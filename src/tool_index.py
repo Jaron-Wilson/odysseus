@@ -42,6 +42,13 @@ ALWAYS_AVAILABLE = frozenset({
     "ask_user",
     # Write back to the active plan (tick steps done / revise) during execution.
     "update_plan",
+    # Retrieval scores these poorly against the phrasings that should start a
+    # research job: "look into X" and "investigate X" both drop trigger_research
+    # out of the top-k, and a dropped tool is absent from the prompt entirely,
+    # so the agent cannot research no matter how clearly it was asked. Pair
+    # manage_research with it so a finished report can still be read back.
+    "trigger_research",
+    "manage_research",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
