@@ -328,6 +328,14 @@ Use this instead of `bash`, `curl`, `python`, `requests`, or scraping code for w
 ```
 Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this when you already have a concrete URL. For open-ended lookups use `web_search`, and for "research X" jobs use `trigger_research`.""",
 
+    "trigger_research": """\
+```trigger_research
+{"topic": "<research question or topic>"}
+```
+Optional knobs: {"topic": "...", "max_rounds": 4, "max_time": 600, "category": "...", "search_provider": "..."}
+START a multi-source DEEP RESEARCH job: it runs Think→Search→Read→Synthesize for several rounds in the Deep Research sidebar and produces a full cited report. Use this whenever the user says "research X", "do research on X", "deep research", "deep dive on X", "look into X", or "investigate X".
+Emit the fenced block ABOVE and then STOP — the job runs in the background and the result comes back to you. Do NOT write a Python-style call like `trigger_research(query=...)`, do NOT invent a tool result, and do NOT write the report yourself from memory: without this block NO research runs and anything you write would be fabricated. To READ an already-finished report use `manage_research`.""",
+
     "read_file": """\
 ```read_file
 <file path>

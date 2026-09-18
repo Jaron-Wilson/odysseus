@@ -3685,7 +3685,11 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
     try:
         args = _parse_tool_args(content)
     except ValueError:
-        return {"error": "Invalid JSON arguments", "exit_code": 1}
+        # Small local models often emit the topic as a bare line instead of
+        # JSON; treat that as the topic rather than failing the whole job.
+        args = {"topic": content.strip()} if isinstance(content, str) and content.strip() else {}
+    if not isinstance(args, dict):
+        args = {}
     topic = args.get("topic", "") or args.get("query", "")
     if not topic:
         return {"error": "topic (or query) is required", "exit_code": 1}
