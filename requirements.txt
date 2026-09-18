@@ -41,5 +41,10 @@ mcp
 pyotp
 qrcode[pil]
 croniter
+# Primary search provider for this deployment. SearXNG's reachable engines
+# return decoy pages here rather than failing, which silently fills research
+# reports with unrelated sources, so deep research depends on this being
+# present — not optional.
+ddgs
 pytest
 pytest-asyncio
