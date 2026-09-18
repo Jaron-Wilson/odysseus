@@ -37,7 +37,10 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-mcp
+# 2.x drops the low-level `@server.list_tools()` decorator that every server
+# under mcp_servers/ is built on, so an unpinned install silently takes all
+# four built-in servers offline at startup with an AttributeError.
+mcp<2
 pyotp
 qrcode[pil]
 croniter
