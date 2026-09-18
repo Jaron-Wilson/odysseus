@@ -361,7 +361,8 @@ Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/ec
 <language>
 <content>
 ```
-Create a NEW document in the editor panel. Only use when the user explicitly asks for a new file/document. If a document is already open in the editor, the user's request "fix this", "add X", "change Y", etc. refers to THAT document — use edit_document, never create_document.""",
+Create a NEW document in the editor panel. Only use when the user explicitly asks for a new file/document. If a document is already open in the editor, the user's request "fix this", "add X", "change Y", etc. refers to THAT document — use edit_document, never create_document.
+To link the user to what you just made, copy the `anchor` field from the result verbatim. It already reads `[Title](#document-<doc_id>)`. NEVER build the link yourself from the title: a slug like `#document-my-new-notes` matches no document id, so the click opens an empty chat and reports "document not found".""",
 
     "edit_document": """\
 ```edit_document
