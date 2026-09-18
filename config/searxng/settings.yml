@@ -7,3 +7,28 @@ search:
   formats:
     - html
     - json
+
+# Engines that answer from this host. The rest of the default set returns
+# CAPTCHAs or rate-limit suspensions here, and leaving them enabled makes
+# every deep-research query wait out their timeouts for zero results.
+engines:
+  - name: duckduckgo
+    disabled: true
+  - name: brave
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: qwant
+    disabled: true
+  - name: yahoo
+    disabled: true
+  - name: marginalia
+    disabled: true
+  - name: presearch
+    disabled: true
+  - name: stackexchange
+    disabled: true
+  - name: bing
+    disabled: false
+  - name: github
+    disabled: false
