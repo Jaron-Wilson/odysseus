@@ -375,14 +375,33 @@ class ClaudeCodeTool:
                     "output": body[:MAX_RESULT_CHARS],
                     "exit_code": 1,
                 }
+            # A plan is the thing the user actually reads before saying yes, so
+            # give them a paginated copy in the house style. Cosmetic: a render
+            # failure still leaves the plan text in the reply.
+            try:
+                from src.doc_pdf import render_markdown_pdf
+                pdf_path, pdf_err = await render_markdown_pdf(
+                    body,
+                    f"plan-{session_id}",
+                    running_title=f"Plan · {cwd_path.name} · jaronwilson.dev",
+                )
+            except Exception as e:
+                pdf_path, pdf_err = None, str(e)
+            if pdf_path:
+                result["pdf"] = f"[Download plan PDF](/api/claude_code/plan/{session_id}/pdf)"
+                result["pdf_path"] = pdf_path
+            elif pdf_err:
+                result["pdf_error"] = pdf_err
+
             result["nothing_changed"] = True
             result["approval"] = {
                 "approve": f"[Approve plan](#claudecode-approve-{session_id})",
                 "deny": f"[Deny](#claudecode-deny-{session_id})",
             }
             result["next_step"] = (
-                "Show the plan to the user in full, then show these two links on their own line "
-                "exactly as given so they can click one:\n"
+                "Show the plan to the user in full. If the result has a `pdf` field, show that "
+                "link too so they can read it as a paginated document. Then show these two links "
+                "on their own line exactly as given so they can click one:\n"
                 f"[Approve plan](#claudecode-approve-{session_id})  ·  [Deny](#claudecode-deny-{session_id})\n"
                 "Tell them they can also just reply with changes they want instead of approving. "
                 "Then STOP and wait. Calling execute before they click Approve will be refused by "

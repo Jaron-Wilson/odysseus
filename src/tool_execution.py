@@ -673,7 +673,17 @@ async def execute_tool_block(
                   "manage_session", "manage_memory", "list_models",
                   "ui_control", "ask_teacher"):
         from src.ai_interaction import dispatch_ai_tool
-        desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
+        try:
+            desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
+        except Exception as e:
+            # These tools look up sessions, models and chats by id, and a model
+            # that passes something else — send_to_session with the whole prompt
+            # as the id is the one seen in the wild — raised straight through
+            # _drain and took the entire agent run down with a 500. A bad
+            # argument is a tool error: report it and let the agent recover.
+            logger.warning("%s failed: %s", tool, e, exc_info=True)
+            desc = f"{tool}: failed"
+            result = {"error": f"{tool}: {type(e).__name__}: {e}"[:500], "exit_code": 1}
     elif tool == "manage_tasks":
         desc = "manage_tasks"
         result = await do_manage_tasks(content, owner=owner)

@@ -9,6 +9,7 @@ given about waiting.
 """
 
 import logging
+import os
 import re
 
 from fastapi import APIRouter, HTTPException, Request
@@ -50,6 +51,21 @@ def setup_claude_code_routes() -> APIRouter:
             "cwd": entry.get("cwd"),
             "plan": entry.get("plan"),
         }
+
+    @router.get("/api/claude_code/plan/{session_id}/pdf")
+    async def get_plan_pdf(request: Request, session_id: str):
+        """Download the plan rendered in the house style."""
+        _require_user(request)
+        _validate(session_id)
+        if not approvals.get(session_id):
+            raise HTTPException(404, "No such plan (it may have expired)")
+        from fastapi.responses import FileResponse
+        from src.doc_pdf import PDF_DIR
+        path = os.path.join(PDF_DIR, f"plan-{session_id}.pdf")
+        if not os.path.isfile(path):
+            raise HTTPException(404, "No PDF was rendered for this plan")
+        return FileResponse(path, media_type="application/pdf",
+                            filename=f"plan-{session_id[:8]}.pdf")
 
     @router.post("/api/claude_code/approve/{session_id}")
     async def approve(request: Request, session_id: str):
