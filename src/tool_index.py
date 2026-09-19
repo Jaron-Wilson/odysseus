@@ -49,6 +49,12 @@ ALWAYS_AVAILABLE = frozenset({
     # manage_research with it so a finished report can still be read back.
     "trigger_research",
     "manage_research",
+    # Retrieval re-runs per round against the newest message, so on the turn
+    # after "use claude code to do X" the query is the assistant's own reply and
+    # the tool drops out of the top-k: one round was sent just four tools, none
+    # of them this one. The model then tells the user it has no such tool and
+    # offers to do the work by hand.
+    "claude_code",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
