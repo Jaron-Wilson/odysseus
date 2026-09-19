@@ -14945,9 +14945,19 @@ body.left-dock-active {
 body.left-dock-active:not(.email-doc-split-active) .chat-container {
   margin-left: var(--left-dock-w, 0px);
 }
+/* Only the RIGHTMOST workspace pane reserves room for a right-side dock.
+   The chat and the doc editor are flex siblings in the body row, so when
+   both claimed `margin-right: var(--right-dock-w)` the chat's copy was not
+   next to the docked panel at all: it opened a dock-wide blank column
+   between the chat and the documents pane. */
 body.right-dock-active .chat-container,
-body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
+body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane:not(.doc-left) {
   margin-right: var(--right-dock-w, 0px);
+}
+/* With the doc pane on the right (its default side) that pane is the one
+   abutting the dock, so the chat reserves nothing. */
+body.right-dock-active:not(.email-doc-split-active):has(.doc-editor-pane:not(.doc-left)) .chat-container {
+  margin-right: 0;
 }
 .modal.modal-right-docked {
   align-items: stretch;
