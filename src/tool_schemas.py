@@ -1006,7 +1006,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "action": {"type": "string", "enum": ["plan", "execute", "ask", "list"], "description": "'ask' converses with a read-only agent that can explore the codebase and spawn its own subagents — no approval needed since it cannot write. 'plan' (default) writes up an intended change, still changing nothing. 'execute' resumes that plan with write tools, and only works once the user has clicked Approve. 'list' shows the Claude Code sessions running on this host."},
                     "session_id": {"type": "string", "description": "Required for execute: the session_id from the approved plan. Optional for ask/plan: pass the previous session_id to continue that conversation instead of starting fresh."},
                     "model": {"type": "string", "description": "Model for Claude Code to use, e.g. claude-opus-5. Ask the user if unspecified."},
-                    "timeout": {"type": "integer", "description": "Seconds before the run is killed (default 900)"},
+                    "background": {"type": "boolean", "description": "Run detached and return immediately with a job id, leaving the chat free. You are re-invoked with the output when it finishes, so do not wait or poll. Use for anything expected to take minutes, or when the user says to push it to the background."},
+                    "timeout": {"type": "integer", "description": "Seconds before the run is killed (default 900). Ignored when background is true."},
                     "allowed_tools": {"type": "string", "description": "Comma-separated tool allowlist. Defaults are read-only for plan, read+write+bash for execute."},
                 },
                 "required": ["prompt", "cwd"]

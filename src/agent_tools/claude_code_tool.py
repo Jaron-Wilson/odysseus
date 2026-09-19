@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from src import claude_code_approvals as approvals
+from src.constants import DATA_DIR
 
+PROMPT_DIR = os.path.join(DATA_DIR, "claude_code_prompts")
 PROGRESS_INTERVAL_S = 1.5
 PROGRESS_TAIL_LINES = 16
 DEFAULT_TIMEOUT_S = 900
@@ -43,6 +45,19 @@ MAX_RESULT_CHARS = 20000
 PLAN_TOOLS = "Read,Glob,Grep,Task"
 ASK_TOOLS = "Read,Glob,Grep,Task"
 EXECUTE_TOOLS = "Read,Glob,Grep,Edit,Write,Bash,TodoWrite,Task"
+
+
+def _die_with_parent() -> None:
+    """Ask the kernel to SIGKILL this child if the server process goes away.
+
+    Linux-only (PR_SET_PDEATHSIG = 1); a no-op anywhere else, which just
+    restores the previous orphaning behaviour rather than breaking the call.
+    """
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, 9, 0, 0, 0)
+    except Exception:
+        pass
 
 
 def _summarize(event: dict) -> Optional[str]:
@@ -82,6 +97,45 @@ def _summarize(event: dict) -> Optional[str]:
 
 
 class ClaudeCodeTool:
+    def _launch_background(self, cmd, prompt, cwd_path, cli_session_id,
+                           action, chat_session_id) -> Dict:
+        """Run the CLI detached via bg_jobs and return immediately."""
+        import shlex
+        from src import bg_jobs
+
+        os.makedirs(PROMPT_DIR, exist_ok=True)
+        prompt_file = os.path.join(PROMPT_DIR, f"{cli_session_id}.prompt")
+        Path(prompt_file).write_text(prompt, encoding="utf-8")
+
+        # bg_jobs inherits the server's environment, and this server is often
+        # started from a Claude Code session, so CLAUDECODE leaks in and the CLI
+        # refuses its own tools. `env -u` strips them for this command only.
+        # stream-json is dropped here: nothing parses it in detached mode, and
+        # the monitor hands the raw log back to the agent to read.
+        argv = [c for c in cmd if c not in ("--output-format", "stream-json", "--verbose")]
+        shell_cmd = (
+            "env -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID "
+            "-u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN "
+            "-u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_AGENT -u CLAUDE_PID "
+            + " ".join(shlex.quote(a) for a in argv)
+            + " < " + shlex.quote(prompt_file)
+        )
+        rec = bg_jobs.launch(shell_cmd, session_id=chat_session_id, cwd=str(cwd_path))
+        return {
+            "action": action,
+            "background": True,
+            "job_id": rec.get("id"),
+            "session_id": cli_session_id,
+            "cwd": str(cwd_path),
+            "output": (
+                f"Claude Code is running detached as job `{rec.get('id')}` in {cwd_path}.\n"
+                "Do NOT wait for it or poll it — you will be re-invoked with its output "
+                "when it finishes. Tell the user it is running in the background and "
+                "carry on with whatever they ask next."
+            ),
+            "exit_code": 0,
+        }
+
     async def _list_agents(self) -> Dict:
         """Report the Claude Code sessions running on this host."""
         cli = shutil.which("claude")
@@ -230,6 +284,13 @@ class ClaudeCodeTool:
         if args.get("model"):
             cmd += ["--model", str(args["model"])]
 
+        # Detached mode: hand the run to bg_jobs and return now, so a refactor
+        # that takes ten minutes does not hold the chat open. The monitor
+        # re-invokes the agent with the output once it finishes.
+        if args.get("background") and (ctx or {}).get("session_id"):
+            return self._launch_background(
+                cmd, prompt, cwd_path, session_id, action, ctx["session_id"])
+
         # Start from a clean environment for the child. Anything inherited from
         # a surrounding Claude Code process (CLAUDECODE, CLAUDE_CODE_*, the
         # messaging socket) makes the CLI think it is a nested child session and
@@ -253,6 +314,10 @@ class ClaudeCodeTool:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # Die with the server. Without this a restart reparents the CLI to
+            # init, where it keeps burning CPU and tokens on a run nothing is
+            # reading any more, and the user has no way to stop it.
+            preexec_fn=_die_with_parent,
         )
         # Prompt over stdin, never argv: no shell, no escaping, no length cap.
         try:
