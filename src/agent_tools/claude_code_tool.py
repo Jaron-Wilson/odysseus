@@ -136,6 +136,40 @@ class ClaudeCodeTool:
             "exit_code": 0,
         }
 
+    def _job_status(self, job_id: Optional[str], chat_session_id: Optional[str]) -> Dict:
+        """Report on backgrounded runs, so the user can simply ask how it is going."""
+        from src import bg_jobs
+        bg_jobs.refresh()
+
+        if job_id:
+            rec = bg_jobs.get(job_id)
+            if not rec:
+                return {"error": f"no background job {job_id}", "exit_code": 1}
+            recs = [rec]
+        elif chat_session_id:
+            recs = bg_jobs.list_for_session(chat_session_id)
+        else:
+            return {"error": "no job_id and no session to look up", "exit_code": 1}
+
+        if not recs:
+            return {"output": "No background Claude Code jobs for this chat.", "exit_code": 0}
+
+        lines = []
+        for r in recs:
+            status = r.get("status", "?")
+            line = f"- `{r.get('id')}` {status}"
+            if status == "running":
+                started = r.get("started_at") or r.get("started")
+                if started:
+                    line += f" for {int(time.time() - float(started))}s"
+            else:
+                line += f" (exit {r.get('exit_code')})"
+            tail = (r.get("output") or "").strip().splitlines()[-3:]
+            if tail:
+                line += "\n      " + "\n      ".join(t[:120] for t in tail)
+            lines.append(line)
+        return {"output": "\n".join(lines), "jobs": recs, "exit_code": 0}
+
     async def _list_agents(self) -> Dict:
         """Report the Claude Code sessions running on this host."""
         cli = shutil.which("claude")
@@ -193,12 +227,15 @@ class ClaudeCodeTool:
             args = {"prompt": (content or "").strip()}
 
         action = (args.get("action") or "plan").strip().lower()
-        if action not in ("plan", "execute", "ask", "list"):
-            return {"error": "action must be 'plan', 'execute', 'ask' or 'list'", "exit_code": 1}
+        if action not in ("plan", "execute", "ask", "list", "status"):
+            return {"error": "action must be 'plan', 'execute', 'ask', 'list' or 'status'",
+                    "exit_code": 1}
 
-        # Listing is a status read: no prompt, no directory, nothing spawned.
+        # Reads: no prompt, no directory, nothing spawned.
         if action == "list":
             return await self._list_agents()
+        if action == "status":
+            return self._job_status(args.get("job_id"), (ctx or {}).get("session_id"))
 
         prompt = (args.get("prompt") or args.get("task") or "").strip()
         if not prompt:
@@ -409,8 +446,17 @@ class ClaudeCodeTool:
             }
         if proc.returncode != 0 and not final_text:
             detail = "\n".join(stderr_buf[-10:]) or console
+            hint = ""
+            if args.get("model"):
+                # The common cause by far: an invented id like claude-opus-4.
+                # The CLI's own message does not always make that obvious.
+                hint = (
+                    f" — note model was set to {args['model']!r}; valid values are "
+                    "'opus', 'sonnet', 'haiku' or a full id such as 'claude-opus-5'. "
+                    "Retry without `model` to use the CLI default."
+                )
             return {
-                "error": f"claude_code exited {proc.returncode}: {detail[:500]}",
+                "error": f"claude_code exited {proc.returncode}: {detail[:400]}{hint}",
                 "session_id": session_id,
                 "exit_code": proc.returncode or 1,
             }
