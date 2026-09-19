@@ -987,10 +987,15 @@ FUNCTION_TOOL_SCHEMAS = [
         "function": {
             "name": "claude_code",
             "description": (
-                "Hand a coding task to the Claude Code CLI on this host. It reads the project, "
-                "edits files and runs commands itself, streaming its console back live. Use for "
-                "work too large or intricate for single tool calls (multi-file refactor, bug hunt "
-                "across a codebase, build-and-iterate), or when the user asks for it by name. "
+                "THE tool for coding work: writing, editing or adding code, fixing bugs, "
+                "refactoring, building or rebranding a site, debugging tests, reviewing or "
+                "explaining a codebase. It runs the Claude Code agent on this host, which reads "
+                "the project, edits files, runs commands and uses its own subagents, streaming "
+                "its console back live.\n"
+                "If the user says 'claude', 'claude code', 'claude agent' or 'claude subagents', "
+                "you MUST call this tool. Do NOT invoke the claude CLI through bash: that skips "
+                "the plan-and-approve gate the user relies on. Prefer this over bash/write_file/"
+                "edit_file for anything bigger than a single known one-line edit.\n"
                 "Sends code to a cloud model, so never use it on anything that must stay local."
             ),
             "parameters": {

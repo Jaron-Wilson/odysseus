@@ -1785,7 +1785,11 @@ body.bg-pattern-sparkles {
       margin-bottom:8px;
       white-space:normal;
       min-height:0;
-      --chat-max: 800px;
+      /* 800px kept a comfortable prose measure but wasted most of a wide
+         monitor, which hurts once the chat is carrying code, tables and tool
+         consoles rather than paragraphs. Scale with the window and keep a
+         ceiling. Override --chat-max in a theme to taste. */
+      --chat-max: min(1400px, 94%);
       padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
       padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
     }
