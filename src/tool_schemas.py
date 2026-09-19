@@ -985,6 +985,32 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "claude_code",
+            "description": (
+                "Hand a coding task to the Claude Code CLI on this host. It reads the project, "
+                "edits files and runs commands itself, streaming its console back live. Use for "
+                "work too large or intricate for single tool calls (multi-file refactor, bug hunt "
+                "across a codebase, build-and-iterate), or when the user asks for it by name. "
+                "Sends code to a cloud model, so never use it on anything that must stay local."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "The coding task, stated in full. On an execute call, the user's approval plus any amendments they asked for."},
+                    "cwd": {"type": "string", "description": "Absolute path to the project directory. Required: it is the only bound on what can be read or edited, so name the project and nothing broader."},
+                    "action": {"type": "string", "enum": ["plan", "execute"], "description": "'plan' (default) reads the project with read-only tools and writes up what it intends to do, changing nothing. 'execute' resumes that same session with write tools. Always plan first and get the user's answer."},
+                    "session_id": {"type": "string", "description": "Required for execute: the session_id returned by the plan call, so phase two keeps all of phase one's context."},
+                    "model": {"type": "string", "description": "Model for Claude Code to use, e.g. claude-opus-5. Ask the user if unspecified."},
+                    "timeout": {"type": "integer", "description": "Seconds before the run is killed (default 900)"},
+                    "allowed_tools": {"type": "string", "description": "Comma-separated tool allowlist. Defaults are read-only for plan, read+write+bash for execute."},
+                },
+                "required": ["prompt", "cwd"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "trigger_research",
             "description": "Start a deep research task on a topic. Returns a task ID for tracking.",
             "parameters": {

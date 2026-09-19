@@ -1086,11 +1086,35 @@ document.addEventListener('click', function(e) {
   if (!a) return;
   const href = a.getAttribute('href') || '';
   if (!href.startsWith('#')) return;
-  const m = href.match(/^#(session|document|note|image|email|event|task|skill|research)-(.+)$/);
+  const m = href.match(/^#(session|document|note|image|email|event|task|skill|research|claudecode)-(.+)$/);
   if (!m) return;
   e.preventDefault();
   e.stopPropagation();
   const [, kind, id] = m;
+  if (kind === 'claudecode') {
+    // Approve/deny a claude_code plan. This click is the gate: the server will
+    // not let the agent execute a plan until an authenticated request from
+    // here marks it approved, so the decision cannot be self-granted.
+    const mm = id.match(/^(approve|deny)-(.+)$/);
+    if (!mm) return;
+    const [, verb, planId] = mm;
+    const label = a.textContent;
+    a.textContent = verb === 'approve' ? 'Approving…' : 'Denying…';
+    fetch(`/api/claude_code/${verb}/${encodeURIComponent(planId)}`, {
+      method: 'POST', credentials: 'same-origin',
+    }).then(async res => {
+      if (res.ok) {
+        a.replaceWith(Object.assign(document.createElement('span'), {
+          className: 'stopped-indicator',
+          textContent: verb === 'approve' ? '[Plan approved]' : '[Plan denied]',
+        }));
+      } else {
+        const detail = await res.json().catch(() => ({}));
+        a.textContent = `${label} — failed: ${detail.detail || res.status}`;
+      }
+    }).catch(() => { a.textContent = `${label} — failed`; });
+    return;
+  }
   if (kind === 'session') {
     import('./sessions.js').then(mod => {
       const fn = mod.selectSession || (mod.default && mod.default.selectSession);
