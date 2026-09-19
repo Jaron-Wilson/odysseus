@@ -36,10 +36,13 @@ PROGRESS_TAIL_LINES = 16
 DEFAULT_TIMEOUT_S = 900
 MAX_RESULT_CHARS = 20000
 
-# Planning reads; it must not be able to write even if the CLI is talked into
-# trying. Execution gets the tools needed to actually land the approved change.
-PLAN_TOOLS = "Read,Glob,Grep"
-EXECUTE_TOOLS = "Read,Glob,Grep,Edit,Write,Bash,TodoWrite"
+# Planning and asking read; neither may write even if the CLI is talked into
+# trying. Execution gets the tools needed to land the approved change. Task is
+# included so the agent can fan work out to its own subagents, which is most of
+# the value on a large codebase.
+PLAN_TOOLS = "Read,Glob,Grep,Task"
+ASK_TOOLS = "Read,Glob,Grep,Task"
+EXECUTE_TOOLS = "Read,Glob,Grep,Edit,Write,Bash,TodoWrite,Task"
 
 
 def _summarize(event: dict) -> Optional[str]:
@@ -79,6 +82,51 @@ def _summarize(event: dict) -> Optional[str]:
 
 
 class ClaudeCodeTool:
+    async def _list_agents(self) -> Dict:
+        """Report the Claude Code sessions running on this host."""
+        cli = shutil.which("claude")
+        if not cli:
+            return {"error": "claude CLI not found on PATH.", "exit_code": 1}
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
+        env["HOME"] = str(Path.home())
+        proc = await asyncio.create_subprocess_exec(
+            cli, "agents", "--json",
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return {"error": "listing agents timed out", "exit_code": 124}
+        if proc.returncode != 0:
+            return {
+                "error": f"claude agents --json exited {proc.returncode}: "
+                         f"{err.decode('utf-8', 'replace')[:300]}",
+                "exit_code": proc.returncode or 1,
+            }
+        try:
+            sessions = json.loads(out.decode("utf-8", "replace") or "[]")
+        except json.JSONDecodeError as e:
+            return {"error": f"could not parse agent list: {e}", "exit_code": 1}
+
+        lines = [
+            f"- {s.get('name') or s.get('id')} — {s.get('state', '?')}"
+            f" ({s.get('kind', '?')}, {s.get('cwd', '?')})"
+            for s in sessions
+        ]
+        return {
+            "output": "\n".join(lines) or "No Claude Code sessions running.",
+            "sessions": sessions,
+            "count": len(sessions),
+            "exit_code": 0,
+        }
+
     async def execute(self, content: str, ctx: dict) -> Dict:
         progress_cb = (ctx or {}).get("progress_cb")
 
@@ -90,13 +138,17 @@ class ClaudeCodeTool:
             # Bare text is the prompt — small models routinely skip the JSON.
             args = {"prompt": (content or "").strip()}
 
+        action = (args.get("action") or "plan").strip().lower()
+        if action not in ("plan", "execute", "ask", "list"):
+            return {"error": "action must be 'plan', 'execute', 'ask' or 'list'", "exit_code": 1}
+
+        # Listing is a status read: no prompt, no directory, nothing spawned.
+        if action == "list":
+            return await self._list_agents()
+
         prompt = (args.get("prompt") or args.get("task") or "").strip()
         if not prompt:
             return {"error": "prompt is required", "exit_code": 1}
-
-        action = (args.get("action") or "plan").strip().lower()
-        if action not in ("plan", "execute"):
-            return {"error": "action must be 'plan' or 'execute'", "exit_code": 1}
 
         resume_id = (args.get("session_id") or "").strip()
         if action == "execute" and not resume_id:
@@ -143,10 +195,20 @@ class ClaudeCodeTool:
 
         cmd = [cli, "-p", "--output-format", "stream-json", "--verbose"]
 
-        if action == "plan":
+        if action == "ask":
+            # Conversation, not change: resume (or open) a session with
+            # read-only tools. Needs no approval precisely because it cannot
+            # write, which is what makes free back-and-forth reasonable.
             session_id = resume_id or str(uuid.uuid4())
+            cmd += (["--resume", session_id] if resume_id else ["--session-id", session_id])
             cmd += [
-                "--session-id", session_id,
+                "--permission-mode", "plan",
+                "--allowedTools", args.get("allowed_tools") or ASK_TOOLS,
+            ]
+        elif action == "plan":
+            session_id = resume_id or str(uuid.uuid4())
+            cmd += (["--resume", session_id] if resume_id else ["--session-id", session_id])
+            cmd += [
                 "--permission-mode", "plan",
                 "--allowedTools", args.get("allowed_tools") or PLAN_TOOLS,
             ]

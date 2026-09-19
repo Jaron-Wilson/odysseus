@@ -998,8 +998,8 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "prompt": {"type": "string", "description": "The coding task, stated in full. On an execute call, the user's approval plus any amendments they asked for."},
                     "cwd": {"type": "string", "description": "Absolute path to the project directory. Required: it is the only bound on what can be read or edited, so name the project and nothing broader."},
-                    "action": {"type": "string", "enum": ["plan", "execute"], "description": "'plan' (default) reads the project with read-only tools and writes up what it intends to do, changing nothing. 'execute' resumes that same session with write tools. Always plan first and get the user's answer."},
-                    "session_id": {"type": "string", "description": "Required for execute: the session_id returned by the plan call, so phase two keeps all of phase one's context."},
+                    "action": {"type": "string", "enum": ["plan", "execute", "ask", "list"], "description": "'ask' converses with a read-only agent that can explore the codebase and spawn its own subagents — no approval needed since it cannot write. 'plan' (default) writes up an intended change, still changing nothing. 'execute' resumes that plan with write tools, and only works once the user has clicked Approve. 'list' shows the Claude Code sessions running on this host."},
+                    "session_id": {"type": "string", "description": "Required for execute: the session_id from the approved plan. Optional for ask/plan: pass the previous session_id to continue that conversation instead of starting fresh."},
                     "model": {"type": "string", "description": "Model for Claude Code to use, e.g. claude-opus-5. Ask the user if unspecified."},
                     "timeout": {"type": "integer", "description": "Seconds before the run is killed (default 900)"},
                     "allowed_tools": {"type": "string", "description": "Comma-separated tool allowlist. Defaults are read-only for plan, read+write+bash for execute."},
