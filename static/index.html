@@ -1969,7 +1969,7 @@
                 <textarea id="set-reminder-webhook-template" class="settings-select" rows="3" style="font-family:inherit;resize:vertical;flex:1" placeholder='{"content": "{{title}}: {{message}}"}'></textarea>
               </div>
               <div id="set-reminder-channel-hint" style="font-size:11px;opacity:0.6;"></div>
-              <div style="font-size:11px;opacity:0.6;margin-top:4px;">Configure email account, ntfy server, etc. in <a href="#" id="set-reminders-open-integrations" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">Integrations</a>.</div>
+              <div style="font-size:11px;opacity:0.6;margin-top:4px;">Configure an email account for the Email channel in <a href="#" id="set-reminders-open-integrations" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">Integrations</a>.</div>
             </div>
           </div>
           <div class="admin-card">
@@ -2377,6 +2377,6 @@
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
-<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
+<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(function(e){console.warn('service worker registration failed',e);});}</script>
 </body>
 </html>

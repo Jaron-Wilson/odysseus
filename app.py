@@ -583,6 +583,22 @@ app.include_router(setup_chat_routes(
 from routes.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
+# The service worker must be served from the root to get root scope. Mounted
+# under /static it is confined to /static/, so it never controls the app at /
+# — which silently breaks both offline caching and push subscription, with no
+# error anywhere to explain it.
+@app.get("/sw.js", include_in_schema=False)
+async def _service_worker():
+    from fastapi.responses import FileResponse
+    from src.constants import STATIC_DIR
+    import os as _os
+    return FileResponse(
+        _os.path.join(STATIC_DIR, "sw.js"),
+        media_type="text/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
+
+
 # Web Push subscriptions — notifications with no third-party app installed.
 from routes.push_routes import setup_push_routes
 app.include_router(setup_push_routes())

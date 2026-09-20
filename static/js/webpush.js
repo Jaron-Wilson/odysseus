@@ -46,16 +46,38 @@ export async function subscribe(deviceName) {
   const perm = await Notification.requestPermission();
   if (perm !== 'granted') return false;
 
-  const reg = await navigator.serviceWorker.ready;
+  // navigator.serviceWorker.ready never resolves when no worker controls this
+  // page — which is exactly what a mis-scoped registration looks like, and it
+  // hangs here forever with nothing logged. Time it out and say so instead.
+  let reg;
+  try {
+    reg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((_, rej) => setTimeout(
+        () => rej(new Error('no service worker is controlling this page')), 8000)),
+    ]);
+  } catch (e) {
+    _toast(`Notifications unavailable: ${e.message}. Reload the page and try again.`);
+    console.warn('[webpush] service worker not ready', e);
+    return false;
+  }
+
   let sub = await reg.pushManager.getSubscription();
   if (!sub) {
     const res = await fetch(KEY_URL, { credentials: 'same-origin' });
     if (!res.ok) { _toast('Could not fetch the push key.'); return false; }
     const { public_key: key } = await res.json();
-    sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,               // required by Chrome
-      applicationServerKey: _b64ToUint8(key),
-    });
+    try {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,             // required by Chrome
+        applicationServerKey: _b64ToUint8(key),
+      });
+    } catch (e) {
+      // Swallowing this is what made the button appear to do nothing at all.
+      _toast(`Could not subscribe: ${e.name} — ${e.message}`);
+      console.warn('[webpush] pushManager.subscribe failed', e);
+      return false;
+    }
   }
 
   const save = await fetch('/api/push/subscribe', {
