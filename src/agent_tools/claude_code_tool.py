@@ -73,6 +73,27 @@ def _die_with_parent() -> None:
         pass
 
 
+def _summarize_opencode(event: dict) -> Optional[str]:
+    """One console line for an OpenCode `run --format json` event.
+
+    Its shape differs from Claude's: a flat {type, sessionID, part} where the
+    interesting content hangs off `part` rather than a message envelope.
+    """
+    etype = event.get("type")
+    part = event.get("part") or {}
+    if etype == "text":
+        return (part.get("text") or "").strip() or None
+    if etype == "tool":
+        state = part.get("state") or {}
+        name = part.get("tool") or "tool"
+        inp = state.get("input") or {}
+        hint = inp.get("filePath") or inp.get("path") or inp.get("command") or inp.get("pattern") or ""
+        return f"● {name}({str(hint).replace(chr(10), ' ')[:70]})"
+    if etype == "step_finish":
+        return None
+    return None
+
+
 def _summarize(event: dict) -> Optional[str]:
     """One console line for a stream-json event, or None to show nothing."""
     etype = event.get("type")
@@ -313,10 +334,14 @@ class ClaudeCodeTool:
                 "exit_code": 1,
             }
 
-        cli = shutil.which("claude")
+        engine = (args.get("engine") or "claude").strip().lower()
+        if engine not in ("claude", "opencode"):
+            return {"error": "engine must be 'claude' or 'opencode'", "exit_code": 1}
+
+        cli = shutil.which("opencode" if engine == "opencode" else "claude")
         if not cli:
             return {
-                "error": "claude CLI not found on PATH. Install Claude Code on this host.",
+                "error": (f"{engine} CLI not found on PATH. Install it on this host."),
                 "exit_code": 1,
             }
 
@@ -346,9 +371,28 @@ class ClaudeCodeTool:
                     "exit_code": 1,
                 }
 
-        cmd = [cli, "-p", "--output-format", "stream-json", "--verbose"]
+        # OpenCode ships the same split as a pair of agents: `plan` is read-only
+        # (verified — it refuses to edit and says so) and `build` writes, so the
+        # approval gate above applies to it unchanged. Its prompt rides as a
+        # positional argument; exec involves no shell, so nothing needs quoting.
+        prompt_via_stdin = True
+        if engine == "opencode":
+            # OpenCode mints its own ses_… id, which the event stream reports.
+            session_id = resume_id or ""
+            cmd = [cli, "run", "--format", "json", "--dir", str(cwd_path),
+                   "--agent", "build" if action == "execute" else "plan"]
+            if args.get("model"):
+                cmd += ["--model", str(args["model"])]
+            if resume_id:
+                cmd += ["--session", resume_id]
+            cmd.append(prompt)
+            prompt_via_stdin = False
+        else:
+            cmd = [cli, "-p", "--output-format", "stream-json", "--verbose"]
 
-        if action == "ask":
+        if engine == "opencode":
+            pass
+        elif action == "ask":
             # Conversation, not change: resume (or open) a session with
             # read-only tools. Needs no approval precisely because it cannot
             # write, which is what makes free back-and-forth reasonable.
@@ -380,7 +424,7 @@ class ClaudeCodeTool:
                 "--allowedTools", args.get("allowed_tools") or EXECUTE_TOOLS,
             ]
 
-        if args.get("model"):
+        if engine != "opencode" and args.get("model"):
             cmd += ["--model", str(args["model"])]
 
         # Detached mode: hand the run to bg_jobs and return now, so a refactor
@@ -419,10 +463,12 @@ class ClaudeCodeTool:
             # reading any more, and the user has no way to stop it.
             preexec_fn=_die_with_parent,
         )
-        # Prompt over stdin, never argv: no shell, no escaping, no length cap.
+        # Claude takes the prompt over stdin, never argv: no shell, no escaping,
+        # no length cap. OpenCode takes it positionally, so just close stdin.
         try:
-            proc.stdin.write(prompt.encode())
-            await proc.stdin.drain()
+            if prompt_via_stdin:
+                proc.stdin.write(prompt.encode())
+                await proc.stdin.drain()
             proc.stdin.close()
         except Exception:
             pass
@@ -437,10 +483,16 @@ class ClaudeCodeTool:
         # What was actually spawned, stated up front. Without this the user sees
         # an opaque spinner and has to go hunting in `ps` to find out whether a
         # process exists at all, what it may touch, or how to kill it.
+        if engine == "opencode":
+            _grant = f"--agent {'build' if action == 'execute' else 'plan'}"
+        else:
+            _grant = (
+                f"--permission-mode {'plan' if action in ('plan', 'ask') else 'bypassPermissions'}"
+                f" --allowedTools {args.get('allowed_tools') or (PLAN_TOOLS if action == 'plan' else ASK_TOOLS if action == 'ask' else EXECUTE_TOOLS)}"
+            )
         banner = (
-            f"$ claude -p --permission-mode {'plan' if action in ('plan', 'ask') else 'bypassPermissions'}"
-            f" --allowedTools {args.get('allowed_tools') or (PLAN_TOOLS if action == 'plan' else ASK_TOOLS if action == 'ask' else EXECUTE_TOOLS)}\n"
-            f"  pid {proc.pid} · session {session_id[:8]} · cwd {cwd_path}\n"
+            f"$ {engine} {_grant}\n"
+            f"  pid {proc.pid} · session {(session_id or 'pending')[:12]} · cwd {cwd_path}\n"
             f"  model {args.get('model') or 'default'} · kill with: kill {proc.pid}"
         )
 
@@ -460,7 +512,7 @@ class ClaudeCodeTool:
                 pass
 
         async def _read_stdout():
-            nonlocal final_text, is_error, thinking_tokens
+            nonlocal final_text, is_error, thinking_tokens, session_id
             while True:
                 line = await proc.stdout.readline()
                 if not line:
@@ -471,7 +523,20 @@ class ClaudeCodeTool:
                 try:
                     event = json.loads(raw)
                 except json.JSONDecodeError:
-                    tail.append(raw[:200])
+                    tail.append(_strip_ansi(raw)[:200])
+                    continue
+                if engine == "opencode":
+                    # OpenCode allocates the session itself, so the id is only
+                    # knowable from the stream — and it is what a later
+                    # --session resume, and the approval record, both key on.
+                    if not session_id and event.get("sessionID"):
+                        session_id = event["sessionID"]
+                    summary = _summarize_opencode(event)
+                    if summary:
+                        for ln in summary.splitlines():
+                            tail.append(ln)
+                        if event.get("type") == "text":
+                            final_text = (final_text + "\n" + summary).strip()
                     continue
                 if event.get("type") == "result":
                     final_text = event.get("result") or final_text
