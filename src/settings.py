@@ -36,6 +36,12 @@ DEFAULT_SETTINGS = {
     "vision_enabled": True,
     # Ordered fallback chain for the Vision model (image analysis, OCR, tagging).
     "vision_model_fallbacks": [],
+    # Comma-separated substrings naming models that accept images natively but
+    # whose names the keyword heuristic in chat_helpers cannot recognise —
+    # locally served builds, mostly, where the operator chose the name. Listing
+    # one here sends images straight to it instead of captioning them with a
+    # smaller model first and handing over only the text.
+    "vision_capable_models": "qwen3.8-27b",
     # Public base URL used to build clickable deep-links in outgoing alerts
     # (e.g., urgency alert email). Example: "https://chat.example.com"
     "app_public_url": "",

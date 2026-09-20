@@ -75,6 +75,19 @@ def is_vision_model(model_name: str) -> bool:
     drops the image entirely. See issue #124.
     """
     m = (model_name or "").lower()
+    # Locally served builds get whatever name the operator gave them, so a
+    # keyword list cannot recognise them: a vision-capable Qwen3 served as
+    # "qwen3.8-27b" matches nothing here and its images get captioned by a
+    # smaller model for no reason. This setting lets the operator name such
+    # models directly rather than waiting for a keyword to be added.
+    try:
+        from src.settings import get_setting
+        extra = get_setting("vision_capable_models", "") or ""
+        for token in (t.strip().lower() for t in extra.split(",")):
+            if token and token in m:
+                return True
+    except Exception:
+        pass
     if any(kw in m for kw in _VISION_MODEL_KEYWORDS):
         return True
     return bool(_VISION_VL_RE.search(m))
