@@ -2617,6 +2617,33 @@ async def stream_agent_loop(
                     yield f'data: {json.dumps({"type": "doc_stream_delta", "content": content})}\n\n'
                     break
 
+        # When a round asks for several independent lookups — three searches, a
+        # handful of file reads — running them one after another wastes most of
+        # the round on network latency. Start them together and let the loop
+        # below collect the results.
+        #
+        # Only tools that read: anything that writes, runs a command or edits a
+        # document stays strictly ordered, because the model emitted those in an
+        # order it expects to hold. Events are still emitted per block in the
+        # original sequence afterwards, so the stream the UI sees is unchanged —
+        # it renders one tool bubble at a time, and interleaving would corrupt
+        # it. This buys the latency, not a protocol change.
+        _PARALLEL_SAFE = {"web_search", "web_fetch", "read_file", "grep", "glob", "ls"}
+        _prefetched: Dict[int, "asyncio.Task"] = {}
+        if (len(tool_blocks) > 1
+                and all(b.tool_type in _PARALLEL_SAFE for b in tool_blocks)
+                and not (tool_policy and any(tool_policy.blocks(b.tool_type) for b in tool_blocks))):
+            for _idx, _blk in enumerate(tool_blocks):
+                _prefetched[_idx] = asyncio.create_task(execute_tool_block(
+                    _blk,
+                    session_id=session_id,
+                    disabled_tools=disabled_tools,
+                    tool_policy=tool_policy,
+                    owner=owner,
+                ))
+            logger.info("[agent] running %d read-only tools concurrently: %s",
+                        len(tool_blocks), [b.tool_type for b in tool_blocks])
+
         # Execute each tool block
         tool_results = []
         tool_result_texts = []  # plain text for native tool role messages
@@ -2673,17 +2700,25 @@ async def stream_agent_loop(
                         # Sentinel so the drainer knows to stop.
                         await _progress_q.put(None)
 
-                _tool_task = asyncio.create_task(_run_tool())
+                if i in _prefetched:
+                    # Started before the loop alongside its siblings; it may
+                    # already be finished. Read-only tools of this kind emit no
+                    # progress, so there is nothing to drain.
+                    desc, result = await _prefetched[i]
+                    _tool_task = None
+                else:
+                    _tool_task = asyncio.create_task(_run_tool())
                 # Drain progress events as they arrive — block until the
                 # next event OR the tool finishes (sentinel = None).
-                while True:
+                while _tool_task is not None:
                     evt = await _progress_q.get()
                     if evt is None:
                         break
                     yield (
                         f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
                     )
-                desc, result = await _tool_task
+                if _tool_task is not None:
+                    desc, result = await _tool_task
 
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
