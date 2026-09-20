@@ -3581,6 +3581,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
    * Initialize event listeners
    */
   export function initListeners() {
+    // The share-screen button is in the markup and the module behind it is
+    // complete, but nothing ever called its init(), so the click listener was
+    // never attached and pressing it did nothing at all. Bind it here with the
+    // rest of the chat listeners. The import stays lazy, matching how the send
+    // path already pulls the module in, so this costs nothing on first paint.
+    import('./screenshare.js')
+      .then(ss => ss.init())
+      .catch(e => console.warn('screenshare init failed', e));
+
     // Global event delegation for copy-code buttons
     document.addEventListener('click', (e) => {
       const btn = e.target.closest('.copy-code');
