@@ -5,6 +5,7 @@
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
 import fileHandlerModule from './js/fileHandler.js';
+import screenshareModule from './js/screenshare.js';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
@@ -125,6 +126,9 @@ async function _createDirectChatFromPreferredModel() {
 function initializeEventListeners() {
   // Chat form submission
 //  document.getElementById('chat-form').addEventListener('submit', chatModule.handleChatSubmit);
+
+  // Screen sharing toggle — chat.js samples a frame per message while it's on.
+  screenshareModule.init();
 
   // File attachments (inside overflow menu)
   const _overflowAttach = el('overflow-attach-btn');

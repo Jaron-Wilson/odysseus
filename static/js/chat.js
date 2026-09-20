@@ -664,6 +664,18 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         } catch {}
       }
 
+      // While the screen is being shared, every message carries a snapshot
+      // taken at the moment of sending — grabbed here so it joins this upload
+      // batch and travels as an ordinary attachment. A stale frame would be
+      // worse than none, which is why it is sampled per message rather than
+      // captured once when sharing started.
+      try {
+        const ss = await import('./screenshare.js');
+        if (ss.isSharing()) await ss.attachFrameIfSharing();
+      } catch (e) {
+        console.warn('screen snapshot failed', e);
+      }
+
       let ids = [];
       try {
         ids = await fileHandlerModule.uploadPending();
