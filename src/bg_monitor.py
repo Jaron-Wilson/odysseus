@@ -80,7 +80,15 @@ async def _run_followup(rec: dict) -> bool:
     sm = get_session_manager()
     if not sm:
         return False  # not ready yet — retry
-    sess = sm.get_session(rec["session_id"])
+    try:
+        sess = sm.get_session(rec["session_id"])
+    except KeyError:
+        # get_session raises rather than returning None for an unknown id, so a
+        # deleted session arrives here as an exception and the check below never
+        # sees it. Left uncaught it reaches the generic handler in _loop(), which
+        # keeps followed_up=False and so retries the same dead job every tick,
+        # forever.
+        sess = None
     if not sess:
         # Session was deleted — nothing to continue. Consider it handled so we
         # don't retry forever.
