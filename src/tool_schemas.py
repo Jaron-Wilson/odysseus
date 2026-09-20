@@ -998,7 +998,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "action": {"type": "string", "enum": ["list", "register", "remove", "capabilities"], "description": "'list' (default) shows registered devices; 'capabilities' shows what a device can be set up to honour."},
                     "name": {"type": "string", "description": "Device name, e.g. 'pixel-8a'"},
                     "kind": {"type": "string", "description": "phone, tablet, desktop, watch"},
-                    "topic": {"type": "string", "description": "ntfy topic it subscribes to. Derived from the name if omitted."},
+                    "topic": {"type": "string", "description": "Delivery topic for the device. Derived from the name if omitted."},
                     "commands": {"type": "array", "items": {"type": "string"}, "description": "What its automation honours, e.g. ['notify','open_app','set_timer']"},
                 },
                 "required": []
@@ -1022,7 +1022,7 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "message": {"type": "string", "description": "The notification text"},
                     "title": {"type": "string", "description": "Short title shown on the device"},
-                    "device": {"type": "string", "description": "Which device (ntfy topic). Omit for the default."},
+                    "device": {"type": "string", "description": "Which device to notify, by registered name. Omit to reach every subscribed device."},
                     "priority": {"type": "string", "enum": ["min", "low", "default", "high", "max"], "description": "Use 'high' for something time-sensitive like a finished print."},
                     "tags": {"type": "string", "description": "Comma-separated emoji tags, e.g. 'printer,white_check_mark'"},
                     "click": {"type": "string", "description": "URL the notification opens when tapped"},

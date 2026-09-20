@@ -2215,6 +2215,48 @@ async function initReminderSettings() {
   const root = el('settings-modal');
   if (!root || !root.querySelector('[data-settings-panel="reminders"]')) return;
 
+  // Push notifications for this browser. The subscription belongs to the
+  // device, so this is deliberately not an account-wide setting: each device
+  // the user wants notified has to opt in on itself.
+  (async () => {
+    const btn = el('set-push-toggle');
+    const testBtn = el('set-push-test');
+    const status = el('set-push-status');
+    const hint = el('set-push-hint');
+    if (!btn) return;
+    let push;
+    try {
+      push = (await import('./webpush.js')).default;
+    } catch (e) {
+      btn.disabled = true;
+      if (status) status.textContent = 'unavailable';
+      return;
+    }
+    if (!push.isSupported()) {
+      btn.disabled = true;
+      if (testBtn) testBtn.disabled = true;
+      if (status) status.textContent = 'not supported here';
+      // The usual cause is a plain-http origin, which is worth naming rather
+      // than leaving the button mysteriously dead.
+      if (hint) hint.textContent = window.isSecureContext
+        ? 'This browser has no push support.'
+        : 'Needs an https address — open Odysseus over its https URL, not the raw IP.';
+      return;
+    }
+    const sync = async () => {
+      const on = await push.isSubscribed();
+      btn.textContent = on ? 'Disable notifications' : 'Enable notifications';
+      if (status) status.textContent = on ? 'on for this device' : 'off';
+      if (testBtn) testBtn.disabled = !on;
+    };
+    await sync();
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try { await push.toggle(); } finally { btn.disabled = false; await sync(); }
+    });
+    if (testBtn) testBtn.addEventListener('click', () => push.sendTest());
+  })();
+
   // Public URL field (used for deep-links in outgoing alert emails)
   const pubUrlIn = el('set-app-public-url');
   const pubUrlMsg = el('set-app-public-url-msg');

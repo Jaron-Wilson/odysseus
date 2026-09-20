@@ -218,7 +218,8 @@ def _subject() -> str:
 
 
 async def send(title: str, body: str, *, device: str = "", url: str = "",
-               tag: str = "odysseus") -> Dict:
+               tag: str = "odysseus", command: str = "",
+               command_arg: str = "") -> Dict:
     """Push to every matching subscription. Returns a per-endpoint summary."""
     import httpx
 
@@ -229,7 +230,14 @@ async def send(title: str, body: str, *, device: str = "", url: str = "",
     if not subs:
         return {"sent": 0, "failed": 0, "detail": "no matching subscriptions"}
 
-    payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag}).encode()
+    msg = {"title": title, "body": body, "url": url, "tag": tag}
+    if command:
+        # An on-device automation matches on these; the service worker shows
+        # the notification either way.
+        msg["command"] = command
+        if command_arg:
+            msg["arg"] = command_arg
+    payload = json.dumps(msg).encode()
     sent = failed = 0
     errors: List[str] = []
     async with httpx.AsyncClient(timeout=20.0) as client:
