@@ -329,6 +329,11 @@ class CreateDocumentTool:
                 "language": language,
                 "content": content,
                 "version": 1,
+                # Ready-made so the model copies a working link instead of
+                # building one from the title. A slug like
+                # #document-my-new-notes matches no id, and the click falls
+                # through to hash navigation, which resets to a new chat.
+                "anchor": f"[{title}](#document-{doc_id})",
             }
         except Exception as e:
             db.rollback()

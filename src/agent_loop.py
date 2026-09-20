@@ -328,6 +328,28 @@ Use this instead of `bash`, `curl`, `python`, `requests`, or scraping code for w
 ```
 Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this when you already have a concrete URL. For open-ended lookups use `web_search`, and for "research X" jobs use `trigger_research`.""",
 
+    "claude_code": """\
+```claude_code
+{"prompt": "<the coding task, stated in full>", "cwd": "/abs/path/to/project"}
+```
+Then, only after the user approves the plan it returns:
+```claude_code
+{"action": "execute", "session_id": "<id from the plan result>", "cwd": "/abs/path/to/project", "prompt": "Approved. <any changes the user asked for>"}
+```
+Hand a CODING task to the Claude Code CLI on this host: it reads the project, edits files, runs commands and can fan work out to its own subagents, with its console streaming back live. Use it for work too large or intricate for single tool calls here — a multi-file refactor, a bug hunt across a codebase, a build that has to be run and iterated on — or when the user asks for it by name.
+Other actions: `{"action":"ask", "prompt":"...", "cwd":"..."}` converses with a READ-ONLY agent that explores the codebase and answers — no approval needed because it cannot change anything, so use it for "what does this do", "where is X handled", "is this safe". Pass the returned `session_id` back on the next ask to keep the thread. `{"action":"list"}` shows the Claude Code sessions running on this host.
+ALWAYS plan first. The default `action` is `plan`: it reads with read-only tools and writes up what it intends to do, changing NOTHING. Show that plan to the user in full, then show the two links from the result's `approval` field on their own line so they can click one. Only call `action:"execute"` after they click Approve, passing the `session_id` from the plan so it keeps everything it already read. The server records the approval and refuses any execute it did not authorise, so executing early just fails — wait for them.
+`cwd` is REQUIRED and absolute: it is the only limit on what can be read or edited, so name the project directory and nothing broader. Ask which model to use if the user has not said. This sends code to a cloud model, so never point it at anything the user has said must stay local.
+For a one-line edit you could make with edit_file, just do that instead — this spawns a whole second agent.""",
+
+    "trigger_research": """\
+```trigger_research
+{"topic": "<research question or topic>"}
+```
+Send ONLY the `topic` key. Do not add `search_provider`, `category` or any other field: the app picks those itself, and an invented value makes the job search the wrong place or return nothing.
+START a multi-source DEEP RESEARCH job: it runs Think→Search→Read→Synthesize for several rounds in the Deep Research sidebar and produces a full cited report. Use this whenever the user says "research X", "do research on X", "deep research", "deep dive on X", "look into X", or "investigate X".
+Emit the fenced block ABOVE and then STOP — the job runs in the background and the result comes back to you. Do NOT write a Python-style call like `trigger_research(query=...)`, do NOT invent a tool result, and do NOT write the report yourself from memory: without this block NO research runs and anything you write would be fabricated. To READ an already-finished report use `manage_research`.""",
+
     "read_file": """\
 ```read_file
 <file path>
@@ -353,7 +375,8 @@ Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/ec
 <language>
 <content>
 ```
-Create a NEW document in the editor panel. Only use when the user explicitly asks for a new file/document. If a document is already open in the editor, the user's request "fix this", "add X", "change Y", etc. refers to THAT document — use edit_document, never create_document.""",
+Create a NEW document in the editor panel. Only use when the user explicitly asks for a new file/document. If a document is already open in the editor, the user's request "fix this", "add X", "change Y", etc. refers to THAT document — use edit_document, never create_document.
+To link the user to what you just made, copy the `anchor` field from the result verbatim. It already reads `[Title](#document-<doc_id>)`. NEVER build the link yourself from the title: a slug like `#document-my-new-notes` matches no document id, so the click opens an empty chat and reports "document not found".""",
 
     "edit_document": """\
 ```edit_document

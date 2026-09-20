@@ -650,6 +650,21 @@ async def execute_tool_block(
         desc = f"{tool}: {first_line}"
         result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool == "claude_code":
+        # Registering the handler is not enough: this chain has no default that
+        # reaches TOOL_HANDLERS, so anything missing here lands in the final
+        # else and comes back as "Unknown tool type". Called directly rather
+        # than through _direct_fallback because backgrounding a run needs the
+        # chat session id, which that helper's ctx does not carry.
+        desc = f"{tool}: {content.split(chr(10))[0][:80]}"
+        from src.agent_tools import TOOL_HANDLERS
+        try:
+            result = await TOOL_HANDLERS["claude_code"](
+                content, {"progress_cb": progress_cb, "session_id": session_id, "owner": owner}
+            )
+        except Exception as e:
+            logger.warning("claude_code failed: %s", e, exc_info=True)
+            result = {"error": f"claude_code: {type(e).__name__}: {e}"[:500], "exit_code": 1}
     elif tool in ("create_document", "update_document", "edit_document",
                   "suggest_document", "manage_documents"):
         desc = f"{tool}: {content.split(chr(10))[0][:80]}"
@@ -666,7 +681,17 @@ async def execute_tool_block(
                   "manage_session", "manage_memory", "list_models",
                   "ui_control", "ask_teacher"):
         from src.ai_interaction import dispatch_ai_tool
-        desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
+        try:
+            desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
+        except Exception as e:
+            # These tools look up sessions, models and chats by id, and a model
+            # that passes something else — send_to_session with the whole prompt
+            # as the id is the one seen in the wild — raised straight through
+            # _drain and took the entire agent run down with a 500. A bad
+            # argument is a tool error: report it and let the agent recover.
+            logger.warning("%s failed: %s", tool, e, exc_info=True)
+            desc = f"{tool}: failed"
+            result = {"error": f"{tool}: {type(e).__name__}: {e}"[:500], "exit_code": 1}
     elif tool == "manage_tasks":
         desc = "manage_tasks"
         result = await do_manage_tasks(content, owner=owner)

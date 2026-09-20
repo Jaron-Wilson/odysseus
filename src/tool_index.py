@@ -42,6 +42,19 @@ ALWAYS_AVAILABLE = frozenset({
     "ask_user",
     # Write back to the active plan (tick steps done / revise) during execution.
     "update_plan",
+    # Retrieval scores these poorly against the phrasings that should start a
+    # research job: "look into X" and "investigate X" both drop trigger_research
+    # out of the top-k, and a dropped tool is absent from the prompt entirely,
+    # so the agent cannot research no matter how clearly it was asked. Pair
+    # manage_research with it so a finished report can still be read back.
+    "trigger_research",
+    "manage_research",
+    # Retrieval re-runs per round against the newest message, so on the turn
+    # after "use claude code to do X" the query is the assistant's own reply and
+    # the tool drops out of the top-k: one round was sent just four tools, none
+    # of them this one. The model then tells the user it has no such tool and
+    # offers to do the work by hand.
+    "claude_code",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
@@ -133,6 +146,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "app_api": "Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
     "edit_image": "Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.",
     "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
+    "claude_code": "Hand a CODING or SOFTWARE task to the Claude Code agent on this host: writing code, editing code, adding a feature, fixing a bug, refactoring, rebuilding or rebranding a website, building a new project, debugging failing tests, reviewing a codebase, explaining how code works. It reads the project, edits files, runs commands and uses its own subagents, streaming its console live. Use for 'claude code', 'claude agent', 'use claude', 'code this', 'build me', 'fix the bug', 'refactor', 'rebrand the site', 'work on my repo'. Plans first and waits for the user to approve before changing anything.",
 }
 
 

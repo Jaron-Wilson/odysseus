@@ -583,6 +583,10 @@ app.include_router(setup_chat_routes(
 from routes.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
+# claude_code plan approvals — the only path that can authorise an execute run.
+from routes.claude_code_routes import setup_claude_code_routes
+app.include_router(setup_claude_code_routes())
+
 # History
 from routes.history_routes import setup_history_routes
 app.include_router(setup_history_routes(session_manager))

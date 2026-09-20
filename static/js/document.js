@@ -1957,6 +1957,35 @@ import * as Modals from './modalManager.js';
     _renderPdfPane();
   }
 
+  /** Re-point the shared PDF pane at whatever document is now active.
+   *
+   *  #doc-pdf-view is one element reused by every tab, so switching documents
+   *  without this leaves the previous document's render on screen while the
+   *  editor wrap comes back for the new one — the reported "PDF at the bottom,
+   *  text at the top", with the stale PDF following you between tabs.
+   *  Deliberately not the teardown half of _setPdfViewActive: that one awaits a
+   *  save against activeDocId, which by here already names the new document.
+   */
+  function _syncPdfPaneForActiveDoc() {
+    const pane = document.getElementById('doc-pdf-view');
+    const wrap = document.getElementById('doc-editor-wrap');
+    if (!pane || !wrap) return;
+    const wantPdf = _pdfViewState.get(activeDocId) === true;
+    const savedPill = document.getElementById('doc-pdf-save-pill');
+    pane.innerHTML = '';
+    if (savedPill) pane.appendChild(savedPill);
+    pane.style.display = wantPdf ? '' : 'none';
+    document.getElementById('doc-pdf-view-btn')?.classList.toggle('active', wantPdf);
+    if (wantPdf) {
+      wrap.style.display = 'none';
+      _renderPdfPane();
+    } else if (docs.get(activeDocId)?.language !== 'email') {
+      // Email docs keep the wrap hidden on purpose so the source view does not
+      // cover the composer, so only restore it for everything else.
+      wrap.style.display = '';
+    }
+  }
+
   async function _setPdfViewActive(active) {
     const pane = document.getElementById('doc-pdf-view');
     const wrap = document.getElementById('doc-editor-wrap');
@@ -3451,6 +3480,13 @@ import * as Modals from './modalManager.js';
     // Save current doc state before switching
     saveCurrentToMap();
 
+    // Flush a pending PDF-pane edit while activeDocId still names the doc it
+    // belongs to — _savePdfPaneToMarkdown reads activeDocId when it starts.
+    if (_pdfPaneSaveTimer) {
+      clearTimeout(_pdfPaneSaveTimer);
+      _savePdfPaneToMarkdown();
+    }
+
     // Auto-delete the doc we're leaving if it's completely empty
     const prevId = activeDocId;
     if (prevId && prevId !== docId && docs.has(prevId)) {
@@ -3568,6 +3604,11 @@ import * as Modals from './modalManager.js';
       const wantsMarkdownPreview = (doc.language || 'markdown') === 'markdown' && doc._markdownPreviewActive === true;
       _setMarkdownPreviewActive(wantsMarkdownPreview, { remember: false });
     }
+
+    // After the email/markdown branches, both of which set the editor wrap's
+    // display unconditionally and would otherwise put the textarea back on
+    // screen underneath an active PDF render.
+    _syncPdfPaneForActiveDoc();
 
     // Hide version panel on switch
     const vp = document.getElementById('doc-version-panel');
@@ -9323,6 +9364,7 @@ import * as Modals from './modalManager.js';
 
     // Switch to this doc's tab
     activeDocId = docId;
+    _syncPdfPaneForActiveDoc();
 
     const badge = document.getElementById('doc-version-badge');
     const titleInput = document.getElementById('doc-title-input');
