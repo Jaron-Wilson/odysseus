@@ -627,7 +627,13 @@ _API_HOSTS = frozenset([
     "localhost", "127.0.0.1", "host.docker.internal",
 ])
 _MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
-                           "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
+                           "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed",
+                           # Media control is reached by asking to "pause my
+                           # music", and none of those words appear in a tool
+                           # name, so the derivation below cannot find them.
+                           # This is what the static list is for: domain words
+                           # the tool names themselves do not contain.
+                           "music", "song", "track", "spotify", "volume", "pause"])
 
 # Words too common to be evidence that the user means an MCP tool. Without this
 # stoplist, a server exposing anything called `list_*` or `*_status` would drag

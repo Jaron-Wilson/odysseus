@@ -202,7 +202,8 @@ if __name__ == "__main__":
     # SSE rather than stdio: Odysseus runs on another machine and reaches this
     # over the tailnet, which stdio cannot cross.
     import uvicorn
-    host = os.environ.get("RESOLVE_MCP_HOST", "0.0.0.0")
+    # Default to the tailnet address, never all interfaces.
+    host = os.environ.get("RESOLVE_MCP_HOST", "100.102.86.125")
     port = int(os.environ.get("RESOLVE_MCP_PORT", "8930"))
     mcp.settings.host = host
     mcp.settings.port = port
