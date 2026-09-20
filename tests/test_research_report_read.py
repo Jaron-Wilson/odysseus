@@ -20,8 +20,13 @@ import pytest
 
 from src.tool_implementations import do_manage_research
 from src.agent_loop import TOOL_SECTIONS
+from src.constants import DATA_DIR
 
-_DATA_DIR = Path("data/deep_research")
+# Must follow DATA_DIR rather than assume ./data: the app sets
+# ODYSSEUS_DATA_DIR to a directory outside the repo, and a hardcoded relative
+# path writes the fixture somewhere the code under test never looks — so these
+# tests passed only in the one configuration nobody runs the app in.
+_DATA_DIR = Path(DATA_DIR) / "deep_research"
 
 
 @pytest.fixture
