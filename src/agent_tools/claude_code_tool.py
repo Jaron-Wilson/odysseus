@@ -23,6 +23,7 @@ import asyncio
 import collections
 import json
 import os
+import re
 import shutil
 import time
 import uuid
@@ -45,6 +46,15 @@ MAX_RESULT_CHARS = 20000
 PLAN_TOOLS = "Read,Glob,Grep,Task"
 ASK_TOOLS = "Read,Glob,Grep,Task"
 EXECUTE_TOOLS = "Read,Glob,Grep,Edit,Write,Bash,TodoWrite,Task"
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07")
+
+
+def _strip_ansi(s: str) -> str:
+    """Drop terminal escapes. `claude --bg` and `claude logs` both colour their
+    output, and the raw codes make the id unparseable and the logs unreadable."""
+    return _ANSI_RE.sub("", s or "")
 
 
 def _die_with_parent() -> None:
@@ -97,78 +107,127 @@ def _summarize(event: dict) -> Optional[str]:
 
 
 class ClaudeCodeTool:
-    def _launch_background(self, cmd, prompt, cwd_path, cli_session_id,
-                           action, chat_session_id) -> Dict:
-        """Run the CLI detached via bg_jobs and return immediately."""
-        import shlex
-        from src import bg_jobs
+    async def _launch_background(self, cmd, prompt, cwd_path, cli_session_id,
+                                 action, chat_session_id) -> Dict:
+        """Dispatch via the CLI's own `--bg` and return the short id.
 
-        os.makedirs(PROMPT_DIR, exist_ok=True)
-        prompt_file = os.path.join(PROMPT_DIR, f"{cli_session_id}.prompt")
-        Path(prompt_file).write_text(prompt, encoding="utf-8")
+        Deliberately not bg_jobs: a `--bg` session is a first-class background
+        session, so it shows up in `claude agents` and the user can
+        `claude attach <id>` into it, read `claude logs <id>` or `claude stop
+        <id>`. A `-p` run detached by other means registers as an interactive
+        session, which attach refuses — the thing the user actually hit.
+        """
+        # --bg owns the backgrounding, and stream-json has no reader here.
+        drop = {"-p", "--output-format", "stream-json", "--verbose"}
+        argv = [c for c in cmd if c not in drop]
+        argv.insert(1, "--bg")
 
-        # bg_jobs inherits the server's environment, and this server is often
-        # started from a Claude Code session, so CLAUDECODE leaks in and the CLI
-        # refuses its own tools. `env -u` strips them for this command only.
-        # stream-json is dropped here: nothing parses it in detached mode, and
-        # the monitor hands the raw log back to the agent to read.
-        argv = [c for c in cmd if c not in ("--output-format", "stream-json", "--verbose")]
-        shell_cmd = (
-            "env -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID "
-            "-u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN "
-            "-u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_AGENT -u CLAUDE_PID "
-            + " ".join(shlex.quote(a) for a in argv)
-            + " < " + shlex.quote(prompt_file)
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
+        env["HOME"] = str(Path.home())
+
+        proc = await asyncio.create_subprocess_exec(
+            *argv, cwd=str(cwd_path), env=env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        rec = bg_jobs.launch(shell_cmd, session_id=chat_session_id, cwd=str(cwd_path))
+        try:
+            out, err = await asyncio.wait_for(
+                proc.communicate(prompt.encode()), timeout=120)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return {"error": "claude --bg did not return an id within 120s", "exit_code": 124}
+
+        text = _strip_ansi((out or b"").decode("utf-8", "replace")).strip()
+        if proc.returncode != 0:
+            detail = (err or b"").decode("utf-8", "replace")[:300] or text[:300]
+            return {"error": f"claude --bg exited {proc.returncode}: {detail}", "exit_code": 1}
+
+        # Anchor on the id the CLI tells the user to attach to. Scanning for a
+        # bare token instead picks up a word out of the help text it prints
+        # underneath — the first attempt came back with the id "this".
+        m = (re.search(r"claude attach\s+([0-9a-f]{6,})", text)
+             or re.search(r"backgrounded\s*·?\s*([0-9a-f]{6,})", text)
+             or re.search(r"\b([0-9a-f]{8})\b", text))
+        short_id = m.group(1) if m else ""
+
         return {
             "action": action,
             "background": True,
-            "job_id": rec.get("id"),
+            "job_id": short_id,
             "session_id": cli_session_id,
             "cwd": str(cwd_path),
+            "launch_output": text[:500],
             "output": (
-                f"Claude Code is running detached as job `{rec.get('id')}` in {cwd_path}.\n"
-                "Do NOT wait for it or poll it — you will be re-invoked with its output "
-                "when it finishes. Tell the user it is running in the background and "
-                "carry on with whatever they ask next."
+                f"Claude Code is running in the background as `{short_id}` in {cwd_path}.\n"
+                f"The user can watch or take it over with `claude attach {short_id}`, "
+                f"read output with `claude logs {short_id}`, or halt it with "
+                f"`claude stop {short_id}`. It also appears in `claude agents`.\n"
+                "Do NOT wait or poll — carry on, and use action:'status' if the user asks "
+                "how it is going."
             ),
             "exit_code": 0,
         }
 
-    def _job_status(self, job_id: Optional[str], chat_session_id: Optional[str]) -> Dict:
-        """Report on backgrounded runs, so the user can simply ask how it is going."""
-        from src import bg_jobs
-        bg_jobs.refresh()
+    async def _job_status(self, job_id: Optional[str]) -> Dict:
+        """Report on background sessions, so the user can just ask how it is going.
 
+        Reads the CLI's own view rather than a local job table, so the ids here
+        are the same ones `claude attach` / `logs` / `stop` accept.
+        """
+        listing = await self._list_agents()
+        if listing.get("exit_code") != 0:
+            return listing
+        sessions = [s for s in listing.get("sessions") or []
+                    if s.get("kind") == "background"]
         if job_id:
-            rec = bg_jobs.get(job_id)
-            if not rec:
-                return {"error": f"no background job {job_id}", "exit_code": 1}
-            recs = [rec]
-        elif chat_session_id:
-            recs = bg_jobs.list_for_session(chat_session_id)
-        else:
-            return {"error": "no job_id and no session to look up", "exit_code": 1}
+            sessions = [s for s in sessions
+                        if str(s.get("id", "")).startswith(job_id)
+                        or str(s.get("sessionId", "")).startswith(job_id)]
+            if not sessions:
+                return {"error": f"no background session matching {job_id}", "exit_code": 1}
+        if not sessions:
+            return {"output": "No background Claude Code sessions are running.", "exit_code": 0}
 
-        if not recs:
-            return {"output": "No background Claude Code jobs for this chat.", "exit_code": 0}
+        cli = shutil.which("claude")
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
+        env["HOME"] = str(Path.home())
 
         lines = []
-        for r in recs:
-            status = r.get("status", "?")
-            line = f"- `{r.get('id')}` {status}"
-            if status == "running":
-                started = r.get("started_at") or r.get("started")
-                if started:
-                    line += f" for {int(time.time() - float(started))}s"
-            else:
-                line += f" (exit {r.get('exit_code')})"
-            tail = (r.get("output") or "").strip().splitlines()[-3:]
-            if tail:
-                line += "\n      " + "\n      ".join(t[:120] for t in tail)
-            lines.append(line)
-        return {"output": "\n".join(lines), "jobs": recs, "exit_code": 0}
+        for s in sessions:
+            sid = s.get("id") or ""
+            state = s.get("state") or s.get("status") or "?"
+            lines.append(f"- `{sid}` {state} — {s.get('name') or '?'} ({s.get('cwd')})")
+            if cli and sid:
+                try:
+                    p = await asyncio.create_subprocess_exec(
+                        cli, "logs", sid, env=env,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL)
+                    o, _ = await asyncio.wait_for(p.communicate(), timeout=30)
+                    clean = _strip_ansi((o or b"").decode("utf-8", "replace"))
+                    # Cursor-positioning leftovers and spinner frames survive
+                    # escape-stripping as junk lines; keep only real text.
+                    # `claude logs` replays a TUI buffer, so most lines are
+                    # spinner frames and cursor droppings. Keep lines that look
+                    # like prose rather than animation.
+                    tail = [
+                        t.strip() for t in clean.splitlines()
+                        if len(t.strip()) > 8
+                        and not t.strip().startswith("[")
+                        and sum(c.isalnum() or c.isspace() for c in t) > len(t) * 0.6
+                    ][-4:]
+                    for t in tail:
+                        lines.append(f"      {t[:140]}")
+                except Exception:
+                    pass
+        lines.append("Attach with `claude attach <id>`, stop with `claude stop <id>`.")
+        return {"output": "\n".join(lines), "sessions": sessions, "exit_code": 0}
 
     async def _list_agents(self) -> Dict:
         """Report the Claude Code sessions running on this host."""
@@ -235,7 +294,7 @@ class ClaudeCodeTool:
         if action == "list":
             return await self._list_agents()
         if action == "status":
-            return self._job_status(args.get("job_id"), (ctx or {}).get("session_id"))
+            return await self._job_status(args.get("job_id"))
 
         prompt = (args.get("prompt") or args.get("task") or "").strip()
         if not prompt:
@@ -324,9 +383,10 @@ class ClaudeCodeTool:
         # Detached mode: hand the run to bg_jobs and return now, so a refactor
         # that takes ten minutes does not hold the chat open. The monitor
         # re-invokes the agent with the output once it finishes.
-        if args.get("background") and (ctx or {}).get("session_id"):
-            return self._launch_background(
-                cmd, prompt, cwd_path, session_id, action, ctx["session_id"])
+        if args.get("background"):
+            return await self._launch_background(
+                cmd, prompt, cwd_path, session_id, action,
+                (ctx or {}).get("session_id"))
 
         # Start from a clean environment for the child. Anything inherited from
         # a surrounding Claude Code process (CLAUDECODE, CLAUDE_CODE_*, the
