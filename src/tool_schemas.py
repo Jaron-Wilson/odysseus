@@ -985,6 +985,29 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "manage_devices",
+            "description": (
+                "List, register or remove the user's devices, and see what each can be told "
+                "to do. Check this before sending a command so you know the device actually "
+                "honours it. Installing apps and signing in are not on the list because a "
+                "phone will not do either from a push message."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "register", "remove", "capabilities"], "description": "'list' (default) shows registered devices; 'capabilities' shows what a device can be set up to honour."},
+                    "name": {"type": "string", "description": "Device name, e.g. 'pixel-8a'"},
+                    "kind": {"type": "string", "description": "phone, tablet, desktop, watch"},
+                    "topic": {"type": "string", "description": "ntfy topic it subscribes to. Derived from the name if omitted."},
+                    "commands": {"type": "array", "items": {"type": "string"}, "description": "What its automation honours, e.g. ['notify','open_app','set_timer']"},
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "notify_device",
             "description": (
                 "Send a notification, or a command, to one of the user's own devices "

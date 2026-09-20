@@ -72,8 +72,18 @@ class NotifyDeviceTool:
             }
 
         # One topic per device is what makes "send it to my phone" mean a
-        # particular phone rather than every subscriber at once.
-        topic = (args.get("device") or args.get("topic") or DEFAULT_TOPIC).strip()
+        # particular phone rather than every subscriber at once. A registered
+        # device is looked up by name; anything else is taken as a raw topic so
+        # an unregistered device still works.
+        want = (args.get("device") or args.get("topic") or "").strip()
+        device = None
+        if want:
+            try:
+                from src import devices as device_registry
+                device = device_registry.resolve(want)
+            except Exception as e:
+                logger.debug("device lookup failed: %s", e)
+        topic = (device.get("topic") if device else want) or DEFAULT_TOPIC
         headers = {
             "Title": (args.get("title") or "Odysseus")[:200],
             "Priority": str(_PRIORITY.get(str(args.get("priority", "default")).lower(), 3)),
@@ -87,6 +97,24 @@ class NotifyDeviceTool:
 
         # Commands ride the same message with a header the device filters on.
         cmd = (args.get("command") or "").strip()
+        if cmd and device:
+            # Refuse rather than fire a command into the void. A device that
+            # never claimed the capability will silently ignore it, and the
+            # model would report success it has no grounds for.
+            try:
+                from src import devices as device_registry
+                if not device_registry.supports(device, cmd):
+                    return {
+                        "error": (
+                            f"{device['name']} does not support `{cmd}`. It handles: "
+                            f"{', '.join(device.get('commands') or ['notify'])}. "
+                            "Send a plain notification instead, or add the capability on the "
+                            "device's automation first."
+                        ),
+                        "exit_code": 1,
+                    }
+            except Exception:
+                pass
         if cmd:
             headers["X-Odysseus-Cmd"] = cmd[:200]
             if args.get("command_arg"):

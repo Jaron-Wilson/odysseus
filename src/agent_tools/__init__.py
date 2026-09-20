@@ -24,11 +24,13 @@ from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool,
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 from .claude_code_tool import ClaudeCodeTool
 from .notify_tool import NotifyDeviceTool
+from .devices_tool import ManageDevicesTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
     "claude_code": ClaudeCodeTool().execute,
     "notify_device": NotifyDeviceTool().execute,
+    "manage_devices": ManageDevicesTool().execute,
     "python": PythonTool().execute,
     "web_search": WebSearchTool().execute,
     "web_fetch": WebFetchTool().execute,
@@ -84,7 +86,7 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "list_cookbook_servers",
              # Other tools the agent reaches for that were also missing.
              "edit_image", "trigger_research", "manage_research",
-             "claude_code", "notify_device",
+             "claude_code", "notify_device", "manage_devices",
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.
