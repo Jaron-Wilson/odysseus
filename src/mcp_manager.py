@@ -442,6 +442,17 @@ class McpManager:
         tool_name = parts[2]
 
         session = self._sessions.get(server_id)
+        if not session and not self.is_builtin(server_id):
+            # No session at all, rather than a stale one: the server was down
+            # when Odysseus started, so the startup connect failed and left
+            # nothing to go stale. The retry below only covers a session that
+            # exists and has broken, so without this a remote host that was
+            # merely asleep at boot stays unreachable until Odysseus is
+            # restarted — even though it may have been back for hours.
+            logger.info(
+                f"MCP server {server_id} has no session (failed at startup); trying to connect")
+            if await self._reconnect_configured(server_id):
+                session = self._sessions.get(server_id)
         if not session:
             return {"error": f"MCP server not connected: {server_id}", "exit_code": 1}
 
