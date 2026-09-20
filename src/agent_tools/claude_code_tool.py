@@ -369,9 +369,35 @@ class ClaudeCodeTool:
         final_text = ""
         is_error = False
         stderr_buf: list[str] = []
+        thinking_tokens = 0
+
+        # What was actually spawned, stated up front. Without this the user sees
+        # an opaque spinner and has to go hunting in `ps` to find out whether a
+        # process exists at all, what it may touch, or how to kill it.
+        banner = (
+            f"$ claude -p --permission-mode {'plan' if action in ('plan', 'ask') else 'bypassPermissions'}"
+            f" --allowedTools {args.get('allowed_tools') or (PLAN_TOOLS if action == 'plan' else ASK_TOOLS if action == 'ask' else EXECUTE_TOOLS)}\n"
+            f"  pid {proc.pid} · session {session_id[:8]} · cwd {cwd_path}\n"
+            f"  model {args.get('model') or 'default'} · kill with: kill {proc.pid}"
+        )
+
+        def _tail_text() -> str:
+            head = banner
+            if thinking_tokens:
+                head += f"\n  thinking… {thinking_tokens} tokens"
+            body = "\n".join(tail)
+            return head + ("\n" + body if body else "")
+
+        if progress_cb:
+            # Emit once immediately; the periodic loop only starts after a delay
+            # and a long thinking phase would otherwise show nothing at all.
+            try:
+                await progress_cb({"elapsed_s": 0.0, "tail": _tail_text()})
+            except Exception:
+                pass
 
         async def _read_stdout():
-            nonlocal final_text, is_error
+            nonlocal final_text, is_error, thinking_tokens
             while True:
                 line = await proc.stdout.readline()
                 if not line:
@@ -387,6 +413,11 @@ class ClaudeCodeTool:
                 if event.get("type") == "result":
                     final_text = event.get("result") or final_text
                     is_error = bool(event.get("is_error"))
+                elif event.get("subtype") == "thinking_tokens":
+                    # Counted rather than printed: it is the only signal during
+                    # a long silent reasoning phase, but one line per tick would
+                    # flood the console.
+                    thinking_tokens = event.get("estimated_tokens") or thinking_tokens
                 summary = _summarize(event)
                 if summary:
                     for ln in summary.splitlines():
@@ -405,7 +436,7 @@ class ClaudeCodeTool:
                 try:
                     await progress_cb({
                         "elapsed_s": round(time.time() - started, 1),
-                        "tail": "\n".join(tail),
+                        "tail": _tail_text(),
                     })
                 except Exception:
                     pass
@@ -436,7 +467,9 @@ class ClaudeCodeTool:
                 r.cancel()
             await asyncio.gather(*readers, return_exceptions=True)
 
-        console = "\n".join(tail)
+        # Keep the banner in the saved console so the pid, cwd and tool grant
+        # are still on the record after the run ends, not just while it streams.
+        console = _tail_text()
         if timed_out:
             return {
                 "error": f"claude_code timed out after {timeout}s",
