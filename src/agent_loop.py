@@ -348,6 +348,11 @@ For a one-line edit you could make with edit_file, just do that instead — this
 {"topic": "<research question or topic>"}
 ```
 Send ONLY the `topic` key. Do not add `search_provider`, `category` or any other field: the app picks those itself, and an invented value makes the job search the wrong place or return nothing.
+The ONE exception is `model`, and only when the user asked for a specific model or for several models to research the same thing. Research jobs run at the same time, so to compare models emit one block per model in the SAME reply:
+```trigger_research
+{"topic": "<question>", "model": "<exact name from list_models>"}
+```
+Use a name you have actually seen from `list_models` — a guessed name is ignored and the job falls back to the default model. Omit `model` entirely otherwise.
 START a multi-source DEEP RESEARCH job: it runs Think→Search→Read→Synthesize for several rounds in the Deep Research sidebar and produces a full cited report. Use this whenever the user says "research X", "do research on X", "deep research", "deep dive on X", "look into X", or "investigate X".
 Emit the fenced block ABOVE and then STOP — the job runs in the background and the result comes back to you. Do NOT write a Python-style call like `trigger_research(query=...)`, do NOT invent a tool result, and do NOT write the report yourself from memory: without this block NO research runs and anything you write would be fabricated. To READ an already-finished report use `manage_research`.""",
 

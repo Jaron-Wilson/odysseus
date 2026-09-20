@@ -3705,6 +3705,15 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
         payload["category"] = args["category"]
     if args.get("search_provider"):
         payload["search_provider"] = args["search_provider"]
+    # /api/research/start has always accepted these; the tool just never passed
+    # them, so every job silently used the session's model. Forwarding them is
+    # what makes "research this with three different models" possible: research
+    # jobs already run concurrently and uncapped, so several triggered in one
+    # turn genuinely run side by side, each on the model it was given.
+    if args.get("model"):
+        payload["model"] = str(args["model"])
+    if args.get("endpoint_id"):
+        payload["endpoint_id"] = str(args["endpoint_id"])
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(f"{_INTERNAL_BASE}/api/research/start",

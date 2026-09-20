@@ -38,6 +38,45 @@ def _first_chat_model(models) -> str:
     return (models[0] if models else "")
 
 
+async def _checked_model(chat_url: str, headers, requested: str, fallback: str) -> tuple:
+    """Honor a caller-supplied model only if the endpoint actually serves it.
+
+    The agent can now choose the model per research job, which is what lets
+    several jobs run side by side on different models. But a small local model
+    asked to "research this three ways" will happily invent a plausible name,
+    and an unchecked override produces a job that runs for a while and then
+    dies on its first completion with "Cannot reach model X" — long after the
+    point where anyone could connect the two. Checking up front costs one
+    request against a job that lasts minutes.
+
+    Returns (model, note). An unreachable list is not treated as a rejection:
+    if we cannot tell, the caller is trusted.
+    """
+    import httpx
+
+    requested = (requested or "").strip()
+    if not requested:
+        return fallback, None
+    if any(p in requested.lower() for p in _NON_CHAT_MODEL):
+        return fallback, (f"Ignored model {requested!r}: that is an embedding/utility model, "
+                          f"not a chat model. Using {fallback!r}.")
+    list_url = chat_url.replace("/chat/completions", "/models")
+    if list_url == chat_url:
+        return requested, None
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(list_url, headers=headers or {})
+        if resp.status_code >= 400:
+            return requested, None
+        names = {str(m.get("id") or "") for m in (resp.json().get("data") or [])}
+    except Exception:
+        return requested, None
+    if not names or requested in names:
+        return requested, None
+    return fallback, (f"Ignored model {requested!r}: the endpoint does not serve it "
+                      f"(it has {', '.join(sorted(names)[:6])}). Using {fallback!r}.")
+
+
 def _resolve_research_endpoint(sess, owner: Optional[str] = None) -> tuple:
     """Return (endpoint_url, model, headers) for Deep Research, checking admin overrides."""
     owner = owner or getattr(sess, "owner", None) or None
@@ -447,7 +486,10 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             if not ep_url:
                 raise HTTPException(400, "No endpoints configured. Add one in Settings first.")
             if body.model:
-                ep_model = body.model
+                ep_model, _model_note = await _checked_model(
+                    ep_url, ep_headers, body.model, ep_model)
+                if _model_note:
+                    logger.warning("research/start: %s", _model_note)
 
         # max_rounds=0 → "Auto", let AI decide; pass 20 as the safety cap.
         effective_max_rounds = body.max_rounds if body.max_rounds > 0 else 20
