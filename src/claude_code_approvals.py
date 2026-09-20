@@ -89,6 +89,24 @@ def set_status(session_id: str, status: str, *, owner: Optional[str] = None) -> 
     return True
 
 
+def restore_approval(session_id: str) -> bool:
+    """Put a spent approval back after a run that never really ran.
+
+    An approval is consumed before the CLI starts, because that is the only
+    point where refusing is still cheap. But a run that times out or dies has
+    not used the user's consent for anything, and making them plan and approve
+    again from scratch punishes them for our timeout.
+    """
+    data = _prune(_load())
+    entry = data.get(session_id)
+    if not entry or entry.get("status") != "used":
+        return False
+    entry["status"] = "approved"
+    entry.pop("used_at", None)
+    _save(data)
+    return True
+
+
 def get(session_id: str) -> Optional[dict]:
     return _prune(_load()).get(session_id)
 

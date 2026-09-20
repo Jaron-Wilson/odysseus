@@ -36,7 +36,10 @@ from src.constants import DATA_DIR
 PROMPT_DIR = os.path.join(DATA_DIR, "claude_code_prompts")
 PROGRESS_INTERVAL_S = 1.5
 PROGRESS_TAIL_LINES = 16
-DEFAULT_TIMEOUT_S = 900
+# 900s killed a real rebrand at ~15 minutes, after it had already written every
+# file — the work survived but the run was recorded as a timeout and the
+# approval was spent. Refactors across a large codebase genuinely take this long.
+DEFAULT_TIMEOUT_S = 2400
 MAX_RESULT_CHARS = 20000
 
 # Planning and asking read; neither may write even if the CLI is talked into
@@ -531,13 +534,21 @@ class ClaudeCodeTool:
         # are still on the record after the run ends, not just while it streams.
         console = _tail_text()
         if timed_out:
+            restored = action == "execute" and approvals.restore_approval(session_id)
             return {
-                "error": f"claude_code timed out after {timeout}s",
+                "error": (
+                    f"claude_code timed out after {timeout}s"
+                    + (" — the approval has been restored, so this can be retried "
+                       "with a longer `timeout` without planning again." if restored else "")
+                ),
                 "output": console[-MAX_RESULT_CHARS:],
                 "session_id": session_id,
+                "approval_restored": restored,
                 "exit_code": 124,
             }
         if proc.returncode != 0 and not final_text:
+            if action == "execute":
+                approvals.restore_approval(session_id)
             detail = "\n".join(stderr_buf[-10:]) or console
             hint = ""
             if args.get("model"):
