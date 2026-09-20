@@ -448,6 +448,26 @@ class McpManager:
         try:
             result = await self._do_call(session, tool_name, arguments)
         except Exception as e:
+            # A configured remote server (SSE/HTTP) drops its connection
+            # whenever the machine hosting it sleeps, reboots, or restarts the
+            # server process. The session object stays cached and looks fine,
+            # so without this every later call fails until Odysseus itself is
+            # restarted — the tools appear to vanish with no obvious cause.
+            if not self.is_builtin(server_id):
+                logger.warning(
+                    f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
+                if await self._reconnect_configured(server_id):
+                    session = self._sessions.get(server_id)
+                    if session:
+                        try:
+                            return await self._do_call(session, tool_name, arguments)
+                        except Exception as e2:
+                            logger.error(
+                                f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
+                            return {"error": str(e2), "exit_code": 1}
+                logger.error(f"MCP tool call failed: {qualified_name}: {e}")
+                return {"error": str(e), "exit_code": 1}
+
             # Auto-reconnect for builtin servers whose subprocess may have died
             if self.is_builtin(server_id):
                 logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
@@ -498,6 +518,42 @@ class McpManager:
         if images:
             result_dict["images"] = images
         return result_dict
+
+    async def _reconnect_configured(self, server_id: str) -> bool:
+        """Reconnect a database-configured server from its stored row.
+
+        Reads the row again rather than caching the connection arguments, so a
+        server whose url or command was edited reconnects to the new one.
+        """
+        from src.database import McpServer, SessionLocal
+
+        db = SessionLocal()
+        try:
+            srv = db.query(McpServer).filter(McpServer.id == server_id).first()
+            if not srv or not srv.is_enabled:
+                return False
+            name, transport = srv.name, srv.transport
+            command, url = srv.command, srv.url
+            args = json.loads(srv.args) if srv.args else []
+            env = json.loads(srv.env) if srv.env else {}
+        except Exception as e:
+            logger.error(f"Could not read MCP server row {server_id} for reconnect: {e}")
+            return False
+        finally:
+            db.close()
+
+        await self.disconnect_server(server_id)
+        try:
+            ok = await self.connect_server(
+                server_id=server_id, name=name, transport=transport,
+                command=command, args=args, env=env, url=url,
+            )
+            if ok:
+                logger.info(f"Reconnected MCP server: {name} ({server_id})")
+            return ok
+        except Exception as e:
+            logger.error(f"Failed to reconnect MCP server {name} ({server_id}): {e}")
+            return False
 
     async def _reconnect_builtin(self, server_id: str) -> bool:
         """Tear down and reconnect a crashed builtin MCP server."""
