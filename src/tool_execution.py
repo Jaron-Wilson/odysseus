@@ -650,6 +650,14 @@ async def execute_tool_block(
         desc = f"{tool}: {first_line}"
         result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool == "notify_device":
+        desc = f"notify_device: {content.split(chr(10))[0][:80]}"
+        from src.agent_tools import TOOL_HANDLERS
+        try:
+            result = await TOOL_HANDLERS["notify_device"](content, {"owner": owner})
+        except Exception as e:
+            logger.warning("notify_device failed: %s", e, exc_info=True)
+            result = {"error": f"notify_device: {type(e).__name__}: {e}"[:400], "exit_code": 1}
     elif tool == "claude_code":
         # Registering the handler is not enough: this chain has no default that
         # reaches TOOL_HANDLERS, so anything missing here lands in the final

@@ -985,6 +985,34 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "notify_device",
+            "description": (
+                "Send a notification, or a command, to one of the user's own devices "
+                "(phone, tablet, desktop). Use whenever they say 'send it to my phone', "
+                "'notify me', 'let me know when it's done', or ask a device to do something "
+                "it already knows how to do, such as launching an app. A command only acts if "
+                "an automation on that device listens for it; it cannot install software or "
+                "sign the user in, and you should say so plainly rather than claim otherwise."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string", "description": "The notification text"},
+                    "title": {"type": "string", "description": "Short title shown on the device"},
+                    "device": {"type": "string", "description": "Which device (ntfy topic). Omit for the default."},
+                    "priority": {"type": "string", "enum": ["min", "low", "default", "high", "max"], "description": "Use 'high' for something time-sensitive like a finished print."},
+                    "tags": {"type": "string", "description": "Comma-separated emoji tags, e.g. 'printer,white_check_mark'"},
+                    "click": {"type": "string", "description": "URL the notification opens when tapped"},
+                    "command": {"type": "string", "description": "Machine-readable instruction for an automation on the device, e.g. 'open_app'"},
+                    "command_arg": {"type": "string", "description": "Argument for the command, e.g. the app package name"},
+                },
+                "required": ["message"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "claude_code",
             "description": (
                 "THE tool for coding work: writing, editing or adding code, fixing bugs, "
