@@ -583,6 +583,10 @@ app.include_router(setup_chat_routes(
 from routes.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
+# Web Push subscriptions — notifications with no third-party app installed.
+from routes.push_routes import setup_push_routes
+app.include_router(setup_push_routes())
+
 # claude_code plan approvals — the only path that can authorise an execute run.
 from routes.claude_code_routes import setup_claude_code_routes
 app.include_router(setup_claude_code_routes())

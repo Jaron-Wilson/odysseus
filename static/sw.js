@@ -142,3 +142,44 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 });
+
+// ── Web Push ────────────────────────────────────────────────────────────────
+// The payload arrives encrypted to this browser's own key and is decrypted by
+// the user agent before we see it, so `data` here is already plaintext JSON.
+self.addEventListener('push', (e) => {
+  let payload = {};
+  try {
+    payload = e.data ? e.data.json() : {};
+  } catch (_) {
+    payload = { title: 'Odysseus', body: e.data ? e.data.text() : '' };
+  }
+  const title = payload.title || 'Odysseus';
+  const options = {
+    body: payload.body || '',
+    // Replacing by tag rather than stacking: three updates about one print
+    // should leave one notification, not three.
+    tag: payload.tag || 'odysseus',
+    renotify: true,
+    data: { url: payload.url || '/' },
+    icon: '/static/icons/icon-192.png',
+    badge: '/static/icons/icon-192.png',
+  };
+  e.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Tapping focuses an already-open tab rather than piling up new ones.
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+      for (const w of wins) {
+        if ('focus' in w) {
+          if ('navigate' in w && target !== '/') w.navigate(target).catch(() => {});
+          return w.focus();
+        }
+      }
+      return clients.openWindow ? clients.openWindow(target) : undefined;
+    })
+  );
+});

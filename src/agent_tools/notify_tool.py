@@ -61,12 +61,38 @@ class NotifyDeviceTool:
         if not message:
             return {"error": "message is required", "exit_code": 1}
 
+        # Web Push first: the browser is already the client, so it needs no
+        # extra app installed, and a tapped notification lands back in Odysseus.
+        # ntfy stays as the fallback for devices that never subscribed.
+        try:
+            from src import webpush
+            if webpush.load_subscriptions():
+                res = await webpush.send(
+                    (args.get("title") or "Odysseus")[:200],
+                    message,
+                    device=(args.get("device") or "").strip(),
+                    url=args.get("click") or "/",
+                    tag=(args.get("tag") or "odysseus"),
+                )
+                if res.get("sent"):
+                    return {
+                        "output": f"Pushed to {res['sent']} device(s): {message[:200]}",
+                        "channel": "webpush",
+                        "sent": res["sent"],
+                        "exit_code": 0,
+                    }
+                # Fall through to ntfy rather than reporting success on zero.
+                logger.info("[notify] web push sent nothing (%s); trying ntfy", res)
+        except Exception as e:
+            logger.debug("web push unavailable: %s", e)
+
         base = _ntfy_base()
         if not base:
             return {
                 "error": (
-                    "No ntfy integration is configured, so there is nowhere to send this. "
-                    "Add one in Settings → Integrations with the server's base URL."
+                    "Nowhere to send this: no device has subscribed to browser "
+                    "notifications, and no ntfy integration is configured. Open Odysseus "
+                    "on the device and enable notifications there."
                 ),
                 "exit_code": 1,
             }
