@@ -97,6 +97,15 @@ class Spinner {
 
     ctx.clearRect(0, 0, W, H);
 
+    // Read the theme's --fg once and cache it (see the identical pattern
+    // and rationale in _drawWhirlpool below) instead of the old hardcoded
+    // cyan, which never followed theme changes.
+    if (!this._waveColor) {
+      const s = getComputedStyle(document.documentElement);
+      this._waveColor = s.getPropertyValue('--fg').trim() || '#ede9e0';
+    }
+    const fg = this._waveColor;
+
     // wave line
     ctx.beginPath();
     for (let i = 0; i <= 80; i++) {
@@ -107,7 +116,7 @@ class Spinner {
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
-    ctx.strokeStyle = 'rgba(156, 222, 242, 0.5)';
+    ctx.strokeStyle = `color-mix(in srgb, ${fg} 50%, transparent)`;
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
@@ -117,7 +126,7 @@ class Spinner {
     const cy = midY + Math.sin(cPhase) * AMP;
     ctx.beginPath();
     ctx.arc(cx, cy, 1.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(156, 222, 242, 0.9)';
+    ctx.fillStyle = `color-mix(in srgb, ${fg} 90%, transparent)`;
     ctx.fill();
 
     if (this.isRunning) {
@@ -178,8 +187,8 @@ class Spinner {
     if (!this._wpColors) {
       const s = getComputedStyle(document.documentElement);
       this._wpColors = {
-        fg: s.getPropertyValue('--red').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2',
-        track: s.getPropertyValue('--border').trim() || '#355a66',
+        fg: s.getPropertyValue('--red').trim() || s.getPropertyValue('--fg').trim() || '#ede9e0',
+        track: s.getPropertyValue('--border').trim() || '#35322a',
       };
     }
     const fg = this._wpColors.fg;

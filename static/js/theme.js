@@ -9,8 +9,21 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
 export const THEMES = {
-  dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
-  light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
+  // Warm paper/ink editorial — matches jaronwilson.dev/.org. `hl` pins the
+  // syntax-highlight vars so they render as designed instead of only ever
+  // being seen on first paint (deriveSyntaxColors() recomputes --hl-* from
+  // bg/fg/red on every applyColors() call and would otherwise overwrite
+  // these). --hl-keyword #c98a5a is the one confirmed value carried over
+  // from the earlier rebrand plan; the rest of this warm ten-color set is
+  // newly constructed to match it, not recovered spec.
+  dark:       { bg:'#17150f', fg:'#ede9e0', panel:'#201d16', border:'#35322a', red:'#e06c75',
+                hl: { bg:'#201d16', fg:'#ede9e0', keyword:'#c98a5a', string:'#b8a465',
+                      comment:'#857f70', function:'#d9975f', number:'#c17a5c',
+                      builtin:'#a68a5a', variable:'#d4c4a0', params:'#b8a58a' } },
+  light:      { bg:'#faf8f4', fg:'#1a1a17', panel:'#ffffff', border:'#e8e4dc', red:'#c0524a',
+                hl: { bg:'#ffffff', fg:'#1a1a17', keyword:'#9a5a2e', string:'#7a6a2e',
+                      comment:'#8f8a7c', function:'#a8622e', number:'#8a5030',
+                      builtin:'#6e5a2e', variable:'#4a4438', params:'#6b6255' } },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
   paper:      { bg:'#faf8f5', fg:'#3b3836', panel:'#ffffff', border:'#d5d0c8', red:'#c5ac4a' },
   // Spicy / fun themes
@@ -37,10 +50,10 @@ const CUSTOM_THEMES_KEY = 'odysseus-custom-themes';
 
 const FONT_MAP = {
   mono: "'Fira Code', monospace",
-  sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+  sans: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
 };
-const DEFAULT_FONT = 'mono';
+const DEFAULT_FONT = 'sans';
 const DEFAULT_DENSITY = 'comfortable';
 const MAX_CUSTOM_THEMES = 8;
 
@@ -264,8 +277,10 @@ export function applyColors(colors) {
   const _mtc = document.querySelector('meta[name="theme-color"]');
   if (_mtc && colors.bg) _mtc.setAttribute('content', colors.bg);
 
-  // Derive and apply syntax highlighting colors
-  const syn = deriveSyntaxColors(colors);
+  // Derive syntax highlighting colors, then let a preset's explicit `hl`
+  // block (if any) override the derivation so hand-tuned syntax colors
+  // actually render instead of being silently recomputed away.
+  const syn = { ...deriveSyntaxColors(colors), ...(colors.hl || {}) };
   s.setProperty('--hl-bg', syn.bg);
   s.setProperty('--hl-fg', syn.fg);
   s.setProperty('--hl-keyword', syn.keyword);
@@ -717,7 +732,7 @@ export function initThemeUI() {
         if (fs) fs.value = f;
         if (ds) ds.value = d;
         if (ps) ps.value = p;
-        if (ecs) ecs.value = ec || colors.fg || '#9cdef2';
+        if (ecs) ecs.value = ec || colors.fg || '#ede9e0';
         if (eis) eis.value = String(Math.round(ei * 100));
         if (szs) szs.value = String(Math.round(sz * 100));
         if (frs) frs.checked = fr;
@@ -1049,7 +1064,7 @@ export function initThemeUI() {
     newBtn.addEventListener('click', () => {
       const ec = document.getElementById('theme-bg-effect-color');
       if (ec) {
-        const fg = currentColors.fg || '#9cdef2';
+        const fg = currentColors.fg || '#ede9e0';
         ec.value = fg;
         applyBgEffectColor('');
         const s = getSaved(); if (s) _saveFull(s.name, s.colors);
@@ -1142,7 +1157,7 @@ export function initThemeUI() {
 
   const effectColorPicker = document.getElementById('theme-bg-effect-color');
   if (effectColorPicker) {
-    effectColorPicker.value = _initEffectColor || currentColors.fg || '#9cdef2';
+    effectColorPicker.value = _initEffectColor || currentColors.fg || '#ede9e0';
     effectColorPicker.addEventListener('input', () => {
       applyBgEffectColor(effectColorPicker.value);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
@@ -1522,7 +1537,7 @@ function _initSynapse() {
 
   function getColor() {
     const s = getComputedStyle(document.documentElement);
-    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2';
+    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#ede9e0';
   }
 
   function spawnPulse() {
@@ -1613,7 +1628,7 @@ function _initRain() {
 
   function getColor() {
     const s = getComputedStyle(document.documentElement);
-    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2';
+    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#ede9e0';
   }
 
   function spawn() {
@@ -1704,7 +1719,7 @@ function _initConstellations() {
 
   function getColor() {
     const s = getComputedStyle(document.documentElement);
-    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2';
+    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#ede9e0';
   }
 
   let t = 0;
@@ -1790,8 +1805,8 @@ function _initPerlinFlow() {
   resize();
   const _onResize = () => resize();
   window.addEventListener('resize', _onResize);
-  function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2'; }
-  function getBg() { return getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#282c34'; }
+  function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#ede9e0'; }
+  function getBg() { return getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#17150f'; }
   let _cachedBg = '', _fadeStyle = '';
   function getFade() {
     const bg = getBg();
@@ -1856,7 +1871,7 @@ function _initPetals() {
   resize();
   const _onResize = () => resize();
   window.addEventListener('resize', _onResize);
-  function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2'; }
+  function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#ede9e0'; }
   function draw() {
     if (!document.body.classList.contains('bg-pattern-petals')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
     requestAnimationFrame(draw);
@@ -1907,7 +1922,7 @@ function _initSparkles() {
   resize();
   const _onResize = () => resize();
   window.addEventListener('resize', _onResize);
-  function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2'; }
+  function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#ede9e0'; }
   function drawStar(x, y, r, c, alpha) {
     ctx.save(); ctx.translate(x, y); ctx.fillStyle = c; ctx.globalAlpha = alpha;
     // 4-point star

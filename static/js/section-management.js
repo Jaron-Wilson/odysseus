@@ -159,9 +159,9 @@ export function initSectionDrag(Storage, loadUIVis) {
     placeholder.style.cssText = `
       height: ${rect.height}px;
       margin: 4px 0;
-      border: 2px dashed rgba(0, 170, 255, 0.5);
+      border: 2px dashed rgba(217, 122, 74, 0.5);
       border-radius: 8px;
-      background: rgba(0, 170, 255, 0.1);
+      background: rgba(217, 122, 74, 0.1);
     `;
     section.parentNode.insertBefore(placeholder, section);
 

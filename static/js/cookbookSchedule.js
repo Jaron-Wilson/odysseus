@@ -297,7 +297,7 @@ try { (function () {
             const calsBody = calsRes.ok ? await calsRes.json() : {};
             let cookbookCal = (calsBody.calendars || []).find(c => (c.name || "").toLowerCase() === "cookbook");
             if (!cookbookCal) {
-              const mk = await fetch("/api/calendar/calendars?name=Cookbook&color=%233b82f6", {
+              const mk = await fetch("/api/calendar/calendars?name=Cookbook&color=%23d97a4a", {
                 method: "POST", credentials: "same-origin",
               });
               if (mk.ok) {
@@ -325,7 +325,7 @@ try { (function () {
                 ? "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
                 : (sched.schedule === "weekly" ? `FREQ=WEEKLY;BYDAY=${days.join(",")}`
                   : (sched.schedule === "daily" ? "FREQ=DAILY" : "FREQ=WEEKLY")),
-              color: "#3b82f6",
+              color: "#d97a4a",
             };
             if (cookbookCal?.href) evBody.calendar_href = cookbookCal.href;
             const evRes = await fetch("/api/calendar/events", {

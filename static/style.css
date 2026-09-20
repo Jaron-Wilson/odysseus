@@ -16,18 +16,27 @@
  */
 
 :root {
-  /* Core palette */
-  --bg: #282c34;
-  --fg: #9cdef2;
-  --panel: #111;
-  --border: #355a66;
+  /* Core palette — warm paper/ink editorial, matching jaronwilson.dev/.org */
+  --bg: #17150f;
+  --fg: #ede9e0;
+  --panel: #201d16;
+  --border: #35322a;
   --red: #e06c75;
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they
      resolved to invalid and every site fell back to its own literal
      (or, for sites with no fallback, painted as transparent/inherit).
      Anchor them to real hex so the token layer actually works. */
-  --green: #50fa7b;
-  --warn: #f0ad4e;
+  --green: #7a9a6a;
+  --warn: #c9a84a;
+  /* Terracotta accent, the system's signature color — carries links, active
+     states, badges. Was previously undefined: ~670 rules read
+     var(--accent, var(--red)) and silently fell back to coral. Defining it
+     here is the single highest-leverage change in the rebrand. */
+  --accent: #d97a4a;
+  --accent-ink: #1a1109;
+  /* Secondary/dimmed text. Was previously undefined; ~84 uses were bare
+     var(--fg-muted) with no fallback and painted as inherit/unset. */
+  --fg-muted: #a39d8f;
 
   /* Syntax highlighting */
   --hl-bg: #1e2228;
@@ -42,18 +51,18 @@
   --hl-params: #a8c0d4;
 
   /* Semantic colors */
-  --color-error: #ff4444;
-  --color-error-light: #ff6666;
+  --color-error: #c0524a;
+  --color-error-light: #d4685f;
   --color-success: #4caf50;
   --color-warning: #f0ad4e;
   --color-danger: #c0392b;
-  --color-recording: #ff3b30;
-  --color-recording-hover: #d63031;
+  --color-recording: #c0524a;
+  --color-recording-hover: #a8443d;
   --color-muted: #888;
   --color-muted-alt: #6b7280;
   --color-accent: #00aaff;
-  --color-agent-active: #00ff00;
-  --color-brand-blue: #3b82f6;
+  --color-agent-active: #7a9a6a;
+  --color-brand-blue: #d97a4a;
   --color-blind-orange: #ff9800;
   --color-save-green: var(--color-success);
   --color-link-hover: #66c7ff;
@@ -69,10 +78,16 @@
 }
 
 :root.light {
-  --bg: #f5f5f5;
-  --fg: #2b2b2b;
-  --panel: #fff;
-  --border: #bbb;
+  --bg: #faf8f4;
+  --fg: #1a1a17;
+  --panel: #ffffff;
+  --border: #e8e4dc;
+  --red: #c0524a;
+  --green: #5f7a52;
+  --warn: #a6752e;
+  --accent: #b3542b;
+  --accent-ink: #ffffff;
+  --fg-muted: #6b6862;
   --hl-bg: #f9f9f9;
   --hl-fg: #2b2b2b;
   --hl-keyword: #7928a1;
@@ -83,6 +98,20 @@
   --hl-builtin: #0070a0;
   --hl-variable: #383a42;
   --hl-params: #4a4f5c;
+  --color-error: #b3452e;
+  --color-error-light: #c96a52;
+  --color-success: #5f7a52;
+  --color-warning: #a6752e;
+  --color-danger: #9c3b28;
+  --color-recording: #b3452e;
+  --color-recording-hover: #8f3620;
+  --color-muted: #6b6862;
+  --color-muted-alt: #8a8478;
+  --color-accent: #b3542b;
+  --color-agent-active: #5f7a52;
+  --color-brand-blue: #b3542b;
+  --color-link-hover: #c96a3f;
+  --color-subheader: #8a8478;
   --select-bg: #eaeaea;
   --select-fg: var(--fg);
   --select-option-bg: var(--panel);
@@ -102,7 +131,8 @@ body {
      below so left + right docks can coexist without skewing the whole body. */
   transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
               padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
-  font-family: var(--font-family, 'Fira Code', monospace);
+  font-family: var(--font-family, 'Inter', -apple-system, BlinkMacSystemFont, sans-serif);
+  line-height: 1.65;
   display: flex;
   height: 100%;
   height: 100dvh; /* dynamic viewport height — adapts when mobile keyboard opens */
@@ -113,6 +143,32 @@ body {
 @font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Light.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
+
+/* Self-hosted Inter font — UI sans, no Google dependency */
+@font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Medium.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-SemiBold.woff2') format('woff2'); }
+
+/* Self-hosted Fraunces — display serif for headings/brand, variable
+   weight 400–600 with the opsz axis (9–144) intact. Self-hosted rather
+   than linked from Google Fonts because the CSP's font-src is locked to
+   'self' + cdn.jsdelivr.net (core/middleware.py); a Google Fonts link
+   would fail silently and Fraunces would render as Georgia. */
+@font-face { font-family: 'Fraunces'; font-weight: 400 600; font-style: normal; font-display: swap; src: url('/static/fonts/Fraunces-Variable.woff2') format('woff2'); }
+
+/* Display serif for headings and brand marks — warm paper/ink identity.
+   The pinned opsz axis is what gives Fraunces its high-contrast display
+   cut at any size; without it the variable font defaults toward the text
+   optical size and looks flat. */
+h1, h2, h3,
+.sidebar-brand-title,
+#welcome-screen .welcome-name {
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-optical-sizing: none;
+  font-variation-settings: "opsz" 72;
+}
 
 /* Code block baseline */
 pre, code, .hljs {
@@ -2194,12 +2250,15 @@ body.bg-pattern-sparkles {
       min-width: 80px;
     }
     
-    /* Ensure code block headers are only slightly larger than regular text */
+    /* Ensure code block headers are only slightly larger than regular text.
+       font-family: inherit keeps these mono (from the pre{} rule above)
+       instead of picking up the global h1-h6 Fraunces rule. */
     pre h1, pre h2, pre h3, pre h4, pre h5, pre h6 {
       font-size: 1.1em;
       font-weight: bold;
       margin: 8px 0 4px 0;
       color: var(--fg);
+      font-family: inherit;
     }
     .code-lang {
       font-size:0.8em;
@@ -2208,7 +2267,10 @@ body.bg-pattern-sparkles {
       margin-bottom:2px;
       font-style:italic;
     }
-    code { font-family:inherit; }
+    /* Explicit mono, not inherit — body is now Inter, and inline <code>
+       outside a <pre> would otherwise lose its monospace styling. Block
+       code inside <pre> already gets Fira Code from the pre{} rule above. */
+    code { font-family: 'Fira Code', 'Courier New', monospace; }
     .loading { color:var(--red); font-style:italic; }
     #chat-form { display:none; }
 

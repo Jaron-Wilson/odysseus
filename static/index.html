@@ -5,7 +5,7 @@
   <title>Odysseus Chat</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="manifest" href="/static/manifest.json">
-  <meta name="theme-color" content="#282c34">
+  <meta name="theme-color" content="#17150f">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <!-- Disable iOS / Android auto-linkifying of numbers (phone/date/address)
@@ -76,7 +76,7 @@
       }
       // Apply font early
       if (t && t.font) {
-        var fm = {mono:"'Fira Code', monospace",sans:"system-ui, -apple-system, 'Segoe UI', sans-serif",serif:"Georgia, 'Times New Roman', serif"};
+        var fm = {mono:"'Fira Code', monospace",sans:"'Inter', -apple-system, BlinkMacSystemFont, sans-serif",serif:"Georgia, 'Times New Roman', serif"};
         if (fm[t.font]) { s.setProperty('--font-family', fm[t.font]); }
         else { s.setProperty('--font-family', "'" + t.font.replace(/'/g,'') + "', sans-serif"); }
       }
@@ -190,11 +190,13 @@
   })();
   </script>
   <script defer src="/static/lib/highlight.min.js"></script>
-  <!-- Inter font — self-hosted, no Google dependencies -->
+  <!-- Inter + Fraunces — self-hosted, no Google dependencies (the CSP's
+       font-src is locked to 'self' + cdn.jsdelivr.net) -->
   <style>
     @font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Regular.woff2') format('woff2'); }
     @font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Medium.woff2') format('woff2'); }
     @font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-SemiBold.woff2') format('woff2'); }
+    @font-face { font-family: 'Fraunces'; font-weight: 400 600; font-style: normal; font-display: swap; src: url('/static/fonts/Fraunces-Variable.woff2') format('woff2'); }
   </style>
   <!-- KaTeX CSS is loaded with media="print" so it doesn't block render,
        then flipped to "all" via JS after load. Mermaid init runs once the
@@ -223,7 +225,7 @@
 </head>
 <body>
   <!-- Loading overlay — hides all flashing until app is ready -->
-  <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#282c34);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
+  <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#17150f);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
     <div id="loader-wave" style="color:var(--brand-color,var(--red,#e06c75));font-family:monospace;font-size:11px;opacity:.5">▁▂▃</div>
   </div>
   <script nonce="{{CSP_NONCE}}">
@@ -608,7 +610,7 @@
           <div class="theme-fd-group" style="flex:0 0 auto;align-items:center;">
             <label class="theme-fd-label">&nbsp;</label>
             <div class="color-row" style="margin:0;padding:0;">
-              <input type="color" id="theme-bg-effect-color" value="#9cdef2" title="Effect color">
+              <input type="color" id="theme-bg-effect-color" value="#ede9e0" title="Effect color">
               <button class="color-reset-btn" data-reset-effect title="Reset to text color">&#x21BA;</button>
             </div>
           </div>
