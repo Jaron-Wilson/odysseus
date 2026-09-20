@@ -628,6 +628,48 @@ _API_HOSTS = frozenset([
 ])
 _MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
+
+# Words too common to be evidence that the user means an MCP tool. Without this
+# stoplist, a server exposing anything called `list_*` or `*_status` would drag
+# every MCP schema into every local-model turn.
+_MCP_GENERIC_TOKENS = frozenset([
+    "list", "info", "status", "project", "projects", "page", "pages", "item",
+    "items", "settings", "setting", "manage", "create", "update", "delete",
+    "read", "write", "send", "open", "close", "start", "stop", "name", "names",
+    "data", "file", "files", "tool", "tools", "server", "servers", "value",
+    "query", "search", "fetch", "call", "with", "from", "this", "that",
+])
+
+
+def _mcp_keywords_from_schemas(schemas) -> set:
+    """Trigger words derived from whichever MCP servers are actually connected.
+
+    The static list above only knows the servers that existed when it was
+    written, so a server registered later is invisible to local models however
+    plainly the user asks for it: the schemas are never sent, the model cannot
+    see the tool, and it answers as if the tool did not exist. Reading the
+    words back off the live tool names keeps the gate honest as servers come
+    and go, instead of needing a hand edit here for each one.
+
+    Both halves of the name are mined: the tool's own name, and the
+    `[MCP:<server label>]` prefix that get_all_openai_schemas puts on every
+    description (the qualified name carries an opaque server id, not the
+    readable name, so the label is where e.g. "davinci" comes from).
+    """
+    words: set = set()
+    for schema in schemas or []:
+        fn = schema.get("function") or {}
+        name = fn.get("name") or ""
+        # mcp__<server_id>__<tool_name> — the tool half only; the id is opaque.
+        parts = name.split("__")
+        text = parts[-1] if len(parts) > 2 else ""
+        label = re.match(r"\[MCP:([^\]]*)\]", fn.get("description") or "")
+        if label:
+            text += " " + label.group(1)
+        for tok in re.split(r"[^a-z0-9]+", text.lower()):
+            if len(tok) > 3 and tok not in _MCP_GENERIC_TOKENS:
+                words.add(tok)
+    return words
 _ADMIN_SCHEMA_NAMES = frozenset([
     "manage_session", "manage_skills", "manage_tasks",
     "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens",
@@ -1974,6 +2016,9 @@ async def stream_agent_loop(
         owner=owner,
         suppress_local_context=guide_only,
     )
+    # Derived once per turn: the connected servers cannot change mid-turn, and
+    # the local-model gate below is re-evaluated every round.
+    _mcp_dynamic_keywords = _mcp_keywords_from_schemas(mcp_schemas)
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
         # every write path except shell; this directive is what keeps the
@@ -2172,7 +2217,8 @@ async def stream_agent_loop(
         else:
             # Local: only MCP schemas when message suggests MCP tool usage
             _last_content = _last_user.lower()
-            _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
+            _wants_mcp = any(kw in _last_content
+                             for kw in (_MCP_KEYWORDS | _mcp_dynamic_keywords))
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
