@@ -2233,8 +2233,10 @@ async function initReminderSettings() {
       return;
     }
     if (!push.isSupported()) {
+      // Only subscribing is impossible here. Sending a test still fans out to
+      // whatever other devices are subscribed, so that button stays live.
       btn.disabled = true;
-      if (testBtn) testBtn.disabled = true;
+      if (testBtn) testBtn.addEventListener('click', () => push.sendTest());
       if (status) status.textContent = 'not supported here';
       // The usual cause is a plain-http origin, which is worth naming rather
       // than leaving the button mysteriously dead.
@@ -2247,9 +2249,17 @@ async function initReminderSettings() {
       const on = await push.isSubscribed();
       btn.textContent = on ? 'Disable notifications' : 'Enable notifications';
       if (status) status.textContent = on ? 'on for this device' : 'off';
-      if (testBtn) testBtn.disabled = !on;
     };
+    // The test button is never gated on this browser's subscription: the
+    // endpoint fans out to every subscribed device server-side, so it works
+    // from a device that is only sending. Disabling it here also lost races on
+    // mobile, where the worker is often not ready yet when the panel opens.
     await sync();
+    // Re-check once the worker settles, so a slow activation does not leave
+    // the label reading "off" on a device that is in fact subscribed.
+    if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+      navigator.serviceWorker.ready.then(() => sync()).catch(() => {});
+    }
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       try { await push.toggle(); } finally { btn.disabled = false; await sync(); }

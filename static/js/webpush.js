@@ -25,7 +25,17 @@ export function isSupported() {
 
 export async function currentSubscription() {
   if (!isSupported()) return null;
-  const reg = await navigator.serviceWorker.getRegistration();
+  // getRegistration() can resolve to undefined while the worker is still
+  // activating — common on a phone right after load — which would report "not
+  // subscribed" on a device that is. Prefer the ready registration, bounded so
+  // a genuinely uncontrolled page still answers.
+  let reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) {
+    reg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise(res => setTimeout(() => res(null), 3000)),
+    ]);
+  }
   return reg ? reg.pushManager.getSubscription() : null;
 }
 
