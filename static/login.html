@@ -144,7 +144,7 @@
     /* Same gradient as the main app's welcome-screen "Odysseus" title
        (static/style.css #welcome-screen .welcome-name) so the brand
        wordmark is consistent across login + first-launch screens. */
-    background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
+    background: linear-gradient(135deg, var(--brand-color, var(--accent)), color-mix(in srgb, var(--brand-color, var(--accent)) 60%, var(--fg)));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -156,7 +156,7 @@
     background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
     color: var(--fg); font-size: 0.95rem; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   }
-  input:focus { outline: none; border-color: var(--red); }
+  input:focus { outline: none; border-color: var(--accent); }
   /* On touch devices keep inputs at >=16px so iOS Safari doesn't zoom the whole
      page when a field is focused (it auto-zooms any focused input under 16px).
      This page has its own inline styles, so it doesn't inherit the main app's
@@ -167,7 +167,7 @@
   }
   /* Clear, visible focus ring for keyboard users on every focusable control. */
   input:focus-visible, a:focus-visible, button:focus-visible {
-    outline: 2px solid var(--red);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   button {
@@ -176,16 +176,16 @@
        the button's total height the same as 0.7rem all-around. */
     padding: calc(0.7rem + 1px) 0.7rem calc(0.7rem - 1px);
     border: none; border-radius: 6px;
-    /* Darken the brand red slightly so #fff label text clears the WCAG AA
-       4.5:1 contrast threshold (plain --red #e06c75 only reaches ~3.2:1). */
-    background: color-mix(in srgb, var(--red) 78%, #000); color: #fff; font-size: 1rem; cursor: pointer;
+    /* Darken the brand accent slightly so #fff label text clears the WCAG AA
+       4.5:1 contrast threshold (terracotta #d97a4a alone reaches only ~2.8:1). */
+    background: color-mix(in srgb, var(--accent) 78%, #000); color: #fff; font-size: 1rem; cursor: pointer;
     font-weight: 600; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   }
-  button:hover { background: color-mix(in srgb, var(--red) 66%, black); }
+  button:hover { background: color-mix(in srgb, var(--accent) 66%, black); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   .error { color: #c0524a; font-size: 0.85rem; margin-bottom: 0.75rem; display: none; }
   .toggle { text-align: center; margin-top: calc(1rem + 4px); font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 50%, transparent); }
-  .toggle a { color: var(--red); cursor: pointer; text-decoration: none; }
+  .toggle a { color: var(--accent); cursor: pointer; text-decoration: none; }
   .toggle a:hover { text-decoration: underline; }
   .pw-wrapper { position: relative; margin-bottom: 1rem; }
   .pw-wrapper input:not(.remember-check) { padding-right: 2.5rem; margin-bottom: 0; }
@@ -216,7 +216,7 @@
     opacity: 0; cursor: pointer;
   }
   .remember-toggle .remember-check:focus-visible + .remember-dot {
-    outline: 2px solid var(--red); outline-offset: 2px;
+    outline: 2px solid var(--accent); outline-offset: 2px;
   }
   .remember-toggle .remember-dot {
     display: block; width: 10px; height: 10px; min-width: 10px; min-height: 10px;
@@ -232,7 +232,7 @@
   .remember-toggle:hover .remember-dot {
     border-color: color-mix(in srgb, var(--fg) 40%, transparent);
   }
-  .logo-boat { width: 1.6rem; height: 1.6rem; margin-right: 0.4rem; vertical-align: -0.15em; color: var(--red); }
+  .logo-boat { width: 1.6rem; height: 1.6rem; margin-right: 0.4rem; vertical-align: -0.15em; color: var(--accent); }
   .version-label {
     position: fixed; bottom: 12px; right: 16px;
     font-size: 0.7rem; opacity: 0.25;
