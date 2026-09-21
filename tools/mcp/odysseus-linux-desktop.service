@@ -28,6 +28,11 @@ Type=simple
 # laptop joins networks you do not control.
 Environment=LINUX_DESKTOP_MCP_HOST=100.103.158.40
 Environment=LINUX_DESKTOP_MCP_PORT=8932
+# mcp >= 1.13 checks the Host header against an allowlist and answers anything
+# else with a bare 421 that names neither the header nor the setting. The bound
+# address is allowed automatically; the MagicDNS name has to be spelled out,
+# because getfqdn() only finds it when MagicDNS is also in /etc/hosts.
+Environment=LINUX_DESKTOP_MCP_ALLOWED_HOSTS=jaron-laptop.tail90b62a.ts.net
 ExecStart=%h/.odysseus-mcp/venv/bin/python %h/.odysseus-mcp/linux_desktop_mcp_server.py
 Restart=on-failure
 RestartSec=10

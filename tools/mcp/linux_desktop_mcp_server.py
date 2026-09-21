@@ -33,7 +33,16 @@ from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("linux-desktop")
+from mcp_transport_security import security_settings
+
+# Read here, not in __main__: mcp validates the Host header against an
+# allowlist built from the bind address, so the server object cannot be
+# constructed until the bind is known.
+HOST = os.environ.get("LINUX_DESKTOP_MCP_HOST", "127.0.0.1")
+PORT = int(os.environ.get("LINUX_DESKTOP_MCP_PORT", "8932"))
+
+_sec = security_settings(HOST, PORT, "LINUX_DESKTOP_MCP_ALLOWED_HOSTS")
+mcp = FastMCP("linux-desktop", **({"transport_security": _sec} if _sec else {}))
 
 APP_DIRS = [
     os.path.expanduser("~/.local/share/applications"),
@@ -157,14 +166,36 @@ def launch_app(app: str) -> Dict[str, Any]:
         entry = matches[0]
 
     # `gio launch` honours the desktop entry properly (Terminal=, field codes,
-    # startup notification). Spawning Exec by hand gets those subtly wrong.
+    # startup notification, systemd app scope). Spawning Exec by hand gets
+    # those subtly wrong.
+    #
+    # It also *waits for the launched app to exit*, which is the trap here:
+    # waiting on it with a timeout and reading the timeout as failure starts
+    # the app, falls through to the Exec branch, and starts it a second time.
+    # So only an immediate non-zero exit counts as failure; a launcher still
+    # alive after a moment means the app is up and holding it open.
+    err = "gio is not installed"
     if _have("gio"):
-        r = _run(["gio", "launch", entry["path"]], timeout=15)
-        if r.get("ok"):
-            return {"ok": True, "launched": entry["id"], "name": entry["name"]}
-        err = r.get("stderr") or r.get("error") or "gio launch failed"
-    else:
-        err = "gio is not installed"
+        try:
+            proc = subprocess.Popen(
+                ["gio", "launch", entry["path"]], start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        except Exception as e:
+            err = f"could not run gio: {e}"
+        else:
+            try:
+                rc = proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                # Still running: gio is waiting on the app, so the app started.
+                return {"ok": True, "launched": entry["id"], "name": entry["name"]}
+            if rc == 0:
+                return {"ok": True, "launched": entry["id"], "name": entry["name"]}
+            stderr = ""
+            try:
+                stderr = (proc.stderr.read() or "").strip() if proc.stderr else ""
+            except Exception:
+                pass
+            err = f"gio launch exited {rc}" + (f": {stderr[:200]}" if stderr else "")
 
     # Fall back to the Exec line with field codes stripped; %U/%f and friends
     # are placeholders for files and must not reach the shell as literals.
@@ -176,8 +207,11 @@ def launch_app(app: str) -> Dict[str, Any]:
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         return {"ok": False, "error": f"{err}; falling back to Exec also failed: {e}"}
+    # Say which route was taken and why, rather than asserting a cause. The
+    # previous wording blamed a missing gio unconditionally, which hid a real
+    # double launch for as long as nobody counted the processes.
     return {"ok": True, "launched": entry["id"], "name": entry["name"],
-            "note": "Launched via its Exec line because gio is unavailable."}
+            "note": f"Launched via its Exec line ({err})."}
 
 
 @mcp.tool()
@@ -355,12 +389,11 @@ def desktop_status() -> Dict[str, Any]:
 
 if __name__ == "__main__":
     import uvicorn  # noqa: F401
-    # Bind the tailnet address by default, never all interfaces: these tools
-    # launch applications, so the listener must not be reachable from whatever
-    # café wifi the laptop is on.
-    host = os.environ.get("LINUX_DESKTOP_MCP_HOST", "127.0.0.1")
-    port = int(os.environ.get("LINUX_DESKTOP_MCP_PORT", "8932"))
-    mcp.settings.host = host
-    mcp.settings.port = port
-    print(f"linux-desktop-mcp listening on {host}:{port} (sse)", flush=True)
+    # HOST/PORT come from the module scope above, where the Host allowlist was
+    # built from them. Binds the tailnet address by default, never all
+    # interfaces: these tools launch applications, and the laptop joins
+    # networks you do not control.
+    mcp.settings.host = HOST
+    mcp.settings.port = PORT
+    print(f"linux-desktop-mcp listening on {HOST}:{PORT} (sse)", flush=True)
     mcp.run(transport="sse")

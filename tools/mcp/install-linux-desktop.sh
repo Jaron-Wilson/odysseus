@@ -13,7 +13,7 @@ UNIT="odysseus-linux-desktop.service"
 
 echo "==> installing to $DEST"
 mkdir -p "$DEST"
-cp "$SRC_DIR/linux_desktop_mcp_server.py" "$DEST/"
+cp "$SRC_DIR/linux_desktop_mcp_server.py" "$SRC_DIR/mcp_transport_security.py" "$DEST/"
 
 # Its own venv. The system python is managed by the distro, and on anything
 # recent pip into it is refused outright (PEP 668).
