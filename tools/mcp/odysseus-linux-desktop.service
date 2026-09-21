@@ -1,0 +1,36 @@
+# systemd --user unit for the Linux desktop MCP server.
+#
+# A user unit, not a system one, and that is the whole point: only the user
+# instance inherits DBUS_SESSION_BUS_ADDRESS and the rest of the graphical
+# session. A system service would start reliably and then be unable to see a
+# single window or media player.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp odysseus-linux-desktop.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now odysseus-linux-desktop
+#
+# Deliberately NOT paired with `loginctl enable-linger`: lingering would start
+# this at boot with no graphical session behind it, so it would run and refuse
+# everything. It should live and die with the desktop, which is what it acts on.
+
+[Unit]
+Description=Odysseus desktop control (MCP over SSE)
+# graphical-session.target is only reached inside a real session, which is
+# exactly the precondition this server has.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# Bind the tailnet address, never 0.0.0.0: this launches applications, and the
+# laptop joins networks you do not control.
+Environment=LINUX_DESKTOP_MCP_HOST=100.103.158.40
+Environment=LINUX_DESKTOP_MCP_PORT=8932
+ExecStart=%h/.odysseus-mcp/venv/bin/python %h/.odysseus-mcp/linux_desktop_mcp_server.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target
