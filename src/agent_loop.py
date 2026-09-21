@@ -2945,6 +2945,20 @@ async def stream_agent_loop(
                 _anchor = f"\n\n[Open in Deep Research](#research-{_rsid})\n"
                 yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
 
+            # Screen control needs a click, so the links have to be real
+            # links. Emitted here rather than left in the tool result, which
+            # renders as literal text in the output card, and rather than
+            # trusting the model to copy them — it paraphrased them instead.
+            _appr_id = result.get("approval_id")
+            if _appr_id and result.get("needs_approval"):
+                _srv = result.get("approval_server", "this machine")
+                _anchor = (
+                    f"\n\n**{_srv} needs your approval for screen control.**\n\n"
+                    f"[Approve screen control](#screencontrol-approve-{_appr_id})"
+                    f" · [Deny](#screencontrol-deny-{_appr_id})\n"
+                )
+                yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
+
             # Same pattern for notes: when manage_notes creates a note
             # and returns note_id, drop a `[View note](#note-<id>)` link
             # into the stream so chatRenderer's click handler routes to

@@ -456,17 +456,23 @@ class McpManager:
                         server_id=server_id, server_name=name, owner=owner,
                         reason=f"{tool_name} on {name}")
                     return {
+                        # Human-readable, and only that: the clickable links
+                        # are emitted into the reply by the agent loop, and
+                        # the instruction to stop is model-facing so it goes
+                        # in next_step rather than on screen.
                         "error": (
-                            f"Screen control of {name} needs your approval first.\n\n"
-                            f"[Approve screen control](#screencontrol-approve-{req['id']}) "
-                            f"&nbsp;·&nbsp; "
-                            f"[Deny](#screencontrol-deny-{req['id']})\n\n"
+                            f"Screen control of {name} needs approval first. "
                             f"Approving covers {name} for "
-                            f"{approvals.GRANT_TTL_S // 60} minutes, then lapses on its own. "
-                            f"Tell the user to click one of those, and stop."
+                            f"{approvals.GRANT_TTL_S // 60} minutes, then lapses on its own."
                         ),
                         "needs_approval": True,
                         "approval_id": req["id"],
+                        "approval_server": name,
+                        "next_step": (
+                            "Do not retry. The approve and deny links are added to your reply "
+                            "automatically, so do not write them yourself. Say in one short "
+                            "sentence what you want to do and that it needs approval, then STOP."
+                        ),
                         "exit_code": 1,
                     }
         except ImportError:
