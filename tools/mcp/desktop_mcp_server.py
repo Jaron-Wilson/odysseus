@@ -83,8 +83,13 @@ APPS: Dict[str, Dict[str, Any]] = {
         # which is what the read-only minecraft_* tools inspect.
         "path": os.path.join(APPDATA, ".minecraft"),
         "aumid": r"Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft",
+        # Two processes, and the difference matters: "Minecraft" is the
+        # launcher, "javaw" is the game, and the game only exists once
+        # somebody clicks Play. Watching for javaw alone reports a working
+        # launch as a failure.
+        "launcher_process": "Minecraft",
         "process": "javaw",
-        "description": "Minecraft Java Edition (opens the official launcher)",
+        "description": "Minecraft Java Edition (opens the launcher; Play still needs a click)",
     },
 }
 
@@ -125,6 +130,25 @@ def _processes() -> Dict[str, int]:
     return out
 
 
+
+def _wait_for_process(name: Optional[str], timeout: float = 20.0) -> Optional[int]:
+    """Poll until a process appears, returning its pid, or None on timeout.
+
+    Launching is asynchronous on Windows: the call that starts an app returns
+    long before the app exists. Without waiting, every launch looks
+    successful, including the ones that silently did nothing.
+    """
+    if not name:
+        return None
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        pid = _processes().get(name)
+        if pid:
+            return pid
+        time.sleep(1.0)
+    return None
+
+
 # --------------------------------------------------------------------------
 # Apps
 # --------------------------------------------------------------------------
@@ -141,13 +165,22 @@ def list_apps() -> List[Dict[str, Any]]:
             or os.path.exists(spec.get("path", ""))
         )
         pname = spec.get("process")
-        out.append({
+        lname = spec.get("launcher_process")
+        running = bool(pname and pname in procs)
+        entry = {
             "app": key,
             "description": spec["description"],
             "installed": installed,
-            "running": bool(pname and pname in procs),
+            "running": running,
             "pid": procs.get(pname) if pname else None,
-        })
+        }
+        if lname:
+            # Without this, a launcher sitting on the Play screen is
+            # indistinguishable from nothing having happened at all.
+            entry["launcher_running"] = lname in procs
+            if entry["launcher_running"] and not running:
+                entry["state"] = "launcher_open"
+        out.append(entry)
     return out
 
 
@@ -170,22 +203,61 @@ def launch_app(app: str) -> Dict[str, Any]:
 
     if spec.get("aumid"):
         # Store apps have no runnable path; the shell resolves them by app id.
-        r = _run(["explorer.exe", f"shell:AppsFolder\\{spec['aumid']}"], timeout=20)
-        # explorer.exe returns a non-zero exit even on success, so its code
-        # says nothing useful; report the launch as attempted instead of
-        # inventing a result from it.
-        return {"ok": True, "app": app, "launched_via": "shell:AppsFolder",
-                "note": "The launcher was asked to start. Store apps report no exit status, "
-                        "so call list_apps in a few seconds to confirm it came up."}
+        _run(["explorer.exe", f"shell:AppsFolder\\{spec['aumid']}"], timeout=20)
+        # explorer.exe's exit code says nothing about the app, so the only
+        # honest answer comes from watching for the process. Returning ok
+        # without this is how "I opened Minecraft" gets said about a launcher
+        # that never appeared.
+        appeared = _wait_for_process(spec.get("process"), timeout=25.0)
+        if appeared:
+            return {"ok": True, "app": app, "launched_via": "shell:AppsFolder",
+                    "pid": appeared, "state": "running"}
+        launcher = _wait_for_process(spec.get("launcher_process"), timeout=1.0)
+        if launcher:
+            # The launcher came up and is waiting for a human. Saying "ok"
+            # here would invite the claim that the game is running; saying
+            # "failed" would be wrong too.
+            return {
+                "ok": True,
+                "app": app,
+                "state": "launcher_open",
+                "pid": launcher,
+                "note": (
+                    f"The {app} launcher is open but the game has not started — that "
+                    f"needs Play to be clicked. Do not say {app} is running. Take a "
+                    f"screenshot to see the launcher, or ask the user to press Play."
+                ),
+            }
+        return {
+            "ok": False,
+            "app": app,
+            "launched_via": "shell:AppsFolder",
+            "state": "not_started",
+            "error": (
+                f"Asked Windows to start {app}, but neither the launcher nor the game "
+                f"appeared within 25s. Do not report it as open — take a screenshot "
+                f"and look."
+            ),
+        }
 
     target = spec.get("path")
     if not os.path.exists(target or ""):
         return {"ok": False, "app": app, "error": f"not installed at {target}"}
 
     subprocess.Popen([target], close_fds=True)
-    time.sleep(1.5)
-    procs = _processes()
-    return {"ok": True, "app": app, "running": bool(spec.get("process") in procs)}
+    appeared = _wait_for_process(spec.get("process"), timeout=20.0)
+    if appeared:
+        return {"ok": True, "app": app, "pid": appeared}
+    # A slow-starting app is common, so this is "not yet" rather than
+    # "failed" — but it is not success, and must not read as it.
+    return {
+        "ok": False,
+        "app": app,
+        "error": (
+            f"Started {target} but no {spec.get('process')} process appeared within 20s. "
+            f"It may still be loading. Take a screenshot and look before saying it is open."
+        ),
+    }
 
 
 @mcp.tool()
