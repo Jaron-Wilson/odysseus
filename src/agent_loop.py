@@ -2118,6 +2118,7 @@ async def stream_agent_loop(
             messages.insert(0, {"role": "system", "content": GUIDE_ONLY_DIRECTIVE})
     prep_timings["prompt_build"] = time.time() - _t2
 
+    _context_trim_note = ""
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
@@ -2162,6 +2163,19 @@ async def stream_agent_loop(
                     reserve_tokens,
                 )
                 messages = trimmed_messages
+                # Worth telling the reader about only when enough went
+                # missing to change the answer. A notice on every long
+                # chat is noise, and noise teaches people to ignore it.
+                _dropped = before_trim_tokens - after_trim_tokens
+                if _dropped >= 1000 and _dropped >= before_trim_tokens * 0.1:
+                    _context_trim_note = (
+                        f"\n\n_Note: this conversation is about "
+                        f"{before_trim_tokens:,} tokens and {model} was given "
+                        f"a {effective_budget:,}-token budget, so roughly "
+                        f"{_dropped:,} tokens of earlier messages were left "
+                        f"out of this turn. If the answer below has lost the "
+                        f"thread, that is why._\n"
+                    )
     except Exception as e:
         logger.warning("[agent] Soft context trim skipped: %s", e)
     prep_timings["context_trim"] = time.time() - _t3
@@ -2172,6 +2186,13 @@ async def stream_agent_loop(
     yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
 
     full_response = ""
+    if _context_trim_note:
+        # Yielded AND accumulated: a yielded delta reaches the live stream
+        # only, so without the append the explanation is gone on reload --
+        # exactly when someone rereads the chat wondering why the model
+        # lost track.
+        yield 'data: ' + json.dumps({"delta": _context_trim_note}) + '\n\n'
+        full_response += _context_trim_note
     total_start = time.time()
     time_to_first_token = None
     first_token_received = False
