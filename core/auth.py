@@ -508,37 +508,81 @@ class AuthManager:
     # a Google account could create themselves one here.
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _identities(row: dict) -> list:
+        """Google identities on a user row, tolerating the old single-field shape.
+
+        Accounts linked before multiple identities were supported stored a
+        bare google_sub/google_email pair. Reading those here means such an
+        account keeps working without a migration step.
+        """
+        found = list(row.get("google_identities") or [])
+        legacy_sub = (row.get("google_sub") or "").strip()
+        if legacy_sub and not any(i.get("sub") == legacy_sub for i in found):
+            found.append({"sub": legacy_sub,
+                          "email": (row.get("google_email") or "").strip()})
+        return found
+
     def link_google(self, username: str, google_sub: str, google_email: str) -> bool:
-        """Attach a verified Google identity to an existing user."""
+        """Attach a verified Google identity, alongside any already attached."""
         username = (username or "").strip().lower()
         google_sub = (google_sub or "").strip()
+        google_email = (google_email or "").strip()
         if not username or not google_sub or username not in self.users:
             return False
         with self._config_lock:
-            # `sub` is the stable identifier; email can be changed by the user
-            # at Google and is kept only to show which account is attached.
-            for other, row in self._config.get("users", {}).items():
-                if other != username and row.get("google_sub") == google_sub:
+            users = self._config.get("users", {})
+            # One identity cannot reach two accounts, or which one it signs
+            # into would depend on iteration order.
+            for other, row in users.items():
+                if other != username and any(
+                        i.get("sub") == google_sub for i in self._identities(row)):
                     logger.warning(
                         "Refused to link Google identity already attached to '%s'", other)
                     return False
-            self._config["users"][username]["google_sub"] = google_sub
-            self._config["users"][username]["google_email"] = (google_email or "").strip()
+            row = users[username]
+            identities = self._identities(row)
+            for existing in identities:
+                if existing.get("sub") == google_sub:
+                    existing["email"] = google_email  # email can change at Google
+                    break
+            else:
+                identities.append({"sub": google_sub, "email": google_email})
+            row["google_identities"] = identities
+            # Fold the legacy pair away now that the list is authoritative.
+            row.pop("google_sub", None)
+            row.pop("google_email", None)
             self._save()
-        logger.info("Linked Google identity to user '%s'", username)
+        logger.info("Linked a Google identity to '%s' (now %d)",
+                    username, len(self.google_emails_for(username)))
         return True
 
-    def unlink_google(self, username: str) -> bool:
+    def unlink_google(self, username: str, google_email: str = "") -> bool:
+        """Detach one Google identity by email, or all of them when omitted."""
         username = (username or "").strip().lower()
         if username not in self.users:
             return False
+        target = (google_email or "").strip().lower()
         with self._config_lock:
             row = self._config["users"][username]
-            # Refuse to remove the only way in. Without a password, unlinking
-            # would lock the account out of its own server.
-            if not row.get("password_hash"):
-                logger.warning("Refused to unlink Google from '%s': it has no password", username)
+            identities = self._identities(row)
+            if not identities:
                 return False
+            if target:
+                remaining = [i for i in identities
+                             if (i.get("email") or "").lower() != target]
+                if len(remaining) == len(identities):
+                    return False  # nothing matched
+            else:
+                remaining = []
+            # Never remove the last way in. Without a password, unlinking
+            # everything would lock the account out of its own server.
+            if not remaining and not row.get("password_hash"):
+                logger.warning(
+                    "Refused to unlink the last Google identity from '%s': it has no password",
+                    username)
+                return False
+            row["google_identities"] = remaining
             row.pop("google_sub", None)
             row.pop("google_email", None)
             self._save()
@@ -550,13 +594,19 @@ class AuthManager:
         if not google_sub:
             return None
         for username, row in self.users.items():
-            if row.get("google_sub") == google_sub:
+            if any(i.get("sub") == google_sub for i in self._identities(row)):
                 return username
         return None
 
+    def google_emails_for(self, username: str) -> list:
+        """Every Google address linked to this account."""
+        row = self.users.get((username or "").strip().lower(), {})
+        return [i.get("email", "") for i in self._identities(row) if i.get("email")]
+
     def google_email_for(self, username: str) -> str:
-        return (self.users.get((username or "").strip().lower(), {})
-                .get("google_email") or "")
+        """First linked address. Kept for callers that expect a single value."""
+        emails = self.google_emails_for(username)
+        return emails[0] if emails else ""
 
     def create_session(self, username: str, password: str) -> Optional[str]:
         """Verify credentials and return a session token, or None."""

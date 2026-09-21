@@ -346,9 +346,12 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
         link_for = entry.get("link_for") or ""
         if link_for:
             if auth_manager.link_google(link_for, sub, email):
+                linked = auth_manager.google_emails_for(link_for)
+                extra = (f" {len(linked)} Google accounts now sign in as {link_for}."
+                         if len(linked) > 1 else "")
                 return _google_page("Google account linked",
                                     f"{email or 'That account'} can now sign in as "
-                                    f"{link_for}.", ok=True)
+                                    f"{link_for}.{extra}", ok=True)
             return _google_page("Could not link",
                                 "That Google account is already attached to a different user.")
 
@@ -378,16 +381,21 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
         current = getattr(request.state, "current_user", None)
         if not current:
             raise HTTPException(401, "Not authenticated")
-        return {"linked_email": auth_manager.google_email_for(current)}
+        emails = auth_manager.google_emails_for(current)
+        # linked_email kept for anything still expecting one value.
+        return {"linked_emails": emails, "linked_email": emails[0] if emails else ""}
 
     @router.post("/google/unlink")
-    async def google_unlink(request: Request):
+    async def google_unlink(request: Request, email: Optional[str] = None):
+        """Detach one linked address, or all of them when none is named."""
         current = getattr(request.state, "current_user", None)
         if not current:
             raise HTTPException(401, "Not authenticated")
-        if auth_manager.unlink_google(current):
-            return {"ok": True}
-        raise HTTPException(400, "Cannot unlink: set a password first, or nothing was linked.")
+        if auth_manager.unlink_google(current, email or ""):
+            return {"ok": True, "linked_emails": auth_manager.google_emails_for(current)}
+        raise HTTPException(400,
+            "Could not unlink. Either that address is not linked, or it is the last way "
+            "into an account with no password.")
 
 
     @router.post("/logout")
