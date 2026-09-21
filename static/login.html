@@ -252,6 +252,18 @@
     vertical-align: -3px;
   }
   @keyframes login-spin { to { transform: rotate(360deg); } }
+
+  /* Sign in with Google */
+  .google-sep { display:flex; align-items:center; gap:.75rem; margin:1.25rem 0 1rem;
+                color:var(--muted,#8a8578); font-size:.85rem; }
+  .google-sep::before, .google-sep::after {
+                content:""; flex:1; height:1px; background:var(--border,#e8e4dc); }
+  .google-btn { display:flex; align-items:center; justify-content:center; gap:.6rem;
+                width:100%; padding:.7rem 1rem; border:1px solid var(--border,#e8e4dc);
+                border-radius:8px; background:var(--panel,#fff); color:var(--fg,#1a1a17);
+                text-decoration:none; font-size:.95rem; font-weight:500;
+                transition:border-color .15s, background .15s; box-sizing:border-box; }
+  .google-btn:hover { border-color:var(--accent,#d97a4a); background:var(--bg,#faf8f4); }
 </style>
 </head>
 <body>
@@ -293,6 +305,21 @@
 
     <button type="submit" id="submitBtn">Sign In</button>
   </form>
+
+  <!-- Revealed only when the server reports Google credentials, so an
+       unconfigured install never shows a button that can only fail. -->
+  <div id="googleArea" style="display:none">
+    <div class="google-sep"><span>or</span></div>
+    <a id="googleSignInBtn" href="/api/auth/google/start" class="google-btn">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+        <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+        <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+        <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
+        <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.9 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+      </svg>
+      <span>Sign in with Google</span>
+    </a>
+  </div>
 
   <div class="toggle" id="toggleArea" style="display:none">
     <span id="toggleText">Don't have an account? </span>
@@ -584,6 +611,16 @@ try {
 } catch (e) {
   console.error('[login-bg] failed:', e);
 }
+
+  // Only offer Google when the server has credentials for it.
+  (async () => {
+    try {
+      const r = await fetch('/api/auth/google/config');
+      if (!r.ok) return;
+      const { configured } = await r.json();
+      if (configured) document.getElementById('googleArea').style.display = 'block';
+    } catch (_) { /* leave it hidden */ }
+  })();
 </script>
 </body>
 </html>

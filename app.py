@@ -176,6 +176,13 @@ if AUTH_ENABLED:
         "/api/auth/login",
         "/api/auth/logout",
         "/api/auth/status",
+        # The Google endpoints have to work while logged out: that is the
+        # entire point of them. /google/start and /google/callback carry
+        # their own state token, and /google/config only reports whether the
+        # button should be drawn.
+        "/api/auth/google/config",
+        "/api/auth/google/start",
+        "/api/auth/google/callback",
         "/api/auth/features",
         "/api/auth/settings",
         "/api/auth/integrations/presets",

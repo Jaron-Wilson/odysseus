@@ -491,7 +491,72 @@ class AuthManager:
         username = username.strip().lower()
         if username not in self.users:
             return False
-        return _verify_password(password, self.users[username]["password_hash"])
+        # A row can legitimately have no password once Google is the only way
+        # in, and indexing straight into it would raise rather than refuse —
+        # turning "this account has no password" into a 500.
+        stored = self.users[username].get("password_hash")
+        if not stored:
+            return False
+        return _verify_password(password, stored)
+
+    # ------------------------------------------------------------------
+    # Google identity linking
+    #
+    # Linking is deliberate and never implicit: a Google sign-in only works
+    # for an account that has already attached that identity from inside a
+    # logged-in session. Provisioning on first sight would mean anybody with
+    # a Google account could create themselves one here.
+    # ------------------------------------------------------------------
+
+    def link_google(self, username: str, google_sub: str, google_email: str) -> bool:
+        """Attach a verified Google identity to an existing user."""
+        username = (username or "").strip().lower()
+        google_sub = (google_sub or "").strip()
+        if not username or not google_sub or username not in self.users:
+            return False
+        with self._config_lock:
+            # `sub` is the stable identifier; email can be changed by the user
+            # at Google and is kept only to show which account is attached.
+            for other, row in self._config.get("users", {}).items():
+                if other != username and row.get("google_sub") == google_sub:
+                    logger.warning(
+                        "Refused to link Google identity already attached to '%s'", other)
+                    return False
+            self._config["users"][username]["google_sub"] = google_sub
+            self._config["users"][username]["google_email"] = (google_email or "").strip()
+            self._save()
+        logger.info("Linked Google identity to user '%s'", username)
+        return True
+
+    def unlink_google(self, username: str) -> bool:
+        username = (username or "").strip().lower()
+        if username not in self.users:
+            return False
+        with self._config_lock:
+            row = self._config["users"][username]
+            # Refuse to remove the only way in. Without a password, unlinking
+            # would lock the account out of its own server.
+            if not row.get("password_hash"):
+                logger.warning("Refused to unlink Google from '%s': it has no password", username)
+                return False
+            row.pop("google_sub", None)
+            row.pop("google_email", None)
+            self._save()
+        return True
+
+    def find_by_google_sub(self, google_sub: str) -> Optional[str]:
+        """Username that owns this Google identity, or None."""
+        google_sub = (google_sub or "").strip()
+        if not google_sub:
+            return None
+        for username, row in self.users.items():
+            if row.get("google_sub") == google_sub:
+                return username
+        return None
+
+    def google_email_for(self, username: str) -> str:
+        return (self.users.get((username or "").strip().lower(), {})
+                .get("google_email") or "")
 
     def create_session(self, username: str, password: str) -> Optional[str]:
         """Verify credentials and return a session token, or None."""

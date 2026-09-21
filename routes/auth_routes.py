@@ -1,12 +1,19 @@
 """Authentication routes — login, logout, signup, status, user management."""
 
 from fastapi import APIRouter, Request, Response, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
 import asyncio
 import logging
 import os
 
+import base64
+import html
+import secrets
+import time
+import urllib.parse
+import httpx
 import json
 import re
 from pathlib import Path
@@ -21,6 +28,7 @@ from src.settings import (
     save_settings as _save_settings,
     load_features as _load_features,
     save_features as _save_features,
+    get_setting,
     DEFAULT_SETTINGS,
 )
 from src.integrations import (
@@ -151,6 +159,220 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             cookie_kwargs["max_age"] = 60 * 60 * 24 * 7  # 7 days
         response.set_cookie(**cookie_kwargs)
         return {"ok": True, "username": username}
+
+    # ------------------------------------------------------------------
+    # Sign in with Google
+    #
+    # Linking is explicit: /google/start?link_for= is called from inside an
+    # authenticated session and attaches the verified identity to that
+    # account. Only then does a plain sign-in recognise it. A first sign-in
+    # never creates a user, because on a server whose whole access model is
+    # "only me" that would be the one hole worth having.
+    # ------------------------------------------------------------------
+
+    def _google_cfg() -> dict:
+        """Client credentials, from settings first then environment."""
+        try:
+            cid = (get_setting("google_oauth_client_id", "") or "").strip()
+            csec = (get_setting("google_oauth_client_secret", "") or "").strip()
+        except Exception:
+            cid = csec = ""
+        cid = cid or os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+        csec = csec or os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+        return {"client_id": cid, "client_secret": csec, "configured": bool(cid and csec)}
+
+    def _google_redirect_uri(request: Request) -> str:
+        """The callback URL, which must match Google's registered value exactly.
+
+        Derived from the request by default so it is correct behind Tailscale
+        Serve with no extra configuration, but overridable because a proxy can
+        rewrite the host and Google compares the string, not the intent.
+        """
+        try:
+            override = (get_setting("google_oauth_redirect_uri", "") or "").strip()
+        except Exception:
+            override = ""
+        override = override or os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
+        if override:
+            return override
+        base = str(request.base_url).rstrip("/")
+        # base_url reports http behind a TLS-terminating proxy such as
+        # Tailscale Serve. The registered URI is https, and Google rejects the
+        # mismatch with an error that never mentions the scheme.
+        if request.headers.get("x-forwarded-proto", "") == "https" and base.startswith("http://"):
+            base = "https://" + base[len("http://"):]
+        return base + "/api/auth/google/callback"
+
+    _google_states: dict = {}
+
+    def _remember_state(state: str, payload: dict) -> None:
+        now = time.time()
+        for key, val in list(_google_states.items()):
+            if now - val.get("at", 0) > 600:
+                _google_states.pop(key, None)
+        payload["at"] = now
+        _google_states[state] = payload
+
+    def _google_page(title: str, message: str, ok: bool = False) -> HTMLResponse:
+        safe_title = html.escape(title)
+        safe_message = html.escape(message)
+        accent = "#2e7d32" if ok else "#b3542b"
+        return HTMLResponse(
+            f"""<!doctype html><html><head><meta charset="utf-8">
+<title>{safe_title}</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{{font-family:system-ui,-apple-system,sans-serif;background:#faf8f4;color:#1a1a17;
+display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+.card{{max-width:32rem;padding:2rem;background:#fff;border:1px solid #e8e4dc;border-radius:12px}}
+h1{{margin:0 0 .5rem;font-size:1.25rem;color:{accent}}}
+p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
+<body><div class="card"><h1>{safe_title}</h1><p>{safe_message}</p>
+<p><a href="/login">Back to sign in</a></p></div></body></html>""",
+            status_code=200 if ok else 400,
+        )
+
+    def _decode_id_token(id_token: str) -> dict:
+        """Read the claims out of Google's ID token.
+
+        The token arrives straight from Google's token endpoint over TLS, in
+        response to a code we just generated, so its signature has already
+        been established by the channel. Verifying it again would mean
+        fetching and caching Google's JWKS for no additional guarantee on
+        this path.
+        """
+        try:
+            payload = id_token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            return json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+        except Exception:
+            return {}
+
+    @router.get("/google/config")
+    async def google_config():
+        """Whether the Sign in with Google button should be shown at all."""
+        return {"configured": _google_cfg()["configured"]}
+
+    @router.get("/google/start")
+    async def google_start(request: Request, link_for: Optional[str] = None):
+        cfg = _google_cfg()
+        if not cfg["configured"]:
+            raise HTTPException(400, "Google sign-in is not configured. Add a client ID "
+                                     "and secret in Settings first.")
+        target = ""
+        if link_for:
+            current = getattr(request.state, "current_user", None)
+            if not current or current != link_for.strip().lower():
+                raise HTTPException(403, "You can only link Google to your own account.")
+            target = current
+        state = secrets.token_urlsafe(24)
+        redirect_uri = _google_redirect_uri(request)
+        _remember_state(state, {"link_for": target, "redirect_uri": redirect_uri})
+        params = {
+            "client_id": cfg["client_id"],
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            # Online only: this proves who you are once. It is not given
+            # standing permission to act on the Google account afterwards.
+            "access_type": "online",
+            "prompt": "select_account",
+        }
+        return RedirectResponse(
+            "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params))
+
+    @router.get("/google/callback")
+    async def google_callback(request: Request, code: Optional[str] = None,
+                              state: Optional[str] = None, error: Optional[str] = None):
+        if error:
+            return _google_page("Sign-in cancelled", f"Google reported: {error}")
+        cfg = _google_cfg()
+        if not cfg["configured"]:
+            return _google_page("Not configured", "Google sign-in is not set up on this server.")
+        entry = _google_states.pop((state or ""), None)
+        if not entry:
+            # Unknown state also catches a replayed or bookmarked callback,
+            # which is the point of carrying one.
+            return _google_page("Expired link",
+                                "That sign-in link was already used or has expired. "
+                                "Start again from the login page.")
+        if not code:
+            return _google_page("Sign-in failed", "Google did not return an authorization code.")
+
+        redirect_uri = entry.get("redirect_uri") or _google_redirect_uri(request)
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                tok = await client.post("https://oauth2.googleapis.com/token", data={
+                    "code": code,
+                    "client_id": cfg["client_id"],
+                    "client_secret": cfg["client_secret"],
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                })
+        except Exception as e:
+            logger.error("Google token exchange failed: %s", e)
+            return _google_page("Sign-in failed", "Could not reach Google to complete sign-in.")
+        if tok.status_code != 200:
+            logger.error("Google token exchange returned %s: %s", tok.status_code, tok.text[:300])
+            return _google_page(
+                "Sign-in failed",
+                "Google rejected the sign-in. The redirect URI must match the one "
+                f"registered in the Google console exactly: {redirect_uri}")
+
+        claims = _decode_id_token(tok.json().get("id_token") or "")
+        sub = (claims.get("sub") or "").strip()
+        email = (claims.get("email") or "").strip()
+        if not sub:
+            return _google_page("Sign-in failed", "Google did not return an account identifier.")
+        if claims.get("email_verified") is False:
+            return _google_page("Unverified email",
+                                "That Google account's email address is not verified.")
+
+        link_for = entry.get("link_for") or ""
+        if link_for:
+            if auth_manager.link_google(link_for, sub, email):
+                return _google_page("Google account linked",
+                                    f"{email or 'That account'} can now sign in as "
+                                    f"{link_for}.", ok=True)
+            return _google_page("Could not link",
+                                "That Google account is already attached to a different user.")
+
+        username = auth_manager.find_by_google_sub(sub)
+        if not username:
+            # Deliberately specific. The alternative is staring at a generic
+            # failure when the fix is one click away inside an account you can
+            # already reach with a password.
+            return _google_page(
+                "Not linked yet",
+                f"{email or 'That Google account'} is not linked to any account here. "
+                "Sign in with your password first, then use 'Link Google account' "
+                "in Settings.")
+
+        token = await asyncio.to_thread(auth_manager.create_session_trusted, username)
+        resp = RedirectResponse("/", status_code=303)
+        resp.set_cookie(
+            key=SESSION_COOKIE, value=token, httponly=True, samesite="lax",
+            secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
+            path="/", max_age=60 * 60 * 24 * 7,
+        )
+        logger.info("Google sign-in for '%s'", username)
+        return resp
+
+    @router.get("/google/linked")
+    async def google_linked(request: Request):
+        current = getattr(request.state, "current_user", None)
+        if not current:
+            raise HTTPException(401, "Not authenticated")
+        return {"linked_email": auth_manager.google_email_for(current)}
+
+    @router.post("/google/unlink")
+    async def google_unlink(request: Request):
+        current = getattr(request.state, "current_user", None)
+        if not current:
+            raise HTTPException(401, "Not authenticated")
+        if auth_manager.unlink_google(current):
+            return {"ok": True}
+        raise HTTPException(400, "Cannot unlink: set a password first, or nothing was linked.")
+
 
     @router.post("/logout")
     async def logout(request: Request, response: Response):
