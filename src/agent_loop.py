@@ -2944,6 +2944,10 @@ async def stream_agent_loop(
             if _rsid:
                 _anchor = f"\n\n[Open in Deep Research](#research-{_rsid})\n"
                 yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
+                # And into the saved message: a yielded delta reaches the
+                # live stream only, so without this the link is gone on
+                # reload — exactly when someone goes back to click it.
+                full_response += _anchor
 
             # Screen control needs a click, so the links have to be real
             # links. Emitted here rather than left in the tool result, which
@@ -2958,6 +2962,10 @@ async def stream_agent_loop(
                     f" · [Deny](#screencontrol-deny-{_appr_id})\n"
                 )
                 yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
+                # And into the saved message: a yielded delta reaches the
+                # live stream only, so without this the link is gone on
+                # reload — exactly when someone goes back to click it.
+                full_response += _anchor
 
             # Same pattern for notes: when manage_notes creates a note
             # and returns note_id, drop a `[View note](#note-<id>)` link
@@ -2971,6 +2979,10 @@ async def stream_agent_loop(
                 _label = f"View note: {_title}" if _title else "View note"
                 _anchor = f"\n\n[{_label}](#note-{_nid})\n"
                 yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
+                # And into the saved message: a yielded delta reaches the
+                # live stream only, so without this the link is gone on
+                # reload — exactly when someone goes back to click it.
+                full_response += _anchor
 
             # Save for history persistence
             tool_event = {

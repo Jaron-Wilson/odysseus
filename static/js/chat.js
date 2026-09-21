@@ -2202,6 +2202,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     if (screenshotSrc) {
                       const details = document.createElement('details');
                       details.className = 'agent-tool-output';
+                      // Open by default. A screenshot the user asked for is
+                      // the answer, not a detail: collapsed inside a collapsed
+                      // tool card it is two clicks deep and easy to miss
+                      // entirely, which is what happened.
+                      details.open = true;
                       const summary = document.createElement('summary');
                       summary.textContent = 'Screenshot';
                       const img = document.createElement('img');

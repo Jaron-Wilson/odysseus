@@ -2130,7 +2130,7 @@ export function addMessage(role, content, modelName, metadata) {
             }
             const screenshotSrc = safeToolScreenshotSrc(ev.screenshot);
             if (screenshotSrc) {
-              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+              outHtml += `<details open class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
             }
             // File-write/edit diff (persisted in the tool event) \u2014 re-render it
             // so it survives reload, matching the live stream.
