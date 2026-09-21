@@ -1,6 +1,7 @@
 # src/llm_core.py
 import httpx
 import asyncio
+import os
 import time
 import json
 import logging
@@ -224,6 +225,32 @@ def _clear_host_dead(url: str) -> None:
 # repeat calls to api.anthropic.com / api.openai.com / openrouter skip the
 # 100-500ms TCP+TLS handshake. Lazy init so we bind to the running event loop.
 _http_client: Optional[httpx.AsyncClient] = None
+# How many generations we will have in flight against ONE endpoint.
+# A single GPU serving a large model at a long context has room for very
+# few concurrent sequences; past that the server accepts the request and
+# queues it, which is indistinguishable from working until the tokens
+# never arrive. Deliberately not 1: compare panes and background
+# extraction are legitimately parallel.
+MAX_CONCURRENT_PER_ENDPOINT = int(
+    os.getenv("ODYSSEUS_MAX_CONCURRENT_PER_ENDPOINT", "4"))
+# How long to wait for a slot before saying so. Long enough to ride out a
+# normal turn finishing, short enough that nobody watches a spinner
+# wondering.
+ENDPOINT_SLOT_WAIT_S = float(os.getenv("ODYSSEUS_ENDPOINT_SLOT_WAIT_S", "120"))
+
+_ENDPOINT_SLOTS: Dict[str, asyncio.Semaphore] = {}
+
+
+def _endpoint_slot(url: str) -> asyncio.Semaphore:
+    """One semaphore per host, created on first use."""
+    key = _host_key(url)
+    sem = _ENDPOINT_SLOTS.get(key)
+    if sem is None:
+        sem = asyncio.Semaphore(MAX_CONCURRENT_PER_ENDPOINT)
+        _ENDPOINT_SLOTS[key] = sem
+    return sem
+
+
 _http_limits = httpx.Limits(max_connections=100, max_keepalive_connections=30, keepalive_expiry=30.0)
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -1462,7 +1489,39 @@ async def llm_call_async(
                 raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
 
-async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
+async def stream_llm(url: str, model: str, messages: List[Dict], *args, **kwargs):
+    """Hold one of the endpoint's slots for the whole generation.
+
+    Wrapping here rather than at one call site so every caller is
+    counted -- the background extraction passes go through the same
+    door as a chat turn, and they are part of what fills a local server
+    up.
+    """
+    sem = _endpoint_slot(url)
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=ENDPOINT_SLOT_WAIT_S)
+    except asyncio.TimeoutError:
+        host = _host_key(url)
+        logger.warning("[slots] %s busy: %d in flight, waited %ss",
+                       host, MAX_CONCURRENT_PER_ENDPOINT, int(ENDPOINT_SLOT_WAIT_S))
+        # A pre-content error, which is the shape the fallback chain
+        # already retries on, so a busy primary moves to the next
+        # candidate instead of stalling the turn.
+        yield ('event: error\ndata: ' + json.dumps({
+            "error": (f"{host} is busy \u2014 {MAX_CONCURRENT_PER_ENDPOINT} "
+                      f"generations already in flight and none freed up in "
+                      f"{int(ENDPOINT_SLOT_WAIT_S)}s"),
+            "status": 503,
+        }) + '\n\n')
+        return
+    try:
+        async for _chunk in _stream_llm_inner(url, model, messages, *args, **kwargs):
+            yield _chunk
+    finally:
+        sem.release()
+
+
+async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None):
