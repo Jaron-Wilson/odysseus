@@ -3184,7 +3184,18 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const msgInput = uiModule.el('message');
       const sb = document.querySelector('.send-btn');
       if (!msgInput || !sb) { _abandon(); return; }
-      const tail = (accumulated || '').slice(-400);
+      // A turn that recorded "stopped before writing anything" is not
+      // partial output to continue from -- it is the server saying there
+      // was none. Quoting it back produces a prompt that asks the model to
+      // carry on from a sentence it never wrote, which is how a recovery
+      // attempt turns into fresh confusion.
+      const STOPPED_MARKERS = [
+        '_Stopped before any answer was written._',
+        '_Stopped while still thinking \u2014 no answer was written._',
+      ];
+      let _acc = accumulated || '';
+      for (const mk of STOPPED_MARKERS) _acc = _acc.split(mk).join('');
+      const tail = _acc.trim().slice(-400);
       msgInput.value = tail
         ? `The stream dropped before you finished. It ended with:\n\n${tail}\n\nIf the task is fully complete, reply with just: DONE. Otherwise continue exactly where you left off and finish it — do not repeat what you already wrote.`
         : `The stream dropped before you produced anything. If the task is already done, reply with just: DONE. Otherwise complete it now.`;

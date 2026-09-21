@@ -8,6 +8,7 @@ The LLM decides when to use tools by writing fenced code blocks.
 
 import asyncio
 import collections
+import os
 import json
 import re
 import time
@@ -1629,6 +1630,58 @@ _VERIFIER_EFFECTFUL_TOOLS = {
     "create_document", "update_document", "edit_document",
     "bash", "python", "write_file",
 }
+# How long to wait for the FIRST token before concluding the endpoint is not
+# going to answer. Generous: prefill on a long prompt (a whole PDF, say) is
+# legitimately slow on a local model. Still well inside the browser's own
+# six-minute timeout, so the failure is ours to report rather than something
+# the page gives up on with nothing to show.
+FIRST_TOKEN_TIMEOUT_S = float(os.getenv("ODYSSEUS_FIRST_TOKEN_TIMEOUT_S", "180"))
+
+
+async def _with_stall_timeout(agen, first_timeout, later_timeout, model_label):
+    """Yield from an LLM stream, giving up if it goes silent.
+
+    The caller's wall-clock deadline is checked inside its loop body, so a
+    stream that yields nothing at all never reaches it. This wraps each
+    await instead, which is the only place a silent stream can be caught.
+
+    On a stall it yields a normal `delta` rather than only an error event:
+    a delta reaches the screen live and accumulates into the saved
+    response, so the reason survives a reload. An error event alone
+    leaves an empty turn behind, which reads as a broken app.
+    """
+    it = agen.__aiter__()
+    got_any = False
+    while True:
+        try:
+            chunk = await asyncio.wait_for(
+                it.__anext__(), timeout=(later_timeout if got_any else first_timeout))
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            waited = int(later_timeout if got_any else first_timeout)
+            if got_any:
+                note = (f"\n\n_The response stopped partway: {model_label} sent "
+                        f"nothing further for {waited}s._")
+            else:
+                note = (f"\n\n_No response from {model_label}: it accepted the "
+                        f"request but sent nothing for {waited}s. The endpoint "
+                        f"can be reachable while its model is still loading or "
+                        f"wedged \u2014 listing models does not mean it can "
+                        f"generate. Try another model, or restart that "
+                        f"endpoint._")
+            logger.warning("[agent] %s stalled after %ss (first_token=%s)",
+                           model_label, waited, got_any)
+            yield 'data: ' + json.dumps({"delta": note}) + '\n\n'
+            try:
+                await it.aclose()
+            except Exception:
+                pass
+            return
+        got_any = True
+        yield chunk
+
+
 _VERIFIER_MAX_ROUNDS = 2  # cap re-verify cycles per turn — never loop forever
 
 
@@ -2255,15 +2308,20 @@ async def stream_agent_loop(
         # complementary cap for the rare stream that trickles bytes forever and
         # so never trips the inactivity timeout. Generous — only catches runaway.
         _round_deadline = time.time() + max(agent_stream_timeout * 4, 1200)
-        async for chunk in stream_llm_with_fallback(
-            _candidates,
-            messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            prompt_type=prompt_type if round_num == 1 else None,
-            tools=all_tool_schemas if all_tool_schemas else None,
-            timeout=agent_stream_timeout,
-            session_id=session_id,
+        async for chunk in _with_stall_timeout(
+            stream_llm_with_fallback(
+                _candidates,
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                prompt_type=prompt_type if round_num == 1 else None,
+                tools=all_tool_schemas if all_tool_schemas else None,
+                timeout=agent_stream_timeout,
+                session_id=session_id,
+            ),
+            FIRST_TOKEN_TIMEOUT_S,
+            max(float(agent_stream_timeout), 60.0),
+            model,
         ):
             if time.time() > _round_deadline:
                 logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")

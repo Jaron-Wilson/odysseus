@@ -107,3 +107,24 @@ def test_the_helper_is_imported():
     assert re.search(r"^\s*stopped_response_for_save,\s*$", src, re.M), (
         "stopped_response_for_save is used but never imported"
     )
+
+
+def test_recovery_does_not_quote_the_stop_marker_back():
+    """The marker is the server saying there was no output, not output.
+
+    Observed live once the marker landed: the stall watchdog picked it up
+    as partial text and sent "It ended with: _Stopped before any answer
+    was written._ ... continue where you left off", asking the model to
+    carry on from a sentence it never wrote. Recording the stop must not
+    manufacture a new prompt out of the recording.
+    """
+    chat = (_REPO / "static" / "js" / "chat.js").read_text()
+    i = chat.index("function _tryAutoRecover(")
+    body = chat[i:i + 2600]
+    assert "STOPPED_MARKERS" in body, (
+        "auto-recovery still treats the stopped marker as partial output"
+    )
+    assert STOPPED_NO_OUTPUT in body, (
+        "the marker the server writes and the one the client strips have "
+        "drifted apart"
+    )
