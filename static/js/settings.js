@@ -2148,6 +2148,10 @@ function initAccount() {
     render2FA();
   }
 
+  // Google accounts sit in the same Account tab as 2FA, so populate them on
+  // the same pass. The sign-in failure page points people here by name.
+  refreshGoogleAccounts();
+
   // Logout
   const logoutBtn = el('settings-logout-btn');
   if (logoutBtn) {
@@ -5316,3 +5320,67 @@ const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations,
 
 
 export default settingsModule;
+
+// ── Google accounts ────────────────────────────────────────────────────
+// Shown only when the server reports credentials. Listing the linked
+// addresses matters as much as the link button: without it there is no way
+// to tell which Google account a sign-in will actually use.
+export async function refreshGoogleAccounts() {
+  const card = document.getElementById('settings-google-card');
+  const list = document.getElementById('settings-google-list');
+  if (!card || !list) return;
+  try {
+    const cfg = await (await fetch('/api/auth/google/config')).json();
+    if (!cfg.configured) { card.style.display = 'none'; return; }
+  } catch (_) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  let emails = [];
+  try {
+    const r = await fetch('/api/auth/google/linked');
+    if (r.ok) emails = (await r.json()).linked_emails || [];
+  } catch (_) {}
+
+  list.innerHTML = '';
+  if (!emails.length) {
+    const none = document.createElement('div');
+    none.style.cssText = 'font-size:11px;opacity:0.6;';
+    none.textContent = 'No Google account linked yet.';
+    list.appendChild(none);
+    return;
+  }
+  emails.forEach((email) => {
+    const row = document.createElement('div');
+    row.className = 'settings-row';
+    row.style.cssText = 'justify-content:space-between;align-items:center;gap:8px;';
+    const label = document.createElement('span');
+    label.style.cssText = 'font-size:12px;';
+    label.textContent = email;
+    const btn = document.createElement('button');
+    btn.className = 'admin-btn-add';
+    btn.textContent = 'Unlink';
+    btn.addEventListener('click', async () => {
+      const msg = document.getElementById('settings-google-msg');
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/auth/google/unlink?email=' + encodeURIComponent(email),
+                              { method: 'POST' });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          // The interesting refusal is "that is your last way in", so show
+          // what the server said rather than a generic failure.
+          if (msg) msg.textContent = err.detail || 'Could not unlink.';
+        } else if (msg) {
+          msg.textContent = 'Unlinked ' + email;
+        }
+      } catch (e) {
+        if (msg) msg.textContent = 'Could not reach the server.';
+      }
+      btn.disabled = false;
+      refreshGoogleAccounts();
+    });
+    row.appendChild(label);
+    row.appendChild(btn);
+    list.appendChild(row);
+  });
+}

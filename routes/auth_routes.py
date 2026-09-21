@@ -363,8 +363,9 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
             return _google_page(
                 "Not linked yet",
                 f"{email or 'That Google account'} is not linked to any account here. "
-                "Sign in with your password first, then use 'Link Google account' "
-                "in Settings.")
+                "Sign in with your password, then open Settings and use "
+                "'Link a Google account' under Account. You can also go "
+                "straight to /api/auth/google/link once signed in.")
 
         token = await asyncio.to_thread(auth_manager.create_session_trusted, username)
         resp = RedirectResponse("/", status_code=303)
