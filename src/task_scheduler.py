@@ -236,6 +236,29 @@ def _digest_windows(now):
     ]
 
 
+# Four is not a capacity estimate, just a point past which a misread setting
+# stops being a preference and starts being a way to fall over.
+_MAX_TASK_CONCURRENCY = 4
+
+
+def _resolve_task_concurrency() -> int:
+    """How many scheduled task runs may overlap. Defaults to 1.
+
+    Read once at construction rather than per run: changing how many things
+    may run mid-flight would resize the semaphore under waiters, and a restart
+    is a fair price for a setting touched approximately never.
+    """
+    try:
+        from src.settings import get_setting
+        raw = get_setting("task_concurrency", 1)
+        n = int(raw or 1)
+    except Exception:
+        # A bad value must not stop the scheduler from starting; serial is the
+        # safe reading of "I could not tell".
+        return 1
+    return max(1, min(n, _MAX_TASK_CONCURRENCY))
+
+
 class TaskScheduler:
     def __init__(self, session_manager):
         self._session_manager = session_manager
@@ -249,12 +272,18 @@ class TaskScheduler:
         self._executing_lock = asyncio.Lock()
         self._pending_notifications = []  # completed task notifications
         self._task_defer_counts = {}
-        # Strict serial execution — exactly one task runs at a time. Anything
-        # else (manual trigger, scheduled dispatch, task chain) waits behind
-        # the semaphore as "queued" and starts when the current run finishes.
-        # This is a hard guarantee, not configurable.
-        self._run_semaphore = asyncio.Semaphore(1)
-        self._concurrency_cap = 1
+        # Serial by default: one task at a time, with manual triggers,
+        # scheduled dispatch and task chains all waiting behind the semaphore
+        # as "queued". That default is deliberate — pointing several task runs
+        # at one local model server just makes them queue on the GPU instead,
+        # more slowly and less visibly.
+        #
+        # It is a setting rather than a constant because that reasoning stops
+        # holding the moment runs target different backends, which is the case
+        # here with vLLM and Ollama on separate machines. Raise it only if that
+        # is true for you; leaving it at 1 keeps the original behaviour exactly.
+        self._concurrency_cap = _resolve_task_concurrency()
+        self._run_semaphore = asyncio.Semaphore(self._concurrency_cap)
         self._task_handles = {}
 
     def _set_run_progress(self, run_id: str, message: str):
