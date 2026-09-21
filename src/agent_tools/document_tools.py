@@ -265,6 +265,13 @@ class CreateDocumentTool:
             if content is None:
                 content = "\n".join(lines)
 
+        # "pdf" is not a language a document is stored in, but it is a
+        # perfectly reasonable thing to be asked for. Remember that it was
+        # asked for so the result can carry a real PDF, instead of dropping
+        # it here and leaving markdown wearing a PDF label.
+        wants_pdf = (language or "").strip().lower() == "pdf" or \
+            (title or "").strip().lower().endswith(".pdf")
+
         # Validate language: must be in known set, else default based on content
         if language and language not in _KNOWN_LANGS:
             language = None
@@ -322,7 +329,7 @@ class CreateDocumentTool:
             except Exception:
                 logger.debug("document_created event dispatch failed", exc_info=True)
 
-            return {
+            result = {
                 "action": "create",
                 "doc_id": doc_id,
                 "title": title,
@@ -335,6 +342,17 @@ class CreateDocumentTool:
                 # through to hash navigation, which resets to a new chat.
                 "anchor": f"[{title}](#document-{doc_id})",
             }
+            if wants_pdf:
+                # Stored as markdown because that is what the editor edits;
+                # the PDF is rendered on demand from the same text, so it
+                # stays in step with later edits rather than going stale.
+                _name = (title or "document").removesuffix(".pdf").strip() or "document"
+                result["pdf"] = f"[Download {_name} as PDF](/api/document/{doc_id}/export-pdf)"
+                result["note"] = (
+                    "Stored as an editable markdown document; the PDF link "
+                    "renders the current text on demand."
+                )
+            return result
         except Exception as e:
             db.rollback()
             return {"error": f"Failed to create document: {e}"}

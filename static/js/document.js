@@ -586,7 +586,7 @@ import * as Modals from './modalManager.js';
     } catch (_) { try { el.blur(); } catch (_) {} }
   }
 
-  async function _downloadFilledPdf() {
+  async function _downloadPdf() {
     if (!activeDocId) return;
     _dismissDocKb();   // export shouldn't leave the keyboard up
     await _saveActiveDocBeforeExport();
@@ -4713,7 +4713,7 @@ import * as Modals from './modalManager.js';
     });
 
     // Export PDF (form-backed markdown docs)
-    document.getElementById('doc-export-pdf-btn')?.addEventListener('click', _downloadFilledPdf);
+    document.getElementById('doc-export-pdf-btn')?.addEventListener('click', _downloadPdf);
 
     // Toggle inline PDF view (form-backed markdown docs). Default for a
     // form-backed doc is "active" — the toggle reads back the visible state.
@@ -8435,9 +8435,18 @@ import * as Modals from './modalManager.js';
     // getting too cramped for dedicated icons.
     options.push({ label: 'Import from library', fn: () => openLibrary() });
     options.push({ label: 'Import from device', fn: () => _importFromDevice(), _divider: true });
-    if (isForm) options.push({ label: 'Filled PDF (.pdf)', fn: _downloadFilledPdf });
+    // Both go to /export-pdf. For a form-backed doc that fills the
+    // uploaded PDF; for anything else it typesets the markdown. Same
+    // endpoint, so "export as PDF" means the same thing either way -- it
+    // used to refuse outright for ordinary documents.
+    if (isForm) options.push({ label: 'Filled PDF (.pdf)', fn: _downloadPdf });
     options.push(
       { label: 'Export Markdown', fn: exportDocument },
+    );
+    // 'Print as PDF' rasterises the on-screen view; the rendered one has
+    // real text you can select and search, so it leads.
+    if (!isForm) options.push({ label: 'Export as PDF', fn: _downloadPdf });
+    options.push(
       { label: 'Print as PDF', fn: exportAsPdf },
       { label: 'Export as Word', fn: exportAsDocx },
     );

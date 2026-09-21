@@ -40,6 +40,21 @@ def _aggregate_language_facets(lang_rows):
     return out
 
 
+def _sanitize_doc_language(language, doc) -> str:
+    """Keep "pdf" out of the stored language.
+
+    It is a view mode for a document backed by an uploaded PDF, not a
+    format anything can be saved as. Stored on an ordinary document it
+    only mislabels markdown -- PDF icon, PDF extension, markdown inside.
+    """
+    lang = (language or "").strip().lower()
+    if lang == "pdf":
+        from src.pdf_form_doc import find_source_upload_id
+        if not find_source_upload_id(doc.current_content or ""):
+            return "markdown"
+    return language
+
+
 def _library_language_for_document(doc: Document) -> str:
     """Return the display language used by the document library.
 
@@ -632,7 +647,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if req.title is not None:
                 doc.title = req.title
             if req.language is not None:
-                doc.language = req.language
+                # "pdf" is not a language a document can be stored in -- the
+                # editor only honours it for form-backed docs, where it is a
+                # view toggle. Persisting it elsewhere is what produced a
+                # markdown document displaying a PDF icon.
+                doc.language = _sanitize_doc_language(req.language, doc)
             if req.session_id is not None:
                 # Empty string = unlink from session
                 if req.session_id:
@@ -1419,7 +1438,29 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
-                raise HTTPException(400, "Document is not linked to a source PDF")
+                # Not a filled-in copy of an uploaded form, just a document.
+                # Typeset its markdown instead of refusing: "export as PDF"
+                # should mean the same thing whatever the document started
+                # life as, and refusing here is why a requested PDF used to
+                # come back as markdown wearing a PDF label.
+                from src.doc_pdf import render_markdown_pdf
+
+                rendered, reason = await render_markdown_pdf(
+                    doc.current_content or "",
+                    doc.id,
+                    running_title=(doc.title or "Document"),
+                )
+                if not rendered:
+                    # Say which step failed. The renderer shells out to node,
+                    # so "500 PDF failed" alone would send someone hunting
+                    # through Python that is working fine.
+                    logger.error(f"markdown->PDF failed for doc {doc_id}: {reason}")
+                    raise HTTPException(500, f"Could not render PDF: {reason}")
+                return FileResponse(
+                    rendered,
+                    media_type="application/pdf",
+                    filename=_slug(doc.title or "document") + ".pdf",
+                )
 
             pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
