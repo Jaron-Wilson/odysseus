@@ -155,3 +155,27 @@ def test_the_route_is_registered_and_scoped():
     body = src[i:i + 700]
     assert "_require_user(request)" in body, "the pending list is unauthenticated"
     assert "pending_for(user)" in body, "the pending list is not owner-scoped"
+
+
+def test_the_modal_quotes_the_real_limits():
+    """The numbers on screen and the numbers enforced must be the same one.
+
+    The modal is a promise about what approving does. Hardcoding 25 and 15
+    in the copy while the server enforces its own constants is how a
+    promise quietly becomes false -- and this is a promise about someone
+    handing over their mouse and keyboard.
+    """
+    import src.screen_control_approvals as approvals
+
+    src = (_JS / "chatRenderer.js").read_text()
+    i = src.index("export function showScreenControlModal")
+    copy = src[i:i + 1600]
+
+    assert "%d actions" % approvals.MAX_ACTIONS_PER_GRANT in copy, (
+        "the modal promises a different action budget than the server "
+        "enforces (server: %d)" % approvals.MAX_ACTIONS_PER_GRANT
+    )
+    assert "%d minutes" % (approvals.GRANT_TTL_S // 60) in copy, (
+        "the modal promises a different window than the server enforces "
+        "(server: %d minutes)" % (approvals.GRANT_TTL_S // 60)
+    )
