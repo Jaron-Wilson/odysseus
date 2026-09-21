@@ -1055,6 +1055,33 @@ window.toggleSources = function(id) {
 };
 
 // Event delegation for sources toggle (capture phase, handles SVG targets)
+// Open whatever an in-app anchor points at. The click handler below does
+// this inline; this is the same behaviour reachable without a click, for a
+// URL that arrives already carrying the hash — a bookmark, a paste, or a
+// link that opened in a fresh tab.
+export function openEntityHash(hash) {
+  const m = String(hash || '').match(
+    /^#?(document|note|image|email|event|task|skill|research)-(.+)$/);
+  if (!m) return false;
+  const [, kind, id] = m;
+  const load = (path, ...names) => import(path).then((mod) => {
+    for (const n of names) {
+      const fn = mod[n] || (mod.default && mod.default[n]);
+      if (fn) { fn(id); return; }
+    }
+  }).catch(() => {});
+  if (kind === 'document') load('./document.js', 'loadDocument', 'openDocument');
+  else if (kind === 'note') load('./notes.js', 'openNote');
+  else if (kind === 'research') load('./research/panel.js', 'openPanel');
+  else if (kind === 'skill') load('./skills.js', 'openSkill');
+  else if (kind === 'task') load('./tasks.js', 'openTasks');
+  else if (kind === 'image') load('./gallery.js', 'openImage', 'openGallery');
+  else if (kind === 'email') load('./emailLibrary.js', 'openEmail');
+  else if (kind === 'event') load('./calendar.js', 'openEvent');
+  else return false;
+  return true;
+}
+
 document.addEventListener('click', function(e) {
   // Walk up from target manually to handle SVG elements that may not support closest()
   var el = e.target;

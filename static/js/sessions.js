@@ -1374,6 +1374,19 @@ export async function loadSessions() {
     const _isTransient = (s) => !!s && (s.folder === 'Assistant' || s.folder === 'Tasks');
     const _realSessions = activeSessions.filter(s => !_isTransient(s));
     const hashId = window.location.hash.replace('#', '');
+    // An entity anchor is not a session id. Left to fall through it matches
+    // nothing, the app picks some other chat, and the thing the URL actually
+    // pointed at never opens — which is what a bookmarked or new-tab
+    // #document-<id> did.
+    const _entityHash = /^(document|note|image|email|event|task|skill|research)-/
+      .test(hashId);
+    if (_entityHash) {
+      import('./chatRenderer.js').then((mod) => {
+        const open = mod.openEntityHash
+          || (mod.default && mod.default.openEntityHash);
+        if (open) open(window.location.hash);
+      }).catch(() => {});
+    }
     let savedId = Storage.get('lastSessionId');
     // If the persisted lastSessionId points to a transient session (legacy
     // state from before the persistence-guard was added), drop it.
@@ -1392,7 +1405,7 @@ export async function loadSessions() {
       // completions call loadSessions() later; without this guard that reload
       // sees no current session and auto-selects the previous chat.
       targetId = null;
-    } else if (hashId && activeSessions.some(s => s.id === hashId)) {
+    } else if (hashId && !_entityHash && activeSessions.some(s => s.id === hashId)) {
       targetId = hashId;
     } else if (currentSessionId && activeSessions.some(s => s.id === currentSessionId)) {
       targetId = currentSessionId;
