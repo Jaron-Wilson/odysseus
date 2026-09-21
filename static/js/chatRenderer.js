@@ -1059,26 +1059,40 @@ window.toggleSources = function(id) {
 // this inline; this is the same behaviour reachable without a click, for a
 // URL that arrives already carrying the hash — a bookmark, a paste, or a
 // link that opened in a fresh tab.
+// Where each anchor kind goes: [module, exported names to try, optional
+// argument shaping, optional fallback]. One table rather than one per
+// entry point - the click handler and the page-load path had separate
+// copies and the copies disagreed, so three kinds silently did nothing.
+const ENTITY_ROUTES = {
+  document: ['./document.js', ['loadDocument', 'openDocument']],
+  note: ['./notes.js', ['openNote']],
+  image: ['./gallery.js', ['openGalleryImage']],
+  email: ['./emailLibrary.js', ['openEmailLibrary'], (id) => ({ uid: id })],
+  event: ['./calendar.js', ['openCalendarTo']],
+  skill: ['./skills.js', ['openSkill']],
+  research: ['./research/panel.js', ['openPanel']],
+  // The tasks panel may not export an opener; its button is equivalent.
+  task: ['./tasks.js', ['openTasks'], null, () => {
+    const b = document.getElementById('tasks-btn');
+    if (b) b.click();
+  }],
+};
+
 export function openEntityHash(hash) {
   const m = String(hash || '').match(
     /^#?(document|note|image|email|event|task|skill|research)-(.+)$/);
   if (!m) return false;
   const [, kind, id] = m;
-  const load = (path, ...names) => import(path).then((mod) => {
+  const route = ENTITY_ROUTES[kind];
+  if (!route) return false;
+  const [path, names, arg, fallback] = route;
+  import(path).then((mod) => {
     for (const n of names) {
       const fn = mod[n] || (mod.default && mod.default[n]);
-      if (fn) { fn(id); return; }
+      if (fn) { fn(arg ? arg(id) : id); return; }
     }
-  }).catch(() => {});
-  if (kind === 'document') load('./document.js', 'loadDocument', 'openDocument');
-  else if (kind === 'note') load('./notes.js', 'openNote');
-  else if (kind === 'research') load('./research/panel.js', 'openPanel');
-  else if (kind === 'skill') load('./skills.js', 'openSkill');
-  else if (kind === 'task') load('./tasks.js', 'openTasks');
-  else if (kind === 'image') load('./gallery.js', 'openImage', 'openGallery');
-  else if (kind === 'email') load('./emailLibrary.js', 'openEmail');
-  else if (kind === 'event') load('./calendar.js', 'openEvent');
-  else return false;
+    if (fallback) fallback();
+  }).catch(() => { if (fallback) fallback(); });
   return true;
 }
 
@@ -1188,54 +1202,16 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (kind === 'session') {
+    // Sessions are not in the entity table: switching chats is a different
+    // action from opening something inside one, and startup reaches it by
+    // its own path.
     import('./sessions.js').then(mod => {
       const fn = mod.selectSession || (mod.default && mod.default.selectSession);
       if (fn) fn(id);
     });
-  } else if (kind === 'document') {
-    import('./document.js').then(mod => {
-      const open = mod.loadDocument
-        || mod.openDocument
-        || (mod.default && (mod.default.loadDocument || mod.default.openDocument));
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'note') {
-    import('./notes.js').then(mod => {
-      const open = mod.openNote || (mod.default && mod.default.openNote);
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'image') {
-    import('./gallery.js').then(mod => {
-      const open = mod.openGalleryImage || (mod.default && mod.default.openGalleryImage);
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'email') {
-    import('./emailLibrary.js').then(mod => {
-      const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
-      if (open) open({ uid: id });
-    }).catch(() => {});
-  } else if (kind === 'event') {
-    import('./calendar.js').then(mod => {
-      const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'task') {
-    import('./tasks.js').then(mod => {
-      const open = mod.openTasks || (mod.default && mod.default.openTasks);
-      if (open) open(id);
-      else { const b = document.getElementById('tasks-btn'); if (b) b.click(); }
-    }).catch(() => { const b = document.getElementById('tasks-btn'); if (b) b.click(); });
-  } else if (kind === 'skill') {
-    import('./skills.js').then(mod => {
-      const open = mod.openSkill || (mod.default && mod.default.openSkill);
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'research') {
-    import('./research/panel.js').then(mod => {
-      const open = mod.openPanel || (mod.default && mod.default.openPanel);
-      if (open) open(id);
-    }).catch(() => {});
+    return;
   }
+  openEntityHash(href);
 });
 
 /**

@@ -2794,6 +2794,32 @@ function _doCloseGallery() {
   if (btn) btn.classList.remove('active');
 }
 
+// Open the gallery straight to one photo, for an #image-<id> anchor.
+// Fetched by id, not looked up in the loaded grid: the grid is one
+// paginated, filtered page, so anything older simply is not in it.
+export async function openGalleryImage(imageId) {
+  openGallery();
+  if (!imageId) return false;
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/gallery/${encodeURIComponent(imageId)}`,
+      { credentials: 'same-origin' });
+    if (!res.ok) return false;
+    const img = await res.json();
+    if (!img || !img.id) return false;
+    // The detail pane is built by openGallery; wait for it rather than
+    // assuming the modal has finished mounting.
+    for (let i = 0; i < 40; i++) {
+      if (document.getElementById('gallery-detail')) break;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    _openDetail(img);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 export function closeGallery() {
   if (!_open && !Modals.isMinimized('gallery-modal')) return;
   if (Modals.isRegistered('gallery-modal')) {
@@ -2828,6 +2854,7 @@ function _humanSize(bytes) {
 
 const galleryModule = {
   openGallery,
+  openGalleryImage,
   closeGallery,
   isGalleryOpen,
 };
