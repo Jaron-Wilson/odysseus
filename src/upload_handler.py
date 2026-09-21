@@ -485,8 +485,14 @@ class UploadHandler:
             logger.error(f"Failed to get upload stats: {e}")
             return {"error": str(e)}
     
-    def save_upload(self, u: UploadFile, client_ip: str, owner: str = None) -> dict:
-        """Save uploaded file with enhanced security and organization."""
+    def save_upload(self, u: UploadFile, client_ip: str, owner: str = None,
+                    session_id: str = None) -> dict:
+        """Save uploaded file with enhanced security and organization.
+
+        `session_id` records which chat the file arrived in, so the library
+        can group a conversation's files. It is carried in rather than
+        inferred later: once the file is on disk that association is gone.
+        """
         # Rate limiting
         now = time.time()
         with self._upload_rate_lock:
@@ -641,6 +647,8 @@ class UploadHandler:
             "last_accessed": datetime.now().isoformat(),
             "client_ip": client_ip,
             "owner": owner,
+            # Which chat this arrived in, for the per-chat library.
+            "session_id": session_id or "",
         }
         # Capture image dimensions (EXIF-rotated) so the chat thumbnail skeleton
         # can size itself to the right aspect ratio before the bytes arrive.

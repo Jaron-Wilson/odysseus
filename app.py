@@ -744,6 +744,8 @@ app.include_router(setup_mcp_routes(mcp_manager))
 # is not constructed until this point.
 from routes.media_routes import setup_media_routes
 app.include_router(setup_media_routes(mcp_manager))
+from routes.chat_library_routes import setup_chat_library_routes
+app.include_router(setup_chat_library_routes())
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)

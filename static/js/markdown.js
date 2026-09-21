@@ -26,9 +26,31 @@ function safeLinkUrl(rawUrl) {
   return '';
 }
 
+// Hash schemes the app handles itself. A link to one of these is internal
+// however it was written — bare, or as a full URL to this host.
+const IN_APP_HASH = /^#(session|document|note|image|email|event|task|skill|research|claudecode|screencontrol)-/;
+
+function inAppHash(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  if (url.startsWith('#')) return IN_APP_HASH.test(url) ? url : '';
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin === window.location.origin && IN_APP_HASH.test(parsed.hash)) {
+      return parsed.hash;
+    }
+  } catch (_) { /* not a URL */ }
+  return '';
+}
+
 function linkHtml(text, url) {
-  const safeUrl = safeLinkUrl(url);
   const safeText = escapeHtml(text);
+  // Checked before safeLinkUrl, which would classify a full URL to this host
+  // as external and open it in a new tab.
+  const internal = inAppHash(url);
+  if (internal) {
+    return `<a href="${internal}" class="chat-link">${safeText}</a>`;
+  }
+  const safeUrl = safeLinkUrl(url);
   if (!safeUrl) return safeText;
   if (safeUrl.startsWith('#')) {
     return `<a href="${safeUrl}" class="chat-link">${safeText}</a>`;

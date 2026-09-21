@@ -41,7 +41,11 @@ def _fake_handler():
     h.upload_rate_log = {}
     h.max_concurrent_uploads = 3
 
-    def save_upload(u, client_ip, owner=None):
+    # **kwargs so the stub tolerates optional arguments the route learns to
+    # pass (session_id was added for the per-chat library). Pinning it to
+    # today's exact signature makes this test fail for changes it is not
+    # actually about.
+    def save_upload(u, client_ip, owner=None, **kwargs):
         # Mimic the real handler: every saved file logs a timestamp.
         h.upload_rate_log.setdefault(client_ip, []).append(_NOW)
         name = getattr(u, "filename", "f")

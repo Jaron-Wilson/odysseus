@@ -3,7 +3,7 @@ import os
 import time
 import json
 import asyncio
-from fastapi import APIRouter, Request, File, UploadFile, HTTPException
+from fastapi import APIRouter, Request, File, UploadFile, HTTPException, Form
 from typing import List
 import logging
 from core.middleware import require_admin
@@ -52,7 +52,8 @@ def setup_upload_routes(upload_handler):
         raise HTTPException(404, "File not found")
     
     @router.post("")
-    async def api_upload(request: Request, files: List[UploadFile] = File(...)):
+    async def api_upload(request: Request, files: List[UploadFile] = File(...),
+                         session_id: str = Form("")):
         """Upload files with enhanced security and organization."""
         if not files:
             raise HTTPException(400, "No files uploaded")
@@ -76,9 +77,18 @@ def setup_upload_routes(upload_handler):
                 detail=f"Maximum concurrent uploads ({upload_handler.max_concurrent_uploads}) exceeded"
             )
         
+        # Declared as a Form field rather than read via request.form():
+        # re-reading the body after FastAPI has parsed it leaves the upload
+        # streams exhausted, and every file then saves as empty.
+        # isinstance, not truthiness: the tests call this function directly,
+        # where the default is FastAPI's Form sentinel rather than a string.
+        _session_id = session_id.strip() if isinstance(session_id, str) else ""
+
         for u in files:
             try:
-                meta = upload_handler.save_upload(u, client_ip, owner=get_current_user(request))
+                meta = upload_handler.save_upload(
+                    u, client_ip, owner=get_current_user(request),
+                    session_id=_session_id)
                 out.append({
                     "id": meta["id"],
                     "name": meta["name"],

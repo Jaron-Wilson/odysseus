@@ -3624,22 +3624,57 @@ import * as Modals from './modalManager.js';
 
   }
 
-  // Detach a doc from its chat session so it stops reappearing in that
-  // chat: docs with content are unlinked (kept in the library), empty docs
-  // are deleted. Used by both the tab × and the mobile chip-to-trash close.
+  // Documents the user has closed, per session. A view preference for this
+  // browser, so it lives in localStorage rather than being written back to
+  // the document — closing a tab should not change what the document
+  // belongs to.
+  function _dismissKey(sessionId) {
+    return `odysseus:closed-docs:${sessionId || 'none'}`;
+  }
+
+  function _dismissedDocs(sessionId) {
+    try {
+      const raw = localStorage.getItem(_dismissKey(sessionId));
+      const arr = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function _rememberDismissed(docId, sessionId) {
+    try {
+      const set = _dismissedDocs(sessionId);
+      set.add(docId);
+      // Bounded: an unbounded list would grow forever for a busy chat.
+      const kept = Array.from(set).slice(-200);
+      localStorage.setItem(_dismissKey(sessionId), JSON.stringify(kept));
+    } catch (_) { /* private mode; it just reappears next load */ }
+  }
+
+  function _forgetDismissed(docId, sessionId) {
+    try {
+      const set = _dismissedDocs(sessionId);
+      if (!set.delete(docId)) return;
+      localStorage.setItem(_dismissKey(sessionId), JSON.stringify(Array.from(set)));
+    } catch (_) { /* nothing to undo */ }
+  }
+
+  // Close a doc's tab without touching the server. The chat keeps the
+  // document — its library still lists it — and this browser stops showing
+  // it until it is opened again.
   function _detachDocFromSession(docId, { toast = false } = {}) {
     const doc = docs.get(docId);
+    const sessionId = doc?.sessionId || sessionModule?.getCurrentSessionId?.() || '';
+    // Deleting an untitled, empty doc is still worth doing: it is scratch
+    // that nobody will look for, and leaving it clutters the library.
     const hasContent = doc && doc.content && doc.content.trim().length > 0;
-    if (hasContent) {
-      fetch(`${API_BASE}/api/document/${docId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: '' }),
-      }).then(() => {
-        if (toast && uiModule) uiModule.showToast('Document unlinked from session');
-      }).catch(() => {});
-    } else {
+    const hasTitle = doc && (doc.title || '').trim().length > 0;
+    if (!hasContent && !hasTitle) {
       fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(() => {});
+    } else {
+      _rememberDismissed(docId, sessionId);
+      if (toast && uiModule) uiModule.showToast('Closed — still in this chat\u2019s library');
     }
     docs.delete(docId);
     _syncDocIndicator();
@@ -5988,7 +6023,9 @@ import * as Modals from './modalManager.js';
       const res = await fetch(`${API_BASE}/api/document/${docId}`);
       if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : `HTTP ${res.status}`);
       const doc = await res.json();
-      addDocToTabs(doc, doc.session_id);
+      // Explicit: the user asked for this document by name, which is how
+      // a closed one is reopened.
+      addDocToTabs(doc, doc.session_id, { explicit: true });
       _ensureDocPaneMounted();
       switchToDoc(doc.id);
     } catch (e) {
@@ -6137,7 +6174,15 @@ import * as Modals from './modalManager.js';
   }
 
   /** Add a document to the tabs map */
-  function addDocToTabs(doc, sessionId) {
+  function addDocToTabs(doc, sessionId, { explicit = false } = {}) {
+    // Skip the ones this browser has closed, unless the user just asked for
+    // this document by name — opening it is how you undo closing it.
+    const sid = sessionId || doc.session_id;
+    if (explicit) {
+      _forgetDismissed(doc.id, sid);
+    } else if (_dismissedDocs(sid).has(doc.id)) {
+      return;
+    }
     const existing = docs.get(doc.id);
     docs.set(doc.id, {
       id: doc.id,

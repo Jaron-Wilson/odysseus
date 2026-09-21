@@ -1084,7 +1084,16 @@ document.addEventListener('click', function(e) {
   while (_t && _t.nodeType === Node.TEXT_NODE) _t = _t.parentElement;
   const a = _t && _t.closest && _t.closest('a[href]');
   if (!a) return;
-  const href = a.getAttribute('href') || '';
+  let href = a.getAttribute('href') || '';
+  // A link written as a full URL to this host is still an in-app link.
+  // Messages already saved contain those, so normalising here is what makes
+  // the old ones work rather than only the newly rendered ones.
+  if (!href.startsWith('#')) {
+    try {
+      const u = new URL(href, window.location.origin);
+      if (u.origin === window.location.origin && u.hash) href = u.hash;
+    } catch (_) { /* leave it alone */ }
+  }
   if (!href.startsWith('#')) return;
   const m = href.match(/^#(session|document|note|image|email|event|task|skill|research|claudecode|screencontrol)-(.+)$/);
   if (!m) return;

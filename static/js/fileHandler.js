@@ -164,6 +164,15 @@ export async function uploadPending() {
 
   const fd = new FormData();
   pendingFiles.forEach(f => fd.append('files', f, f.name || 'paste.png'));
+  // Tie the upload to the conversation it was dropped into, so the chat's
+  // library can find it later. Best-effort: an upload with no chat behind
+  // it is still a perfectly good upload.
+  try {
+    const sid = (window.currentSessionId
+      || document.body?.dataset?.sessionId
+      || (location.hash || '').replace(/^#/, ''));
+    if (sid) fd.append('session_id', sid);
+  } catch (_) { /* no session to attach */ }
 
   try {
     const res = await fetch(`${API_BASE}/api/upload`, {
