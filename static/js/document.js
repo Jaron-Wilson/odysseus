@@ -6277,6 +6277,7 @@ import * as Modals from './modalManager.js';
     const text = textarea.value;
     const style = getComputedStyle(textarea);
     const paddingTop = parseFloat(style.paddingTop) || 10;
+    const paddingBottom = parseFloat(style.paddingBottom) || 0;
     const paddingLeft = parseFloat(style.paddingLeft) || 48;
     const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.45);
 
@@ -6305,12 +6306,15 @@ import * as Modals from './modalManager.js';
       // Line-band style: highlight the FULL visual row containing the
       // match. Cheap, always-visible, doesn't need character-precise
       // mirror measurement that varies across email/markdown/code modes.
+      // scrollHeight spans the padding box, so it carries padding at both
+      // ends; taking back only paddingTop left every find rect sitting
+      // most of a line below the text it was marking.
       mirror.textContent = text.substring(0, s);
-      const startTop = mirror.scrollHeight - paddingTop;
+      const startTop = mirror.scrollHeight - paddingTop - paddingBottom;
       // Find the wrap-row's end by measuring with one extra char beyond
       // the match end and stepping back to the last whitespace boundary.
       mirror.textContent = text.substring(0, e);
-      const endHeight = mirror.scrollHeight - paddingTop;
+      const endHeight = mirror.scrollHeight - paddingTop - paddingBottom;
       mirror.textContent = '';
 
       const top = paddingTop + startTop - scrollTop;
@@ -6899,6 +6903,7 @@ import * as Modals from './modalManager.js';
     if (_selections.length === 0) return;
     const style = getComputedStyle(textarea);
     const paddingTop = parseFloat(style.paddingTop) || 10;
+    const paddingBottom = parseFloat(style.paddingBottom) || 0;
     const paddingLeft = parseFloat(style.paddingLeft) || 48;
     const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.45);
 
@@ -6938,13 +6943,16 @@ import * as Modals from './modalManager.js';
         const beforeStart = text.substring(0, sel.start);
         const lastNewline = beforeStart.lastIndexOf('\n');
         const startLineBegin = lastNewline + 1;
+        // scrollHeight is the padding box: it counts padding at BOTH ends.
+        // Subtracting only paddingTop leaves paddingBottom in every offset,
+        // which pushed each stripe most of a line down the page.
         mirror.textContent = text.substring(0, startLineBegin);
-        const startTop = mirror.scrollHeight - paddingTop;
+        const startTop = mirror.scrollHeight - paddingTop - paddingBottom;
 
         const afterEnd = text.indexOf('\n', sel.end);
         const endLineEnd = afterEnd === -1 ? text.length : afterEnd;
         mirror.textContent = text.substring(0, endLineEnd);
-        const endBottom = mirror.scrollHeight - paddingTop;
+        const endBottom = mirror.scrollHeight - paddingTop - paddingBottom;
 
         mirror.textContent = '';
 
@@ -6966,11 +6974,16 @@ import * as Modals from './modalManager.js';
         const endPos = _measurePos(mirror, text, sel.end);
         mirror.innerHTML = '';
 
+        // top and left arrive in wrapper coordinates. _measurePos reads
+        // against the mirror's border box, and the mirror sits exactly over
+        // the textarea, so its numbers already include the editor's padding
+        // - adding paddingTop/paddingLeft here counted both a second time,
+        // and paddingLeft is the 48px line-number gutter.
         const addRect = (top, left, width, height) => {
           const overlay = document.createElement('div');
           overlay.className = 'doc-selection-overlay';
-          overlay.style.top = (paddingTop + top - scrollTop) + 'px';
-          overlay.style.left = (paddingLeft + left) + 'px';
+          overlay.style.top = (top - scrollTop) + 'px';
+          overlay.style.left = left + 'px';
           if (width != null) overlay.style.width = width + 'px';
           else overlay.style.right = '0';
           overlay.style.height = height + 'px';
@@ -6983,12 +6996,14 @@ import * as Modals from './modalManager.js';
         } else {
           // First line: from selection start to right edge.
           addRect(startPos.y, startPos.x, null, lineHeight);
-          // Middle lines (if any): full-width band between the two.
+          // Middle lines (if any): full-width band between the two. The
+          // text's left edge is paddingLeft, not 0 - 0 would run the band
+          // back under the line-number gutter.
           const middleTop = startPos.y + lineHeight;
           const middleHeight = endPos.y - middleTop;
-          if (middleHeight > 0) addRect(middleTop, 0, null, middleHeight);
-          // Last line: from left edge to selection end.
-          addRect(endPos.y, 0, endPos.x, lineHeight);
+          if (middleHeight > 0) addRect(middleTop, paddingLeft, null, middleHeight);
+          // Last line: from the text's left edge to the selection end.
+          addRect(endPos.y, paddingLeft, endPos.x - paddingLeft, lineHeight);
         }
       }
     }
