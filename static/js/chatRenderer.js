@@ -1027,7 +1027,7 @@ function _appendReportButton(container, sessionId) {
     } catch (e) {
       chatBtn.disabled = false;
       chatBtn.innerHTML = origLabel;
-      if (window.uiModule && uiModule.showError) {
+      if (uiModule && uiModule.showError) {
         uiModule.showError('Could not start follow-up chat: ' + e.message);
       } else {
         alert('Could not start follow-up chat: ' + e.message);

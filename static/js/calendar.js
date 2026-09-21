@@ -264,7 +264,7 @@ async function _createEvent(data) {
   }).catch((e) => {
     delete _allEvents[tempUid];
     if (_open) _render();
-    if (window.uiModule) window.uiModule.showError('Failed to create event: ' + (e?.message || 'unknown'));
+    if (uiModule) uiModule.showError('Failed to create event: ' + (e?.message || 'unknown'));
   });
   return { uid: tempUid };
 }
@@ -293,7 +293,7 @@ async function _updateEvent(uid, data) {
     if (_preMergeBackup) _allEvents[uid] = _preMergeBackup;
     else delete _allEvents[uid];
     if (_open) _render();
-    if (window.uiModule) window.uiModule.showError('Failed to update event: ' + (e?.message || 'unknown'));
+    if (uiModule) uiModule.showError('Failed to update event: ' + (e?.message || 'unknown'));
   });
   return { ok: true };
 }
@@ -345,7 +345,7 @@ async function _deleteEvent(uid) {
       _allEvents[k] = ev;
       if (Array.isArray(_events)) _events.push(ev);
     }
-    if (window.uiModule) window.uiModule.showError('Failed to delete event: ' + (e?.message || 'unknown'));
+    if (uiModule) uiModule.showError('Failed to delete event: ' + (e?.message || 'unknown'));
     if (_open) _render();
   });
   return { ok: true };

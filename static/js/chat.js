@@ -3116,7 +3116,25 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         const _sid = _streamSessionId
           || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
         if (_sid) {
-          fetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+          fetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST', credentials: 'same-origin' })
+            .then(r => r.ok ? r.json() : null)
+            .then(info => {
+              // Say it out loud when Stop also took back control of a
+              // machine. Releasing it silently is indistinguishable from
+              // not releasing it, which is what "there was no stop on the
+              // mcp side" meant -- the run halted, and nothing said the
+              // computer was no longer reachable.
+              const n = info && info.screen_control_revoked;
+              // uiModule is the imported module, not window.uiModule -
+              // nothing ever assigns that, so going through it would make
+              // this a no-op that looks like working code.
+              if (n && uiModule && uiModule.showToast) {
+                uiModule.showToast(
+                  n === 1 ? 'Stopped \u2014 screen control released'
+                          : `Stopped \u2014 released screen control on ${n} machines`);
+              }
+            })
+            .catch(() => {});
         }
       } catch (_) {}
     }

@@ -2214,7 +2214,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             card.style.transform = '';
           }
         });
-        if (window.uiModule) window.uiModule.showError(`Failed to archive ${failed.length} of ${ids.length} chat${ids.length > 1 ? 's' : ''}`);
+        if (uiModule) uiModule.showError(`Failed to archive ${failed.length} of ${ids.length} chat${ids.length > 1 ? 's' : ''}`);
       }
       _chatsSelected.clear();
       _chatsSelectMode = false;
@@ -2259,7 +2259,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             card.style.transform = '';
           }
         });
-        if (window.uiModule) window.uiModule.showError(`Failed to delete ${failed.length} of ${ids.length} chat${ids.length > 1 ? 's' : ''}`);
+        if (uiModule) uiModule.showError(`Failed to delete ${failed.length} of ${ids.length} chat${ids.length > 1 ? 's' : ''}`);
       }
       _chatsSelected.clear();
       _chatsSelectMode = false;
@@ -2289,14 +2289,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Tidy failed');
         if (data.status === 'ok') {
-          if (window.uiModule) window.uiModule.showToast('Sorted ' + data.updated + ' sessions into ' + data.folders.length + ' folders');
+          if (uiModule) uiModule.showToast('Sorted ' + data.updated + ' sessions into ' + data.folders.length + ' folders');
           if (window.sessionModule) await window.sessionModule.loadSessions();
           _renderLibChats();
         } else {
-          if (window.uiModule) window.uiModule.showToast(data.reason || 'Nothing to tidy');
+          if (uiModule) uiModule.showToast(data.reason || 'Nothing to tidy');
         }
       } catch (e) {
-        if (window.uiModule) window.uiModule.showError('Tidy: ' + e.message);
+        if (uiModule) uiModule.showError('Tidy: ' + e.message);
       } finally {
         tidyBtn.disabled = false;
         tidyBtn.classList.remove('spinning');

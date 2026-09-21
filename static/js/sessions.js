@@ -2413,7 +2413,7 @@ async function _arcPeekOpen(sid) {
         }
       }
     }
-    if (window.uiModule) window.uiModule.scrollHistory();
+    if (uiModule && uiModule.scrollHistory) uiModule.scrollHistory();
   } catch (e) {
     console.error('Peek open failed:', e);
     uiModule.showError('Failed to open archived session');

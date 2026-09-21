@@ -1062,9 +1062,9 @@ async function _exportCopyMarkdown(_btn) {
       document.body.appendChild(ta);
       ta.select(); document.execCommand('copy'); ta.remove();
     }
-    try { window.uiModule?.showToast?.('Copied comparison to clipboard'); } catch {}
+    try { uiModule?.showToast?.('Copied comparison to clipboard'); } catch {}
   } catch (e) {
-    try { window.uiModule?.showToast?.('Copy failed'); } catch {}
+    try { uiModule?.showToast?.('Copy failed'); } catch {}
   }
 }
 
