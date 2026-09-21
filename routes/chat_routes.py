@@ -37,6 +37,7 @@ from routes.chat_helpers import (
     save_assistant_response,
     run_post_response_tasks,
     clean_thinking_for_save,
+    stopped_response_for_save,
     _enforce_chat_privileges,
 )
 from src.action_intents import classify_tool_intent as _classify_tool_intent
@@ -1084,9 +1085,12 @@ def setup_chat_routes(
                             _stream_set(session, status="done")
                             yield chunk
                 except (asyncio.CancelledError, GeneratorExit):
-                    if full_response:
-                        logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
-                        _stopped_content, _stopped_md = clean_thinking_for_save(
+                    # Saved even when nothing was produced. A compare pane is
+                    # the exception: it is a throwaway session driving one
+                    # pane, and a note there is noise nobody returns to.
+                    if not compare_mode:
+                        logger.info("Stream cancelled (chat mode) for session %s, saving %d chars", session, len(full_response or ""))
+                        _stopped_content, _stopped_md = stopped_response_for_save(
                             full_response,
                             {
                                 "stopped": True,
@@ -1223,9 +1227,9 @@ def setup_chat_routes(
                     # outer finally from running and left _active_streams
                     # with a stale entry).
                     try:
-                        if full_response:
-                            logger.info("Client disconnected mid-stream for session %s, saving partial response (%d chars)", session, len(full_response))
-                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(
+                        if not compare_mode:
+                            logger.info("Stream cancelled for session %s, saving %d chars", session, len(full_response or ""))
+                            _stopped_content2, _stopped_md2 = stopped_response_for_save(
                                 full_response,
                                 {
                                     "stopped": True,

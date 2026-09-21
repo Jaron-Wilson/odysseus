@@ -852,6 +852,33 @@ def clean_thinking_for_save(content: str, metadata: dict | None = None) -> tuple
     return content, md
 
 
+# What a stopped turn says when the model left nothing behind. Wording
+# matters here: the run may have been stopped by the user, or by the
+# browser's own timeout, and we cannot tell which from inside the
+# generator -- so these state what is known and claim no cause.
+STOPPED_NO_OUTPUT = "_Stopped before any answer was written._"
+STOPPED_WHILE_THINKING = "_Stopped while still thinking \u2014 no answer was written._"
+
+
+def stopped_response_for_save(full_response: str, metadata: dict | None = None):
+    """Content and metadata for a run that was cancelled.
+
+    Never returns blank content. An empty assistant turn reads as a
+    broken app rather than a stopped one, and it is the state a reader
+    is left staring at after a refresh -- the browser's timeout note
+    lives only in the DOM.
+
+    Reasoning is still moved into metadata, so a run that thought and
+    then stopped keeps its thinking available behind the usual toggle
+    instead of throwing it away.
+    """
+    content, md = clean_thinking_for_save(full_response or "", metadata)
+    if (content or "").strip():
+        return content, md
+    md["stopped_empty"] = True
+    return (STOPPED_WHILE_THINKING if md.get("thinking") else STOPPED_NO_OUTPUT), md
+
+
 def save_assistant_response(
     sess,
     session_manager,
