@@ -432,6 +432,10 @@ def media_control(action: str, repeat: int = 1) -> Dict[str, Any]:
 
     Acts on whatever currently has media focus, so it drives YouTube Music in
     the browser, Spotify, or a video, without needing an integration per app.
+
+    For volume, prefer set_volume(percent): it is exact and takes one call.
+    volume_up and volume_down move one notch each, so reaching a target with
+    them means guessing repeatedly.
     """
     action = (action or "").strip().lower()
     vk = _MEDIA_KEYS.get(action)
@@ -608,8 +612,14 @@ def screenshot(max_width: int = 1280, region: Optional[List[int]] = None):
 
 
 @mcp.tool()
-def click(x: int, y: int, button: str = "left", clicks: int = 1) -> Dict[str, Any]:
-    """Click at a screen coordinate. Origin is the top-left of the primary monitor."""
+def click(x: int, y: int, button: str = "left", clicks: int = 1,
+          label: str = "", confidence: Optional[float] = None) -> Dict[str, Any]:
+    """Click at a screen coordinate. Origin is the top-left of the primary monitor.
+
+    Pass `label` (and optionally `confidence`, 0 to 1) to record what you
+    believed you were clicking. It changes nothing about the click; it puts
+    your claim in the transcript so a wrong one is visible afterwards.
+    """
     blocked = _input_guard()
     if blocked:
         return blocked
@@ -623,7 +633,20 @@ def click(x: int, y: int, button: str = "left", clicks: int = 1) -> Dict[str, An
         # Off-screen clicks land nowhere and look like the app ignoring us.
         return {"ok": False, "error": f"({x},{y}) is outside the {w}x{h} screen."}
     pg.click(x=x, y=y, button=button, clicks=clicks)
-    return {"ok": True, "clicked": [x, y], "button": button, "clicks": clicks}
+    out = {"ok": True, "clicked": [x, y], "button": button, "clicks": clicks}
+    if label:
+        # Echoing the claim back makes the transcript say what was aimed at,
+        # not just where the pointer went.
+        out["aimed_at"] = label
+        if confidence is not None:
+            try:
+                out["confidence"] = round(float(confidence), 2)
+            except (TypeError, ValueError):
+                pass
+        out["note"] = (f"Clicked at ({x},{y}), believed to be {label!r}. "
+                       f"Take a screenshot to confirm it did what you expected "
+                       f"before saying it worked.")
+    return out
 
 
 @mcp.tool()
@@ -710,6 +733,193 @@ def scroll(amount: int, x: Optional[int] = None, y: Optional[int] = None) -> Dic
         pg.moveTo(x, y)
     pg.scroll(int(amount))
     return {"ok": True, "scrolled": int(amount), "at": [x, y] if x is not None else "pointer"}
+
+
+def _draw_regions(img, regions: List[Dict[str, Any]], scale: float = 1.0):
+    """Draw labelled boxes on a screenshot. Coordinates are screen pixels."""
+    from PIL import ImageDraw, ImageFont
+    draw = ImageDraw.Draw(img, "RGBA")
+    try:
+        font = ImageFont.truetype("arial.ttf", max(12, int(img.width / 70)))
+    except Exception:
+        font = ImageFont.load_default()
+
+    # Terracotta, to match the rest of the interface, and distinct from most
+    # application chrome.
+    outline = (217, 122, 74, 255)
+    for r in regions:
+        try:
+            x = int(r.get("x", 0) * scale)
+            y = int(r.get("y", 0) * scale)
+            w = int(r.get("width", 0) * scale)
+            h = int(r.get("height", 0) * scale)
+        except (TypeError, ValueError):
+            continue
+        if w <= 0 or h <= 0:
+            continue
+        width = max(2, int(img.width / 400))
+        draw.rectangle([x, y, x + w, y + h], outline=outline, width=width)
+
+        label = str(r.get("label") or "").strip()
+        conf = r.get("confidence")
+        if conf is not None:
+            try:
+                label = f"{label} {float(conf) * 100:.0f}%".strip()
+            except (TypeError, ValueError):
+                pass
+        if not label:
+            continue
+        box = draw.textbbox((0, 0), label, font=font)
+        tw, th = box[2] - box[0], box[3] - box[1]
+        # Above the region, unless that would fall off the top edge.
+        ty = y - th - 6 if y - th - 6 > 0 else y + h + 4
+        draw.rectangle([x, ty - 2, x + tw + 8, ty + th + 4], fill=(217, 122, 74, 220))
+        draw.text((x + 4, ty), label, fill=(255, 255, 255, 255), font=font)
+    return img
+
+
+@mcp.tool()
+def annotate_screen(regions: List[Dict[str, Any]], max_width: int = 1280):
+    """Take a screenshot with boxes drawn where you believe things are.
+
+    Pass one entry per thing you have located:
+    `{"x": 100, "y": 200, "width": 300, "height": 80, "label": "Play button",
+      "confidence": 0.8}` — coordinates in real screen pixels, confidence
+    between 0 and 1.
+
+    Use this before clicking something you are not sure about. The boxes are
+    your claim about where things are, not a detection the machine made, so
+    drawing one is how the user can catch a confident mistake before it
+    turns into a click in the wrong place.
+    """
+    blocked = _input_guard()
+    if blocked:
+        raise RuntimeError(blocked["error"])
+    if not isinstance(regions, list) or not regions:
+        raise RuntimeError('regions is required, e.g. '
+                           '[{"x":100,"y":200,"width":300,"height":80,'
+                           '"label":"Play","confidence":0.8}]')
+    from mcp.server.fastmcp import Image
+    from PIL import ImageGrab
+    import io
+
+    img = ImageGrab.grab(all_screens=True)
+    full_w = img.width
+    max_width = max(320, min(int(max_width or 1280), 3840))
+    scale = 1.0
+    if img.width > max_width:
+        scale = max_width / img.width
+        img = img.resize((max_width, int(img.height * scale)))
+    # Regions arrive in screen pixels, so they scale with the image.
+    img = _draw_regions(img.convert("RGB"), regions, scale=scale)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    print(f"annotate_screen {len(regions)} region(s), scale {scale:.3f} "
+          f"(screen {full_w}px)", flush=True)
+    return Image(data=buf.getvalue(), format="png")
+
+
+def _volume_endpoint():
+    """The system volume control, via Core Audio.
+
+    Raises with something actionable rather than a COM traceback, since the
+    usual cause is simply that pycaw is not installed.
+    """
+    try:
+        from ctypes import cast, POINTER
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+    except ImportError as e:
+        raise RuntimeError(
+            f"Volume control needs pycaw ({e}). Install it on this machine with "
+            f"`python -m pip install pycaw comtypes`."
+        )
+    speakers = AudioUtilities.GetSpeakers()
+
+    # pycaw 2025 returns an AudioDevice wrapper rather than the raw IMMDevice
+    # the widely-copied snippet assumes, so Activate() is simply absent and
+    # every call fails with an attribute error. The wrapper exposes what we
+    # want directly; the old path stays as a fallback because this file runs
+    # against whatever version a given machine has.
+    endpoint = getattr(speakers, "EndpointVolume", None)
+    if endpoint is not None:
+        return endpoint
+    raw = getattr(speakers, "_dev", speakers)
+    interface = raw.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    return cast(interface, POINTER(IAudioEndpointVolume))
+
+
+@mcp.tool()
+def get_volume() -> Dict[str, Any]:
+    """The system volume, 0-100, and whether it is muted.
+
+    Read this before changing it if the user asked for a relative change
+    ("turn it down a bit"); guessing from nothing is what turns one action
+    into a dozen.
+    """
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    try:
+        vol = _volume_endpoint()
+        return {
+            "ok": True,
+            "volume": round(vol.GetMasterVolumeLevelScalar() * 100),
+            "muted": bool(vol.GetMute()),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@mcp.tool()
+def set_volume(percent: int) -> Dict[str, Any]:
+    """Set the system volume to an exact percentage, 0-100.
+
+    One call, and it lands on the number asked for. Prefer this over
+    repeating volume_up/volume_down, and never open the Sound settings
+    panel to do it.
+    """
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    try:
+        pct = int(percent)
+    except (TypeError, ValueError):
+        raise RuntimeError("percent must be a whole number from 0 to 100")
+    if not 0 <= pct <= 100:
+        return {"ok": False, "error": f"percent must be 0-100, got {pct}"}
+    try:
+        vol = _volume_endpoint()
+        before = round(vol.GetMasterVolumeLevelScalar() * 100)
+        vol.SetMasterVolumeLevelScalar(pct / 100.0, None)
+        # Setting a level on a muted device changes nothing audible, which
+        # reads as the call having failed.
+        unmuted = False
+        if pct > 0 and vol.GetMute():
+            vol.SetMute(0, None)
+            unmuted = True
+        out = {"ok": True, "volume": round(vol.GetMasterVolumeLevelScalar() * 100),
+               "was": before}
+        if unmuted:
+            out["note"] = "Also unmuted, since setting a level on a muted device is silent."
+        return out
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@mcp.tool()
+def set_mute(muted: bool = True) -> Dict[str, Any]:
+    """Mute or unmute the system volume."""
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    try:
+        vol = _volume_endpoint()
+        vol.SetMute(1 if muted else 0, None)
+        return {"ok": True, "muted": bool(vol.GetMute()),
+                "volume": round(vol.GetMasterVolumeLevelScalar() * 100)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)

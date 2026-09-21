@@ -442,6 +442,35 @@
   </div>
 
   <!-- Theme Popup (floating panel) -->
+  <!-- Raised when the agent asks for the mouse and keyboard. The inline
+       chat link does the same thing and persists; this is what makes sure
+       the request is not scrolled past. -->
+  <div id="screen-control-modal" class="modal hidden">
+    <div class="modal-content" role="dialog" aria-modal="true"
+         aria-labelledby="sc-modal-title"
+         style="background:var(--bg);max-width:30rem;">
+      <div class="modal-header">
+        <h2 id="sc-modal-title" style="margin:0;font-size:15px;">Allow screen control?</h2>
+      </div>
+      <div class="modal-body" style="padding:16px;">
+        <p id="sc-modal-body" style="margin:0 0 10px;line-height:1.5;font-size:13px;"></p>
+        <p style="margin:0 0 4px;font-size:12px;opacity:0.75;">
+          This lets the assistant see the screen, move the pointer and type on
+          <strong id="sc-modal-server"></strong>.
+        </p>
+        <p style="margin:0;font-size:12px;opacity:0.75;">
+          The grant lasts <strong id="sc-modal-mins">15</strong> minutes and then
+          lapses by itself. You can end it early in Settings.
+        </p>
+      </div>
+      <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;">
+        <button class="admin-btn-add" id="sc-modal-deny"
+                style="background:transparent;border:1px solid var(--border);">Deny</button>
+        <button class="admin-btn-add" id="sc-modal-approve">Allow</button>
+      </div>
+    </div>
+  </div>
+
   <div id="theme-modal" class="modal hidden">
   <div id="theme-popup" class="modal-content admin-modal-content" role="dialog" aria-label="Theme" style="background:var(--bg)">
     <div class="modal-header theme-popup-header" id="theme-popup-header">

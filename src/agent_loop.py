@@ -2966,6 +2966,14 @@ async def stream_agent_loop(
                 # live stream only, so without this the link is gone on
                 # reload — exactly when someone goes back to click it.
                 full_response += _anchor
+                # Raise the modal too. Handing over the mouse and keyboard
+                # deserves an interruption rather than a link that can be
+                # scrolled past; the anchor above stays as the record.
+                yield 'data: ' + json.dumps({
+                    "ui_event": "screen_control_request",
+                    "request_id": _appr_id,
+                    "server_name": result.get("approval_server", ""),
+                }) + '\n\n'
 
             # Same pattern for notes: when manage_notes creates a note
             # and returns note_id, drop a `[View note](#note-<id>)` link

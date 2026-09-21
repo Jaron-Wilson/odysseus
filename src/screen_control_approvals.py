@@ -48,6 +48,12 @@ REQUEST_TTL_S = 10 * 60
 SENSITIVE_TOOLS = {
     "screenshot", "click", "double_click", "move_mouse", "drag",
     "type_text", "press_keys", "scroll", "screen_record",
+    # Annotating captures the screen to draw on it, so it is a screenshot
+    # by another name and belongs behind the same gate.
+    "annotate_screen",
+    # Volume is not screen control: it changes a system setting, not what is
+    # on screen, and gating it would put an approval click in front of
+    # "turn it down" — the exact friction this was meant to remove.
 }
 
 

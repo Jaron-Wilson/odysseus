@@ -2534,3 +2534,66 @@ const chatRenderer = {
 };
 
 export default chatRenderer;
+
+// ── Screen-control approval modal ──────────────────────────────────────
+// Raised from the stream when the agent asks for the mouse and keyboard.
+// Answering here posts to the same route the inline link uses, so the two
+// cannot disagree about what was decided.
+export function showScreenControlModal(requestId, serverName) {
+  const modal = document.getElementById('screen-control-modal');
+  if (!modal || !requestId) return;
+  if (modal.dataset.requestId === requestId && !modal.classList.contains('hidden')) return;
+  modal.dataset.requestId = requestId;
+
+  const body = document.getElementById('sc-modal-body');
+  const srv = document.getElementById('sc-modal-server');
+  if (body) body.textContent =
+    `The assistant wants to control the screen on ${serverName || 'a machine'} to carry on with what you asked.`;
+  if (srv) srv.textContent = serverName || 'that machine';
+  modal.classList.remove('hidden');
+
+  const finish = () => {
+    modal.classList.add('hidden');
+    delete modal.dataset.requestId;
+  };
+
+  const answer = async (verb) => {
+    const approveBtn = document.getElementById('sc-modal-approve');
+    const denyBtn = document.getElementById('sc-modal-deny');
+    if (approveBtn) approveBtn.disabled = true;
+    if (denyBtn) denyBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/screen_control/${verb}/${encodeURIComponent(requestId)}`,
+                              { method: 'POST', credentials: 'same-origin' });
+      if (res.status === 401) {
+        // Signing in again is the confirmation step, not a failure.
+        window.location.href = '/login';
+        return;
+      }
+      // Reflect the decision on the inline link too, so the transcript does
+      // not still offer a choice that has been made.
+      document.querySelectorAll(
+        `a[href="#screencontrol-approve-${requestId}"], a[href="#screencontrol-deny-${requestId}"]`
+      ).forEach((a) => {
+        a.replaceWith(Object.assign(document.createElement('span'), {
+          className: 'stopped-indicator',
+          textContent: verb === 'approve' ? '[Screen control approved]' : '[Screen control denied]',
+        }));
+      });
+    } catch (_) {
+      /* the inline link remains as a fallback */
+    } finally {
+      if (approveBtn) approveBtn.disabled = false;
+      if (denyBtn) denyBtn.disabled = false;
+      finish();
+    }
+  };
+
+  const approveBtn = document.getElementById('sc-modal-approve');
+  const denyBtn = document.getElementById('sc-modal-deny');
+  if (approveBtn) approveBtn.onclick = () => answer('approve');
+  if (denyBtn) denyBtn.onclick = () => answer('deny');
+  // Escape denies nothing; it just dismisses. Closing a permission prompt
+  // should not be read as consent, and should not be read as refusal either.
+  modal.onclick = (e) => { if (e.target === modal) finish(); };
+}

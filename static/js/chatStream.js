@@ -125,6 +125,15 @@ export function handleUIControl(uiData) {
       document.querySelectorAll('.odysseus-highlight').forEach(function(e) { e.classList.remove('odysseus-highlight'); });
       document.querySelectorAll('.odysseus-hl-label').forEach(function(e) { e.remove(); });
 
+    } else if (uiEvent === 'screen_control_request'
+               || uiData.ui_event === 'screen_control_request') {
+      // Asking for the mouse and keyboard should interrupt, not sit in the
+      // transcript hoping to be noticed.
+      import('./chatRenderer.js').then(function (mod) {
+        var fn = mod.showScreenControlModal
+          || (mod.default && mod.default.showScreenControlModal);
+        if (fn) fn(uiData.request_id, uiData.server_name);
+      }).catch(function () { /* the inline link still works */ });
     } else if (uiEvent === 'research_started' || uiData.ui_event === 'research_started') {
       // Agent kicked off deep research — adopt the session into the
       // sidebar immediately so the user sees it without waiting for
