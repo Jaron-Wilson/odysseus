@@ -2009,7 +2009,7 @@ window.addEventListener('hashchange', () => {
   // from this list is treated as a session id, matches nothing, and the app
   // drops the chat the user was reading — which is what #claudecode-approve-…
   // did when the approve link was clicked.
-  if (/^(document|note|image|email|event|task|skill|research|claudecode)-/.test(hashId)) return;
+  if (/^(document|note|image|email|event|task|skill|research|claudecode|screencontrol)-/.test(hashId)) return;
   if (hashId && hashId !== currentSessionId) {
     const target = sessions.find(s => s.id === hashId && !s.archived);
     if (target) selectSession(hashId);

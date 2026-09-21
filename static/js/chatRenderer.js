@@ -1086,7 +1086,7 @@ document.addEventListener('click', function(e) {
   if (!a) return;
   const href = a.getAttribute('href') || '';
   if (!href.startsWith('#')) return;
-  const m = href.match(/^#(session|document|note|image|email|event|task|skill|research|claudecode)-(.+)$/);
+  const m = href.match(/^#(session|document|note|image|email|event|task|skill|research|claudecode|screencontrol)-(.+)$/);
   if (!m) return;
   e.preventDefault();
   e.stopPropagation();
@@ -1111,6 +1111,39 @@ document.addEventListener('click', function(e) {
       } else {
         const detail = await res.json().catch(() => ({}));
         a.textContent = `${label} — failed: ${detail.detail || res.status}`;
+      }
+    }).catch(() => { a.textContent = `${label} — failed`; });
+    return;
+  }
+  if (kind === 'screencontrol') {
+    // Approving screen control. The click is the gate and also the proof of
+    // identity: the route needs a session cookie, so a lapsed login sends the
+    // browser to /login and back rather than silently granting anything.
+    const mm = id.match(/^(approve|deny)-(.+)$/);
+    if (!mm) return;
+    const [, verb, reqId] = mm;
+    const label = a.textContent;
+    a.textContent = verb === 'approve' ? 'Approving…' : 'Denying…';
+    fetch(`/api/screen_control/${verb}/${encodeURIComponent(reqId)}`, {
+      method: 'POST', credentials: 'same-origin',
+    }).then(async res => {
+      if (res.status === 401) {
+        // Say what happened instead of failing opaquely, and send them to
+        // sign in; the link stays clickable when they come back.
+        a.textContent = `${label} — sign in first`;
+        window.location.href = '/login';
+        return;
+      }
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const mins = body.minutes ? ` for ${body.minutes} min` : '';
+        a.replaceWith(Object.assign(document.createElement('span'), {
+          className: 'stopped-indicator',
+          textContent: verb === 'approve'
+            ? `[Screen control approved${mins}]` : '[Screen control denied]',
+        }));
+      } else {
+        a.textContent = `${label} — ${body.detail || res.status}`;
       }
     }).catch(() => { a.textContent = `${label} — failed`; });
     return;

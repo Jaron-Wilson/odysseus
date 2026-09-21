@@ -441,6 +441,37 @@ class McpManager:
         server_id = parts[1]
         tool_name = parts[2]
 
+        # Screen control needs a person to say yes first. Enforced here, not
+        # in the prompt: the prompt can only ask the model to behave, and this
+        # has to hold even when it does not.
+        try:
+            from src import screen_control_approvals as approvals
+            if approvals.is_sensitive(qualified_name):
+                owner = (arguments or {}).pop("_owner", "") if isinstance(arguments, dict) else ""
+                grant = approvals.active_grant(server_id, owner)
+                if not grant:
+                    conn = self._connections.get(server_id, {})
+                    name = conn.get("name", server_id)
+                    req = approvals.request_grant(
+                        server_id=server_id, server_name=name, owner=owner,
+                        reason=f"{tool_name} on {name}")
+                    return {
+                        "error": (
+                            f"Screen control of {name} needs your approval first.\n\n"
+                            f"[Approve screen control](#screencontrol-approve-{req['id']}) "
+                            f"&nbsp;·&nbsp; "
+                            f"[Deny](#screencontrol-deny-{req['id']})\n\n"
+                            f"Approving covers {name} for "
+                            f"{approvals.GRANT_TTL_S // 60} minutes, then lapses on its own. "
+                            f"Tell the user to click one of those, and stop."
+                        ),
+                        "needs_approval": True,
+                        "approval_id": req["id"],
+                        "exit_code": 1,
+                    }
+        except ImportError:
+            pass
+
         session = self._sessions.get(server_id)
         if not session and not self.is_builtin(server_id):
             # No session at all, rather than a stale one: the server was down
