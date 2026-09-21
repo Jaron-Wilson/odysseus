@@ -19,7 +19,13 @@ from src.auth_helpers import _auth_disabled, get_current_user
 
 logger = logging.getLogger(__name__)
 
-_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
+# Underscores are part of the real thing: the agent SDKs hand back ids like
+# "ses_f3ba77bb0ffespZ8YzTJn2Ku8G". Leaving "_" out rejected every one of
+# them, so both the plan PDF and the Approve button answered 400 -- the
+# approval could not be given at all, by button or by typing it.
+# Still an allowlist, and still no "/", "." or "\", which is what matters:
+# the id is interpolated into a filename below.
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 def setup_claude_code_routes() -> APIRouter:

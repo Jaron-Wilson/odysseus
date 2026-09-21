@@ -1055,6 +1055,48 @@ window.toggleSources = function(id) {
 };
 
 // Event delegation for sources toggle (capture phase, handles SVG targets)
+// Fetch a same-origin API link and hand it to the browser as a file,
+// without leaving the page. Errors land on the link itself: navigating to
+// a failed download shows raw JSON on a blank page, which loses the chat
+// and explains nothing.
+async function downloadWithoutLeaving(anchor, url) {
+  const label = anchor.textContent;
+  anchor.textContent = `${label} \u2014 downloading\u2026`;
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) {
+      let detail = `${res.status}`;
+      try {
+        const body = await res.json();
+        if (body && body.detail) detail = body.detail;
+      } catch (_) { /* not JSON; the status is all we have */ }
+      anchor.textContent = `${label} \u2014 ${detail}`;
+      return;
+    }
+    const blob = await res.blob();
+    // Prefer the name the server chose; it knows the real extension.
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+    let name = 'download';
+    try {
+      name = m ? decodeURIComponent(m[1]) : (new URL(url).pathname.split('/').filter(Boolean).pop() || 'download');
+    } catch (_) { /* keep the default */ }
+    const objectUrl = URL.createObjectURL(blob);
+    const tmp = document.createElement('a');
+    tmp.href = objectUrl;
+    tmp.download = name;
+    document.body.appendChild(tmp);
+    tmp.click();
+    tmp.remove();
+    // Revoked late: revoking immediately can cancel the save in some
+    // browsers before it has read the blob.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+    anchor.textContent = label;
+  } catch (_) {
+    anchor.textContent = `${label} \u2014 download failed`;
+  }
+}
+
 // Open whatever an in-app anchor points at. The click handler below does
 // this inline; this is the same behaviour reachable without a click, for a
 // URL that arrives already carrying the hash — a bookmark, a paste, or a
@@ -1132,6 +1174,15 @@ document.addEventListener('click', function(e) {
   if (!href.startsWith('#')) {
     try {
       const u = new URL(href, window.location.origin);
+      if (u.origin === window.location.origin
+          && u.pathname.startsWith('/api/')) {
+        // Our own API: a file, not a page. Navigating there drops the
+        // chat the reader was in.
+        e.preventDefault();
+        e.stopPropagation();
+        downloadWithoutLeaving(a, u.href);
+        return;
+      }
       if (u.origin === window.location.origin && u.hash) href = u.hash;
     } catch (_) { /* leave it alone */ }
   }
