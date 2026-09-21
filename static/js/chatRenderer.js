@@ -1139,8 +1139,11 @@ document.addEventListener('click', function(e) {
         const mins = body.minutes ? ` for ${body.minutes} min` : '';
         a.replaceWith(Object.assign(document.createElement('span'), {
           className: 'stopped-indicator',
+          // Say it is carrying on, so nobody waits for a reply that is
+          // already being written, or re-asks for what was just approved.
           textContent: verb === 'approve'
-            ? `[Screen control approved${mins}]` : '[Screen control denied]',
+            ? `[Screen control approved${mins}${body.resuming ? ' — continuing…' : ''}]`
+            : '[Screen control denied]',
         }));
       } else {
         a.textContent = `${label} — ${body.detail || res.status}`;

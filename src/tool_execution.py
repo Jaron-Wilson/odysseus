@@ -817,6 +817,13 @@ async def execute_tool_block(
             except (json.JSONDecodeError, TypeError):
                 args = {}
             desc = f"mcp: {tool}"
+            # Underscore-prefixed, and popped by call_tool before the request
+            # reaches the server: these are context for the gate, not tool
+            # arguments. Without them an approval cannot say who asked or
+            # which chat to carry on in.
+            if isinstance(args, dict):
+                args["_owner"] = owner or ""
+                args["_session_id"] = session_id or ""
             result = await mcp.call_tool(tool, args)
         else:
             desc = f"mcp: {tool}"

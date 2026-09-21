@@ -45,10 +45,19 @@ def setup_screen_control_routes() -> APIRouter:
         if not rec:
             raise HTTPException(
                 404, "That request has expired or was already answered. Ask again.")
+        # Carry on with the thing that was just approved, rather than leaving
+        # the user to re-ask for it. Fired in the background so the click
+        # returns immediately; a full agent turn can take a minute.
+        resumed = False
+        if rec.get("session_id"):
+            from src.screen_control_resume import resume_in_background
+            resume_in_background(rec["session_id"], rec.get("server_name", ""))
+            resumed = True
         return {
             "ok": True,
             "server": rec.get("server_name"),
             "minutes": approvals.GRANT_TTL_S // 60,
+            "resuming": resumed,
         }
 
     @router.post("/deny/{request_id}")

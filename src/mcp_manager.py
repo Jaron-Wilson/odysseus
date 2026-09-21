@@ -447,14 +447,16 @@ class McpManager:
         try:
             from src import screen_control_approvals as approvals
             if approvals.is_sensitive(qualified_name):
-                owner = (arguments or {}).pop("_owner", "") if isinstance(arguments, dict) else ""
+                _ctx = arguments if isinstance(arguments, dict) else {}
+                owner = _ctx.pop("_owner", "") or ""
+                _sess = _ctx.pop("_session_id", "") or ''
                 grant = approvals.active_grant(server_id, owner)
                 if not grant:
                     conn = self._connections.get(server_id, {})
                     name = conn.get("name", server_id)
                     req = approvals.request_grant(
                         server_id=server_id, server_name=name, owner=owner,
-                        reason=f"{tool_name} on {name}")
+                        reason=f"{tool_name} on {name}", session_id=_sess)
                     return {
                         # Human-readable, and only that: the clickable links
                         # are emitted into the reply by the agent loop, and
@@ -477,6 +479,13 @@ class McpManager:
                     }
         except ImportError:
             pass
+
+        if isinstance(arguments, dict):
+            # Strip the gate's context off every call, gated or not: an MCP
+            # server would reject unexpected arguments, and a stray _owner in
+            # a tool payload is a leak.
+            arguments.pop("_owner", None)
+            arguments.pop("_session_id", None)
 
         session = self._sessions.get(server_id)
         if not session and not self.is_builtin(server_id):
