@@ -90,3 +90,8 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Local-only compose overrides. This file exists to adapt to one machine
+# (a taken port, a different bind); committing it would impose that on every
+# checkout, which is the opposite of what an override is for.
+docker-compose.override.yml
