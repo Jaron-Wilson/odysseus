@@ -163,11 +163,14 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     # ------------------------------------------------------------------
     # Sign in with Google
     #
-    # Linking is explicit: /google/start?link_for= is called from inside an
-    # authenticated session and attaches the verified identity to that
-    # account. Only then does a plain sign-in recognise it. A first sign-in
-    # never creates a user, because on a server whose whole access model is
-    # "only me" that would be the one hole worth having.
+    # Linking is explicit: /google/link runs inside an authenticated session
+    # and attaches the verified identity to that account. Only then does a
+    # plain sign-in recognise it. A first sign-in never creates a user,
+    # because on a server whose whole access model is "only me" that would be
+    # the one hole worth having.
+    #
+    # start and link are separate endpoints because they need opposite
+    # authentication, and only start belongs on the auth-exempt list.
     # ------------------------------------------------------------------
 
     def _google_cfg() -> dict:
@@ -251,21 +254,15 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
         """Whether the Sign in with Google button should be shown at all."""
         return {"configured": _google_cfg()["configured"]}
 
-    @router.get("/google/start")
-    async def google_start(request: Request, link_for: Optional[str] = None):
+    def _begin_google(request: Request, link_for: str = "") -> RedirectResponse:
+        """Build the Google authorization redirect for sign-in or for linking."""
         cfg = _google_cfg()
         if not cfg["configured"]:
             raise HTTPException(400, "Google sign-in is not configured. Add a client ID "
                                      "and secret in Settings first.")
-        target = ""
-        if link_for:
-            current = getattr(request.state, "current_user", None)
-            if not current or current != link_for.strip().lower():
-                raise HTTPException(403, "You can only link Google to your own account.")
-            target = current
         state = secrets.token_urlsafe(24)
         redirect_uri = _google_redirect_uri(request)
-        _remember_state(state, {"link_for": target, "redirect_uri": redirect_uri})
+        _remember_state(state, {"link_for": link_for, "redirect_uri": redirect_uri})
         params = {
             "client_id": cfg["client_id"],
             "redirect_uri": redirect_uri,
@@ -279,6 +276,25 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
         }
         return RedirectResponse(
             "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params))
+
+    @router.get("/google/start")
+    async def google_start(request: Request):
+        """Sign in with Google. Must work while logged out, hence exempt."""
+        return _begin_google(request)
+
+    @router.get("/google/link")
+    async def google_link(request: Request):
+        """Attach a Google identity to the signed-in account.
+
+        Deliberately NOT on the auth-exempt list. The middleware returns early
+        for exempt paths without resolving the session, so an exempt version of
+        this could never see who was asking — which is the one thing it needs
+        to know.
+        """
+        current = getattr(request.state, "current_user", None)
+        if not current:
+            raise HTTPException(401, "Sign in with your password first, then link Google.")
+        return _begin_google(request, link_for=current)
 
     @router.get("/google/callback")
     async def google_callback(request: Request, code: Optional[str] = None,
