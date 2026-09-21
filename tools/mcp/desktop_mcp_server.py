@@ -67,6 +67,16 @@ APPS: Dict[str, Dict[str, Any]] = {
         "process": None,
         "description": "YouTube Music (web player in the default browser)",
     },
+    "bambu_studio": {
+        "path": r"C:\Program Files\Bambu Studio\bambu-studio.exe",
+        "process": "bambu-studio",
+        "description": "Bambu Studio (slicer for the Bambu Lab printer)",
+    },
+    "orca_slicer": {
+        "path": r"C:\Program Files\OrcaSlicer\orca-slicer.exe",
+        "process": "orca-slicer",
+        "description": "OrcaSlicer",
+    },
     "minecraft": {
         # Installed from the Store, so there is no .exe to run: it is launched
         # by app id through the shell. The path below is the game data folder,
@@ -415,6 +425,219 @@ try {
         return {"ok": False, "error": "could not read the media session", "raw": raw[:500],
                 "stderr": (r.get("stderr") or "")[:300]}
 
+
+
+# --------------------------------------------------------------------------
+# Computer use: see the screen, act on it
+#
+# Off unless DESKTOP_MCP_ALLOW_INPUT is set. Everything above this point is
+# bounded — a fixed table of apps, read-only queries, media keys. Arbitrary
+# clicking and typing is not bounded, and the only thing guarding this port
+# is the tailnet, so it gets a switch that does not require redeploying.
+#
+# All coordinates are physical screen pixels with the origin at the top-left
+# of the primary monitor. screen_info reports the real size; do not assume
+# one, and never guess coordinates from a resized screenshot without scaling
+# them back.
+# --------------------------------------------------------------------------
+
+INPUT_ENABLED = os.environ.get("DESKTOP_MCP_ALLOW_INPUT", "").strip().lower() in (
+    "1", "true", "yes", "on")
+
+
+def _input_guard() -> Optional[Dict[str, Any]]:
+    if INPUT_ENABLED:
+        return None
+    return {
+        "ok": False,
+        "error": "Screen control is switched off on this machine. Set "
+                 "DESKTOP_MCP_ALLOW_INPUT=1 in the OdysseusDesktopMCP task and restart "
+                 "it to enable clicking and typing. Reading the screen with screenshot() "
+                 "is also covered by this switch.",
+    }
+
+
+def _pyautogui():
+    """Import lazily and disable the fail-safe.
+
+    pyautogui aborts if the pointer reaches a screen corner, which is a
+    sensible default for a human at the keyboard and a source of random
+    unexplained failures for a program driving the mouse.
+    """
+    import pyautogui
+    pyautogui.FAILSAFE = False
+    pyautogui.PAUSE = 0.05
+    return pyautogui
+
+
+@mcp.tool()
+def screen_info() -> Dict[str, Any]:
+    """Screen size and whether screen control is available.
+
+    Worth calling before the first click: coordinates mean nothing without
+    the real resolution, and this says plainly when control is switched off
+    rather than letting every action fail the same way.
+    """
+    out: Dict[str, Any] = {"input_enabled": INPUT_ENABLED}
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        u.SetProcessDPIAware()
+        out["width"] = u.GetSystemMetrics(0)
+        out["height"] = u.GetSystemMetrics(1)
+        out["monitors"] = u.GetSystemMetrics(80)
+        out["virtual"] = {
+            "width": u.GetSystemMetrics(78), "height": u.GetSystemMetrics(79),
+            "left": u.GetSystemMetrics(76), "top": u.GetSystemMetrics(77),
+        }
+    except Exception as e:
+        out["error"] = f"could not read screen metrics: {e}"
+    if not INPUT_ENABLED:
+        out["note"] = ("Screen control is off. Set DESKTOP_MCP_ALLOW_INPUT=1 on the "
+                       "OdysseusDesktopMCP task to turn it on.")
+    return out
+
+
+@mcp.tool()
+def screenshot(max_width: int = 1280, region: Optional[List[int]] = None):
+    """Capture the screen for the model to look at.
+
+    `region` is [left, top, width, height] in screen pixels; omit it for the
+    whole screen. The image is scaled down to `max_width` because a raw 4K
+    PNG is mostly cost, but the response states the scale factor: a click
+    coordinate read off the image must be divided by it to land in the right
+    place.
+    """
+    blocked = _input_guard()
+    if blocked:
+        raise RuntimeError(blocked["error"])
+    from mcp.server.fastmcp import Image
+    from PIL import ImageGrab
+    import io
+
+    box = None
+    if region:
+        if len(region) != 4:
+            raise RuntimeError("region must be [left, top, width, height]")
+        left, top, width, height = region
+        box = (left, top, left + width, top + height)
+    img = ImageGrab.grab(bbox=box, all_screens=True)
+    full_w = img.width
+    max_width = max(320, min(int(max_width or 1280), 3840))
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    # The scale factor rides in the log line rather than the image, which can
+    # only carry pixels; callers should re-read screen_info if unsure.
+    print(f"screenshot {img.width}x{img.height} (scale {img.width / full_w:.3f})", flush=True)
+    return Image(data=buf.getvalue(), format="png")
+
+
+@mcp.tool()
+def click(x: int, y: int, button: str = "left", clicks: int = 1) -> Dict[str, Any]:
+    """Click at a screen coordinate. Origin is the top-left of the primary monitor."""
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    button = (button or "left").strip().lower()
+    if button not in ("left", "right", "middle"):
+        raise RuntimeError("button must be left, right or middle")
+    clicks = max(1, min(int(clicks or 1), 3))
+    pg = _pyautogui()
+    w, h = pg.size()
+    if not (0 <= x < w and 0 <= y < h):
+        # Off-screen clicks land nowhere and look like the app ignoring us.
+        return {"ok": False, "error": f"({x},{y}) is outside the {w}x{h} screen."}
+    pg.click(x=x, y=y, button=button, clicks=clicks)
+    return {"ok": True, "clicked": [x, y], "button": button, "clicks": clicks}
+
+
+@mcp.tool()
+def move_mouse(x: int, y: int) -> Dict[str, Any]:
+    """Move the pointer without clicking, to reveal hover states."""
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    pg = _pyautogui()
+    pg.moveTo(x, y)
+    return {"ok": True, "at": [x, y]}
+
+
+@mcp.tool()
+def drag(from_x: int, from_y: int, to_x: int, to_y: int, duration: float = 0.4) -> Dict[str, Any]:
+    """Press at one point, move, and release at another."""
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    pg = _pyautogui()
+    pg.moveTo(from_x, from_y)
+    # A drag with no duration is often dropped: many UIs need to see motion
+    # between press and release to treat it as a drag rather than a click.
+    pg.dragTo(to_x, to_y, duration=max(0.1, min(float(duration or 0.4), 3.0)),
+              button="left")
+    return {"ok": True, "from": [from_x, from_y], "to": [to_x, to_y]}
+
+
+@mcp.tool()
+def type_text(text: str, interval: float = 0.01) -> Dict[str, Any]:
+    """Type text into whatever currently has focus.
+
+    Focus is not checked, because nothing here can know what is focused.
+    Take a screenshot first if it matters where the text lands.
+    """
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    if not text:
+        raise RuntimeError("text is required")
+    if len(text) > 5000:
+        return {"ok": False, "error": "text is longer than 5000 characters."}
+    pg = _pyautogui()
+    pg.write(text, interval=max(0.0, min(float(interval or 0.01), 0.5)))
+    return {"ok": True, "typed_chars": len(text)}
+
+
+@mcp.tool()
+def press_keys(keys: str) -> Dict[str, Any]:
+    """Press a key or a chord, e.g. "enter", "ctrl+s", "alt+tab", "win".
+
+    Note that Ctrl+Alt+Del and the UAC prompt live on Windows' secure
+    desktop, which synthetic input cannot reach by design. Those will appear
+    to do nothing rather than fail.
+    """
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    combo = [k.strip().lower() for k in (keys or "").split("+") if k.strip()]
+    if not combo:
+        raise RuntimeError('keys is required, e.g. "enter" or "ctrl+s"')
+    pg = _pyautogui()
+    valid = set(pg.KEYBOARD_KEYS)
+    unknown = [k for k in combo if k not in valid]
+    if unknown:
+        return {"ok": False,
+                "error": f"unknown key(s): {', '.join(unknown)}. "
+                         f"Examples: enter, tab, esc, ctrl, alt, shift, win, f1-f12."}
+    if len(combo) == 1:
+        pg.press(combo[0])
+    else:
+        pg.hotkey(*combo)
+    return {"ok": True, "pressed": "+".join(combo)}
+
+
+@mcp.tool()
+def scroll(amount: int, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
+    """Scroll by `amount` clicks; positive is up, negative is down."""
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    pg = _pyautogui()
+    if x is not None and y is not None:
+        pg.moveTo(x, y)
+    pg.scroll(int(amount))
+    return {"ok": True, "scrolled": int(amount), "at": [x, y] if x is not None else "pointer"}
 
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)
