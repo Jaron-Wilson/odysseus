@@ -29,6 +29,17 @@ def setup_screen_control_routes() -> APIRouter:
             raise HTTPException(401, "Sign in to approve screen control.")
         return user
 
+    @router.get("/pending")
+    async def pending(request: Request):
+        """What is waiting on this person right now.
+
+        The page calls this on load. Without it a reload loses the prompt
+        entirely -- the request stays pending server-side and answerable,
+        but nothing on screen says so, so the run just appears to hang.
+        """
+        user = _require_user(request)
+        return {"pending": approvals.pending_for(user)}
+
     @router.get("/pending/{request_id}")
     async def get_request(request_id: str, request: Request):
         _require_user(request)

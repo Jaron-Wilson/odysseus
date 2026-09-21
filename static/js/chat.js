@@ -3397,7 +3397,30 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     const renderDelta = () => {
       const dt = stripToolBlocks(roundText);
-      contentDiv.innerHTML = markdownModule.mdToHtml(markdownModule.squashOutsideCode(dt));
+      // Thinking is not its own event -- it is <think> tags inside the
+      // delta text. Rendering with plain mdToHtml, as this did, either
+      // swallows it or spills raw reasoning; either way a reload during
+      // thinking showed nothing that said "still thinking".
+      if (markdownModule.hasUnclosedThinkTag &&
+          markdownModule.hasUnclosedThinkTag(dt)) {
+        const start = dt.search(
+          /<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i);
+        const thought = dt.substring(Math.max(start, 0))
+          .replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought\s*\n?/i, '')
+          .replace(/<channel\|>/gi, '')
+          .trim();
+        const lines = thought.split('\n').length;
+        contentDiv.innerHTML =
+          '<div class="thinking-section"><div class="thinking-header">' +
+          '<div class="thinking-header-left">Thinking' +
+          (lines > 1 ? ` (${lines} lines)` : '') + '</div></div></div>';
+        uiModule.scrollHistory();
+        return;
+      }
+      // Closed thinking collapses into its own bar, same as live.
+      contentDiv.innerHTML = markdownModule.processWithThinking
+        ? markdownModule.processWithThinking(markdownModule.squashOutsideCode(dt))
+        : markdownModule.mdToHtml(markdownModule.squashOutsideCode(dt));
       uiModule.scrollHistory();
     };
 
@@ -3438,6 +3461,16 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             if (documentModule && json.delta) documentModule.streamDocDelta(json.delta);
           } else if (json.type === 'metrics') {
             metricsData = json.data || metricsData;
+          } else if (json.ui_event === 'screen_control_request') {
+            // Replayed from the run's buffer. Without this a reload while
+            // something waits on approval loses the prompt entirely -- the
+            // request is still pending and answerable, but nothing says so
+            // and the run just looks stuck.
+            import('./chatRenderer.js').then((mod) => {
+              const fn = mod.showScreenControlModal
+                || (mod.default && mod.default.showScreenControlModal);
+              if (fn) fn(json.request_id, json.server_name);
+            }).catch(() => {});
           } else if (json.type === 'tool_start' || json.type === 'tool_output' ||
                      json.type === 'tool_progress' || json.type === 'agent_step' ||
                      json.type === 'web_sources' || json.type === 'rag_sources' ||

@@ -230,6 +230,30 @@ def spend_action(server_id: str, owner: str = "") -> dict:
     return {"remaining": 0, "exhausted": True}
 
 
+def pending_for(owner: str = "") -> List[dict]:
+    """Unanswered requests this person can still act on, newest first.
+
+    Owner-scoped like active_grant: being shown someone else's prompt is
+    how you end up approving something you never saw the reason for.
+    """
+    now = time.time()
+    out = [
+        {
+            "id": r["id"],
+            "server_id": r.get("server_id", ""),
+            "server_name": r.get("server_name", ""),
+            "reason": r.get("reason", ""),
+            "session_id": r.get("session_id", ""),
+            "age_s": int(now - r.get("created", now)),
+        }
+        for r in _prune(_load()).values()
+        if r.get("status") == "pending"
+        and (not owner or not r.get("owner") or r.get("owner") == owner)
+    ]
+    out.sort(key=lambda r: r["age_s"])
+    return out
+
+
 def list_grants() -> List[dict]:
     """Live grants, for showing what is currently permitted."""
     now = time.time()

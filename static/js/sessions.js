@@ -2030,6 +2030,35 @@ export function initDragSort() {
 // Skip entity-prefixed hashes (document-, note-, etc.) — those are handled
 // by their own click handlers in chatRenderer.js and must not trigger
 // session navigation (which would reset the active chat).
+// A pending approval outlives the stream that announced it: the request
+// is stored on disk, the SSE event is not. After a reload, a finished run
+// or a server restart, the prompt was gone from the screen while still
+// being answerable -- so the run sat waiting on a question nobody could
+// see. Ask once on load and put it back.
+(function restorePendingApproval() {
+  const raise = (rec) => {
+    import('./chatRenderer.js').then((mod) => {
+      const fn = mod.showScreenControlModal
+        || (mod.default && mod.default.showScreenControlModal);
+      if (fn) fn(rec.id, rec.server_name || '');
+    }).catch(() => {});
+  };
+  const check = () => {
+    fetch('/api/screen_control/pending', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const rec = data && data.pending && data.pending[0];
+        if (rec) raise(rec);
+      })
+      .catch(() => { /* nothing waiting, or not signed in yet */ });
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', check, { once: true });
+  } else {
+    check();
+  }
+})();
+
 window.addEventListener('hashchange', () => {
   const hashId = window.location.hash.replace('#', '');
   // Entity anchors are handled by their own click delegates. Anything missing

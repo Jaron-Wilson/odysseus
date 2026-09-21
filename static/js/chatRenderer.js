@@ -1217,41 +1217,41 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (kind === 'screencontrol') {
-    // Approving screen control. The click is the gate and also the proof of
-    // identity: the route needs a session cookie, so a lapsed login sends the
-    // browser to /login and back rather than silently granting anything.
+    // Raise the modal rather than acting on the click. Handing over the
+    // mouse and keyboard is not undoable, and the modal is the one place
+    // that spells out what approving actually grants. Denying is the only
+    // thing answered straight from the link, because refusing needs no
+    // explanation.
     const mm = id.match(/^(approve|deny)-(.+)$/);
     if (!mm) return;
     const [, verb, reqId] = mm;
+    if (verb === 'approve') {
+      showScreenControlModal(reqId, a.dataset.serverName || '');
+      return;
+    }
     const label = a.textContent;
-    a.textContent = verb === 'approve' ? 'Approving…' : 'Denying…';
-    fetch(`/api/screen_control/${verb}/${encodeURIComponent(reqId)}`, {
+    a.textContent = 'Denying\u2026';
+    fetch(`/api/screen_control/deny/${encodeURIComponent(reqId)}`, {
       method: 'POST', credentials: 'same-origin',
-    }).then(async res => {
+    }).then(async (res) => {
       if (res.status === 401) {
-        // Say what happened instead of failing opaquely, and send them to
-        // sign in; the link stays clickable when they come back.
-        a.textContent = `${label} — sign in first`;
+        a.textContent = `${label} \u2014 sign in first`;
         window.location.href = '/login';
         return;
       }
-      const body = await res.json().catch(() => ({}));
       if (res.ok) {
-        const mins = body.minutes ? ` for ${body.minutes} min` : '';
         a.replaceWith(Object.assign(document.createElement('span'), {
           className: 'stopped-indicator',
-          // Say it is carrying on, so nobody waits for a reply that is
-          // already being written, or re-asks for what was just approved.
-          textContent: verb === 'approve'
-            ? `[Screen control approved${mins}${body.resuming ? ' — continuing…' : ''}]`
-            : '[Screen control denied]',
+          textContent: '[Screen control denied]',
         }));
       } else {
-        a.textContent = `${label} — ${body.detail || res.status}`;
+        const body = await res.json().catch(() => ({}));
+        a.textContent = `${label} \u2014 ${body.detail || res.status}`;
       }
-    }).catch(() => { a.textContent = `${label} — failed`; });
+    }).catch(() => { a.textContent = `${label} \u2014 failed`; });
     return;
   }
+
   if (kind === 'session') {
     // Sessions are not in the entity table: switching chats is a different
     // action from opening something inside one, and startup reaches it by
@@ -2610,8 +2610,25 @@ export function showScreenControlModal(requestId, serverName) {
 
   const body = document.getElementById('sc-modal-body');
   const srv = document.getElementById('sc-modal-server');
+  // Opened from an inline link there is no name to hand over, and "a
+  // machine" is the one detail that matters here -- which computer is
+  // about to be driven. The request record knows, so ask it.
+  if (!serverName) {
+    fetch(`/api/screen_control/pending/${encodeURIComponent(requestId)}`,
+          { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((rec) => {
+        const name = rec && rec.server_name;
+        if (!name || modal.dataset.requestId !== requestId) return;
+        if (srv) srv.textContent = name;
+        if (body) body.textContent = body.textContent.replace('a machine', name);
+      })
+      .catch(() => { /* the generic wording stands */ });
+  }
   if (body) body.textContent =
-    `The assistant wants to control the screen on ${serverName || 'a machine'} to carry on with what you asked.`;
+    `The assistant wants to control the screen on ${serverName || 'a machine'} `
+    + `to carry on with what you asked. Approving covers up to 25 actions or `
+    + `15 minutes, whichever comes first, and Stop ends it immediately.`;
   if (srv) srv.textContent = serverName || 'that machine';
   modal.classList.remove('hidden');
 
