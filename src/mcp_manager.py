@@ -451,6 +451,11 @@ class McpManager:
                 owner = _ctx.pop("_owner", "") or ""
                 _sess = _ctx.pop("_session_id", "") or ''
                 grant = approvals.active_grant(server_id, owner)
+                if grant:
+                    # Charge the action now. An approval is permission to do
+                    # a bounded amount, not to keep going until the clock
+                    # runs out.
+                    approvals.spend_action(server_id, owner)
                 if not grant:
                     conn = self._connections.get(server_id, {})
                     name = conn.get("name", server_id)

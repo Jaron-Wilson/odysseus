@@ -110,3 +110,24 @@ def test_click_handler_does_not_keep_a_second_table():
         assert name not in after, (
             f"{name} is routed in the click handler as well as the table"
         )
+
+
+def test_select_session_refuses_an_entity_anchor():
+    """The sink guard, after this leaked in from three separate callers.
+
+    When an anchor like `screencontrol-approve-<id>` reached selectSession
+    the app switched to a session that does not exist and then polled
+    /stream_status and /resume for it, which bounced the reader out of the
+    chat they were reading and left the window looking frozen.
+    """
+    src = (_JS / "sessions.js").read_text()
+    assert "ENTITY_ANCHOR_RE" in src, "no guard at selectSession"
+    head = src[src.index("export async function selectSession"):][:400]
+    assert "ENTITY_ANCHOR_RE.test(id)" in head, (
+        "selectSession does not check its argument before using it"
+    )
+    # The guard must cover the approval anchors, which are the ones that
+    # actually hit it.
+    guard = src[src.index("const ENTITY_ANCHOR_RE"):][:400]
+    for kind in ("document", "research", "claudecode", "screencontrol"):
+        assert kind in guard, "guard misses %s-" % kind

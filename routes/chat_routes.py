@@ -1296,7 +1296,19 @@ def setup_chat_routes(
     async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
         _verify_session_owner(request, session_id)
         stopped = agent_runs.stop(session_id)
-        return {"stopped": stopped}
+        # Stop has to mean the computer too. Cancelling the task ends this
+        # loop, but the screen-control grant would outlive it for the rest
+        # of its window, so the next run could pick straight up where this
+        # one was stopped -- which is what "there was no stop on the mcp
+        # side" was describing. Releasing it costs one extra Approve click
+        # if the user did want to carry on.
+        revoked = 0
+        try:
+            from src import screen_control_approvals as _approvals
+            revoked = _approvals.revoke(owner=get_current_user(request) or "")
+        except Exception:
+            logger.exception("Could not release screen control on stop")
+        return {"stopped": stopped, "screen_control_revoked": revoked}
 
     # ------------------------------------------------------------------ #
     # GET /api/chat/stream_status — check if a stream is active for a session

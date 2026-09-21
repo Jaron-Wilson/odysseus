@@ -1501,7 +1501,21 @@ export async function loadSessions() {
   }
 }
 
+// Anchors that name a thing inside a chat, not a chat. Guarded here as
+// well as at each caller because this has now leaked in from three
+// different directions -- boot, hashchange, and the approve-link click --
+// and the damage is the same every time: the app switches to a session
+// that does not exist, then polls /stream_status and /resume for it, so
+// the reader is bounced out of the chat they were in and the window looks
+// stuck. One check at the sink is worth three at the sources.
+const ENTITY_ANCHOR_RE =
+  /^(document|note|image|email|event|task|skill|research|claudecode|screencontrol)-/;
+
 export async function selectSession(id, { keepSidebar = false } = {}) {
+  if (typeof id === 'string' && ENTITY_ANCHOR_RE.test(id)) {
+    console.warn('selectSession: ignoring entity anchor', id);
+    return;
+  }
   // Exit compare mode cleanly if active
   if (window.compareModule && window.compareModule.isActive()) {
     window.compareModule.deactivate(true);

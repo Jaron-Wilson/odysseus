@@ -37,6 +37,14 @@ APPROVALS_FILE = os.path.join(DATA_DIR, "screen_control_approvals.json")
 # window rather than a single action.
 GRANT_TTL_S = 15 * 60
 
+# How many sensitive actions one approval buys. A clock alone is not a
+# bound on what can happen to someone's desktop: at a few seconds per
+# round, fifteen minutes is hundreds of clicks, and an agent alternating
+# screenshot and click never trips the loop-breaker because every call
+# signature differs. Whichever runs out first -- the clock or the budget --
+# sends the next action back to the approval gate.
+MAX_ACTIONS_PER_GRANT = 25
+
 # How long an unanswered request stays clickable. Answering a stale request
 # should not silently hand out control.
 REQUEST_TTL_S = 10 * 60
@@ -165,18 +173,61 @@ def active_grant(server_id: str, owner: str = "") -> Optional[dict]:
     return None
 
 
-def revoke(server_id: str = "") -> int:
-    """Drop live grants, for a server or all of them. Returns how many."""
+def revoke(server_id: str = "", owner: str = "") -> int:
+    """Drop live grants, for a server or all of them. Returns how many.
+
+    Owner-scoped when an owner is given, for the same reason active_grant
+    is: stopping your own run must not quietly disarm someone else's.
+    """
     data = _prune(_load())
     dropped = 0
     for key, rec in list(data.items()):
-        if rec.get("status") == "approved" and (not server_id or rec.get("server_id") == server_id):
-            data.pop(key, None)
-            dropped += 1
+        if rec.get("status") != "approved":
+            continue
+        if server_id and rec.get("server_id") != server_id:
+            continue
+        if owner and rec.get("owner") and rec.get("owner") != owner:
+            continue
+        data.pop(key, None)
+        dropped += 1
     if dropped:
         _save(data)
         logger.info("Revoked %d screen-control grant(s)", dropped)
     return dropped
+
+
+def spend_action(server_id: str, owner: str = "") -> dict:
+    """Charge one action to the live grant for this server.
+
+    Charged before the call runs, not after: a call that hangs or crashes
+    has still reached for the machine, and a budget that only counted
+    clean returns would not bound the case that matters.
+
+    Returns {"remaining": int, "exhausted": bool}. When the budget runs
+    out the grant is dropped, so the next sensitive call re-prompts.
+    """
+    now = time.time()
+    data = _prune(_load())
+    for key, rec in list(data.items()):
+        if (rec.get("status") == "approved"
+                and rec.get("server_id") == server_id
+                and now < rec.get("expires", 0)
+                and (not owner or not rec.get("owner") or rec.get("owner") == owner)):
+            used = int(rec.get("actions_used", 0)) + 1
+            rec["actions_used"] = used
+            remaining = max(MAX_ACTIONS_PER_GRANT - used, 0)
+            if remaining <= 0:
+                data.pop(key, None)
+                _save(data)
+                logger.info(
+                    "Screen-control grant for %s spent its %d-action budget; "
+                    "further actions need a new approval",
+                    rec.get("server_name", server_id), MAX_ACTIONS_PER_GRANT)
+                return {"remaining": 0, "exhausted": True}
+            data[key] = rec
+            _save(data)
+            return {"remaining": remaining, "exhausted": False}
+    return {"remaining": 0, "exhausted": True}
 
 
 def list_grants() -> List[dict]:
