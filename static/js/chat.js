@@ -4011,11 +4011,83 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     }
   }
 
+  /**
+   * Stop whatever is running on this thread, and wait until it is really
+   * stopped.
+   *
+   * Regenerating replaces a turn. A detached run that survives that
+   * keeps calling tools for the abandoned turn -- on a real machine, in
+   * the screen-control case -- and then saves its answer into history
+   * that has been rewritten underneath it, so the reply the user just
+   * regenerated away comes back.
+   *
+   * Resolves true if the thread is confirmed idle, false if it would not
+   * settle; the caller carries on either way, because refusing to
+   * regenerate would be the worse failure.
+   */
+  async function _stopThreadForRegen(sessionId) {
+    // Deep research is its own server-side job on this thread, tracked
+    // separately from the chat run -- cancelling only the run would leave
+    // it searching for a question that no longer exists. Same condition
+    // the Stop button uses.
+    if (_researchingStreamIds.has(sessionId)) {
+      try {
+        await fetch(`${API_BASE}/api/research/cancel/${encodeURIComponent(sessionId)}`,
+                    { method: 'POST', credentials: 'same-origin' });
+      } catch (_) { /* already finished or gone */ }
+      _researchingStreamIds.delete(sessionId);
+      try { _clearResearchTimer(); } catch (_) {}
+    }
+    // Drop the local reader first so its handlers stop touching the DOM
+    // we are about to rewrite. The server stop is the authoritative part.
+    try { abortCurrentRequest(false); } catch (_) {}
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/chat/stop/${encodeURIComponent(sessionId)}`,
+        { method: 'POST', credentials: 'same-origin' });
+      const info = res.ok ? await res.json().catch(() => null) : null;
+      // Regenerating also takes the machine back, same as Stop. Say so,
+      // or the grant looks like it silently survived the turn it was
+      // given for.
+      const n = info && info.screen_control_revoked;
+      if (n && uiModule && uiModule.showToast) {
+        uiModule.showToast(n === 1
+          ? 'Stopped \u2014 screen control released'
+          : `Stopped \u2014 released screen control on ${n} machines`);
+      }
+    } catch (_) { /* nothing was running, or the post failed; still check */ }
+
+    // Poll until the run is gone. 404 from stream_status is the "no active
+    // run" answer. ~3s is generous for a cancellation that has already
+    // been requested, and the loop exits the moment it settles.
+    for (let i = 0; i < 20; i++) {
+      let active = false;
+      try {
+        const r = await fetch(
+          `${API_BASE}/api/chat/stream_status/${encodeURIComponent(sessionId)}`,
+          { credentials: 'same-origin' });
+        active = r.ok;
+      } catch (_) {
+        active = false;
+      }
+      if (!active) return true;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    return false;
+  }
+
   export async function regenerateFrom(aiMsgElement) {
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const aiIndex = allMsgs.indexOf(aiMsgElement);
     if (aiIndex < 0) return;
+
+    // Stop the thread before touching it. Done here, before the old answer
+    // is read below, so a regenerate pressed mid-stream keeps whatever had
+    // arrived as the previous variant instead of snapshotting a moving
+    // target -- and so the run cannot save over the rewrite afterwards.
+    const _sidForStop = sessionModule.getCurrentSessionId();
+    if (_sidForStop) await _stopThreadForRegen(_sidForStop);
 
     // Find the preceding user message
     let userIndex = -1;
