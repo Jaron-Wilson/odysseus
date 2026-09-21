@@ -823,7 +823,22 @@ async def execute_tool_block(
             result = {"error": "MCP manager not available", "exit_code": 1}
     else:
         desc = f"unknown: {tool}"
-        result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
+        if str(tool).startswith("mcp__"):
+            # Naming an MCP tool that did not reach the schema list is a
+            # different problem from naming one that does not exist, and the
+            # model cannot tell them apart. Saying which stops it reporting a
+            # connected server as down.
+            result = {
+                "error": (
+                    f"{tool} was not offered this turn, so it cannot be called. "
+                    "This is not the same as the server being disconnected. "
+                    "Ask again mentioning the machine or app by name, or check "
+                    "Settings to confirm the MCP server is connected."
+                ),
+                "exit_code": 1,
+            }
+        else:
+            result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result

@@ -1869,10 +1869,17 @@ async def stream_agent_loop(
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
+    # Set when retrieval was skipped rather than run. The MCP schemas must
+    # still go out in that case: the prompt lists every connected MCP tool by
+    # name whatever retrieval decides, so dropping the schemas leaves the
+    # model able to name a tool and unable to call it.
+    _skipped_retrieval = False
     if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
         from src.tool_index import ALWAYS_AVAILABLE
         _relevant_tools = set(ALWAYS_AVAILABLE)
-        logger.info("[tool-rag] Low-signal agent message; skipping retrieval and using always-available tools only")
+        _skipped_retrieval = True
+        logger.info("[tool-rag] Low-signal agent message; skipping retrieval, "
+                    "keeping always-available tools plus all MCP tools")
     if not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
@@ -2208,7 +2215,10 @@ async def stream_agent_loop(
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
-                _mcp_filtered = [
+                # Retrieval never got the chance to pick MCP tools on the
+                # skip path, so filtering by its result would drop all of
+                # them while the prompt still advertises every one.
+                _mcp_filtered = mcp_schemas if _skipped_retrieval else [
                     s for s in mcp_schemas
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
