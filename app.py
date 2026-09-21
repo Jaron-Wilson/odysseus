@@ -740,6 +740,10 @@ from routes.mcp_routes import setup_mcp_routes
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
 app.include_router(setup_mcp_routes(mcp_manager))
+# Mounted here, not with the other routers above: it needs mcp_manager, which
+# is not constructed until this point.
+from routes.media_routes import setup_media_routes
+app.include_router(setup_media_routes(mcp_manager))
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)

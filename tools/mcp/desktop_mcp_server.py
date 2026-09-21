@@ -921,6 +921,51 @@ def set_mute(muted: bool = True) -> Dict[str, Any]:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+
+@mcp.tool()
+def list_audio_devices() -> Dict[str, Any]:
+    """Audio output devices, and which one is currently in use.
+
+    Bluetooth headphones appear here alongside speakers, which is how to
+    answer "am I on my AirPods".
+    """
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    try:
+        from pycaw.pycaw import AudioUtilities
+    except ImportError as e:
+        return {"ok": False,
+                "error": f"Needs pycaw ({e}). Install with `python -m pip install pycaw comtypes`."}
+    try:
+        active_name = ""
+        try:
+            speakers = AudioUtilities.GetSpeakers()
+            active_name = getattr(speakers, "FriendlyName", "") or ""
+        except Exception:
+            pass
+
+        devices = []
+        for d in AudioUtilities.GetAllDevices():
+            name = getattr(d, "FriendlyName", "") or str(d)
+            state = str(getattr(d, "state", "") or "")
+            # GetAllDevices includes unplugged and disabled endpoints, which
+            # would otherwise read as "connected headphones" when they are
+            # anything but.
+            if "Active" not in state:
+                continue
+            low = name.lower()
+            devices.append({
+                "name": name,
+                "active": bool(active_name) and name == active_name,
+                "bluetooth": any(w in low for w in
+                                 ("airpod", "bluetooth", "headset", "buds", "beats")),
+            })
+        return {"ok": True, "count": len(devices), "default": active_name,
+                "devices": devices}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)
     # Default to the tailnet address, never all interfaces. These tools launch

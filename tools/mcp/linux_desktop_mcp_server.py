@@ -387,6 +387,140 @@ def desktop_status() -> Dict[str, Any]:
     return out
 
 
+
+# --------------------------------------------------------------------------
+# Audio: volume and output devices
+#
+# pactl covers PulseAudio and PipeWire alike, and Bluetooth headphones appear
+# as ordinary sinks, so one tool lists speakers and AirPods together.
+# --------------------------------------------------------------------------
+
+def _default_sink() -> str:
+    r = _run(["pactl", "get-default-sink"], timeout=10)
+    return (r.get("stdout") or "").strip()
+
+
+def _sink_volume(sink: str = "@DEFAULT_SINK@") -> Optional[int]:
+    r = _run(["pactl", "get-sink-volume", sink], timeout=10)
+    if not r.get("ok"):
+        return None
+    # "Volume: front-left: 32113 /  49% / -18.59 dB, front-right: ..."
+    m = re.search(r"(\d+)%", r.get("stdout", ""))
+    return int(m.group(1)) if m else None
+
+
+def _sink_muted(sink: str = "@DEFAULT_SINK@") -> Optional[bool]:
+    r = _run(["pactl", "get-sink-mute", sink], timeout=10)
+    if not r.get("ok"):
+        return None
+    return "yes" in (r.get("stdout") or "").lower()
+
+
+@mcp.tool()
+def get_volume() -> Dict[str, Any]:
+    """Current output volume (0-100), mute state, and which device is active."""
+    blocked = _require_session()
+    if blocked:
+        return blocked
+    if not _have("pactl"):
+        return {"ok": False, "error": "pactl is not installed (apt install pulseaudio-utils)."}
+    vol = _sink_volume()
+    if vol is None:
+        return {"ok": False, "error": "Could not read the volume from pactl."}
+    return {"ok": True, "volume": vol, "muted": _sink_muted(),
+            "sink": _default_sink()}
+
+
+@mcp.tool()
+def set_volume(percent: int) -> Dict[str, Any]:
+    """Set the output volume to an exact percentage, 0-100."""
+    blocked = _require_session()
+    if blocked:
+        return blocked
+    try:
+        pct = int(percent)
+    except (TypeError, ValueError):
+        raise RuntimeError("percent must be a whole number from 0 to 100")
+    if not 0 <= pct <= 100:
+        return {"ok": False, "error": f"percent must be 0-100, got {pct}"}
+    before = _sink_volume()
+    r = _run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{pct}%"], timeout=10)
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("stderr") or r.get("error") or "pactl failed"}
+    out = {"ok": True, "volume": _sink_volume(), "was": before}
+    # Setting a level on a muted sink is silent, which reads as the call
+    # having done nothing.
+    if pct > 0 and _sink_muted():
+        _run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"], timeout=10)
+        out["note"] = "Also unmuted, since setting a level on a muted output is silent."
+    return out
+
+
+@mcp.tool()
+def set_mute(muted: bool = True) -> Dict[str, Any]:
+    """Mute or unmute the output."""
+    blocked = _require_session()
+    if blocked:
+        return blocked
+    r = _run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "1" if muted else "0"], timeout=10)
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("stderr") or r.get("error") or "pactl failed"}
+    return {"ok": True, "muted": _sink_muted(), "volume": _sink_volume()}
+
+
+@mcp.tool()
+def list_audio_devices() -> Dict[str, Any]:
+    """Output devices, including Bluetooth headphones, and which is in use."""
+    blocked = _require_session()
+    if blocked:
+        return blocked
+    if not _have("pactl"):
+        return {"ok": False, "error": "pactl is not installed."}
+    r = _run(["pactl", "list", "sinks"], timeout=15)
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("stderr") or "pactl failed"}
+    default = _default_sink()
+    devices = []
+    current: Dict[str, Any] = {}
+    for line in (r.get("stdout") or "").splitlines():
+        line = line.strip()
+        if line.startswith("Name:"):
+            if current:
+                devices.append(current)
+            name = line.split(":", 1)[1].strip()
+            current = {"name": name, "active": name == default,
+                       # Bluetooth sinks are named bluez_*; that is the only
+                       # reliable way to tell headphones from speakers here.
+                       "bluetooth": name.startswith("bluez")}
+        elif line.startswith("Description:") and current:
+            current["description"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Mute:") and current:
+            current["muted"] = "yes" in line.lower()
+        elif line.startswith("Volume:") and current and "%" in line:
+            m = re.search(r"(\d+)%", line)
+            if m:
+                current["volume"] = int(m.group(1))
+    if current:
+        devices.append(current)
+    return {"ok": True, "count": len(devices), "default": default, "devices": devices}
+
+
+@mcp.tool()
+def set_audio_device(name: str) -> Dict[str, Any]:
+    """Switch output to a device from list_audio_devices, by name."""
+    blocked = _require_session()
+    if blocked:
+        return blocked
+    name = (name or "").strip()
+    if not name:
+        raise RuntimeError("name is required — use list_audio_devices to see them")
+    r = _run(["pactl", "set-default-sink", name], timeout=10)
+    if not r.get("ok"):
+        return {"ok": False,
+                "error": f"Could not switch to {name!r}: "
+                         f"{r.get('stderr') or r.get('error') or 'pactl failed'}"}
+    return {"ok": True, "default": _default_sink()}
+
 if __name__ == "__main__":
     import uvicorn  # noqa: F401
     # HOST/PORT come from the module scope above, where the Host allowlist was
