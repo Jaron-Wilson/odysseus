@@ -3676,7 +3676,8 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     return {"output": f"Research library ({len(items)} item{'s' if len(items) != 1 else ''}):\n{rows}", "exit_code": 0}
 
 
-async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict:
+async def do_trigger_research(content: str, owner: Optional[str] = None,
+                              session_id: Optional[str] = None) -> Dict:
     """Start a live deep-research job that appears in the Deep Research
     sidebar. Hits /api/research/start (the same path the sidebar's
     'Research' button uses) so the session is discoverable + streamable
@@ -3714,6 +3715,12 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
         payload["model"] = str(args["model"])
     if args.get("endpoint_id"):
         payload["endpoint_id"] = str(args["endpoint_id"])
+    # Stamp the chat this came from so the finished report can be delivered
+    # back here. Without it the report only reaches the sidebar, and asking
+    # "is it done?" depends on the model choosing to call manage_research —
+    # which smaller local models do not reliably do.
+    if session_id:
+        payload["origin_session"] = str(session_id)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(f"{_INTERNAL_BASE}/api/research/start",

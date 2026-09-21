@@ -418,6 +418,10 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
         extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
         category: Optional[str] = None
+        # The chat that asked for this, when it came from trigger_research
+        # rather than the panel. Lets the finished report be delivered back
+        # there instead of only appearing in the sidebar.
+        origin_session: Optional[str] = None
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
@@ -506,6 +510,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             extraction_timeout=body.extraction_timeout,
             extraction_concurrency=body.extraction_concurrency,
             owner=user,
+            origin_session=(body.origin_session or "").strip(),
         )
         return {"session_id": session_id, "status": "running", "query": body.query}
 

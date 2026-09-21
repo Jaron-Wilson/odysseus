@@ -789,7 +789,7 @@ async def execute_tool_block(
         desc = result.get("output") or result.get("error") or "edit_file"
     elif tool == "trigger_research":
         desc = "trigger_research"
-        result = await do_trigger_research(content, owner=owner)
+        result = await do_trigger_research(content, owner=owner, session_id=session_id)
     elif tool == "manage_research":
         desc = "manage_research"
         result = await do_manage_research(content, owner=owner)

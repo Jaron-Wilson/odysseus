@@ -256,6 +256,7 @@ class ResearchHandler:
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
         owner: str = "",
+        origin_session: str = "",
     ) -> dict:
         """Start research as a background task. Returns task info dict.
 
@@ -304,6 +305,12 @@ class ResearchHandler:
             "category": category,
             # SECURITY: track ownership so all reads / saves can filter by user.
             "owner": owner or "",
+            # The chat that asked for this, so the finished report can be put
+            # back where it was requested. Without it the report only ever
+            # lands in the panel and the chat has no way to learn it exists:
+            # a rerun mints a fresh rp- id, so any id the chat remembered is
+            # already stale.
+            "origin_session": origin_session or "",
         }
         self._active_tasks[session_id] = entry
 
@@ -372,7 +379,13 @@ class ResearchHandler:
                     except Exception as e:
                         logger.warning(f"on_complete callback failed in timeout branch: {e}")
                 else:
-                    entry["result"] = f"Research timed out after {hard_timeout}s. The model may be too slow for deep research."
+                    entry["result"] = (
+                        f"Research timed out after {hard_timeout}s with nothing gathered. "
+                        f"The model is probably too slow for deep research — check which "
+                        f"endpoint the research model points at."
+                    )
+                    entry["status"] = "error"
+                    self._deliver_to_chat(session_id, entry)
                 on_progress({"phase": "error", "message": f"Research timed out after {hard_timeout}s"})
             except asyncio.CancelledError:
                 entry["status"] = "cancelled"
@@ -399,6 +412,7 @@ class ResearchHandler:
                 else:
                     entry["result"] = str(e)
                     entry["status"] = "error"
+                    self._deliver_to_chat(session_id, entry)
 
         task = asyncio.create_task(_run())
         entry["task"] = task
@@ -598,6 +612,73 @@ class ResearchHandler:
             except Exception:
                 pass
 
+    def _deliver_to_chat(self, session_id: str, entry: dict) -> bool:
+        """Put a finished report back into the chat that asked for it.
+
+        Background shell jobs already get this treatment via bg_monitor; deep
+        research never did, so a finished report sat in the panel while the
+        chat had no idea it existed. Asking "is it done yet?" then depended on
+        the model choosing to call manage_research, which small local models
+        reliably do not.
+
+        The report is appended as-is rather than handed back to a model to
+        summarise. It is already synthesised prose with citations, so a second
+        pass would add latency and a chance to distort it, and this runs off
+        the back of a completion rather than inside a live turn.
+        """
+        origin = (entry.get("origin_session") or "").strip()
+        if not origin:
+            return False
+        result = entry.get("result") or ""
+        if not result.strip():
+            return False
+        try:
+            from src.ai_interaction import get_session_manager
+            from core.models import ChatMessage
+
+            sm = get_session_manager()
+            if not sm:
+                return False
+            try:
+                sess = sm.get_session(origin)
+            except KeyError:
+                # The chat was deleted while the research ran. Nothing to do,
+                # and not an error worth surfacing.
+                logger.info("Research %s: origin chat %s is gone; report kept in the panel only",
+                            session_id, origin)
+                return False
+            if not sess:
+                return False
+
+            query = entry.get("query") or "your question"
+            if (entry.get("status") or "").lower() == "error":
+                # A run that dies with nothing is the worst case to leave
+                # silent: the panel shows no report and the chat waits for a
+                # result that will never arrive.
+                header = (f"**Deep research failed** — {query}\n\n"
+                          f"Nothing was saved, so there is no report to open. "
+                          f"What went wrong:\n\n")
+            else:
+                header = (f"**Deep research finished** — {query}\n\n"
+                          f"[Open the full report](#research-{session_id})\n\n---\n\n")
+            sm.add_message(origin, ChatMessage(
+                "assistant", header + result,
+                metadata={
+                    "research_id": session_id,
+                    "research_query": query,
+                    "source": "research_completed",
+                },
+            ))
+            sm.save_sessions()
+            logger.info("Research %s delivered into chat %s", session_id, origin)
+            return True
+        except Exception as e:
+            # Delivery is a convenience on top of a report that is already
+            # saved; never let it turn a completed run into a failed one.
+            logger.warning("Could not deliver research %s to chat %s: %s",
+                           session_id, origin, e)
+            return False
+
     def _save_result(self, session_id: str, entry: dict):
         """Persist completed research result to disk."""
         try:
@@ -627,9 +708,12 @@ class ResearchHandler:
                 "completed_at": time.time(),
                 # SECURITY: stamp owner so route handlers can filter by user.
                 "owner": entry.get("owner", ""),
+                "origin_session": entry.get("origin_session", ""),
             }
             path.write_text(json.dumps(data), encoding="utf-8")
             logger.info(f"Research result saved to {path}")
+            # After the write, so a delivery failure can never cost the report.
+            self._deliver_to_chat(session_id, entry)
             try:
                 from src.event_bus import fire_event
                 fire_event("research_completed", entry.get("owner") or None)
