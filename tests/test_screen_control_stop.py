@@ -130,3 +130,47 @@ def test_stop_releases_screen_control():
     assert "get_current_user(request)" in body, (
         "Stop revokes without scoping to the caller"
     )
+
+
+# --------------------------------------------------------------------------
+# Resolve 21.1 ships its own MCP server, whose script tools run code
+# --------------------------------------------------------------------------
+
+def test_resolve_script_tools_need_approval():
+    """run_script is arbitrary Python on the machine Resolve runs on.
+
+    Wider than anything else exposed here: not "control an application"
+    but code execution with Resolve's privileges, and unlike taking the
+    mouse it leaves nothing on screen for anyone to notice.
+    """
+    from src.screen_control_approvals import is_sensitive
+
+    for tool in ("run_script", "run_script_unsafe"):
+        assert is_sensitive(f"mcp__abc123__{tool}"), (
+            "%s runs code and is not gated" % tool
+        )
+
+
+def test_resolve_read_only_tools_are_not_gated():
+    """An approval click in front of "what version is running" is friction
+    that teaches people to approve without reading."""
+    from src.screen_control_approvals import is_sensitive
+
+    for tool in ("get_resolve_status", "list_luts", "list_dctls",
+                 "get_scripting_api", "search_scripting_api"):
+        assert not is_sensitive(f"mcp__abc123__{tool}"), (
+            "%s is read-only and should not need approval" % tool
+        )
+
+
+def test_the_gate_matches_on_the_bare_tool_name():
+    """Entries carry no mcp__<server>__ prefix deliberately.
+
+    Resolve's server id is assigned when it is registered, so a
+    prefixed entry would silently stop matching if it were re-added.
+    """
+    from src.screen_control_approvals import SENSITIVE_TOOLS
+
+    assert not any("mcp__" in t for t in SENSITIVE_TOOLS), (
+        "a prefixed entry only matches one server registration"
+    )

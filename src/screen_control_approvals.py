@@ -62,6 +62,18 @@ SENSITIVE_TOOLS = {
     # Volume is not screen control: it changes a system setting, not what is
     # on screen, and gating it would put an approval click in front of
     # "turn it down" — the exact friction this was meant to remove.
+    #
+    # DaVinci Resolve 21.1 ships its own MCP server, and its two script tools
+    # are the widest capability any server here exposes: they run Python on
+    # the machine Resolve is on, with Resolve's privileges. That is not
+    # "control an application", it is arbitrary code execution, so it belongs
+    # behind the same gate as taking the mouse -- more so, because a script
+    # leaves no trail on screen for anyone to notice.
+    #
+    # Named without the mcp__<server>__ prefix, like every entry here, so this
+    # holds whichever server id Resolve is registered under, and for any other
+    # server that adopts the same names.
+    "run_script", "run_script_unsafe",
 }
 
 
