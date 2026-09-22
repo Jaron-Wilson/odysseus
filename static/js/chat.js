@@ -1992,6 +1992,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
               } else if (json.type === 'tool_start') {
                 if (_isBg) continue;
+                // ask_user renders as its own question card. The generic tool
+                // card would print the arguments beside it, and for this tool
+                // the arguments are the question -- so the reader sees it
+                // twice, the second time as raw JSON.
+                if ((json.tool || '').toLowerCase() === 'ask_user') continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 // Force-close thinking if still open — tools are real content, not thinking
@@ -2130,6 +2135,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
               } else if (json.type === 'tool_output') {
                 if (_isBg) continue;
+                if ((json.tool || _lastToolName || '').toLowerCase() === 'ask_user') continue;
                 // --- Update the current thread node ---
                 if (currentToolBubble) {
                   // Stop wave animation + the per-second cooking ticker
@@ -2302,7 +2308,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (_aq.question && _opts.length) {
                   const chatBox = document.getElementById('chat-history');
                   // Drop any prior unanswered card so only the latest shows.
-                  chatBox.querySelectorAll('.ask-user-card').forEach(n => n.remove());
+                  // Clear any earlier unanswered question, wherever it lives.
+                  document.querySelectorAll('.ask-user-overlay, .ask-user-card')
+                    .forEach(n => n.remove());
                   const card = document.createElement('div');
                   card.className = 'ask-user-card';
                   const multi = !!_aq.multi;
@@ -2327,7 +2335,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   closeBtn.setAttribute('aria-label', 'Dismiss question');
                   closeBtn.textContent = '×';
                   closeBtn.addEventListener('click', () => {
-                    card.remove();
+                    (card.closest('.ask-user-overlay') || card).remove();
                     const mi = uiModule.el('message');
                     if (mi) mi.focus();
                   });
@@ -2359,7 +2367,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     // Remove the card once answered — the choice is sent as a
                     // normal user message (and the question persists as the
                     // assistant text above), so the affordances are spent.
-                    card.remove();
+                    (card.closest('.ask-user-overlay') || card).remove();
                     const mi = uiModule.el('message');
                     if (mi) mi.value = text;
                     const sb = document.querySelector('.send-btn');
@@ -2429,7 +2437,22 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   other.appendChild(otherSend);
                   card.appendChild(other);
 
-                  chatBox.appendChild(card);
+                  // A question that ends the turn should interrupt, not join
+                  // the scroll: appended to the history it scrolls away with
+                  // everything else and gets missed on a long answer.
+                  const askOverlay = document.createElement('div');
+                  askOverlay.className = 'ask-user-overlay';
+                  askOverlay.appendChild(card);
+                  // Clicking the backdrop dismisses the buttons and leaves the
+                  // composer focused. Dismissing is not an answer -- the turn
+                  // has already ended, so typing a reply is always available.
+                  askOverlay.addEventListener('click', (ev) => {
+                    if (ev.target !== askOverlay) return;
+                    askOverlay.remove();
+                    const mi = uiModule.el('message');
+                    if (mi) mi.focus();
+                  });
+                  document.body.appendChild(askOverlay);
                   card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                   // Move focus to the card so keyboard/screen-reader users land on
                   // the question + choices when it appears.

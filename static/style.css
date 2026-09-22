@@ -36612,6 +36612,35 @@ body.theme-frosted .modal {
    types a free-text "Other" answer, or dismisses (×) to just type in the
    composer. Reuses theme vars (and .modal-close for the ×) so it reads as
    part of the conversation, not a modal. */
+/* The question ends the turn, so it interrupts rather than joining the
+   scroll. Inside the history it scrolled away with everything else and got
+   missed on a long answer. */
+.ask-user-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, #000 45%, transparent);
+  backdrop-filter: blur(2px);
+  animation: ask-user-in 0.12s ease-out;
+}
+@keyframes ask-user-in { from { opacity: 0; } to { opacity: 1; } }
+.ask-user-overlay .ask-user-card {
+  align-self: center;
+  margin: 0;
+  width: min(560px, 100%);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ask-user-overlay { animation: none; }
+}
+
 .ask-user-card {
   /* Left-align like an assistant message (.msg-ai), not centered. */
   align-self: flex-start;
@@ -36647,11 +36676,14 @@ body.theme-frosted .modal {
 .ask-user-option {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 2px 8px;
   width: 100%;
-  /* Match the height of the free-text input below (.styled-prompt-input). */
+  /* Match the height of the free-text input below (.styled-prompt-input),
+     but only as a floor: height must follow the content or a wrapped
+     description spills past the border. */
   min-height: 39px;
+  height: auto;
   text-align: left;
   padding: 9px 12px;
   border: 1px solid var(--border);
@@ -36668,7 +36700,17 @@ body.theme-frosted .modal {
 }
 .ask-user-option:disabled { cursor: default; }
 .ask-user-option-label { font-weight: 500; }
-.ask-user-option-desc { opacity: 0.65; font-size: 12px; }
+/* Its own row, always. A <button> is a flex container that does not grow to
+   fit a WRAPPED flex line, so a description long enough to wrap painted
+   outside the button's border; and letting short ones sit inline made some
+   options one line and others two, which read as a rendering fault rather
+   than a layout. */
+.ask-user-option-desc {
+  opacity: 0.65;
+  font-size: 12px;
+  flex: 1 0 100%;
+  line-height: 1.35;
+}
 /* Free-text "Other" row: input + send, on one line. */
 .ask-user-other {
   display: flex;
