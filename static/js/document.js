@@ -2082,7 +2082,10 @@ import * as Modals from './modalManager.js';
     if (pdfViewBtn) pdfViewBtn.style.display = 'none';
     if (true) {
       const explicit = _pdfViewState.get(activeDocId);
-      const active = isForm && explicit !== false;
+      // A form-backed doc opens in the rendered view by default, because the
+      // PDF is the thing. Any other document opens as its source and shows
+      // the render only when asked.
+      const active = explicit === true || (isForm && explicit !== false);
       // Sync the language select's displayed value to the current view.
       if (isForm && langSelect) {
         const want = active ? 'pdf' : 'markdown';
@@ -4395,9 +4398,19 @@ import * as Modals from './modalManager.js';
       // markdown source instead of changing the underlying language.
       const live = document.getElementById('doc-editor-textarea')?.value
         || docs.get(activeDocId)?.content || '';
-      if (_isFormBackedDoc(live) && (val === 'pdf' || val === 'markdown')) {
+      // "pdf" is a view, not a language a document is stored in. It used to
+      // only mean something for a doc backed by an uploaded PDF; every other
+      // document typesets to a PDF now, so the same toggle shows that render
+      // instead of falling through and trying to save "pdf" as the language.
+      const _inPdfView = _pdfViewState.get(activeDocId) === true;
+      if (val === 'pdf' || (val === 'markdown' && _inPdfView && _isFormBackedDoc(live))) {
         _setPdfViewActive(val === 'pdf');
         return;
+      }
+      if (val === 'markdown' && _inPdfView) {
+        // Leaving the rendered view on an ordinary document: drop back to the
+        // source and let the language change through as normal.
+        _setPdfViewActive(false);
       }
       // Mark user explicitly chose a language — stop auto-detection
       if (activeDocId && docs.has(activeDocId)) {

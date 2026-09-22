@@ -78,6 +78,46 @@ from routes.document_helpers import (
 )
 
 
+async def _pdf_for_viewing(request, doc, user, locate_upload):
+    """A PDF path for this document, whichever kind it is.
+
+    Returns (path, is_form_backed). A form-backed document has a real
+    uploaded PDF behind it and keeps its fields; anything else is
+    typeset from its markdown, which is the same render /export-pdf
+    serves, so the page images and the download cannot disagree.
+
+    The render is cached against a hash of the content. The viewer asks
+    for one PNG per page, and re-rendering per page would relaunch
+    Chromium each time and could return pages from different versions of
+    the text if it changed mid-view.
+    """
+    import hashlib
+    import os
+    from src.pdf_form_doc import find_source_upload_id
+
+    upload_id = find_source_upload_id(doc.current_content or "")
+    if upload_id:
+        path = locate_upload(request, upload_id, user)
+        if not path:
+            raise HTTPException(404, f"Source PDF {upload_id} not found")
+        return path, True
+
+    from src.doc_pdf import PDF_DIR, render_markdown_pdf
+
+    content = doc.current_content or ""
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+    name = f"docview-{doc.id}-{digest}"
+    cached = os.path.join(PDF_DIR, f"{name}.pdf")
+    if os.path.isfile(cached):
+        return cached, False
+    rendered, reason = await render_markdown_pdf(
+        content, name, running_title=(doc.title or "Document"))
+    if not rendered:
+        logger.error("markdown->PDF failed for doc view %s: %s", doc.id, reason)
+        raise HTTPException(500, f"Could not render PDF: {reason}")
+    return rendered, False
+
+
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
 
@@ -1073,15 +1113,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not doc:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
-            upload_id = find_source_upload_id(doc.current_content or "")
-            if not upload_id:
-                raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_current_user_upload(request, upload_id, user)
-            if not pdf_path:
-                raise HTTPException(404, f"Source PDF {upload_id} not found")
+            pdf_path, _is_form = await _pdf_for_viewing(
+                request, doc, user, _locate_current_user_upload)
 
             fitz = _load_pdf_viewer_fitz()
-            schema = load_field_sidecar(pdf_path) or []
+            # Only a real uploaded form has fields to overlay. A typeset
+            # document has none, and asking for a sidecar it never had
+            # would fail the whole view.
+            schema = (load_field_sidecar(pdf_path) or []) if _is_form else []
             values = parse_markdown_to_values(doc.current_content or "")
 
             # Group fields by page
@@ -1140,12 +1179,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not doc:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
-            upload_id = find_source_upload_id(doc.current_content or "")
-            if not upload_id:
-                raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_current_user_upload(request, upload_id, user)
-            if not pdf_path:
-                raise HTTPException(404, "Source PDF not found")
+            pdf_path, _ = await _pdf_for_viewing(
+                request, doc, user, _locate_current_user_upload)
         finally:
             db.close()
 
