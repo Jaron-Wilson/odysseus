@@ -773,6 +773,11 @@ _EXPLICIT_CONTINUATION_RE = re.compile(
     r"^\s*(?:"
     r"yes|y|yeah|yep|ok|okay|sure|do it|go ahead|continue|carry on|"
     r"run it|launch it|start it|use that|that one|same|the same|"
+    # Mid-task replies: the user did the step they were handed and is saying
+    # so. "done" alone went out as low-signal with no shell.
+    r"done|did it|i did it|it'?s done|all done|finished|ready|all set|"
+    r"try (?:it )?(?:now|again)|now try|retry|again|next|go|"
+    r"(?:okay|ok)[, ]+(?:done|try (?:it )?now|go)|"
     r"first|second|third|the first one|the second one|the third one|"
     r"[123]|[abc]"
     r")\s*[.!?]*\s*$",
@@ -806,6 +811,13 @@ def _assistant_requested_followup(messages: List[Dict]) -> bool:
         if isinstance(content, list):
             content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
         text = str(content or "").lower()
+        # The assistant handed the user a step to do ("run this on your
+        # laptop", "once you've done that I'll..."): whatever they reply next
+        # is the task continuing, however short.
+        if re.search(r"\b(once you(?:'ve| have)|when you(?:'ve| have)|after you(?:'ve| have)|"
+                     r"let me know when|tell me when|run (?:this|these|it) on|then i'?ll|"
+                     r"once that'?s done|when that'?s done)\b", text):
+            return True
         if "?" not in text:
             return False
         return bool(re.search(
@@ -866,6 +878,9 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
         domains.add("sessions")
     if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
+        domains.add("files")
+    if has(r"\b(ssh|scp|rsync|ssh keys?|authorized_keys|tailscale|laptop|desktop|servers?|my pc|"
+           r"my computer|machines?|devices?|remote|deploy|docker|containers?|wrangler|install)\b"):
         domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
