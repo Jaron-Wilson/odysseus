@@ -7,9 +7,10 @@ media keys, only mean anything in the interactive desktop session.
 Three groups of tools, and one rule that shapes all of them.
 
 The rule: nothing here execs an arbitrary command. `launch_app` takes a key
-from a fixed table, never a path or command line, so a prompt-injected model
-cannot turn "open my editor" into "run this binary". Adding an app means
-editing APPS below, deliberately.
+from a fixed table or the name of a Start menu entry (whose AppID comes from
+Windows), never a path or command line, so a prompt-injected model
+cannot turn "open my editor" into "run this binary". Giving an app special
+handling (process checks, CLI access) means editing APPS below, deliberately.
 
 - VS Code: driven through its own CLI, which is the supported way in and
   handles an already-running instance correctly (it reuses the window instead
@@ -28,6 +29,7 @@ editing APPS below, deliberately.
 import glob
 import json
 import os
+import re
 import subprocess
 import time
 from typing import Any, Dict, List, Optional
@@ -150,11 +152,111 @@ def _wait_for_process(name: Optional[str], timeout: float = 20.0) -> Optional[in
 
 
 # --------------------------------------------------------------------------
+# Everything else in the Start menu
+# --------------------------------------------------------------------------
+#
+# The table above is six apps; this machine has ~300 in its Start menu. The
+# rest are found, not configured: Get-StartApps lists every Start menu entry
+# (classic programs, Store apps, Steam games) with an AppID that Explorer can
+# launch through shell:AppsFolder. That keeps the rule: the caller names an
+# app from that list, and the AppID comes from Windows, never from the caller,
+# so no path or command line can be smuggled in.
+
+START_APPS_TTL = 300.0
+_start_cache: Dict[str, Any] = {"at": 0.0, "apps": []}
+
+# Entries that launch but should never be opened by an assistant: removing
+# software, repairing it, resetting it, or reinstalling it.
+_SKIP_NAME = re.compile(
+    r"\b(uninstall\w*|uninst|remove|repair|reset|recovery|setup|installer|"
+    r"modify|change or remove)\b", re.I)
+# Documents rather than programs: help files, readmes, web shortcuts.
+_SKIP_SUFFIX = (".chm", ".txt", ".pdf", ".rtf", ".htm", ".html", ".url", ".ini", ".log")
+
+
+def _parse_start_apps(raw: str) -> List[Dict[str, str]]:
+    """`Get-StartApps | ConvertTo-Json` to a clean, sorted [{name, app_id}]."""
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    data = json.loads(raw)
+    if isinstance(data, dict):                  # one app comes back unwrapped
+        data = [data]
+    out, seen = [], set()
+    for d in data if isinstance(data, list) else []:
+        name = str(d.get("Name") or "").strip()
+        app_id = str(d.get("AppID") or "").strip()
+        if not name or not app_id:
+            continue
+        leaf = app_id.replace("/", "\\").rsplit("\\", 1)[-1]
+        if _SKIP_NAME.search(name) or _SKIP_NAME.search(leaf):
+            continue
+        if leaf.lower().endswith(_SKIP_SUFFIX):
+            continue
+        if name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out.append({"name": name, "app_id": app_id})
+    out.sort(key=lambda a: a["name"].lower())
+    return out
+
+
+def _start_apps(refresh: bool = False) -> List[Dict[str, str]]:
+    if not refresh and _start_cache["apps"] and time.time() - _start_cache["at"] < START_APPS_TTL:
+        return _start_cache["apps"]
+    r = _run(["powershell", "-NoProfile", "-Command",
+              "Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress"], timeout=45)
+    if not r.get("ok"):
+        return _start_cache["apps"]              # keep the last good list
+    try:
+        apps = _parse_start_apps(r.get("stdout", ""))
+    except (ValueError, TypeError):
+        return _start_cache["apps"]
+    _start_cache.update(at=time.time(), apps=apps)
+    return apps
+
+
+def _find_start_app(apps: List[Dict[str, str]], want: str) -> Dict[str, Any]:
+    """Pick the one app `want` means: exact name, then a unique prefix, then a
+    unique substring. Returns {"app": ...} or {"candidates": [...]}."""
+    w = (want or "").strip().lower()
+    if not w:
+        return {"candidates": []}
+    exact = [a for a in apps if a["name"].lower() == w]
+    if exact:
+        return {"app": exact[0]}
+    for test in (lambda n: n.startswith(w), lambda n: w in n):
+        hits = [a for a in apps if test(a["name"].lower())]
+        if len(hits) == 1:
+            return {"app": hits[0]}
+        if hits:
+            return {"candidates": [a["name"] for a in hits[:12]]}
+    return {"candidates": []}
+
+
+# --------------------------------------------------------------------------
 # Apps
 # --------------------------------------------------------------------------
 
 @mcp.tool()
-def list_apps() -> List[Dict[str, Any]]:
+def list_apps(match: str = "") -> Dict[str, Any]:
+    """Apps on this PC. `curated` are the ones with special handling (VS Code,
+    Resolve, Minecraft, ...) and a running state; `installed` is everything
+    else in the Start menu, by name. Pass `match` to filter, e.g. "adobe".
+    Launch any of them with launch_app(app=<key or name>)."""
+    m = (match or "").strip().lower()
+    installed = [a["name"] for a in _start_apps() if not m or m in a["name"].lower()]
+    return {
+        "curated": [a for a in _curated_apps()
+                    if not m or m in a["app"] or m in a["description"].lower()],
+        "installed": installed if m else installed[:150],
+        "installed_total": len(installed),
+        "note": ("" if m or len(installed) <= 150 else
+                 f"Showing 150 of {len(installed)}; pass match= to narrow it."),
+    }
+
+
+def _curated_apps() -> List[Dict[str, Any]]:
     """The apps that can be launched, and whether each is running right now."""
     procs = _processes()
     out = []
@@ -186,16 +288,13 @@ def list_apps() -> List[Dict[str, Any]]:
 
 @mcp.tool()
 def launch_app(app: str) -> Dict[str, Any]:
-    """Start one of the apps from list_apps. Only those keys are accepted.
-
-    `app` is a key such as "vscode", never a path or command line.
+    """Start an app from list_apps: a curated key ("vscode", "resolve") or the
+    name of anything in the Start menu ("Adobe Photoshop 2025", "Audacity").
+    Never a path or command line.
     """
     spec = APPS.get((app or "").strip().lower())
     if not spec:
-        raise RuntimeError(
-            f"Unknown app {app!r}. Allowed: {', '.join(sorted(APPS))}. "
-            "This tool only launches apps from that fixed list."
-        )
+        return _launch_start_app(app)
 
     if spec.get("url"):
         os.startfile(spec["url"])  # noqa: S606 - a constant from APPS, not caller input
@@ -257,6 +356,35 @@ def launch_app(app: str) -> Dict[str, Any]:
             f"Started {target} but no {spec.get('process')} process appeared within 20s. "
             f"It may still be loading. Take a screenshot and look before saying it is open."
         ),
+    }
+
+
+def _launch_start_app(app: str) -> Dict[str, Any]:
+    """Launch a Start menu entry by name, through Explorer's app folder."""
+    found = _find_start_app(_start_apps(), app)
+    if "app" not in found:
+        found = _find_start_app(_start_apps(refresh=True), app)   # just installed?
+    if "app" not in found:
+        cands = found.get("candidates") or []
+        return {
+            "ok": False,
+            "app": app,
+            "error": (f"{app!r} matches several apps: {', '.join(cands)}. Say which one."
+                      if cands else
+                      f"No app called {app!r} on this PC. Call list_apps(match=...) to look."),
+        }
+    entry = found["app"]
+    # The AppID came from Get-StartApps, not from the caller.
+    _run(["explorer.exe", f"shell:AppsFolder\\{entry['app_id']}"], timeout=20)
+    # Explorer's exit code says nothing about the app, and a Start menu entry
+    # does not say which process it becomes, so this cannot confirm the app
+    # is up. Say so rather than claim it.
+    return {
+        "ok": True,
+        "app": entry["name"],
+        "launched_via": "shell:AppsFolder",
+        "note": (f"Asked Windows to open {entry['name']}. It can take a few seconds; "
+                 f"take a screenshot before saying it is open."),
     }
 
 

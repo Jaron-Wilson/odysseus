@@ -111,6 +111,106 @@ async function load() {
   } catch (e) {
     say(`Could not load devices: ${e.message}`, true);
   }
+  loadComputers();
+}
+
+// ── Computers (MCP servers) ────────────────────────────────────────────────
+
+function statusBadge(s) {
+  const up = s === 'connected';
+  return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;` +
+    `background:${up ? '#3fb950' : s === 'connecting' ? '#d29922' : '#f85149'}"></span>${esc(s || 'disconnected')}`;
+}
+
+async function loadComputers() {
+  const box = $('devices-computers');
+  if (!box) return;
+  try {
+    const { computers } = await api('GET', '/api/devices/computers');
+    if (!computers.length) {
+      box.innerHTML = '<div class="admin-toggle-sub">No MCP servers configured. Add one under Agent Tools.</div>';
+      return;
+    }
+    box.innerHTML = computers.map((c) => {
+      const id = esc(c.id);
+      const can = [c.apps && 'apps', c.screen && 'screen', `${c.tool_count || 0} tools`].filter(Boolean).join(' · ');
+      return `
+        <div style="padding:10px 0;border-top:1px solid color-mix(in srgb, var(--fg) 10%, transparent)">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong>${esc(c.name)}</strong>
+            <span class="admin-toggle-sub">${statusBadge(c.status)}</span>
+            <span class="admin-toggle-sub">${esc(can)}</span>
+            <span style="flex:1"></span>
+            ${c.apps && c.status === 'connected'
+              ? `<button class="settings-btn" style="padding:3px 10px;font-size:12px" data-pc-apps="${id}" type="button">Apps</button>` : ''}
+          </div>
+          ${c.error && c.status !== 'connected'
+            ? `<div class="admin-toggle-sub" style="margin-top:4px">${esc(String(c.error).slice(0, 160))}</div>` : ''}
+          <div data-pc-panel="${id}" style="display:none;margin-top:8px">
+            <input class="settings-select" data-pc-search="${id}" type="text" placeholder="Search apps…" style="width:100%;margin-bottom:6px" />
+            <div data-pc-list="${id}" class="admin-toggle-sub"></div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="admin-toggle-sub">Could not load computers: ${esc(e.message)}</div>`;
+  }
+}
+
+async function showApps(id, match = '') {
+  const list = document.querySelector(`[data-pc-list="${CSS.escape(id)}"]`);
+  if (!list) return;
+  list.textContent = 'Loading…';
+  try {
+    const r = await api('GET', `/api/devices/computers/${encodeURIComponent(id)}/apps?match=${encodeURIComponent(match)}`);
+    if (!r.apps.length) {
+      list.textContent = match ? `Nothing matches "${match}".` : 'No apps reported.';
+      return;
+    }
+    list.innerHTML = `<div style="margin-bottom:4px">${r.apps.length} shown${r.total > r.apps.length ? ` of ${r.total} — search to narrow` : ''}</div>` +
+      `<div style="max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:2px">` +
+      r.apps.map((a) => `
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="flex:1">${esc(a.name)}${a.curated ? ' ' + chip('built-in') : ''}${a.running ? ' ' + chip('running') : ''}</span>
+          <button class="settings-btn" style="padding:2px 8px;font-size:11px" data-pc-open="${esc(id)}" data-app="${esc(a.launch)}" type="button">Open</button>
+        </div>`).join('') + '</div>';
+  } catch (e) {
+    list.textContent = `Could not list apps: ${e.message}`;
+  }
+}
+
+let searchTimer = null;
+
+function onComputersInput(ev) {
+  const id = ev.target.dataset.pcSearch;
+  if (!id) return;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => showApps(id, ev.target.value.trim()), 300);
+}
+
+async function onComputersClick(ev) {
+  const t = ev.target.closest('[data-pc-apps],[data-pc-open]');
+  if (!t) return;
+  ev.preventDefault();
+  if (t.dataset.pcApps) {
+    const panel = document.querySelector(`[data-pc-panel="${CSS.escape(t.dataset.pcApps)}"]`);
+    const open = panel.style.display === 'none';
+    panel.style.display = open ? '' : 'none';
+    if (open) showApps(t.dataset.pcApps);
+    return;
+  }
+  const label = t.textContent;
+  t.textContent = 'Opening…';
+  try {
+    const r = await api('POST', `/api/devices/computers/${encodeURIComponent(t.dataset.pcOpen)}/launch`,
+      { app: t.dataset.app });
+    t.textContent = r.ok === false ? 'Failed' : 'Opened';
+    if (r.ok === false) say(r.error || 'Could not open it.', true);
+  } catch (e) {
+    t.textContent = 'Failed';
+    say(e.message, true);
+  }
+  setTimeout(() => { t.textContent = label; }, 2500);
 }
 
 async function onClick(ev) {
@@ -178,6 +278,8 @@ function init() {
   const panel = document.querySelector('[data-settings-panel="devices"]');
   if (!panel || panel.dataset.devicesReady) return;
   panel.addEventListener('click', onClick);
+  panel.addEventListener('click', onComputersClick);
+  panel.addEventListener('input', onComputersInput);
   panel.dataset.devicesReady = '1';
 }
 
