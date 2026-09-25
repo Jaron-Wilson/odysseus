@@ -371,6 +371,17 @@ class ToolIndex:
                    "deploy", "docker", "container", "wrangler", "install", "terminal",
                    "shell", "command", "repo", "git", "push", "pull request"}):
             {"bash", "python", "read_file", "write_file", "edit_file", "ls", "grep", "glob"},
+        # The user's own devices. "can you use my phone and find ..." matched
+        # nothing, so the agent never saw the device tools and told the user it
+        # had no way to reach the phone that was registered all along.
+        frozenset({"phone", "my phone", "tablet", "pixel", "android", "iphone",
+                   "tailnet", "on my device", "my devices", "push to", "send to my",
+                   "open on my", "open it on"}):
+            {"manage_devices", "notify_device", "bash"},
+        # Shopping means looking things up on the web.
+        frozenset({"amazon", "buy", "shop", "shopping", "product", "products",
+                   "price", "prices", "order", "deal", "deals"}):
+            {"web_search", "web_fetch"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):

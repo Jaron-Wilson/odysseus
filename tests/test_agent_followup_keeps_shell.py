@@ -71,6 +71,28 @@ def test_status_replies_are_continuations_on_their_own():
         assert _classify_agent_request(msgs, reply)["continuation"], reply
 
 
+PHONE_ASK = ("i just got an s26 ultra i need to get a new phone screen protector and case for "
+             "my device, through amazon can you use my phone and find those products on "
+             "amazon please")
+
+
+def test_phone_shopping_request_brings_devices_and_web():
+    """Seen live: this went out low-signal, with no device or web tools, so the
+    agent never found the registered phone."""
+    intent = _classify_agent_request(_chat(PHONE_ASK), PHONE_ASK)
+    assert not intent["low_signal"]
+    tools = _index_without_embeddings().get_tools_for_query(PHONE_ASK)
+    assert {"manage_devices", "notify_device", "web_search", "web_fetch"} <= tools
+
+
+def test_tailnet_request_brings_the_shell():
+    """Seen live: "look at my tailnet" got model-serving tools and no bash,
+    so the agent could not run tailscale status."""
+    q = "look at my tailnet and connect though odysseus to do the tasks"
+    tools = _index_without_embeddings().get_tools_for_query(q)
+    assert {"bash", "manage_devices"} <= tools
+
+
 def test_plain_chat_is_still_low_signal():
     for text in ("hello", "thanks!", "lol"):
         intent = _classify_agent_request(_chat(text), text)

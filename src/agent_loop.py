@@ -882,6 +882,10 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     if has(r"\b(ssh|scp|rsync|ssh keys?|authorized_keys|tailscale|laptop|desktop|servers?|my pc|"
            r"my computer|machines?|devices?|remote|deploy|docker|containers?|wrangler|install)\b"):
         domains.add("files")
+    if has(r"\b(phones?|my phone|tablets?|pixel|android|iphone|tailnet)\b"):
+        domains.add("files")
+    if has(r"\b(amazon|buy|shop|shopping|products?|prices?|deals?)\b"):
+        domains.add("web")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
 
