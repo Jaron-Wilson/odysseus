@@ -226,7 +226,20 @@ async def send(title: str, body: str, *, device: str = "", url: str = "",
     subs = load_subscriptions()
     if device:
         want = device.strip().lower()
-        subs = [s for s in subs if want in (s.get("device") or "").lower()]
+        # A registered device also answers to the subscription names linked
+        # to it in Settings > Devices: the browser named the Pixel's
+        # subscription "android-phone", so "pixel-8a" alone matched nothing.
+        names = {want}
+        try:
+            from src import devices as _devices
+            rec = _devices.resolve(device)
+            if rec:
+                names |= _devices.push_names(rec)
+        except Exception:
+            pass
+        subs = [s for s in subs
+                if (s.get("device") or "").lower() in names
+                or want in (s.get("device") or "").lower()]
     if not subs:
         return {"sent": 0, "failed": 0, "detail": "no matching subscriptions"}
 

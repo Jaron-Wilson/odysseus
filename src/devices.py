@@ -236,3 +236,107 @@ async def send_command(device: Dict, command: str, params: Optional[Dict] = None
 
 def supports(device: Dict, command: str) -> bool:
     return command in (device.get("commands") or [])
+
+
+# ── Settings > Devices ─────────────────────────────────────────────────────
+#
+# A phone reaches Odysseus two ways: its listener (the Modes app, addressed by
+# `endpoint` + token) and a browser push subscription, which the browser names
+# itself when it subscribes ("android-phone"). Those names never matched the
+# registry ("pixel-8a"), so notify_device to a registered phone found nothing.
+# `aliases` records which subscription names belong to which device.
+
+def public(device: Dict) -> Dict:
+    """A device as the UI may see it: everything but the token."""
+    out = {k: v for k, v in device.items() if k != "token"}
+    token = device.get("token") or ""
+    out["has_token"] = bool(token)
+    out["token_hint"] = token[-4:] if token else ""
+    out["aliases"] = list(device.get("aliases") or [])
+    out["listener_commands"] = [c for c in (device.get("commands") or [])
+                                if c in ENDPOINT_COMMANDS]
+    return out
+
+
+def _find(devices: List[Dict], name: str) -> Optional[Dict]:
+    want = (name or "").strip().lower()
+    return next((d for d in devices if d.get("name", "").lower() == want), None)
+
+
+def get(name: str) -> Optional[Dict]:
+    """Exact (case-insensitive) lookup, for the settings routes."""
+    return _find(_load(), name)
+
+
+def update(name: str, *, new_name: Optional[str] = None, kind: Optional[str] = None,
+           endpoint: Optional[str] = None, commands: Optional[List[str]] = None) -> Dict:
+    """Edit a device in place. The token is kept, so a rename does not break
+    the listener already configured with it."""
+    devices = _load()
+    d = _find(devices, name)
+    if d is None:
+        raise KeyError(f"no device named {name!r}")
+    if new_name is not None and new_name.strip() and new_name.strip() != d["name"]:
+        new_name = new_name.strip()
+        if not _NAME_RE.match(new_name):
+            raise ValueError("device name must be 1-48 chars of letters, digits, space, _ . or -")
+        if _find(devices, new_name) is not None:
+            raise ValueError(f"a device named {new_name!r} already exists")
+        d["name"] = new_name
+    if kind is not None and kind.strip():
+        d["kind"] = kind.strip()
+    if endpoint is not None:
+        d["endpoint"] = _check_endpoint(endpoint)
+    if commands is not None:
+        d["commands"] = [c for c in commands if c in KNOWN_COMMANDS] or ["notify"]
+    d["updated"] = time.time()
+    _save(devices)
+    return d
+
+
+def add_alias(name: str, alias: str) -> Dict:
+    """Say that the push subscription called `alias` is this device. An alias
+    belongs to one device only, so linking it here unlinks it elsewhere."""
+    alias = (alias or "").strip()
+    if not alias:
+        raise ValueError("alias is required")
+    devices = _load()
+    d = _find(devices, name)
+    if d is None:
+        raise KeyError(f"no device named {name!r}")
+    for other in devices:
+        other["aliases"] = [a for a in (other.get("aliases") or [])
+                            if a.lower() != alias.lower()]
+    d["aliases"] = (d.get("aliases") or []) + [alias]
+    d["updated"] = time.time()
+    _save(devices)
+    return d
+
+
+def remove_alias(name: str, alias: str) -> Dict:
+    devices = _load()
+    d = _find(devices, name)
+    if d is None:
+        raise KeyError(f"no device named {name!r}")
+    d["aliases"] = [a for a in (d.get("aliases") or [])
+                    if a.lower() != (alias or "").strip().lower()]
+    d["updated"] = time.time()
+    _save(devices)
+    return d
+
+
+def push_names(device: Dict) -> set:
+    """Every push-subscription name that reaches this device, lowercased."""
+    names = [device.get("name") or ""] + list(device.get("aliases") or [])
+    return {n.lower() for n in names if n}
+
+
+def owner_of_alias(alias: str) -> Optional[str]:
+    """The device a push subscription name is linked to, if any."""
+    want = (alias or "").strip().lower()
+    if not want:
+        return None
+    for d in _load():
+        if want in push_names(d):
+            return d.get("name")
+    return None
