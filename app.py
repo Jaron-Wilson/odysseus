@@ -613,6 +613,8 @@ async def _service_worker():
 # Web Push subscriptions — notifications with no third-party app installed.
 from routes.push_routes import setup_push_routes
 app.include_router(setup_push_routes())
+from routes.device_routes import setup_device_routes
+app.include_router(setup_device_routes())
 
 # claude_code plan approvals — the only path that can authorise an execute run.
 from routes.claude_code_routes import setup_claude_code_routes
