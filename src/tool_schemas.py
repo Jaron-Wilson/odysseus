@@ -1013,9 +1013,12 @@ FUNCTION_TOOL_SCHEMAS = [
                 "Send a notification, or a command, to one of the user's own devices "
                 "(phone, tablet, desktop). Use whenever they say 'send it to my phone', "
                 "'notify me', 'let me know when it's done', or ask a device to do something "
-                "it already knows how to do, such as launching an app. A command only acts if "
-                "an automation on that device listens for it; it cannot install software or "
-                "sign the user in, and you should say so plainly rather than claim otherwise."
+                "it already knows how to do. This only SHOWS a notification: to OPEN a link or an "
+                "app on a device, use manage_devices with action 'control' and command open_url or "
+                "open_app, which acts immediately with no tap. A command only acts if an automation "
+                "on that device listens for it; it cannot install software or sign the user in, and "
+                "you should say so plainly rather than claim otherwise. If delivery fails, report the "
+                "reason the tool gives; do not invent one."
             ),
             "parameters": {
                 "type": "object",
