@@ -5110,6 +5110,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     detachCurrentStream,
     checkBackgroundStream,
     resumeStream,
+    // For modules that cannot import sessions.js (chatRenderer's approval
+    // modal): which chat is on screen, so a resumed run is only attached to
+    // the chat it belongs to.
+    currentSessionId: () => sessionModule.getCurrentSessionId(),
     hideWelcomeScreen: chatRenderer.hideWelcomeScreen,
     showWelcomeScreen: chatRenderer.showWelcomeScreen,
     checkPendingResearch,
