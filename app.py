@@ -206,6 +206,10 @@ if AUTH_ENABLED:
     import re as _re
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+        # Adding a device: the install script and the phone's pairing page run
+        # on a device that is not logged in. The one-time code in the path is
+        # the credential; routes/enroll_routes.py checks it and 404s otherwise.
+        _re.compile(r"^/enroll/[a-z2-9]{16}/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)?/?$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -615,6 +619,8 @@ from routes.push_routes import setup_push_routes
 app.include_router(setup_push_routes())
 from routes.device_routes import setup_device_routes
 app.include_router(setup_device_routes())
+from routes.enroll_routes import setup_enroll_routes
+app.include_router(setup_enroll_routes())
 
 # claude_code plan approvals — the only path that can authorise an execute run.
 from routes.claude_code_routes import setup_claude_code_routes
