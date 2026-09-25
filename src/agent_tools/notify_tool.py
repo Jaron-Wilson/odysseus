@@ -101,10 +101,41 @@ class NotifyDeviceTool:
         )
 
         if not res.get("sent"):
+            # Seen live: "open this link on my phone" went out as a push, found
+            # no subscription under the phone's name, and the model then
+            # invented a cause ("the WebSocket drops when the phone locks")
+            # while the phone's listener sat there able to open the link
+            # directly. So when there is a link and the device can open one,
+            # open it that way, and otherwise say exactly why and what works.
+            link = str(args.get("click") or "").strip()
+            if device and link.startswith(("http://", "https://")):
+                try:
+                    from src import devices as device_registry
+                    if device_registry.supports(device, "open_url") and device.get("endpoint"):
+                        r = await device_registry.send_command(device, "open_url", {"url": link})
+                        if r.get("ok"):
+                            return {
+                                "output": (f"No push subscription reaches {device['name']}, so the "
+                                           f"link was opened on it directly through its listener: {link}"),
+                                "sent": 0, "opened": link, "exit_code": 0,
+                            }
+                except Exception as e:
+                    logger.debug("open_url fallback failed: %s", e)
+            detail = "; ".join(res.get("errors") or []) or res.get("detail", "")
+            if device and res.get("detail") == "no matching subscriptions":
+                why = (f"No notification subscription is linked to {device['name']}. Its browser "
+                       f"subscribed under its own name; link it to {device['name']} in "
+                       f"Settings → Devices.")
+            else:
+                why = f"Nothing was delivered: {detail}"
+            hint = ""
+            if device and device.get("endpoint"):
+                hint = (f" To open a link or an app on {device['name']} now, use manage_devices "
+                        f"{{\"action\":\"control\",\"name\":\"{device['name']}\",\"command\":\"open_url\","
+                        f"\"params\":{{\"url\":\"...\"}}}} -- it goes to the device's listener with "
+                        f"its token and needs no tap.")
             return {
-                "error": (
-                    f"Nothing was delivered. {'; '.join(res.get('errors') or []) or res.get('detail', '')}"
-                ),
+                "error": why + hint + " This is the actual reason; do not guess another.",
                 "exit_code": 1,
             }
 
