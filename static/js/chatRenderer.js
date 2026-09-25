@@ -2650,6 +2650,17 @@ export function showScreenControlModal(requestId, serverName) {
         window.location.href = '/login';
         return;
       }
+      // The server starts the approved task again as a live run in the chat
+      // that asked. If that chat is the one on screen, attach to it now, so
+      // the agent is seen carrying on -- rather than nothing appearing, the
+      // user typing "approved", and a second agent starting beside the first.
+      const data = res.ok ? await res.json().catch(() => ({})) : {};
+      const cm = window.chatModule;
+      if (verb === 'approve' && data.resuming && data.session_id && cm
+          && typeof cm.resumeStream === 'function'
+          && (!cm.currentSessionId || cm.currentSessionId() === data.session_id)) {
+        cm.resumeStream(data.session_id);
+      }
       // Reflect the decision on the inline link too, so the transcript does
       // not still offer a choice that has been made.
       document.querySelectorAll(

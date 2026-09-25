@@ -61,14 +61,16 @@ def setup_screen_control_routes() -> APIRouter:
         # returns immediately; a full agent turn can take a minute.
         resumed = False
         if rec.get("session_id"):
-            from src.screen_control_resume import resume_in_background
-            resume_in_background(rec["session_id"], rec.get("server_name", ""))
-            resumed = True
+            from src.screen_control_resume import start_resume
+            # Registered before this returns, so the approving browser can
+            # attach to the run and show the agent carrying on, live.
+            resumed = start_resume(rec["session_id"], rec.get("server_name", ""))
         return {
             "ok": True,
             "server": rec.get("server_name"),
             "minutes": approvals.GRANT_TTL_S // 60,
             "resuming": resumed,
+            "session_id": rec.get("session_id") or "",
         }
 
     @router.post("/deny/{request_id}")

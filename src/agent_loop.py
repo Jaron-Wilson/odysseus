@@ -776,6 +776,9 @@ _EXPLICIT_CONTINUATION_RE = re.compile(
     # Mid-task replies: the user did the step they were handed and is saying
     # so. "done" alone went out as low-signal with no shell.
     r"done|did it|i did it|it'?s done|all done|finished|ready|all set|"
+    # After an approval prompt: "approved" alone went out low-signal, with no
+    # screen tools, one turn after the agent had been using them.
+    r"approved|approve|i approved(?: it)?|(?:ok|okay|yes)[, ]+approved|allowed|granted|"
     r"try (?:it )?(?:now|again)|now try|retry|again|next|go|"
     r"(?:okay|ok)[, ]+(?:done|try (?:it )?now|go)|"
     r"first|second|third|the first one|the second one|the third one|"
