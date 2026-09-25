@@ -361,6 +361,27 @@ class ToolIndex:
         # believed it had only email tools and refused web/other tasks (#1707).
         frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
             {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
+        # Working on a machine: this server, or another device reached over
+        # SSH/Tailscale. "Whitelist my SSH key" matched no hint and no topic,
+        # so the turn went out with no shell at all, and the model told the
+        # user it had never had one -- a turn after it had just used it.
+        frozenset({"ssh", "scp", "rsync", "ssh key", "authorized_keys", "known_hosts",
+                   "tailscale", "laptop", "desktop", "server", "servers", "my pc",
+                   "my computer", "machine", "device", "devices", "host", "remote",
+                   "deploy", "docker", "container", "wrangler", "install", "terminal",
+                   "shell", "command", "repo", "git", "push", "pull request"}):
+            {"bash", "python", "read_file", "write_file", "edit_file", "ls", "grep", "glob"},
+        # The user's own devices. "can you use my phone and find ..." matched
+        # nothing, so the agent never saw the device tools and told the user it
+        # had no way to reach the phone that was registered all along.
+        frozenset({"phone", "my phone", "tablet", "pixel", "android", "iphone",
+                   "tailnet", "on my device", "my devices", "push to", "send to my",
+                   "open on my", "open it on"}):
+            {"manage_devices", "notify_device", "bash"},
+        # Shopping means looking things up on the web.
+        frozenset({"amazon", "buy", "shop", "shopping", "product", "products",
+                   "price", "prices", "order", "deal", "deals"}):
+            {"web_search", "web_fetch"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
