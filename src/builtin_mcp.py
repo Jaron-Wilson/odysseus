@@ -79,7 +79,12 @@ _BUILTIN_NPX_SERVERS = {
     "builtin_browser": {
         "name": "Built-in: Browser",
         "command": "npx",
-        "args": ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"],
+        # --browser chromium: Playwright's own Chromium, which the npx install
+        # brings. The default is the Chrome channel, which wants Google
+        # Chrome at /opt/google/chrome -- not installed here, so every
+        # browser_navigate failed and the agent said it had no browser.
+        "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium",
+                 "--caps", "vision"],
     },
 }
 

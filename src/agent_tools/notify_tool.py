@@ -70,6 +70,28 @@ class NotifyDeviceTool:
             except Exception:
                 pass
 
+        # A command that needs the device to *do* something goes to its
+        # listener when it has one. Seen live: "open Amazon on my Pixel" went
+        # out as a push carrying command=open_url; the push was delivered, but
+        # a browser notification cannot open anything by itself, so nothing
+        # happened -- while the Modes listener could have opened the page.
+        if cmd and device and device.get("endpoint"):
+            try:
+                from src import devices as device_registry
+                if cmd in device_registry.ENDPOINT_COMMANDS and device_registry.supports(device, cmd):
+                    arg = str(args.get("command_arg") or args.get("click") or "").strip()
+                    params = ({"url": arg} if cmd == "open_url" else
+                              {"package": arg} if cmd in ("open_app", "install_app") else
+                              {"arg": arg, "message": message})
+                    r = await device_registry.send_command(device, cmd, params)
+                    if r.get("ok"):
+                        return {"output": f"Done on {device['name']} through its listener: {cmd} {arg}".strip(),
+                                "result": r.get("result"), "exit_code": 0}
+                    logger.info("listener %s failed on %s: %s; falling back to push",
+                                cmd, device.get("name"), r.get("error"))
+            except Exception as e:
+                logger.debug("listener route failed: %s", e)
+
         try:
             from src import webpush
         except Exception as e:

@@ -788,9 +788,21 @@ _EXPLICIT_CONTINUATION_RE = re.compile(
 )
 
 
+# "I didn't see anything happen", "nothing happened", "still nothing": a short
+# report that the last step failed. Seen live going out low-signal, without
+# the device tools the agent had just used, after which it told the user it
+# had never had a way to reach their phone.
+_FAILED_FOLLOWUP_RE = re.compile(
+    r"^\s*(?:i\s+|it\s+|that\s+)?(?:did\s*n'?o?t|didn'?t|does\s*n'?t|doesn'?t|nothing|still|"
+    r"not\s+work|never\s+(?:opened|showed|came)|no\s+(?:luck|change))\b", re.I)
+
+
 def _is_explicit_continuation(text: str) -> bool:
     """Only these terse replies may inherit older user turns for tool retrieval."""
-    return bool(_EXPLICIT_CONTINUATION_RE.match(str(text or "").strip()))
+    t = str(text or "").strip()
+    if _EXPLICIT_CONTINUATION_RE.match(t):
+        return True
+    return bool(_FAILED_FOLLOWUP_RE.match(t)) and len(t.split()) <= 12
 
 
 def _assistant_requested_followup(messages: List[Dict]) -> bool:
@@ -1879,6 +1891,7 @@ async def stream_agent_loop(
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
     _is_teacher_run: bool = False,
+    client_device: Optional[Dict] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -2101,6 +2114,10 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
+    if client_device and client_device.get("registered") and _relevant_tools:
+        # Chatting from a registered device: "open it here" needs the tools
+        # that reach that device, whatever the wording scored in retrieval.
+        _relevant_tools = set(_relevant_tools) | {"manage_devices", "notify_device"}
     messages, mcp_schemas = _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
@@ -2133,6 +2150,13 @@ async def stream_agent_loop(
         else:
             messages.insert(0, {"role": "system", "content": _plan_note})
         logger.info("[plan] pinned approved plan (%d chars) for execution turn", len(approved_plan))
+    if client_device and client_device.get("note") and not guide_only:
+        # Where this message came from (routes/chat_routes.py, from the
+        # tailnet address): "this phone" / "here" then means something.
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = (messages[0].get("content") or "") + "\n\n" + client_device["note"]
+        else:
+            messages.insert(0, {"role": "system", "content": client_device["note"]})
     if guide_only:
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = GUIDE_ONLY_DIRECTIVE + "\n\n" + (messages[0].get("content") or "")
