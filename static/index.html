@@ -2050,16 +2050,25 @@
              link each device to the push subscription its browser made, and
              test both ways of reaching it. Filled in by devicesSettings.js. -->
         <div data-settings-panel="devices" class="hidden">
+          <div class="admin-card" style="border-left:3px solid var(--accent, var(--red))">
+            <div class="admin-toggle-sub"><strong>Tip:</strong> install and sign in to <a href="https://tailscale.com/download" target="_blank" rel="noopener" style="color:var(--accent, var(--red))">Tailscale</a> on every device you want Odysseus to reach: PC, laptop and phone. It is how devices are found here, how their MCP servers are reached from anywhere, and how Ping restarts them, without opening anything to the internet.</div>
+          </div>
           <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>Your devices</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">What the agent can reach when you say "my phone" or "my desktop". A device is reached by push notification (link its subscription below) and, for commands like opening a URL, by its listener at the endpoint using its token.</div>
-            <div id="devices-list"><div class="admin-toggle-sub">Loading…</div></div>
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Your machines<span style="flex:1"></span><button class="settings-btn" style="padding:2px 10px;font-size:12px;float:right" id="devices-refresh" type="button">Refresh</button></h2>
+            <div class="admin-toggle-sub" style="margin-bottom:4px">Every machine on your tailnet, with the MCP servers running on it and any phone registered to it. Odysseus reconnects a machine's servers by itself when it comes online; <strong>Ping</strong> does it now, and starts the servers over SSH if they are down. <strong>Prefer</strong> the machine to use first for heavy work, like the one with the better GPU.</div>
+            <div id="devices-machines"><div class="admin-toggle-sub">Loading…</div></div>
             <div id="devices-msg" class="admin-toggle-sub" style="margin-top:6px"></div>
           </div>
           <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Computers</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Your PC and laptop, reached through the MCP server running on each. Anything they list here the agent can open for you. Add or reconnect a server under Agent Tools.</div>
-            <div id="devices-computers"><div class="admin-toggle-sub">Loading…</div></div>
+            <h2>Services</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:4px">MCP servers that are not on one of your machines, like Cloudflare's. Set them up under Agent Tools.</div>
+            <div id="devices-services"><div class="admin-toggle-sub">Loading…</div></div>
+          </div>
+          <div class="admin-card">
+            <details>
+              <summary style="cursor:pointer" class="admin-toggle-sub">Other tailnet devices (<span id="devices-others-count">0</span>): not seen for a month, or shared with you</summary>
+              <div id="devices-others" style="margin-top:6px"></div>
+            </details>
           </div>
           <div class="admin-card">
             <h2>Add a device</h2>

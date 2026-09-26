@@ -37,36 +37,123 @@ function chip(text, extra = '') {
     `background:color-mix(in srgb, var(--fg) 8%, transparent);font-size:11px">${text}${extra}</span>`;
 }
 
-function renderDevices() {
-  const box = $('devices-list');
+const BTN = 'class="settings-btn" style="padding:3px 10px;font-size:12px" type="button"';
+const ROW = 'style="padding:12px 0;border-top:1px solid color-mix(in srgb, var(--fg) 10%, transparent)"';
+
+// A registered device (a phone with the Modes listener, say): shown inside
+// the machine card whose Tailscale address it uses.
+function phoneRow(d) {
+  const n = esc(d.name);
+  const aliases = (d.aliases || []).map((a) => chip(esc(a),
+    ` <a href="#" data-dev-unlink="${n}" data-alias="${esc(a)}" title="Unlink" style="text-decoration:none;color:inherit;font-weight:700;opacity:.7">×</a>`)).join(' ');
+  const cmds = (d.commands || []).map((c) => chip(esc(c))).join(' ');
+  return `
+    <div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:color-mix(in srgb, var(--fg) 4%, transparent)">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <strong style="font-size:12px">${n}</strong>${chip(esc(d.kind || 'device'))}
+        <span style="flex:1"></span>
+        <button ${BTN} data-dev-test="${n}">Test</button>
+        <button ${BTN} data-dev-token="${n}" ${d.has_token ? '' : 'disabled'}>Copy token</button>
+        <button ${BTN} data-dev-rename="${n}">Rename</button>
+        <button ${BTN} data-dev-endpoint="${n}">Endpoint</button>
+        <button ${BTN} data-dev-remove="${n}">Remove</button>
+      </div>
+      <div class="admin-toggle-sub">Listener: ${d.endpoint ? esc(d.endpoint) : '<em>none (notifications only)</em>'}${d.has_token ? ` · token …${esc(d.token_hint)}` : ''}</div>
+      <div class="admin-toggle-sub">Commands: ${cmds || '—'}</div>
+      <div class="admin-toggle-sub">Notification names: ${aliases || '<em>none linked — see below</em>'}</div>
+      <div class="admin-toggle-sub" data-dev-result="${n}"></div>
+    </div>`;
+}
+
+function dot(on) {
+  return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:${on ? '#3fb950' : '#8b949e'}"></span>`;
+}
+
+function ago(iso) {
+  if (!iso) return '';
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (!isFinite(s) || s < 0) return '';
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+function serverLine(s) {
+  return `<div class="admin-toggle-sub" style="display:flex;gap:8px;align-items:center">
+    <span>${statusBadge(s.status)}</span><strong>${esc(s.name)}</strong>
+    <span>${[s.apps && 'apps', s.screen && 'screen', `${s.tool_count || 0} tools`].filter(Boolean).join(' · ')}</span>
+    ${s.error && s.status !== 'connected' ? `<span>— ${esc(String(s.error).slice(0, 120))}</span>` : ''}
+  </div>`;
+}
+
+function renderMachines() {
+  const box = $('devices-machines');
   if (!box) return;
-  if (!state.devices.length) {
-    box.innerHTML = '<div class="admin-toggle-sub">No devices yet. Add one below, or ask the agent to "register my phone".</div>';
+  const ov = state.overview || {};
+  if (!ov.tailscale) {
+    box.innerHTML = '<div class="admin-toggle-sub">Tailscale is not running on this server, so machines cannot be found. Install it and sign in to the same tailnet.</div>';
     return;
   }
-  box.innerHTML = state.devices.map((d) => {
-    const n = esc(d.name);
-    const aliases = (d.aliases || []).map((a) => chip(esc(a),
-      ` <a href="#" data-dev-unlink="${n}" data-alias="${esc(a)}" title="Unlink" style="text-decoration:none;color:inherit;font-weight:700;opacity:.7">×</a>`)).join(' ');
-    const cmds = (d.commands || []).map((c) => chip(esc(c))).join(' ');
+  box.innerHTML = (ov.machines || []).map((m) => {
+    const h = esc(m.host);
+    const isPhone = ['android', 'ios', 'ipados'].includes((m.os || '').toLowerCase());
+    const appsSrv = (m.servers || []).find((s) => s.apps && s.status === 'connected');
+    const badges = [m.is_self && chip('this server'), m.preferred && chip('★ preferred'), m.gpu && chip('GPU')]
+      .filter(Boolean).join(' ');
+    const seen = m.online ? 'online' : (m.last_seen ? `offline · seen ${ago(m.last_seen)}` : 'offline');
     return `
-      <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:10px 0;border-top:1px solid color-mix(in srgb, var(--fg) 10%, transparent)">
+      <div ${ROW}>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <strong>${n}</strong>${chip(esc(d.kind || 'device'))}
+          <strong>${esc(m.label)}</strong>
+          <span class="admin-toggle-sub">${esc(m.os || '')} · ${dot(m.online)}${esc(seen)}</span>
+          ${badges}
+          <span style="flex:1"></span>
+          ${m.is_self ? '' : `<button ${BTN} data-m-ping="${h}">Ping</button>`}
+          ${appsSrv ? `<button ${BTN} data-pc-apps="${esc(appsSrv.id)}">Apps</button>` : ''}
+          ${m.is_self || isPhone ? '' : `<button ${BTN} data-m-pref="${h}" data-on="${m.preferred ? 1 : 0}">${m.preferred ? 'Unprefer' : 'Prefer'}</button>
+          <button ${BTN} data-m-gpu="${h}" data-on="${m.gpu ? 1 : 0}">${m.gpu ? 'No GPU' : 'Has GPU'}</button>`}
         </div>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-test="${n}" type="button">Test</button>
-          <button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-token="${n}" type="button" ${d.has_token ? '' : 'disabled'}>Copy token</button>
-          <button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-rename="${n}" type="button">Rename</button>
-          <button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-endpoint="${n}" type="button">Endpoint</button>
-          <button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-remove="${n}" type="button">Remove</button>
-        </div>
-        <div class="admin-toggle-sub">Endpoint: ${d.endpoint ? esc(d.endpoint) : '<em>none (notifications only)</em>'}${d.has_token ? ` · token …${esc(d.token_hint)}` : ''}</div>
-        <div class="admin-toggle-sub">Commands: ${cmds || '—'}</div>
-        <div class="admin-toggle-sub">Notification names: ${aliases || '<em>none linked — see below</em>'}</div>
-        <div class="admin-toggle-sub" data-dev-result="${n}"></div>
+        <div class="admin-toggle-sub">${esc(m.dns || '')}${m.ips && m.ips[0] ? ` · ${esc(m.ips[0])}` : ''}</div>
+        ${(m.servers || []).length ? `<div style="margin-top:6px">${m.servers.map(serverLine).join('')}</div>`
+          : (m.is_self || (isPhone && (m.phones || []).length) ? ''
+            : `<div class="admin-toggle-sub" style="margin-top:4px"><em>${isPhone
+              ? 'Not registered yet: add it below with its Modes listener endpoint.'
+              : 'No MCP server on this machine yet.'}</em></div>`)}
+        ${(m.phones || []).map(phoneRow).join('')}
+        <div class="admin-toggle-sub" data-m-result="${h}" style="margin-top:4px"></div>
+        ${appsSrv ? `<div data-pc-panel="${esc(appsSrv.id)}" style="display:none;margin-top:8px">
+          <input class="settings-select" data-pc-search="${esc(appsSrv.id)}" type="text" placeholder="Search apps…" style="width:100%;margin-bottom:6px" />
+          <div data-pc-list="${esc(appsSrv.id)}" class="admin-toggle-sub"></div></div>` : ''}
       </div>`;
-  }).join('');
+  }).join('') || '<div class="admin-toggle-sub">No machines found on your tailnet.</div>';
+}
+
+function renderServices() {
+  const box = $('devices-services');
+  if (!box) return;
+  const sv = (state.overview || {}).services || [];
+  box.innerHTML = sv.length ? sv.map((s) => s.phone ? phoneRow(s.phone) : `<div ${ROW}>${serverLine(s)}</div>`).join('')
+    : '<div class="admin-toggle-sub">None.</div>';
+}
+
+function renderOthers() {
+  const box = $('devices-others');
+  if (!box) return;
+  const others = (state.overview || {}).others || [];
+  const sum = $('devices-others-count');
+  if (sum) sum.textContent = String(others.length);
+  box.innerHTML = others.map((p) => `
+    <div class="admin-toggle-sub" style="display:flex;gap:8px">
+      <span>${dot(p.online)}${esc(p.name)}</span><span>${esc(p.os)}</span>
+      <span>${p.shared ? 'shared with you' : (p.last_seen ? `seen ${ago(p.last_seen)}` : '')}</span>
+    </div>`).join('');
+}
+
+function renderDevices() {
+  renderMachines();
+  renderServices();
+  renderOthers();
 }
 
 function renderSubs() {
@@ -102,16 +189,56 @@ function renderCommandPicker() {
   box.dataset.ready = '1';
 }
 
-async function load() {
+async function load(refresh = false) {
   try {
-    state = await api('GET', '/api/devices');
+    const [base, overview] = await Promise.all([
+      api('GET', '/api/devices'),
+      api('GET', `/api/devices/overview${refresh ? '?refresh=true' : ''}`),
+    ]);
+    state = { ...base, overview };
     renderDevices();
     renderSubs();
     renderCommandPicker();
   } catch (e) {
     say(`Could not load devices: ${e.message}`, true);
   }
-  loadComputers();
+}
+
+async function onMachineClick(ev) {
+  if (ev.target.closest('#devices-refresh')) {
+    ev.preventDefault();
+    await load(true);
+    return;
+  }
+  const t = ev.target.closest('[data-m-ping],[data-m-pref],[data-m-gpu]');
+  if (!t) return;
+  ev.preventDefault();
+  const host = t.dataset.mPing || t.dataset.mPref || t.dataset.mGpu;
+  const out = document.querySelector(`[data-m-result="${CSS.escape(host)}"]`);
+  try {
+    if (t.dataset.mPing) {
+      t.disabled = true;
+      if (out) out.textContent = 'Pinging… (starting its services over SSH if they are down; can take ~30s)';
+      const r = await api('POST', `/api/devices/machines/${encodeURIComponent(host)}/ping`);
+      const srv = (r.servers || []).map((s) => `${s.name}: ${s.status}`).join(', ');
+      const started = r.started ? (r.started.ok ? ` · started ${(r.started.started || []).join(', ') || 'its services'}`
+        : ` · could not start services: ${r.started.error}`) : '';
+      if (out) out.textContent = `${r.reachable ? 'Reachable over Tailscale' : 'Not reachable'}` +
+        `${srv ? ` · ${srv}` : ''}${started}${(r.notes || []).length ? ` · ${r.notes.join(' ')}` : ''}`;
+      t.disabled = false;
+      await load(true);
+      const again = document.querySelector(`[data-m-result="${CSS.escape(host)}"]`);
+      if (again && out) again.textContent = out.textContent;
+      return;
+    }
+    const field = t.dataset.mPref ? 'preferred' : 'gpu';
+    await api('POST', `/api/devices/machines/${encodeURIComponent(host)}/prefs`,
+      { [field]: t.dataset.on !== '1' });
+    await load();
+  } catch (e) {
+    t.disabled = false;
+    if (out) out.textContent = e.message;
+  }
 }
 
 // ── Computers (MCP servers) ────────────────────────────────────────────────
@@ -120,41 +247,6 @@ function statusBadge(s) {
   const up = s === 'connected';
   return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;` +
     `background:${up ? '#3fb950' : s === 'connecting' ? '#d29922' : '#f85149'}"></span>${esc(s || 'disconnected')}`;
-}
-
-async function loadComputers() {
-  const box = $('devices-computers');
-  if (!box) return;
-  try {
-    const { computers } = await api('GET', '/api/devices/computers');
-    if (!computers.length) {
-      box.innerHTML = '<div class="admin-toggle-sub">No MCP servers configured. Add one under Agent Tools.</div>';
-      return;
-    }
-    box.innerHTML = computers.map((c) => {
-      const id = esc(c.id);
-      const can = [c.apps && 'apps', c.screen && 'screen', `${c.tool_count || 0} tools`].filter(Boolean).join(' · ');
-      return `
-        <div style="padding:10px 0;border-top:1px solid color-mix(in srgb, var(--fg) 10%, transparent)">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <strong>${esc(c.name)}</strong>
-            <span class="admin-toggle-sub">${statusBadge(c.status)}</span>
-            <span class="admin-toggle-sub">${esc(can)}</span>
-            <span style="flex:1"></span>
-            ${c.apps && c.status === 'connected'
-              ? `<button class="settings-btn" style="padding:3px 10px;font-size:12px" data-pc-apps="${id}" type="button">Apps</button>` : ''}
-          </div>
-          ${c.error && c.status !== 'connected'
-            ? `<div class="admin-toggle-sub" style="margin-top:4px">${esc(String(c.error).slice(0, 160))}</div>` : ''}
-          <div data-pc-panel="${id}" style="display:none;margin-top:8px">
-            <input class="settings-select" data-pc-search="${id}" type="text" placeholder="Search apps…" style="width:100%;margin-bottom:6px" />
-            <div data-pc-list="${id}" class="admin-toggle-sub"></div>
-          </div>
-        </div>`;
-    }).join('');
-  } catch (e) {
-    box.innerHTML = `<div class="admin-toggle-sub">Could not load computers: ${esc(e.message)}</div>`;
-  }
 }
 
 async function showApps(id, match = '') {
@@ -279,6 +371,7 @@ function init() {
   if (!panel || panel.dataset.devicesReady) return;
   panel.addEventListener('click', onClick);
   panel.addEventListener('click', onComputersClick);
+  panel.addEventListener('click', onMachineClick);
   panel.addEventListener('input', onComputersInput);
   panel.dataset.devicesReady = '1';
 }

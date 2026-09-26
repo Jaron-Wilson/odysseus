@@ -971,6 +971,13 @@ async def _startup_event():
             logger.warning(f"MCP startup failed (non-critical): {type(e).__name__}: {e}")
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
+    # Startup connects each machine's MCP server once; this keeps them
+    # connected while the machine is on, and starts them if they stopped.
+    try:
+        from src.mcp_health import run_forever as _mcp_health_loop
+        _startup_tasks.append(asyncio.create_task(_mcp_health_loop()))
+    except Exception as _e:
+        logger.warning("Failed to start MCP health loop: %s", _e)
 
     # Pre-warm the RAG tool index off the request path. Loading the local
     # embedding model + opening ChromaDB + indexing the built-in tools is a

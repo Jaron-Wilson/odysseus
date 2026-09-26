@@ -9,6 +9,7 @@ Admin only: a device record carries the token that lets its holder launch
 apps on the phone, and every device is shared by the whole install.
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -89,6 +90,82 @@ def _apps_from(result) -> dict:
             else result.get("count") or len(apps)
         return {"apps": apps, "total": total, "note": result.get("note", "")}
     return {"apps": [], "total": 0, "note": ""}
+
+
+def _build_overview(refresh: bool = False) -> dict:
+    """Settings > Devices: machines (with their MCP servers and phones),
+    services, and the rest of the tailnet."""
+    from src import machines
+    mgr = _mcp()
+    tools, statuses = {}, {}
+    if mgr:
+        for t in mgr.get_all_tools():
+            tools.setdefault(t["server_id"], set()).add(t["name"])
+        statuses = mgr.get_all_statuses()
+    servers = _configured_servers()
+    for s in servers:                        # friendlier than "TaskGroup"
+        st = dict(statuses.get(s["id"], {}))
+        err = st.get("error")
+        if err and any(x in str(err) for x in ("TaskGroup", "ConnectError", "Connection refused",
+                                               "timed out", "Name or service not known")):
+            st["error"] = "Can't reach its MCP server."
+        statuses[s["id"]] = st
+    return machines.overview(servers, statuses, tools,
+                             [devices.public(d) for d in devices.list_devices()],
+                             machines.peers(refresh=refresh), machines.load_prefs())
+
+
+async def ping_machine(host: str) -> dict:
+    """Reconnect a machine's MCP servers; if the machine is up but they are
+    not, start them over SSH and reconnect again. Says what it found."""
+    import getpass
+    from src import machines
+
+    ov = _build_overview(refresh=True)
+    m = next((x for x in ov["machines"] if x["host"] == host), None)
+    if m is None:
+        peer = machines.find_peer(machines.peers(), host)
+        if peer is None:
+            return {"ok": False, "error": f"{host} is not on your tailnet."}
+        m = dict(peer, servers=[])
+    mgr = _mcp()
+    reachable = True if m.get("is_self") else await machines.tailscale_ping(m)
+    out = {"host": host, "online": m.get("online"), "reachable": reachable,
+           "servers": [], "started": None, "notes": []}
+    if not reachable:
+        out["notes"].append(f"{m.get('label') or host} does not answer on Tailscale: it is off, "
+                            f"asleep, or Tailscale is not running on it.")
+        out["ok"] = False
+        return out
+
+    async def reconnect_down() -> list:
+        still = []
+        for s in m["servers"]:
+            st = (mgr.get_server_status(s["id"]) if mgr else {}).get("status")
+            if st == "connected" or not s.get("enabled", True):
+                continue
+            ok = await mgr._reconnect_configured(s["id"]) if mgr else False
+            if not ok:
+                still.append(s)
+        return still
+
+    down = await reconnect_down()
+    if down and not m.get("is_self"):
+        user = machines.load_prefs().get(host, {}).get("ssh_user") or getpass.getuser()
+        started = await machines.start_services(m, user)
+        out["started"] = started
+        if started.get("ok"):
+            await asyncio.sleep(8)          # let the servers bind their ports
+            down = await reconnect_down()
+    for s in m["servers"]:
+        st = mgr.get_server_status(s["id"]) if mgr else {}
+        out["servers"].append({"name": s["name"], "status": st.get("status", "disconnected")})
+    for s in down:
+        if "resolve" in s["name"].lower():
+            out["notes"].append(f"{s['name']} needs DaVinci Resolve itself to be open on "
+                                f"{m.get('label') or host}.")
+    out["ok"] = not down
+    return out
 
 
 def _subscriptions_view():
@@ -203,6 +280,28 @@ def setup_device_routes() -> APIRouter:
         if not d.get("token"):
             raise HTTPException(409, f"{name} has no token")
         return {"token": d["token"]}
+
+    @router.get("/api/devices/overview")
+    async def devices_overview(request: Request, refresh: bool = False):
+        require_admin(request)
+        return _build_overview(refresh=refresh)
+
+    @router.post("/api/devices/machines/{host}/ping")
+    async def machine_ping(host: str, request: Request):
+        require_admin(request)
+        return await ping_machine(host.strip().lower())
+
+    @router.post("/api/devices/machines/{host}/prefs")
+    async def machine_prefs(host: str, request: Request):
+        require_admin(request)
+        from src import machines
+        body = await _body(request)
+        try:
+            return {"ok": True, "prefs": machines.set_prefs(
+                host, preferred=body.get("preferred"), gpu=body.get("gpu"),
+                label=body.get("label"), ssh_user=body.get("ssh_user"))}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @router.get("/api/devices/computers")
     async def computers(request: Request):

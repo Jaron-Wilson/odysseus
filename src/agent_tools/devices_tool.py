@@ -6,6 +6,25 @@ from typing import Dict
 from src import devices as registry
 
 
+def _computers_block() -> str:
+    """The user's machines, so the agent can pick one: which are online,
+    which the user prefers for heavy work, and what runs on each."""
+    try:
+        from routes.device_routes import _build_overview
+        from src import machines
+        text = machines.summary_for_agent(_build_overview())
+    except Exception:
+        return ""
+    if not text:
+        return ""
+    return ("\n\nComputers on the tailnet:\n" + text +
+            "\n\nWork any computer can do (wrangler, builds, git) can go to whichever is "
+            "online. For heavy or GPU work (a Resolve render) use the preferred one first, "
+            "and fall back to another online computer with the same tool if it is off. "
+            "Reach a Linux or Mac computer with bash `ssh <host>`, and Windows through its "
+            "MCP tools.")
+
+
 class ManageDevicesTool:
     async def execute(self, content: str, ctx: dict) -> Dict:
         raw = (content or "").strip()
@@ -25,6 +44,7 @@ class ManageDevicesTool:
 
         if action == "list":
             devs = registry.list_devices()
+            computers = _computers_block()
             if not devs:
                 return {
                     "output": (
@@ -32,7 +52,7 @@ class ManageDevicesTool:
                         '{"action":"register","name":"pixel-8a","kind":"phone",'
                         '"commands":["notify","open_app"]} — the name is what the user '
                         "will call it, and the commands are what its automation actually "
-                        "honours."
+                        "honours." + computers
                     ),
                     "devices": [],
                     "exit_code": 0,
@@ -56,7 +76,7 @@ class ManageDevicesTool:
             # Never hand the model the token; it has no use for it and it would
             # end up in chat history.
             safe = [{k: v for k, v in d.items() if k != "token"} for d in devs]
-            return {"output": "\n".join(lines), "devices": safe, "exit_code": 0}
+            return {"output": "\n".join(lines) + computers, "devices": safe, "exit_code": 0}
 
         if action == "capabilities":
             lines = [f"- `{k}` — {v}" for k, v in registry.KNOWN_COMMANDS.items()]
