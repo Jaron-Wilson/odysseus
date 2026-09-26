@@ -1014,6 +1014,10 @@
     </script>
     <div id="chat-history" class="chat-history" role="log" aria-live="polite"></div>
 
+    <!-- Queued messages: typed while a reply was running; each sends when the
+         reply before it finishes (chat.js renderQueue). -->
+    <div id="chat-queue" class="chat-queue" hidden></div>
+
     <!-- Attachments strip -->
     <div id="attach-strip" class="attach-strip"></div>
 
