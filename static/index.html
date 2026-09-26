@@ -2072,6 +2072,15 @@
           </div>
           <div class="admin-card">
             <h2>Add a device</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">One command on a computer, or one scan on a phone. The code in it works once, for 20 minutes. The device needs Tailscale on and signed in first.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="admin-btn-add" data-enroll="computer" type="button">Add a computer</button>
+              <button class="admin-btn-add" data-enroll="phone" type="button">Pair a phone</button>
+            </div>
+            <div id="devices-enroll" style="margin-top:10px"></div>
+          </div>
+          <div class="admin-card">
+            <h2>Register a device by hand</h2>
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label">Name</label>

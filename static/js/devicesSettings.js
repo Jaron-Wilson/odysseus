@@ -110,6 +110,7 @@ function renderMachines() {
           ${badges}
           <span style="flex:1"></span>
           ${m.is_self ? '' : `<button ${BTN} data-m-ping="${h}">Ping</button>`}
+          ${m.is_self ? '' : `<button ${BTN} data-m-check="${esc((m.phones && m.phones[0] && m.phones[0].name) || m.host)}" title="Show a QR code to scan on that device">Check QR</button>`}
           ${appsSrv ? `<button ${BTN} data-pc-apps="${esc(appsSrv.id)}">Apps</button>` : ''}
           ${m.is_self || isPhone ? '' : `<button ${BTN} data-m-pref="${h}" data-on="${m.preferred ? 1 : 0}">${m.preferred ? 'Unprefer' : 'Prefer'}</button>
           <button ${BTN} data-m-gpu="${h}" data-on="${m.gpu ? 1 : 0}">${m.gpu ? 'No GPU' : 'Has GPU'}</button>`}
@@ -122,6 +123,7 @@ function renderMachines() {
               : 'No MCP server on this machine yet.'}</em></div>`)}
         ${(m.phones || []).map(phoneRow).join('')}
         <div class="admin-toggle-sub" data-m-result="${h}" style="margin-top:4px"></div>
+        <div data-m-qr="${esc((m.phones && m.phones[0] && m.phones[0].name) || m.host)}" style="margin-top:6px"></div>
         ${appsSrv ? `<div data-pc-panel="${esc(appsSrv.id)}" style="display:none;margin-top:8px">
           <input class="settings-select" data-pc-search="${esc(appsSrv.id)}" type="text" placeholder="Search apps…" style="width:100%;margin-bottom:6px" />
           <div data-pc-list="${esc(appsSrv.id)}" class="admin-toggle-sub"></div></div>` : ''}
@@ -201,6 +203,95 @@ async function load(refresh = false) {
     renderCommandPicker();
   } catch (e) {
     say(`Could not load devices: ${e.message}`, true);
+  }
+}
+
+// ── Adding a device, and checking one ─────────────────────────────────────
+
+function copyBtn(text) {
+  return `<button ${BTN} data-copy="${esc(text)}">Copy</button>`;
+}
+
+let enrollPoll = null;
+
+async function startEnroll(kind) {
+  const box = $('devices-enroll');
+  if (!box) return;
+  let device = '';
+  if (kind === 'phone') {
+    device = (prompt('Name for this phone (how you will call it, e.g. pixel-8a):', 'my-phone') || '').trim();
+    if (!device) return;
+  }
+  box.innerHTML = '<div class="admin-toggle-sub">Making a code…</div>';
+  const r = await api('POST', '/api/devices/enroll', { kind, device });
+  const mins = Math.round((r.expires * 1000 - Date.now()) / 60000);
+  if (kind === 'computer') {
+    box.innerHTML = `
+      <div class="admin-toggle-sub" style="margin-bottom:6px">Run one of these on the computer you are adding (valid ${mins} min, one machine).</div>
+      <div class="admin-toggle-sub"><strong>Windows</strong>: PowerShell, ideally "Run as administrator" (adds the tailnet-only firewall rule and SSH for Ping):</div>
+      <div style="display:flex;gap:6px;align-items:center;margin:4px 0 8px"><code style="flex:1;word-break:break-all">${esc(r.commands.windows)}</code>${copyBtn(r.commands.windows)}</div>
+      <div class="admin-toggle-sub"><strong>Linux or Mac</strong>: a terminal, as yourself (no sudo):</div>
+      <div style="display:flex;gap:6px;align-items:center;margin:4px 0 8px"><code style="flex:1;word-break:break-all">${esc(r.commands.unix)}</code>${copyBtn(r.commands.unix)}</div>
+      ${r.pubkey ? '' : '<div class="admin-toggle-sub">Note: this server has no SSH key yet, so Ping will not be able to restart servers.</div>'}
+      <div class="admin-toggle-sub" id="devices-enroll-status">Waiting for the computer to finish…</div>`;
+  } else {
+    box.innerHTML = `
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <div style="background:#fff;padding:6px;border-radius:8px;width:180px">${r.qr_svg}</div>
+        <div class="admin-toggle-sub" style="flex:1;min-width:200px">Scan this with <strong>${esc(device)}</strong>'s camera (Tailscale on), then tap
+          "Turn on notifications" on the page it opens, and copy the Modes token from it.
+          <div style="margin-top:6px"><code style="word-break:break-all">${esc(r.url)}</code> ${copyBtn(r.url)}</div>
+          <div id="devices-enroll-status" style="margin-top:6px">Waiting for the phone…</div></div>
+      </div>`;
+  }
+  clearInterval(enrollPoll);
+  const started = Date.now();
+  enrollPoll = setInterval(async () => {
+    const st = $('devices-enroll-status');
+    if (!st || Date.now() - started > 21 * 60000) { clearInterval(enrollPoll); return; }
+    try {
+      const s = await api('GET', `/api/devices/enroll/${encodeURIComponent(r.code)}`);
+      if (!s.used) return;
+      clearInterval(enrollPoll);
+      const res = s.result || {};
+      st.innerHTML = kind === 'computer'
+        ? `<span style="color:#3fb950">✓ Added ${esc(res.machine || 'the computer')}</span>: ` +
+          ((res.servers || []).map((x) => `${esc(x.name)} ${x.connected ? 'connected' : 'not connected yet'}`).join(', ') || 'no MCP server') +
+          (res.ssh ? '' : ' · SSH is off there, so Ping cannot restart it.')
+        : `<span style="color:#3fb950">✓ ${esc(device)} is paired</span>: notifications on.`;
+      load(true);
+    } catch (_) { /* keep waiting */ }
+  }, 3000);
+}
+
+async function showCheckQr(name) {
+  const slot = document.querySelector(`[data-m-qr="${CSS.escape(name)}"]`);
+  if (!slot) return;
+  if (slot.innerHTML) { slot.innerHTML = ''; return; }
+  const r = await api('POST', '/api/devices/enroll', { kind: 'check', device: name });
+  slot.innerHTML = `<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <div style="background:#fff;padding:6px;border-radius:8px;width:150px">${r.qr_svg}</div>
+    <div class="admin-toggle-sub" style="flex:1;min-width:180px">Scan on <strong>${esc(name)}</strong> to check it is still connected:
+      the page shows what Odysseus can reach and can send a test notification. Works for 10 minutes.
+      <div style="margin-top:4px"><code style="word-break:break-all">${esc(r.url)}</code> ${copyBtn(r.url)}</div></div></div>`;
+}
+
+async function onEnrollClick(ev) {
+  const t = ev.target.closest('[data-enroll],[data-m-check],[data-copy]');
+  if (!t) return;
+  ev.preventDefault();
+  try {
+    if (t.dataset.copy !== undefined) {
+      await navigator.clipboard.writeText(t.dataset.copy);
+      const old = t.textContent; t.textContent = 'Copied';
+      setTimeout(() => { t.textContent = old; }, 1500);
+    } else if (t.dataset.enroll) {
+      await startEnroll(t.dataset.enroll);
+    } else if (t.dataset.mCheck) {
+      await showCheckQr(t.dataset.mCheck);
+    }
+  } catch (e) {
+    say(e.message, true);
   }
 }
 
@@ -372,6 +463,7 @@ function init() {
   panel.addEventListener('click', onClick);
   panel.addEventListener('click', onComputersClick);
   panel.addEventListener('click', onMachineClick);
+  panel.addEventListener('click', onEnrollClick);
   panel.addEventListener('input', onComputersInput);
   panel.dataset.devicesReady = '1';
 }
