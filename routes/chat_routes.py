@@ -1123,6 +1123,21 @@ def setup_chat_routes(
                         _max_rounds = _DEFAULT_ROUNDS
                     _max_rounds = max(1, min(_max_rounds, 200))
 
+                    # Which of the user's devices this came from (tailnet
+                    # address, passed through by Tailscale Serve), so "this
+                    # phone" and "here" mean something to the agent.
+                    _client_dev = None
+                    try:
+                        from src import machines as _machines
+                        _ip = request.client.host if request.client else ""
+                        _info = await asyncio.to_thread(_machines.client_device, _ip)
+                        if _info:
+                            _client_dev = {"note": _machines.client_device_note(_info),
+                                           "registered": bool(_info.get("device")),
+                                           "name": _info["peer"]["name"]}
+                    except Exception as _e:
+                        logger.debug("client device lookup failed: %s", _e)
+
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
                         sess.model,
@@ -1142,6 +1157,7 @@ def setup_chat_routes(
                         fallbacks=_fallback_candidates,
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
+                        client_device=_client_dev,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

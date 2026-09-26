@@ -365,3 +365,60 @@ async def tailscale_ping(peer: Dict) -> bool:
     target = peer["ips"][0] if peer["ips"] else peer["host"]
     r = await _run(["tailscale", "ping", "-c", "1", "--timeout", "5s", target], timeout=12)
     return r["rc"] == 0 and "pong" in r["out"].lower()
+
+
+# ── Which device the user is chatting from ─────────────────────────────────
+#
+# Odysseus sits behind Tailscale Serve, which passes the client's tailnet
+# address through, so a request says which machine it came from. Asked to
+# "use my phone" from the phone, the agent had no idea the phone was the
+# thing in the user's hand; told "this phone", it could not know which.
+
+def client_device(ip: str, all_peers: Optional[List[Dict]] = None,
+                  registry: Optional[List[Dict]] = None) -> Optional[Dict]:
+    """The machine at `ip`, with any registered device on it, or None."""
+    ip = (ip or "").strip()
+    if not ip or ip in ("127.0.0.1", "::1", "localhost"):
+        return None
+    all_peers = peers() if all_peers is None else all_peers
+    peer = find_peer(all_peers, ip)
+    if peer is None or peer.get("is_self"):
+        return None
+    if registry is None:
+        from src import devices as _devices
+        registry = _devices.list_devices()
+    reg = None
+    for d in registry:
+        host = url_host(d.get("endpoint", ""))
+        if (host and find_peer([peer], host)) or find_peer([peer], d.get("name", "")):
+            reg = d
+            break
+    return {"peer": peer, "device": reg}
+
+
+def client_device_note(info: Optional[Dict]) -> str:
+    """A short system-prompt note: where this message came from, and how to act there."""
+    if not info:
+        return ""
+    p, d = info["peer"], info.get("device")
+    os_name = p.get("os") or "unknown OS"
+    phone = os_name in ("android", "ios", "ipados")
+    kind = "phone" if phone else "computer"
+    lines = [f"The user is sending this message from their {kind} **{p['name']}** "
+             f"({os_name}, tailnet {', '.join(p['ips'][:1])}). When they say \"this {kind}\", "
+             f"\"my {kind}\", \"here\" or \"on this device\", they mean it."]
+    if d:
+        cmds = [c for c in (d.get("commands") or []) if c != "notify"]
+        if d.get("endpoint") and cmds:
+            lines.append(
+                f"It is registered as device `{d['name']}` with a listener that handles: "
+                f"{', '.join(cmds)}. To open a link or an app on it, call manage_devices "
+                f"{{\"action\":\"control\",\"name\":\"{d['name']}\",\"command\":\"open_url\","
+                f"\"params\":{{\"url\":\"...\"}}}} (or open_app with a package). It happens "
+                f"at once, with no tap. notify_device only shows a notification.")
+        else:
+            lines.append(f"It is registered as device `{d['name']}` (notifications only).")
+    elif not phone:
+        lines.append("If a Linux or Mac computer, reach it with bash `ssh "
+                     f"{p['dns'] or p['host']}`; a Windows one through its MCP tools.")
+    return " ".join(lines)
