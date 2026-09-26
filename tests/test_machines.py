@@ -96,6 +96,18 @@ def test_overview_groups_servers_and_phones_under_machines():
     assert others == {"pikvm", "ubuntu-club-3090"}                    # stale, shared
 
 
+def test_a_computer_registered_for_notifications_sits_under_its_machine():
+    """No listener address, so it is matched by name, not dropped into
+    Services (linking the PC's browser to the PC registers it this way)."""
+    peers = machines.parse_peers(TS, now=NOW)
+    pc = {"name": "desktop-jaron", "kind": "desktop", "endpoint": "", "commands": ["notify"],
+          "has_token": True, "token_hint": "x", "aliases": ["windows-desktop"]}
+    ov = machines.overview([], {}, {}, [pc], peers, {})
+    by = {m["host"]: m for m in ov["machines"]}
+    assert [p["name"] for p in by["desktop-jaron"]["phones"]] == ["desktop-jaron"]
+    assert ov["services"] == []
+
+
 def test_only_one_machine_is_preferred(prefs_file):
     machines.set_prefs("desktop-jaron", preferred=True, gpu=True)
     machines.set_prefs("jaron-laptop", preferred=True)

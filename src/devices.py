@@ -223,7 +223,7 @@ async def send_command(device: Dict, command: str, params: Optional[Dict] = None
     if resp.status_code == 401:
         return {"ok": False, "error":
                 f"{name} rejected the token. The token in Odysseus and the one in the Modes "
-                f"app no longer match — copy it across again."}
+                f"app no longer match: copy it across again."}
     if resp.status_code >= 400:
         return {"ok": False, "error":
                 f"{name} returned HTTP {resp.status_code}: {resp.text[:200]}"}

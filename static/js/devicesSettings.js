@@ -99,7 +99,7 @@ function renderMachines() {
     const h = esc(m.host);
     const isPhone = ['android', 'ios', 'ipados'].includes((m.os || '').toLowerCase());
     const appsSrv = (m.servers || []).find((s) => s.apps && s.status === 'connected');
-    const badges = [m.is_self && chip('this server'), m.preferred && chip('★ preferred'), m.gpu && chip('GPU')]
+    const badges = [m.is_self && chip('this server'), m.preferred && chip('★ used first'), m.gpu && chip('GPU')]
       .filter(Boolean).join(' ');
     const seen = m.online ? 'online' : (m.last_seen ? `offline · seen ${ago(m.last_seen)}` : 'offline');
     return `
@@ -110,10 +110,12 @@ function renderMachines() {
           ${badges}
           <span style="flex:1"></span>
           ${m.is_self ? '' : `<button ${BTN} data-m-ping="${h}">Ping</button>`}
-          ${m.is_self ? '' : `<button ${BTN} data-m-check="${esc((m.phones && m.phones[0] && m.phones[0].name) || m.host)}" title="Show a QR code to scan on that device">Check QR</button>`}
+          ${isPhone ? `<button ${BTN} data-m-check="${esc((m.phones && m.phones[0] && m.phones[0].name) || m.host)}" title="Show a QR code to scan with this phone's camera: it opens a page that checks the connection">Check QR</button>` : ''}
           ${appsSrv ? `<button ${BTN} data-pc-apps="${esc(appsSrv.id)}">Apps</button>` : ''}
-          ${m.is_self || isPhone ? '' : `<button ${BTN} data-m-pref="${h}" data-on="${m.preferred ? 1 : 0}">${m.preferred ? 'Unprefer' : 'Prefer'}</button>
-          <button ${BTN} data-m-gpu="${h}" data-on="${m.gpu ? 1 : 0}">${m.gpu ? 'No GPU' : 'Has GPU'}</button>`}
+          ${m.is_self || isPhone ? '' : `<button ${BTN} data-m-pref="${h}" data-on="${m.preferred ? 1 : 0}" title="${m.preferred
+            ? 'This computer is used first for heavy jobs. Click to stop.'
+            : 'Use this computer first for heavy jobs (Resolve renders, builds). Others are used when it is off.'}">${m.preferred ? 'Stop using first' : 'Use first'}</button>
+          <button ${BTN} data-m-gpu="${h}" data-on="${m.gpu ? 1 : 0}" title="Whether this computer has a strong graphics card, so GPU work (video renders, local AI models) goes to it. Set automatically when it is added with the install command.">GPU: ${m.gpu ? 'yes' : 'no'}</button>`}
         </div>
         <div class="admin-toggle-sub">${esc(m.dns || '')}${m.ips && m.ips[0] ? ` · ${esc(m.ips[0])}` : ''}</div>
         ${(m.servers || []).length ? `<div style="margin-top:6px">${m.servers.map(serverLine).join('')}</div>`
@@ -165,19 +167,29 @@ function renderSubs() {
     box.innerHTML = '<div class="admin-toggle-sub">No browser has turned on notifications yet (Reminders tab → Enable notifications).</div>';
     return;
   }
-  const options = state.devices.map((d) => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('');
+  // Nothing preselected. The list used to hold only registered devices, so
+  // the phone was the default on every row and one Link click sent the PC's
+  // and laptop's notifications to the phone. Computers are choices too.
+  const registered = new Set(state.devices.map((d) => d.name.toLowerCase()));
+  const machines = ((state.overview || {}).machines || [])
+    .filter((m) => !m.is_self && !['android', 'ios', 'ipados'].includes((m.os || '').toLowerCase())
+      && !registered.has(m.host.toLowerCase()));
+  const options = '<option value="">Choose a device…</option>'
+    + state.devices.map((d) => `<option value="dev:${esc(d.name)}">${esc(d.name)} (${esc(d.kind || 'device')})</option>`).join('')
+    + machines.map((m) => `<option value="machine:${esc(m.host)}:${esc(m.os || '')}">${esc(m.label)} (${esc(m.os || 'computer')})</option>`).join('');
   box.innerHTML = state.subscriptions.map((s, i) => `
     <div class="settings-row" style="gap:8px;flex-wrap:wrap">
       <strong style="min-width:120px">${esc(s.device || '(unnamed)')}</strong>
       <span class="admin-toggle-sub">${esc(s.owner)}</span>
       <span class="admin-toggle-sub" style="flex:1">${s.linked_to ? `reaches <strong>${esc(s.linked_to)}</strong>` : 'not linked to a device'}</span>
-      ${s.device && state.devices.length ? `
-        <select class="settings-select" id="devices-link-${i}" style="max-width:160px">${options}</select>
-        <button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-link="${i}" type="button">Link</button>` : ''}
+      ${s.device ? `
+        <select class="settings-select" id="devices-link-${i}" style="max-width:190px">${options}</select>
+        <button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-link="${i}" type="button">${s.linked_to ? 'Move' : 'Link'}</button>
+        ${s.linked_to ? `<button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-unlink="${esc(s.linked_to)}" data-alias="${esc(s.device)}" type="button">Unlink</button>` : ''}` : ''}
     </div>`).join('');
   state.subscriptions.forEach((s, i) => {
     const sel = $(`devices-link-${i}`);
-    if (sel && s.linked_to) sel.value = s.linked_to;
+    if (sel && s.linked_to) sel.value = `dev:${s.linked_to}`;
   });
 }
 
@@ -447,7 +459,21 @@ async function onClick(ev) {
       await api('DELETE', `${path}/aliases/${encodeURIComponent(t.dataset.alias)}`);
     } else if (t.dataset.devLink !== undefined) {
       const sub = state.subscriptions[Number(t.dataset.devLink)];
-      const target = $(`devices-link-${t.dataset.devLink}`).value;
+      const choice = $(`devices-link-${t.dataset.devLink}`).value;
+      if (!choice) { say('Choose which device this browser is first.', true); return; }
+      let target = choice.slice(4);
+      if (choice.startsWith('machine:')) {
+        // A computer that is not registered yet: register it (notifications
+        // only), so "notify my PC" has somewhere to go.
+        const [, host, os] = choice.split(':');
+        target = host;
+        try {
+          await api('POST', '/api/devices', { name: host, kind: os === 'windows' || os === 'macos' ? 'desktop' : 'laptop',
+            commands: ['notify'] });
+        } catch (e) {
+          if (!/already exists/.test(e.message)) throw e;
+        }
+      }
       await api('POST', `/api/devices/${encodeURIComponent(target)}/aliases`, { alias: sub.device });
       say(`"${sub.device}" now reaches ${target}.`);
     }

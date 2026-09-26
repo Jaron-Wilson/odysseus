@@ -83,17 +83,24 @@ def _render_script(name: str, base: str, code: str) -> str:
                 .replace("__ODYSSEUS_PUBKEY__", server_pubkey()))
 
 
-def _page(title: str, body: str) -> HTMLResponse:
+def _page(title: str, body: str, *, page: str, code: str, device: str = "") -> HTMLResponse:
+    """A standalone page for a device that is not logged in.
+
+    No inline script: Odysseus's Content-Security-Policy only runs scripts
+    from its own origin (or with a per-request nonce), so an inline <script>
+    is silently blocked -- which is how the first version's buttons did
+    nothing at all. The behaviour lives in /static/js/enroll-page.js, and the
+    page hands it what it needs through data- attributes.
+    """
     return HTMLResponse(f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>{html.escape(title)} · Odysseus</title>
-<style>
- body{{font-family:system-ui,sans-serif;background:#151311;color:#ece6df;margin:0;padding:24px;max-width:560px}}
- h1{{font-size:20px;color:#e0654f}} .card{{background:#1f1c19;border-radius:12px;padding:16px;margin:14px 0}}
- button{{background:#e0654f;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-size:15px;margin:4px 0}}
- button.secondary{{background:#3a342f}} code{{background:#2a2622;padding:2px 6px;border-radius:5px;word-break:break-all}}
- .ok{{color:#3fb950}} .bad{{color:#f85149}} .muted{{opacity:.7;font-size:13px}}
-</style></head><body><h1>{html.escape(title)}</h1>{body}</body></html>""")
+<link rel="stylesheet" href="/static/css/enroll-page.css">
+<script src="/static/js/enroll-page.js" defer></script>
+</head><body data-page="{html.escape(page)}" data-code="{html.escape(code)}" data-device="{html.escape(device)}">
+<header><div class="brand">Odysseus</div><h1>{html.escape(title)}</h1></header>
+<main>{body}</main></body></html>""")
 
 
 def setup_enroll_routes(get_mcp_manager=None) -> APIRouter:
@@ -191,39 +198,23 @@ def setup_enroll_routes(get_mcp_manager=None) -> APIRouter:
             d = devices.register(name, kind="phone", commands=["notify", "open_url", "open_app", "list_apps"])
         token = d.get("token") or ""
         return _page(f"Pair {name}", f"""
-<div class="card"><b>1. Notifications</b>
- <p class="muted">Turns on notifications on this phone, filed under <b>{html.escape(name)}</b>, so the agent's
- "notify my phone" reaches it.</p>
- <button id="push">Turn on notifications</button> <span id="push-msg" class="muted"></span></div>
-<div class="card"><b>2. Modes listener</b>
- <p class="muted">For opening links and apps without a tap: in the Modes app, open Remote control and paste this token.</p>
- <code id="tok">{html.escape(token)}</code><br><button class="secondary" id="copy">Copy token</button></div>
-<p class="muted">This page works for 20 minutes. Tailscale must be on for Odysseus to reach this phone.</p>
-<script>
-const code = {json.dumps(code)};
-document.getElementById('copy').onclick = async () => {{
-  await navigator.clipboard.writeText(document.getElementById('tok').textContent);
-  document.getElementById('copy').textContent = 'Copied';
-}};
-function b64(s) {{ const p='='.repeat((4-s.length%4)%4); const r=atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));
-  return Uint8Array.from([...r].map(ch => ch.charCodeAt(0))); }}
-document.getElementById('push').onclick = async () => {{
-  const msg = document.getElementById('push-msg');
-  try {{
-    if (!('serviceWorker' in navigator) || !window.isSecureContext) throw new Error('this browser cannot do push here');
-    if (await Notification.requestPermission() !== 'granted') throw new Error('permission was not given');
-    const reg = await navigator.serviceWorker.register('/sw.js');
-    await navigator.serviceWorker.ready;
-    const {{ public_key }} = await (await fetch(`/enroll/${{code}}/push-key`)).json();
-    const sub = (await reg.pushManager.getSubscription()) ||
-      await reg.pushManager.subscribe({{ userVisibleOnly: true, applicationServerKey: b64(public_key) }});
-    const r = await fetch(`/enroll/${{code}}/push`, {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ subscription: sub.toJSON() }}) }});
-    if (!r.ok) throw new Error('Odysseus did not accept it (the code may have expired)');
-    msg.textContent = 'On. A test notification is on its way.'; msg.className = 'ok';
-  }} catch (e) {{ msg.textContent = e.message; msg.className = 'bad'; }}
-}};
-</script>""")
+<section class="card">
+  <div class="step">1</div>
+  <h2>Notifications</h2>
+  <p>So "notify my phone" reaches this phone. Filed under <b>{html.escape(name)}</b>.</p>
+  <button class="primary" data-action="subscribe">Turn on notifications</button>
+  <p class="result" data-result="subscribe"></p>
+</section>
+<section class="card">
+  <div class="step">2</div>
+  <h2>Modes listener</h2>
+  <p>So Odysseus can open links and apps here without a tap. In the Modes app, open
+     <b>Remote control</b> and paste this token.</p>
+  <code class="token">{html.escape(token)}</code>
+  <button data-action="copy" data-text="{html.escape(token)}">Copy token</button>
+</section>
+<p class="foot">This page works for 20 minutes. Keep Tailscale on so Odysseus can reach this phone.</p>
+""", page="phone", code=code, device=name)
 
     @router.get("/enroll/{code}/push-key")
     async def push_key(code: str):
@@ -250,36 +241,56 @@ document.getElementById('push').onclick = async () => {{
     async def check_page(code: str):
         rec = _code_or_404(code, "check")
         name = rec["device"]
-        return _page(f"Check {name}", f"""
-<div class="card"><span class="ok">✓</span> This device reached Odysseus over the tailnet: you are reading this page.</div>
-<div class="card" id="res">Checking whether Odysseus can reach <b>{html.escape(name)}</b>…</div>
-<button id="test">Send a test notification here</button> <span id="msg" class="muted"></span>
-<script>
-const code = {json.dumps(code)};
-(async () => {{
-  const r = await (await fetch(`/enroll/${{code}}/check/status`)).json();
-  const row = (ok, text) => `<div class="${{ok ? 'ok' : 'bad'}}">${{ok ? '✓' : '✗'}} ${{text}}</div>`;
-  document.getElementById('res').innerHTML = (r.checks || []).map(x => row(x.ok, x.text)).join('')
-    || 'Nothing to check.';
-}})();
-document.getElementById('test').onclick = async () => {{
-  const r = await (await fetch(`/enroll/${{code}}/check/push`, {{ method: 'POST' }})).json();
-  const m = document.getElementById('msg');
-  m.textContent = r.sent ? 'Sent. It should arrive in a few seconds.' : (r.detail || 'Nothing was delivered.');
-  m.className = r.sent ? 'ok' : 'bad';
-}};
-</script>""")
+        return _page(f"Is {name} connected?", """
+<section class="card">
+  <div class="row ok"><span class="icon">✓</span><div><b>This device can reach Odysseus</b>
+    <p>You are reading this page over the tailnet.</p></div></div>
+</section>
+<section class="card">
+  <h2>Can Odysseus reach it?</h2>
+  <div data-slot="device" class="muted">Checking…</div>
+  <div data-slot="checks"></div>
+</section>
+<section class="card">
+  <h2>Try it</h2>
+  <button class="primary" data-action="test">Send a test notification</button>
+  <button data-action="subscribe" hidden>Turn on notifications on this device</button>
+  <p class="result" data-result="test"></p>
+</section>
+<p class="foot">This page works for 10 minutes; reload it to check again.</p>
+""", page="check", code=code, device=name)
 
     @router.get("/enroll/{code}/check/status")
     async def check_status(code: str):
         rec = _code_or_404(code, "check")
-        return {"device": rec["device"], "checks": await device_checks(rec["device"], _mgr())}
+        return {"device": rec["device"], "info": _device_info(rec["device"]),
+                "checks": await device_checks(rec["device"], _mgr())}
 
     @router.post("/enroll/{code}/check/push")
     async def check_push(code: str):
         rec = _code_or_404(code, "check")
         r = await webpush.send("Odysseus", f"Check: {rec['device']} is connected.", device=rec["device"], url="/")
-        return {"sent": r.get("sent", 0), "detail": r.get("detail", "")}
+        return {"sent": r.get("sent", 0), "detail": r.get("detail", ""), "errors": r.get("errors", [])}
+
+    @router.get("/enroll/{code}/check/push-key")
+    async def check_push_key(code: str):
+        _code_or_404(code, "check")
+        return {"public_key": webpush.public_key()}
+
+    @router.post("/enroll/{code}/check/subscribe")
+    async def check_subscribe(code: str, request: Request):
+        """Fix it from the check page: subscribe this browser under the
+        device's own name. Not single-use, like the rest of a check code."""
+        rec = _code_or_404(code, "check")
+        body = await _json(request)
+        try:
+            webpush.save_subscription(body.get("subscription") or {}, device=rec["device"],
+                                      owner=rec.get("owner") or "")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        r = await webpush.send("Odysseus", f"Notifications are on for {rec['device']}.",
+                               device=rec["device"], url="/")
+        return {"ok": True, "sent": r.get("sent", 0)}
 
     return router
 
@@ -345,6 +356,20 @@ async def register_machine(body: dict, mgr) -> dict:
         out.append({"name": a["name"], "connected": bool(ok)})
     return {"ok": True, "machine": v["host"], "os": v["os"], "gpu": v["gpu"],
             "ssh": v["ssh"], "servers": out}
+
+
+def _device_info(name: str) -> dict:
+    d = devices.get(name)
+    all_peers = machines.peers()
+    peer = None
+    if d and d.get("endpoint"):
+        peer = machines.find_peer(all_peers, machines.url_host(d["endpoint"]))
+    if peer is None:
+        peer = machines.find_peer(all_peers, name)
+    if peer is None:
+        return {"name": name}
+    return {"name": peer["name"], "os": peer["os"], "ip": (peer["ips"] or [""])[0],
+            "online": peer["online"], "last_seen": peer["last_seen"]}
 
 
 async def device_checks(name: str, mgr) -> list:
