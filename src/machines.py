@@ -243,7 +243,9 @@ def overview(servers: List[Dict], statuses: Dict[str, Dict], tools: Dict[str, se
             services.append(row)
 
     for ph in phones:
-        peer = find_peer(all_peers, url_host(ph.get("endpoint", "")))
+        # By its listener's address, or -- for a computer registered only for
+        # notifications, which has no listener -- by its name.
+        peer = find_peer(all_peers, url_host(ph.get("endpoint", ""))) or find_peer(all_peers, ph["name"])
         if peer is not None:
             machine_for(peer)["phones"].append(ph)
         else:

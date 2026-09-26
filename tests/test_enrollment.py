@@ -209,8 +209,10 @@ def test_check_page_reports_what_odysseus_can_reach(client, monkeypatch):
     import routes.device_routes as dr
     monkeypatch.setattr(dr, "_configured_servers", lambda: [])
     r = c.post("/api/devices/enroll", json={"kind": "check", "device": "pixel-8a"}).json()
-    assert "Check pixel-8a" in c.get(f"/enroll/{r['code']}/check").text
-    checks = c.get(f"/enroll/{r['code']}/check/status").json()["checks"]
+    assert "Is pixel-8a connected?" in c.get(f"/enroll/{r['code']}/check").text
+    status = c.get(f"/enroll/{r['code']}/check/status").json()
+    assert status["info"] == {"name": "Pixel 8a", "os": "android", "ip": "100.96.1.1", "online": True, "last_seen": ""}
+    checks = status["checks"]
     assert [x["ok"] for x in checks] == [True, True, True]
     assert "online" in checks[0]["text"] and "Modes listener answered" in checks[1]["text"]
     # A check code can be reloaded: it expires rather than being used up.
@@ -230,3 +232,43 @@ def test_only_enroll_paths_skip_login():
     for no in ("/enroll/short/install.sh", f"/enroll/{code}/../../api/devices", "/api/devices/enroll",
                f"/enroll/{code}/a/b/c"):
         assert not rx.match(no), no
+
+
+# ── Pages must work under the site's Content-Security-Policy ───────────────
+
+def test_pages_have_no_inline_script(client, monkeypatch):
+    """The first version used inline <script>; the CSP (script-src 'self'
+    plus a nonce) blocked it, so every button on the phone and check pages
+    silently did nothing. Behaviour must come from a static file."""
+    c, _ = client
+    monkeypatch.setattr(machines, "peers", lambda refresh=False: [])
+    for kind in ("phone", "check"):
+        r = c.post("/api/devices/enroll", json={"kind": kind, "device": "pixel-8a"}).json()
+        page = c.get(r["url"].replace("https://jaron-dev-server.tail0.ts.net", "")).text
+        scripts = re.findall(r"<script\b[^>]*>", page)
+        assert scripts == ['<script src="/static/js/enroll-page.js" defer>'], (kind, scripts)
+        assert f'data-code="{r["code"]}"' in page and 'data-page="' + kind + '"' in page
+    assert os.path.exists(os.path.join(HERE, "static", "js", "enroll-page.js"))
+    assert os.path.exists(os.path.join(HERE, "static", "css", "enroll-page.css"))
+
+
+def test_check_page_can_turn_notifications_on_under_the_device_name(client, monkeypatch):
+    c, _ = client
+    saved, sent = [], []
+    monkeypatch.setattr(webpush, "save_subscription",
+                        lambda sub, device="", owner="": saved.append(device) or {"device": device, "endpoint": "e"})
+    monkeypatch.setattr(webpush, "public_key", lambda: "BKEY")
+
+    async def fake_send(title, body, device="", url=""):
+        sent.append(device)
+        return {"sent": 1}
+
+    monkeypatch.setattr(webpush, "send", fake_send)
+    r = c.post("/api/devices/enroll", json={"kind": "check", "device": "pixel-8a"}).json()
+    assert c.get(f"/enroll/{r['code']}/check/push-key").json() == {"public_key": "BKEY"}
+    for _ in range(2):                       # a check code is not used up
+        assert c.post(f"/enroll/{r['code']}/check/subscribe",
+                      json={"subscription": {"endpoint": "https://fcm/x"}}).json()["sent"] == 1
+    assert saved == ["pixel-8a", "pixel-8a"] and sent == ["pixel-8a", "pixel-8a"]
+    t = c.post(f"/enroll/{r['code']}/check/push").json()
+    assert t["sent"] == 1
