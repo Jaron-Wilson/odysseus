@@ -258,6 +258,11 @@ _DOMAIN_RULES = {
 - Use file tools for real disk files. Use document tools only for editor documents.
 - Prefer `grep`, `glob`, and `ls` over shell equivalents when available.
 - Use `edit_file`/`write_file` for writes; avoid shell redirection/heredocs for editing files.""",
+    "background": """\
+## Background first
+- Do work out of sight by default. To look something up, check a page, compare prices or read docs, use the built-in browser (`mcp__builtin_browser__*`, headless on this server and invisible to the user) or `web_search`/`web_fetch`, and report what you found in the chat.
+- Act on the user's own screen (open_url/open_app on their phone, launch_app, or click/type/screenshot on their computer) only when they ask to see it there ("open it on my phone", "show me", "pull it up on my PC"), or when the task needs their device (signing in, an app that only exists there, an approval).
+- If you are unsure, do it in the background and then offer to open it on their device.""",
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
@@ -277,12 +282,25 @@ _DOMAIN_TOOL_MAP = {
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
 }
 
+# Tools that act on the user's own devices, or the invisible browser that
+# should be tried first. MCP names are namespaced per server, so match suffixes.
+_SCREEN_TOOL_SUFFIXES = ("__launch_app", "__focus_app", "__screenshot", "__click", "__type_text",
+                         "__press_keys", "__scroll", "__drag", "__double_click")
+
+
+def _touches_devices(names: set) -> bool:
+    return bool(names & {"manage_devices", "notify_device"}) or any(
+        n.endswith(_SCREEN_TOOL_SUFFIXES) or n.startswith("mcp__builtin_browser__") for n in names)
+
+
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
     names = set(tool_names or set())
     rules = []
     for domain, domain_tools in _DOMAIN_TOOL_MAP.items():
         if names & domain_tools:
             rules.append(_DOMAIN_RULES[domain])
+    if _touches_devices(names):
+        rules.append(_DOMAIN_RULES["background"])
     if names & {"create_session", "list_sessions", "manage_session", "manage_documents", "manage_notes", "manage_calendar", "manage_tasks", "manage_skills", "manage_research"}:
         rules.append(_LINK_RULES)
     return rules
@@ -997,6 +1015,14 @@ def _build_system_prompt(
     mcp_schemas = []
     if mcp_mgr:
         mcp_schemas = mcp_mgr.get_all_openai_schemas(mcp_disabled_map or {})
+    # On a low-signal turn the MCP schemas go out without being in
+    # relevant_tools, so the rule pack keyed on tool names never sees the
+    # screen/browser tools. Add "background first" whenever they are sent.
+    _bg_rule = _DOMAIN_RULES["background"]
+    if _bg_rule not in agent_prompt:
+        _mcp_names = {((s or {}).get("function") or {}).get("name", "") for s in mcp_schemas}
+        if _touches_devices(_mcp_names):
+            agent_prompt = agent_prompt + "\n\n" + _bg_rule
 
     set_active_model(model)
 

@@ -412,10 +412,11 @@ def client_device_note(info: Optional[Dict]) -> str:
         if d.get("endpoint") and cmds:
             lines.append(
                 f"It is registered as device `{d['name']}` with a listener that handles: "
-                f"{', '.join(cmds)}. To open a link or an app on it, call manage_devices "
+                f"{', '.join(cmds)}. When they want to see something there, open it with manage_devices "
                 f"{{\"action\":\"control\",\"name\":\"{d['name']}\",\"command\":\"open_url\","
                 f"\"params\":{{\"url\":\"...\"}}}} (or open_app with a package). It happens "
-                f"at once, with no tap. notify_device only shows a notification.")
+                f"at once, with no tap. notify_device only shows a notification. Anything they "
+                f"only want looked up, do in the background and tell them.")
         else:
             lines.append(f"It is registered as device `{d['name']}` (notifications only).")
     elif not phone:
