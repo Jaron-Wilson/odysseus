@@ -32,6 +32,110 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let API_BASE = '';
   let currentAbort = null;
   let isStreaming = false;
+
+  // ── Message queue ────────────────────────────────────────────────────────
+  // Pressing Enter mid-reply used to STOP the reply. Now, with text in the
+  // box, it queues the message instead ("...and send it to my phone"), and
+  // queued messages go out one at a time as each reply finishes. An empty
+  // box still means Stop, and Stop clears the queue: stopping means stop.
+  const _queues = new Map();               // sessionId -> [text, ...]
+  let _restoreDraft = null;                // what the user was typing when a queued send went out
+
+  function _queueFor(sid) {
+    if (!_queues.has(sid)) _queues.set(sid, []);
+    return _queues.get(sid);
+  }
+
+  function _escQ(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function renderQueue() {
+    const box = document.getElementById('chat-queue');
+    if (!box) return;
+    const sid = sessionModule.getCurrentSessionId();
+    const q = (sid && _queues.get(sid)) || [];
+    if (!q.length) { box.innerHTML = ''; box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = `
+      <div class="chat-queue-head">
+        <span>Queued: sends when the current reply finishes</span>
+        <span class="chat-queue-actions">
+          ${isStreaming ? '<button type="button" data-queue-stop>Stop now</button>' : ''}
+          <button type="button" data-queue-clear>Clear</button>
+        </span>
+      </div>
+      ${q.map((t, i) => `
+        <div class="chat-queue-item">
+          <span class="chat-queue-n">${i + 1}</span>
+          <span class="chat-queue-text" title="${_escQ(t)}">${_escQ(t)}</span>
+          <button type="button" class="chat-queue-x" data-queue-remove="${i}" title="Remove" aria-label="Remove">×</button>
+        </div>`).join('')}`;
+  }
+
+  export function queueMessage(text) {
+    const sid = sessionModule.getCurrentSessionId();
+    const t = String(text || '').trim();
+    if (!sid || !t) return false;
+    _queueFor(sid).push(t);
+    renderQueue();
+    return true;
+  }
+
+  export function clearQueue(sid) {
+    _queues.delete(sid || sessionModule.getCurrentSessionId());
+    renderQueue();
+  }
+
+  // Send the next queued message for the chat on screen, if nothing is running.
+  function drainQueue() {
+    if (isStreaming) return;
+    const sid = sessionModule.getCurrentSessionId();
+    const q = sid && _queues.get(sid);
+    if (!q || !q.length) { renderQueue(); return; }
+    const ta = document.getElementById('message');
+    if (!ta) return;
+    const next = q.shift();
+    if (!q.length) _queues.delete(sid);
+    renderQueue();
+    // Whatever is half-typed in the box is put back once the send has read
+    // the queued text (see updateSubmitButton's 'streaming' branch).
+    _restoreDraft = ta.value && ta.value.trim() ? ta.value : null;
+    ta.value = next;
+    const form = document.getElementById('chat-form');
+    if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+    else if (form) form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  }
+
+  // The chat on screen changes in several places with no event to hook, so
+  // watch for it cheaply and show that chat's own queue.
+  let _queueSid;
+  setInterval(() => {
+    const sid = sessionModule.getCurrentSessionId();
+    if (sid !== _queueSid) { _queueSid = sid; renderQueue(); }
+  }, 800);
+
+  document.addEventListener('click', (ev) => {
+    const t = ev.target.closest('[data-queue-remove],[data-queue-clear],[data-queue-stop]');
+    if (!t) return;
+    ev.preventDefault();
+    const sid = sessionModule.getCurrentSessionId();
+    if (t.dataset.queueRemove !== undefined) {
+      const q = _queues.get(sid) || [];
+      q.splice(Number(t.dataset.queueRemove), 1);
+      if (!q.length) _queues.delete(sid);
+      renderQueue();
+    } else if (t.dataset.queueClear !== undefined) {
+      clearQueue(sid);
+    } else if (t.dataset.queueStop !== undefined) {
+      const ta = document.getElementById('message');
+      const draft = ta ? ta.value : '';
+      if (ta) ta.value = '';                 // empty box = Stop
+      handleChatSubmit({ preventDefault() {} });
+      if (ta && draft) ta.value = draft;
+    }
+  });
   // Continuous stall watchdog: while streaming, if the SSE stream produces
   // NOTHING for STALL_THRESHOLD_MS (no deltas, no tool heartbeat — tools beat
   // every 2s, so a full minute of silence means it's genuinely stuck or the
@@ -243,9 +347,20 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       submitBtn.dataset.phase = 'processing';
       isStreaming = true;
       _startStallWatchdog();
+      // A queued send has read its text by now: give back what was being typed.
+      if (_restoreDraft !== null) {
+        const _ta = document.getElementById('message');
+        if (_ta && !_ta.value) _ta.value = _restoreDraft;
+        _restoreDraft = null;
+      }
+      renderQueue();
     } else if (state === 'idle') {
       submitBtn.dataset.mode = '';
       delete submitBtn.dataset.phase;
+      delete submitBtn.dataset.queue;
+      // The reply is over: send the next queued message, after a beat so the
+      // finished reply has rendered and saved first.
+      setTimeout(drainQueue, 700);
       submitBtn.classList.remove('recording');
       isStreaming = false;
       _stopStallWatchdog();
@@ -289,6 +404,20 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     if (window.compareModule && window.compareModule.isActive()) {
       window.compareModule.handleCompareSubmit();
       return;
+    }
+
+    // Mid-reply with text in the box: queue it rather than stopping. (Files
+    // are left in the attachments strip for the next normal send.)
+    if (isStreaming) {
+      const _ta = document.getElementById('message');
+      const _typed = _ta ? (_ta.value || '').trim() : '';
+      if (_typed && queueMessage(_typed)) {
+        _ta.value = '';
+        if (uiModule.autoResize) uiModule.autoResize(_ta);
+        if (window._updateSendBtnIcon) window._updateSendBtnIcon();
+        return;
+      }
+      clearQueue(sessionModule.getCurrentSessionId());   // an explicit Stop stops everything
     }
 
     // If currently streaming, stop it

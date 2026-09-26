@@ -3574,10 +3574,26 @@ function startOdysseusApp() {
     return fileHandlerModule.getPendingCount && fileHandlerModule.getPendingCount() > 0;
   }
 
+  const _queueIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="14" y2="7"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="17" x2="10" y2="17"/><path d="M18 14v6M15 17h6"/></svg>';
   function _updateSendBtnIcon() {
     if (!sendBtn) return;
-    // Don't override if streaming (stop button) or recording
-    if (sendBtn.dataset.mode === 'streaming' || sendBtn.dataset.mode === 'recording') return;
+    // Mid-reply the button is Stop -- unless there is text in the box, in
+    // which case Enter/click queues it to send after this reply.
+    if (sendBtn.dataset.mode === 'streaming') {
+      const typing = messageInput && messageInput.value.trim().length > 0;
+      if (typing && sendBtn.dataset.queue !== '1') {
+        sendBtn.dataset.queue = '1';
+        sendBtn.innerHTML = _queueIcon;
+        sendBtn.title = 'Queue: sends when this reply finishes';
+      } else if (!typing && sendBtn.dataset.queue === '1') {
+        delete sendBtn.dataset.queue;
+        sendBtn.innerHTML = _stopIcon;
+        sendBtn.title = 'Stop generation';
+      }
+      return;
+    }
+    // Don't override while recording
+    if (sendBtn.dataset.mode === 'recording') return;
     const prevMode = sendBtn.dataset.mode || '';
     const hasText = messageInput && messageInput.value.trim().length > 0;
     const hasFiles = _hasAttachments();

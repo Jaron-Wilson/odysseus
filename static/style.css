@@ -8215,6 +8215,39 @@ button.hamburger {
 }
 .attach-strip:empty { display: none; }
 
+/* Messages queued while a reply runs. */
+.chat-queue {
+  max-width: var(--chat-max);
+  width: 100%;
+  margin: 0 auto 6px;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  font-size: 13px;
+}
+.chat-queue[hidden] { display: none; }
+.chat-queue-head {
+  display: flex; align-items: center; gap: 8px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent); font-size: 12px; margin-bottom: 4px;
+}
+.chat-queue-actions { margin-left: auto; display: flex; gap: 6px; }
+.chat-queue-actions button {
+  background: none; border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  color: inherit; border-radius: 8px; padding: 2px 8px; font-size: 12px; cursor: pointer;
+}
+.chat-queue-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.chat-queue-n {
+  flex: 0 0 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.chat-queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-queue-x {
+  background: none; border: 0; color: inherit; opacity: .6; cursor: pointer; font-size: 16px; line-height: 1;
+}
+.chat-queue-x:hover { opacity: 1; }
+
 /* Upload-in-progress feedback: the message bubble shows immediately, so while
    the files are still uploading we put a whirlpool ON each attachment chip and
    dim the chip's content — making it obvious that file is being sent, not stuck. */
