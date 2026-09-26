@@ -219,12 +219,15 @@ def _subject() -> str:
 
 async def send(title: str, body: str, *, device: str = "", url: str = "",
                tag: str = "odysseus", command: str = "",
-               command_arg: str = "") -> Dict:
-    """Push to every matching subscription. Returns a per-endpoint summary."""
+               command_arg: str = "", endpoint: str = "") -> Dict:
+    """Push to every matching subscription. Returns a per-endpoint summary.
+    `endpoint` picks one browser's subscription ("this device")."""
     import httpx
 
     subs = load_subscriptions()
-    if device:
+    if endpoint:
+        subs = [s for s in subs if s.get("endpoint") == endpoint]
+    elif device:
         want = device.strip().lower()
         # A registered device also answers to the subscription names linked
         # to it in Settings > Devices: the browser named the Pixel's

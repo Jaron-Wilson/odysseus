@@ -24,6 +24,7 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+import notifyDone from './notifyDone.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -38,17 +39,38 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   // box, it queues the message instead ("...and send it to my phone"), and
   // queued messages go out one at a time as each reply finishes. An empty
   // box still means Stop, and Stop clears the queue: stopping means stop.
-  const _queues = new Map();               // sessionId -> [text, ...]
+  //
+  // The queue is kept on the server (src/chat_queue.py), so it still goes
+  // out with this page closed. With the page open, the page claims the next
+  // message when a reply ends and sends it the normal way; with no page, the
+  // server sends it itself. _queues is this page's copy of the server's.
+  const _queues = new Map();               // sessionId -> [{id, text}, ...]
   let _restoreDraft = null;                // what the user was typing when a queued send went out
-
-  function _queueFor(sid) {
-    if (!_queues.has(sid)) _queues.set(sid, []);
-    return _queues.get(sid);
-  }
+  const _queueWatch = new Set();           // chats whose queue the server may be sending
 
   function _escQ(s) {
     return String(s ?? '').replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function _queueUrl(sid, rest = '') {
+    return `${API_BASE}/api/chat/queue/${encodeURIComponent(sid)}${rest}`;
+  }
+
+  async function _queueCall(sid, rest, method, body) {
+    const opts = { method, credentials: 'same-origin' };
+    if (body !== undefined) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(_queueUrl(sid, rest), opts);
+    if (!res.ok) throw new Error(`queue ${method} ${res.status}`);
+    return res.json();
+  }
+
+  function _setQueue(sid, items) {
+    if (items && items.length) { _queues.set(sid, items); _queueWatch.add(sid); }
+    else _queues.delete(sid);
   }
 
   function renderQueue() {
@@ -66,55 +88,103 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           <button type="button" data-queue-clear>Clear</button>
         </span>
       </div>
-      ${q.map((t, i) => `
+      ${q.map((it) => `
         <div class="chat-queue-item">
-          <span class="chat-queue-n">${i + 1}</span>
-          <span class="chat-queue-text" title="${_escQ(t)}">${_escQ(t)}</span>
-          <button type="button" class="chat-queue-x" data-queue-remove="${i}" title="Remove" aria-label="Remove">×</button>
-        </div>`).join('')}`;
+          <span class="chat-queue-n">${q.indexOf(it) + 1}</span>
+          <span class="chat-queue-text" title="${_escQ(it.text)}">${_escQ(it.text)}</span>
+          ${it.id ? `<button type="button" class="chat-queue-x" data-queue-remove="${_escQ(it.id)}" title="Remove" aria-label="Remove">×</button>` : ''}
+        </div>`).join('')}
+      <div class="chat-queue-note">Saved on the server: these still send if you leave the page.</div>`;
+  }
+
+  // Pull the server's copy. If the server started sending a queued message
+  // itself while this chat is on screen, attach to it so it shows live.
+  async function refreshQueue(sid = sessionModule.getCurrentSessionId()) {
+    if (!sid) return;
+    let data;
+    try { data = await _queueCall(sid, '', 'GET'); } catch (_) { return; }
+    _setQueue(sid, data.items);
+    if (sid !== sessionModule.getCurrentSessionId()) return;
+    renderQueue();
+    if (data.running && !isStreaming && _queueWatch.has(sid)
+        && !(window.chatModule && window.chatModule.hasActiveStream
+             && window.chatModule.hasActiveStream(sid))) {
+      resumeStream(sid);
+    }
+    if (!data.running && !(data.items || []).length) _queueWatch.delete(sid);
   }
 
   export function queueMessage(text) {
     const sid = sessionModule.getCurrentSessionId();
     const t = String(text || '').trim();
     if (!sid || !t) return false;
-    _queueFor(sid).push(t);
+    // Show it straight away; the server's answer replaces this copy.
+    const local = (_queues.get(sid) || []).concat([{ id: '', text: t }]);
+    _setQueue(sid, local);
     renderQueue();
+    const body = { text: t };
+    if (notifyDone.isOn()) body.notify = JSON.parse(notifyDone.payload());
+    _queueCall(sid, '', 'POST', body)
+      .then((data) => { _setQueue(sid, data.items); renderQueue(); })
+      .catch(() => {
+        if (window.showToast) window.showToast('Could not queue that message on the server.');
+        refreshQueue(sid);
+      });
     return true;
   }
 
   export function clearQueue(sid) {
-    _queues.delete(sid || sessionModule.getCurrentSessionId());
+    sid = sid || sessionModule.getCurrentSessionId();
+    if (!sid) return;
+    _queues.delete(sid);
+    _queueWatch.delete(sid);
     renderQueue();
+    _queueCall(sid, '', 'DELETE').catch(() => {});
   }
 
   // Send the next queued message for the chat on screen, if nothing is running.
-  function drainQueue() {
+  // The claim is atomic on the server, so the server never sends it as well.
+  async function drainQueue() {
     if (isStreaming) return;
     const sid = sessionModule.getCurrentSessionId();
-    const q = sid && _queues.get(sid);
-    if (!q || !q.length) { renderQueue(); return; }
+    if (!sid) return;
+    let item = null;
+    try { item = (await _queueCall(sid, '/claim', 'POST')).item; } catch (_) { /* server drains it */ }
+    if (!item) { refreshQueue(sid); return; }
+    if (isStreaming || sid !== sessionModule.getCurrentSessionId()) {
+      // Something started meanwhile: put it back at the front.
+      _queueCall(sid, '', 'POST', { text: item.text }).catch(() => {});
+      return;
+    }
     const ta = document.getElementById('message');
     if (!ta) return;
-    const next = q.shift();
-    if (!q.length) _queues.delete(sid);
+    const q = (_queues.get(sid) || []).filter((it) => it.id !== item.id);
+    _setQueue(sid, q.length ? q : null);
     renderQueue();
     // Whatever is half-typed in the box is put back once the send has read
     // the queued text (see updateSubmitButton's 'streaming' branch).
     _restoreDraft = ta.value && ta.value.trim() ? ta.value : null;
-    ta.value = next;
+    ta.value = item.text;
     const form = document.getElementById('chat-form');
     if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
     else if (form) form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
   }
 
   // The chat on screen changes in several places with no event to hook, so
-  // watch for it cheaply and show that chat's own queue.
+  // watch for it cheaply and show that chat's own queue. While a chat has a
+  // queue, keep its copy fresh: the server may be sending from it.
   let _queueSid;
+  let _queueTick = 0;
   setInterval(() => {
     const sid = sessionModule.getCurrentSessionId();
-    if (sid !== _queueSid) { _queueSid = sid; renderQueue(); }
+    _queueTick += 1;
+    if (sid !== _queueSid) { _queueSid = sid; renderQueue(); refreshQueue(sid); }
+    else if (sid && _queueWatch.has(sid) && _queueTick % 4 === 0
+             && document.visibilityState === 'visible') refreshQueue(sid);
   }, 800);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshQueue();
+  });
 
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('[data-queue-remove],[data-queue-clear],[data-queue-stop]');
@@ -122,10 +192,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     ev.preventDefault();
     const sid = sessionModule.getCurrentSessionId();
     if (t.dataset.queueRemove !== undefined) {
-      const q = _queues.get(sid) || [];
-      q.splice(Number(t.dataset.queueRemove), 1);
-      if (!q.length) _queues.delete(sid);
+      const id = t.dataset.queueRemove;
+      _setQueue(sid, (_queues.get(sid) || []).filter((it) => it.id !== id));
       renderQueue();
+      _queueCall(sid, `/${encodeURIComponent(id)}`, 'DELETE')
+        .then((data) => { _setQueue(sid, data.items); renderQueue(); })
+        .catch(() => refreshQueue(sid));
     } else if (t.dataset.queueClear !== undefined) {
       clearQueue(sid);
     } else if (t.dataset.queueStop !== undefined) {
@@ -922,6 +994,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const fd = new FormData();
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);
+      // The bell: push a "done" notification from the server (notifyDone.js).
+      fd.append('notify', notifyDone.payload());
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
       // Auto-save & send active doc ID so the backend sees latest content
       if (documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {

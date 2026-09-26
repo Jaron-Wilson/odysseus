@@ -132,6 +132,13 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
                 q.put_nowait((None, None))
             except Exception:
                 pass
+        # Queued messages and "notify when done" (src/chat_queue.py). Never
+        # let a failure there reach the run itself.
+        try:
+            from src import chat_queue
+            chat_queue.on_run_finished(session_id, run.status)
+        except Exception:
+            logger.exception("[agent-run] after-run hook failed for %s", session_id)
         # Run is terminal — arm the grace timer so it (and its buffer) is
         # eventually freed even if nobody ever reconnects. subscribe() cancels
         # this on connect and re-arms on disconnect.
@@ -152,6 +159,11 @@ def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
     run = _Run()
     _RUNS[session_id] = run
     run.task = asyncio.create_task(_drain(session_id, agen, prev_task))
+    try:
+        from src import chat_queue
+        chat_queue.on_run_started(session_id)
+    except Exception:
+        logger.exception("[agent-run] start hook failed for %s", session_id)
     return run
 
 
