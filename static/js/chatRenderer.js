@@ -2273,6 +2273,7 @@ export function addMessage(role, content, modelName, metadata) {
         box.querySelectorAll('pre code:not(.hljs)').forEach(b => window.hljs.highlightElement(b));
       }
       if (markdownModule.renderMermaid) markdownModule.renderMermaid(box);
+      if (markdownModule.enhanceMedia) markdownModule.enhanceMedia(box);
       return lastWrap;
     }
 
@@ -2579,6 +2580,7 @@ export function addMessage(role, content, modelName, metadata) {
     if (role === 'assistant' && markdownModule.renderMermaid) {
       markdownModule.renderMermaid(wrap);
     }
+    if (role === 'assistant' && markdownModule.enhanceMedia) markdownModule.enhanceMedia(wrap);
     return wrap;
   } catch (error) {
     console.error('Error in addMessage:', error);

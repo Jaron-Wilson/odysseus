@@ -69,6 +69,7 @@ The block executes automatically and you see the output."""
 _AGENT_RULES = """\
 ## Rules
 - Only use tools when needed. Don't search for things you already know.
+- Music and video play inside this chat: a YouTube link on its own line shows a player, and so does a link to an audio or video file. For "find me music to try" or "show me a video", search (web_search, e.g. "no copyright cinematic instrumental 100 bpm youtube"), then give a few options as YouTube links with one line each on why. To play a file from the user's machines (a render on the PC), copy it to ~/odysseus-data/chat_media/ (scp) and link it as [name](/api/chat-media/<file name>); do not open it on their screen for that.
 - When something worth keeping for this chat comes up (the task, a decision, who or what you are waiting on), suggest it for Needs to know with `chat_memory` (the user decides), and remove items that are done or wrong.
 - For web lookup/search/latest/current requests, use `web_search` or `web_fetch`. Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.

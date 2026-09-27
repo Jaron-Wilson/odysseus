@@ -625,6 +625,8 @@ app.include_router(setup_enroll_routes())
 # claude_code plan approvals — the only path that can authorise an execute run.
 from routes.claude_code_routes import setup_claude_code_routes
 app.include_router(setup_claude_code_routes())
+from routes.chat_media_routes import setup_chat_media_routes
+app.include_router(setup_chat_media_routes())
 from routes.screen_control_routes import setup_screen_control_routes
 app.include_router(setup_screen_control_routes())
 

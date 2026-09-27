@@ -795,6 +795,83 @@ export function renderContent(content) {
 /**
  * Initialize any unprocessed Mermaid diagrams in a container (or whole document)
  */
+// ── Media in the chat ────────────────────────────────────────────────────
+// A YouTube link in a reply gets a player under it (a thumbnail first; the
+// player loads on click, from youtube-nocookie.com), and a link to an audio
+// or video file gets a native player. So "find me some music to try" or
+// "play that video here" plays in the chat. Files copied into Odysseus'
+// media folder are served from /api/chat-media/<name>.
+const _YT_RE = /^https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
+const _AUDIO_RE = /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)(?:[?#].*)?$/i;
+const _VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv)(?:[?#].*)?$/i;
+
+export function youtubeId(href) {
+  const m = _YT_RE.exec(String(href || ''));
+  return m ? m[1] : null;
+}
+
+function _mediaFor(href) {
+  const yt = youtubeId(href);
+  if (yt) {
+    const box = document.createElement('div');
+    box.className = 'media-embed media-yt';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'media-yt-thumb';
+    btn.setAttribute('aria-label', 'Play video');
+    btn.innerHTML = `<img src="https://i.ytimg.com/vi/${yt}/hqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="media-yt-play">\u25B6</span>`;
+    btn.addEventListener('click', () => {
+      const f = document.createElement('iframe');
+      f.src = `https://www.youtube-nocookie.com/embed/${yt}?autoplay=1&rel=0`;
+      f.title = 'YouTube video';
+      f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      f.allowFullscreen = true;
+      f.referrerPolicy = 'strict-origin-when-cross-origin';
+      box.replaceChildren(f);
+    });
+    box.appendChild(btn);
+    return box;
+  }
+  let path = String(href || '');
+  try { path = new URL(path, window.location.href).pathname; } catch (_) { /* relative */ }
+  if (_AUDIO_RE.test(path)) {
+    const a = document.createElement('audio');
+    a.className = 'media-embed media-audio';
+    a.controls = true;
+    a.preload = 'metadata';
+    a.src = href;
+    return a;
+  }
+  if (_VIDEO_RE.test(path)) {
+    const v = document.createElement('video');
+    v.className = 'media-embed media-video';
+    v.controls = true;
+    v.preload = 'metadata';
+    v.playsInline = true;
+    v.src = href;
+    return v;
+  }
+  return null;
+}
+
+/** Add players under media links in a rendered message. Safe to call again. */
+export function enhanceMedia(container) {
+  if (!container || !container.querySelectorAll) return;
+  const links = container.querySelectorAll('a[href]:not([data-media-done])');
+  let added = 0;
+  for (const a of links) {
+    a.dataset.mediaDone = '1';
+    if (added >= 6) break;                 // a list of 20 links should not become 20 players
+    if (a.closest('pre, code, .agent-thread-content, .media-embed')) continue;
+    const el = _mediaFor(a.getAttribute('href'));
+    if (!el) continue;
+    // After the link's paragraph or list item, so the text still reads.
+    const anchor = a.closest('li, p') || a;
+    anchor.after(el);
+    added += 1;
+  }
+}
+
 export function renderMermaid(container) {
   if (!window.mermaid) return;
   initMermaid();
@@ -819,6 +896,7 @@ const markdownModule = {
   extractThinkingBlocks,
   normalizeThinkingMarkup,
   startsWithReasoningPrefix,
+  enhanceMedia,
   renderMermaid
 };
 

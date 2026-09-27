@@ -715,6 +715,10 @@ import './bgTasks.js';
       // The reply is over: send the next queued message, after a beat so the
       // finished reply has rendered and saved first.
       setTimeout(drainQueue, 700);
+      // Players for any media links the reply ended with (markdown.js).
+      setTimeout(() => {
+        if (markdownModule.enhanceMedia) markdownModule.enhanceMedia(document.getElementById('chat-history'));
+      }, 400);
       submitBtn.classList.remove('recording');
       isStreaming = false;
       _stopStallWatchdog();
@@ -3103,6 +3107,7 @@ import './bgTasks.js';
           });
         }
         if (markdownModule.renderMermaid) markdownModule.renderMermaid(roundHolder);
+        if (markdownModule.enhanceMedia) markdownModule.enhanceMedia(roundHolder);
 
         uiModule.scrollHistory();
         // Render RAG sources if present
