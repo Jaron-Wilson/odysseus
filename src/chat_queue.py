@@ -421,7 +421,8 @@ async def send_done_notification(session_id: str, notify: Dict, *, failed: bool 
 
     async def _listener(device):
         from src import devices as _devices
-        params = {"text": f"Odysseus: {heading}. {body}"}
+        # Modes 0.1.53+ shows the title; older builds show only the text.
+        params = {"title": "Odysseus", "text": f"{heading}. {body}"}
         link = chat_link(session_id, notify)
         if link:
             params["url"] = link          # tapping it opens the chat (Modes 1.x+)

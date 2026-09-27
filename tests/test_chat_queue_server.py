@@ -240,7 +240,7 @@ def test_done_notification_also_goes_through_the_modes_listener(q, monkeypatch):
 
     out = asyncio.run(q.send_done_notification("c1", {"device": "android-phone"}))
     assert sent_cmds == [("pixel-8a", "notify",
-                          {"text": "Odysseus: Reply ready: Phone case. Found a case."})]
+                          {"title": "Odysseus", "text": "Reply ready: Phone case. Found a case."})]
     assert out["listeners"] == {"pixel-8a": "shown"}
 
     # With the address the bell was set from, tapping it opens the chat.
