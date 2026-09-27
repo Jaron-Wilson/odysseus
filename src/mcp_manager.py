@@ -476,7 +476,10 @@ class McpManager:
                         "approval_id": req["id"],
                         "approval_server": name,
                         "next_step": (
-                            "Do not retry. The approve and deny links are added to your reply "
+                            ("The user has not answered the approval request yet; this is the same "
+                             "request again. Do not try screen tools until they approve: the task "
+                             "resumes by itself when they do. " if req.get("reused") else "")
+                            + "Do not retry. The approve and deny links are added to your reply "
                             "automatically, so do not write them yourself. Say in one short "
                             "sentence what you want to do and that it needs approval, then STOP."
                         ),

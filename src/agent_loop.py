@@ -268,6 +268,7 @@ _DOMAIN_RULES = {
 - Using their browser (once they have said yes): unless they already said, ask with ask_user "A new Chrome window, or the one you already have open?". Open it by the exact name from list_apps ("Google Chrome"; never just "chrome", which also matches Chrome Remote Desktop).
 - Look before you act: take one screenshot and read it. Is Chrome open at all? Which tabs are open (read the tab titles in the strip)? If the page is already open in a tab, click that tab once. Never cycle through tabs (ctrl+tab, clicking one after another) to find something.
 - Otherwise drive it with the keyboard: in a new window press ctrl+l, in their current window press ctrl+t for a new tab; type_text the full URL; press enter. Take ONE screenshot after the page loads and read what you need from it.
+- On Windows, anything started over SSH (Start-Process, explorer, start) runs in a hidden session and never appears on the user's screen. To show something on their PC, use the desktop tools (after approval), or an interactive scheduled task (`schtasks /create ... /it`, then `/run`). Do not claim a window opened because an SSH command succeeded.
 - Never take screenshots back to back without acting in between. If two tries have not got you there, stop and tell the user what you see, rather than trying again.""",
     "settings": """\
 ## Settings/API rules
