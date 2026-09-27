@@ -67,9 +67,12 @@ def _collect(chunk: str, st: dict) -> None:
         })
 
 
-async def _resume_stream(sess, sm, context, agent_loop=None):
+async def _resume_stream(sess, sm, context, agent_loop=None, *,
+                         source="screen_control_resumed", client_device=None,
+                         context_length=None):
     """The resumed turn's SSE events, saving the reply when it ends -- also
-    when it is cut short by the user sending a new message or pressing Stop."""
+    when it is cut short by the user sending a new message or pressing Stop.
+    Also sends queued messages with no page open (src/chat_queue.py)."""
     if agent_loop is None:
         from src.agent_loop import stream_agent_loop as agent_loop
     from core.models import ChatMessage
@@ -79,9 +82,10 @@ async def _resume_stream(sess, sm, context, agent_loop=None):
         async for chunk in agent_loop(
             sess.endpoint_url, sess.model, context,
             headers=getattr(sess, "headers", None),
-            context_length=getattr(sess, "context_length", 0) or 0,
+            context_length=context_length or getattr(sess, "context_length", 0) or 0,
             session_id=sess.id,
             owner=getattr(sess, "owner", None),
+            **({"client_device": client_device} if client_device else {}),
         ):
             _collect(chunk, st)
             yield chunk
@@ -91,10 +95,10 @@ async def _resume_stream(sess, sm, context, agent_loop=None):
                 sm.add_message(sess.id, ChatMessage(
                     "assistant", st["full"],
                     metadata={"tool_events": st["tools"], "model": sess.model,
-                              "source": "screen_control_resumed"},
+                              "source": source},
                 ))
                 sm.save_sessions()
-                logger.info("Resumed chat %s after screen-control approval", sess.id)
+                logger.info("Saved %s turn in chat %s", source, sess.id)
             except Exception as e:
                 logger.warning("Could not save resumed turn in %s: %s", sess.id, e)
 

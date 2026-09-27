@@ -8247,6 +8247,29 @@ button.hamburger {
   background: none; border: 0; color: inherit; opacity: .6; cursor: pointer; font-size: 16px; line-height: 1;
 }
 .chat-queue-x:hover { opacity: 1; }
+.chat-queue-note { font-size: 11px; color: color-mix(in srgb, var(--fg) 50%, transparent); margin-top: 2px; }
+
+/* Bell by the composer: notify when the reply is done. */
+.notify-done-wrap { position: relative; display: flex; }
+.notify-done-btn.active { color: var(--accent, var(--fg)); }
+.notify-done-menu {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 50;
+  min-width: 220px; max-width: 280px; padding: 6px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); font-size: 13px;
+}
+.notify-done-title { font-weight: 600; padding: 4px 8px 6px; }
+.notify-done-opt {
+  display: block; width: 100%; text-align: left; background: none; border: 0; color: inherit;
+  padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.notify-done-opt:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.notify-done-opt.selected { background: color-mix(in srgb, var(--fg) 12%, transparent); font-weight: 600; }
+.notify-done-opt.selected::after { content: " ✓"; }
+.notify-done-hint, .notify-done-loading {
+  padding: 6px 8px 2px; font-size: 11px; color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
 
 /* Upload-in-progress feedback: the message bubble shows immediately, so while
    the files are still uploading we put a whirlpool ON each attachment chip and

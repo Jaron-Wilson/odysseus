@@ -6,7 +6,7 @@ import os
 import time
 import logging
 from datetime import datetime
-from typing import Dict, Any, AsyncGenerator, List
+from typing import Dict, Any, AsyncGenerator, List, Optional
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
@@ -16,7 +16,7 @@ from core.models import ChatMessage
 from src.request_models import ChatRequest
 from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
-from src import agent_runs
+from src import agent_runs, chat_queue
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
@@ -298,6 +298,22 @@ def _set_user_time_from_request(request: Request) -> None:
         pass
 
 
+async def _client_device_for(request: Request) -> Optional[Dict[str, Any]]:
+    """Which of the user's devices a request came from (tailnet address,
+    passed through by Tailscale Serve), in the shape stream_agent_loop takes."""
+    try:
+        from src import machines as _machines
+        ip = request.client.host if request.client else ""
+        info = await asyncio.to_thread(_machines.client_device, ip)
+        if info:
+            return {"note": _machines.client_device_note(info),
+                    "registered": bool(info.get("device")),
+                    "name": info["peer"]["name"]}
+    except Exception as e:
+        logger.debug("client device lookup failed: %s", e)
+    return None
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -443,6 +459,7 @@ def setup_chat_routes(
         form_data = await request.form()
         message = form_data.get("message")
         session = form_data.get("session")
+        notify_when_done = form_data.get("notify")   # bell by the composer (src/chat_queue.py)
         attachments = form_data.get("attachments")
         use_web = form_data.get("use_web")
         use_research = form_data.get("use_research")
@@ -1126,17 +1143,7 @@ def setup_chat_routes(
                     # Which of the user's devices this came from (tailnet
                     # address, passed through by Tailscale Serve), so "this
                     # phone" and "here" mean something to the agent.
-                    _client_dev = None
-                    try:
-                        from src import machines as _machines
-                        _ip = request.client.host if request.client else ""
-                        _info = await asyncio.to_thread(_machines.client_device, _ip)
-                        if _info:
-                            _client_dev = {"note": _machines.client_device_note(_info),
-                                           "registered": bool(_info.get("device")),
-                                           "name": _info["peer"]["name"]}
-                    except Exception as _e:
-                        logger.debug("client device lookup failed: %s", _e)
+                    _client_dev = await _client_device_for(request)
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
@@ -1294,6 +1301,11 @@ def setup_chat_routes(
         if compare_mode:
             return StreamingResponse(_safe_stream(), media_type="text/event-stream")
 
+        if notify_when_done is not None:
+            try:
+                chat_queue.set_notify(session, notify_when_done)
+            except Exception:
+                logger.exception("Could not save the notify request for %s", session)
         agent_runs.start(session, _safe_stream())
         return StreamingResponse(agent_runs.subscribe(session), media_type="text/event-stream")
 
@@ -1316,6 +1328,8 @@ def setup_chat_routes(
     async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
         _verify_session_owner(request, session_id)
         stopped = agent_runs.stop(session_id)
+        # Stop means stop: nothing queued goes out after it, and no "done" ping.
+        chat_queue.clear(session_id)
         # Stop has to mean the computer too. Cancelling the task ends this
         # loop, but the screen-control grant would outlive it for the rest
         # of its window, so the next run could pick straight up where this
@@ -1329,6 +1343,62 @@ def setup_chat_routes(
         except Exception:
             logger.exception("Could not release screen control on stop")
         return {"stopped": stopped, "screen_control_revoked": revoked}
+
+    # ------------------------------------------------------------------ #
+    # /api/chat/queue: messages queued behind the running reply, kept on the
+    # server so they still go out after the page is closed (src/chat_queue.py)
+    # ------------------------------------------------------------------ #
+    @router.get("/api/chat/queue/{session_id}")
+    async def chat_queue_get(request: Request, session_id: str) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id)
+        return {**chat_queue.get(session_id), "running": agent_runs.is_active(session_id)}
+
+    @router.post("/api/chat/queue/{session_id}")
+    async def chat_queue_add(request: Request, session_id: str) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            out = chat_queue.add(session_id, str(body.get("text") or ""),
+                                 client_device=await _client_device_for(request),
+                                 notify=body.get("notify"))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if not agent_runs.is_active(session_id):
+            # Nothing running to wait for (it finished while this was typed):
+            # start the drain now rather than leaving it until a reply ends.
+            chat_queue.on_run_finished(session_id, "done")
+        return out
+
+    @router.post("/api/chat/queue/{session_id}/claim")
+    async def chat_queue_claim(request: Request, session_id: str) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id)
+        if agent_runs.is_active(session_id):
+            return {"item": None}
+        return {"item": chat_queue.claim(session_id)}
+
+    @router.post("/api/chat/queue/{session_id}/notify")
+    async def chat_queue_notify(request: Request, session_id: str) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        chat_queue.set_notify(session_id, body.get("notify"))
+        return chat_queue.get(session_id)
+
+    @router.delete("/api/chat/queue/{session_id}/{item_id}")
+    async def chat_queue_remove(request: Request, session_id: str, item_id: str) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id)
+        return chat_queue.remove(session_id, item_id)
+
+    @router.delete("/api/chat/queue/{session_id}")
+    async def chat_queue_clear(request: Request, session_id: str) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id)
+        chat_queue.clear(session_id)
+        return chat_queue.get(session_id)
 
     # ------------------------------------------------------------------ #
     # GET /api/chat/stream_status — check if a stream is active for a session
