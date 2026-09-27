@@ -1039,6 +1039,26 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "chat_memory",
+            "description": (
+                "This chat's 'Needs to know' notes, shown to you on every turn and kept across "
+                "long gaps and compaction. Update them when the task, a decision or what is "
+                "pending changes. Keep them short: what you would need if the conversation "
+                "were cut off."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["get", "set", "append"], "description": "'set' replaces the notes, 'append' adds a line, 'get' reads them."},
+                    "text": {"type": "string", "description": "For set/append: the notes, e.g. 'Task: PR for will-scheduling-feature\\nWaiting on: Will to merge'."},
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "claude_code",
             "description": (
                 "THE tool for coding work: writing, editing or adding code, fixing bugs, "
