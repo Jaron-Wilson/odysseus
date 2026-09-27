@@ -3632,6 +3632,60 @@ import notifyDone from './notifyDone.js';
       _resumingStreams.delete(sessionId);
     };
 
+    // Tool calls, drawn live. This view used to show only the text until the
+    // run ended, so a second device watching the same chat saw plain text
+    // while the one that sent it showed every tool call. The events are
+    // collected in the shape the server saves (tool_events + round_texts)
+    // and drawn with the same renderer a reload uses.
+    let liveRound = 1;
+    const liveRoundText = { 1: '' };
+    const liveTools = [];
+    let liveRunning = null;              // a tool_start still waiting for its output
+    let liveNodes = [];
+    let liveTimer = null;
+    let liveSpinner = null;              // the first spinner goes at the first text
+    const renderLiveTools = () => {
+      liveTimer = null;
+      if (!liveTools.length && !liveRunning) return;
+      for (const n of liveNodes) n.remove();
+      const before = new Set(box.children);
+      const maxR = Math.max(liveRound, ...liveTools.map((e) => e.round || 1));
+      const roundTexts = [];
+      for (let r = 1; r <= maxR; r++) roundTexts.push(stripToolBlocks(liveRoundText[r] || ''));
+      const events = liveRunning ? liveTools.concat([liveRunning]) : liveTools.slice();
+      try {
+        chatRenderer.addMessage('assistant', '', meta && meta.model,
+          { tool_events: events, round_texts: roundTexts, model: meta && meta.model });
+      } catch (_) { /* fall back to the text-only bubble */ }
+      liveNodes = [...box.children].filter((n) => !before.has(n) && n !== holder);
+      // Redrawn several times a second: skip the entry animation, or every
+      // redraw fades the whole reply in again.
+      for (const n of liveNodes) n.classList.add('resume-live');
+      if (liveRunning && liveNodes.length) {
+        const nodes = box.querySelectorAll('.agent-thread-node');
+        const last = nodes[nodes.length - 1];
+        if (last && liveNodes.some((n) => n.contains(last))) {
+          last.classList.add('running');
+          const st = last.querySelector('.agent-thread-status');
+          if (st) st.textContent = 'running';
+          const ic = last.querySelector('.agent-thread-icon');
+          if (ic) ic.textContent = '\u2026';
+        }
+      }
+      // The text-only bubble becomes just the "still working" spinner, below.
+      contentDiv.innerHTML = '';
+      if (!liveSpinner && gotDelta) {
+        liveSpinner = spinnerModule.create('Working...', 'right');
+        holder.querySelector('.body').appendChild(liveSpinner.createElement());
+        liveSpinner.start();
+      }
+      box.appendChild(holder);
+      uiModule.scrollHistory();
+    };
+    const queueLiveTools = () => {
+      if (!liveTimer) liveTimer = setTimeout(renderLiveTools, 150);
+    };
+
     const renderDelta = () => {
       const dt = stripToolBlocks(roundText);
       // Thinking is not its own event -- it is <think> tags inside the
@@ -3688,8 +3742,26 @@ import notifyDone from './notifyDone.js';
           try { json = JSON.parse(payload); } catch (_) { continue; }
           if (json.delta) {
             roundText += json.delta;
+            liveRoundText[liveRound] = (liveRoundText[liveRound] || '') + json.delta;
+            if (liveTools.length || liveRunning) { queueLiveTools(); continue; }
             if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
             renderDelta();
+          } else if (json.type === 'agent_step') {
+            rich = true;
+            liveRound = Number(json.round) || liveRound + 1;
+            if (liveRoundText[liveRound] === undefined) liveRoundText[liveRound] = '';
+          } else if (json.type === 'tool_start') {
+            rich = true;
+            liveRunning = { round: liveRound, tool: json.tool, command: json.command || '',
+                            output: '', exit_code: null };
+            queueLiveTools();
+          } else if (json.type === 'tool_output') {
+            rich = true;
+            const ev = Object.assign({}, json, { round: liveRound });
+            delete ev.type;
+            liveTools.push(ev);
+            liveRunning = null;
+            queueLiveTools();
           } else if (json.type === 'doc_stream_open') {
             rich = true;
             if (documentModule) documentModule.streamDocOpen(json.title || '', json.lang || '');
@@ -3722,6 +3794,9 @@ import notifyDone from './notifyDone.js';
     }
 
     cleanup();
+    if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+    if (liveSpinner) { try { liveSpinner.destroy(); } catch (_) {} liveSpinner = null; }
+    for (const n of liveNodes) n.remove();
     if (leftSession) { if (holder.parentNode) holder.remove(); return true; }
 
     const onThisSession = sessionModule.getCurrentSessionId &&
