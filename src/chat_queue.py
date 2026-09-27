@@ -147,6 +147,33 @@ def claim(session_id: str) -> Optional[Dict]:
         return {"id": item["id"], "text": item["text"]}
 
 
+def take_all(session_id: str) -> List[Dict]:
+    """Everything queued for a chat, removed from the queue, for the running
+    agent turn to read at its next tool-call boundary (like Claude Code)."""
+    if not session_id:
+        return []
+    with _lock:
+        data = _load()
+        e = data.get(session_id)
+        if not e or not e["items"]:
+            return []
+        items, e["items"] = e["items"], []
+        _save(data)
+    return [{"id": i["id"], "text": i["text"]} for i in items]
+
+
+def put_back(session_id: str, items: List[Dict]) -> None:
+    """Return messages to the front of the queue (a delivery that failed)."""
+    if not items:
+        return
+    with _lock:
+        data = _load()
+        e = _entry(data, session_id)
+        e["items"] = [{"id": i["id"], "text": i["text"], "client_device": None,
+                       "added": time.time()} for i in items] + e["items"]
+        _save(data)
+
+
 def clean_notify(notify) -> Optional[Dict]:
     """{"device": name} for one device (or its linked subscriptions),
     {"endpoint": ...} for "this browser", {} for all devices, None for off."""
@@ -201,6 +228,23 @@ def set_notify(session_id: str, notify, *, base: str = "") -> None:
 
 
 # ── after each run ───────────────────────────────────────────────────────
+
+def after_stop(session_id: str) -> None:
+    """The user pressed Stop. Queued messages are sent next (and a notify
+    request carries over to them); with nothing queued, it is dropped, since
+    nothing finished."""
+    with _lock:
+        data = _load()
+        e = data.get(session_id)
+        if not e:
+            return
+        has_items = bool(e["items"])
+        if not has_items and e.get("notify") is not None:
+            e["notify"] = None
+            _save(data)
+    if has_items:
+        on_run_finished(session_id, "done")
+
 
 def on_run_started(session_id: str) -> None:
     """agent_runs calls this when a run starts: a claimed message is now sending."""

@@ -21,7 +21,9 @@ def test_enter_mid_reply_with_text_queues_before_the_stop_path():
     queue_at = submit.index("queueMessage(_typed)")
     stop_at = submit.index("abortCurrentRequest(true)")
     assert queue_at < stop_at, "text typed mid-reply must be queued before Stop runs"
-    assert "clearQueue(sessionModule.getCurrentSessionId());   // an explicit Stop stops everything" in submit
+    # Stop no longer empties the queue: like Escape in Claude Code, the
+    # queued messages are sent next.
+    assert "clearQueue(sessionModule.getCurrentSessionId());" not in submit[:submit.index("abortCurrentRequest(true)")]
 
 
 def test_a_finished_reply_sends_the_next_queued_message():
@@ -36,3 +38,13 @@ def test_queue_panel_and_button_are_wired():
     app = _read("static", "app.js")
     assert "Queue: sends when this reply finishes" in app
     assert ".chat-queue {" in _read("static", "style.css")
+
+
+def test_claude_code_style_controls_are_wired():
+    js = _read("static", "js", "chat.js")
+    assert "async function sendQueuedNow()" in js and "async function takeBackQueued()" in js
+    assert "e.key === 'Enter' && (e.ctrlKey || e.metaKey)" in js
+    assert "e.key === 'ArrowUp' && hasQueue" in js
+    assert js.count("markQueuedDelivered(json.items)") == 2      # live and resumed
+    routes = _read("routes", "chat_routes.py")
+    assert '"queued_delivered",' in routes
