@@ -658,6 +658,10 @@ async def execute_tool_block(
         except Exception as e:
             logger.warning("manage_devices failed: %s", e, exc_info=True)
             result = {"error": f"manage_devices: {type(e).__name__}: {e}"[:400], "exit_code": 1}
+    elif tool == "chat_memory":
+        desc = "chat_memory"
+        from src import chat_memory
+        result = chat_memory.run_tool(content, session_id=session_id, owner=owner)
     elif tool == "notify_device":
         desc = f"notify_device: {content.split(chr(10))[0][:80]}"
         from src.agent_tools import TOOL_HANDLERS

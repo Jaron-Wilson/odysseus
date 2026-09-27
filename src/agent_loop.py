@@ -69,6 +69,7 @@ The block executes automatically and you see the output."""
 _AGENT_RULES = """\
 ## Rules
 - Only use tools when needed. Don't search for things you already know.
+- Keep this chat's notes current with `chat_memory` when the task, a decision or what is pending changes (a PR opened, waiting on someone, the branch or folder that matters).
 - For web lookup/search/latest/current requests, use `web_search` or `web_fetch`. Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
@@ -507,6 +508,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
     "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
+    "chat_memory": "- ```chat_memory``` — This chat's \"Needs to know\" notes, which you see on every turn and which survive long gaps and compaction. Args (JSON): {\"action\": \"set\", \"text\": \"Task: ...\\nDecided: ...\\nWaiting on: ...\"} replaces them; {\"action\": \"append\", \"text\": \"...\"} adds a line; {\"action\": \"get\"}. Update them when the task, a decision or what is pending changes (a PR opened, waiting for someone, a path or branch that matters). Keep them short: facts you would need if the conversation were cut off.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
@@ -2223,6 +2225,29 @@ async def stream_agent_loop(
             messages[0]["content"] = (messages[0].get("content") or "") + "\n\n" + client_device["note"]
         else:
             messages.insert(0, {"role": "system", "content": client_device["note"]})
+    # "Needs to know" (src/chat_memory.py): this chat's running notes, and in
+    # a brand-new chat the user's recent chats' notes. Kept out of the system
+    # role, since the user and the model both write it.
+    if session_id and not guide_only:
+        try:
+            from src import chat_memory as _chat_memory
+            # New = the saved chat has at most this one message from the user.
+            # (The context sent here also carries user-role context messages,
+            # such as the local time, so it cannot be counted instead.)
+            try:
+                from src.ai_interaction import get_session_manager as _gsm
+                _hist = getattr(_gsm().get_session(session_id), "history", None) or []
+                _user_turns = sum(1 for m in _hist if getattr(m, "role", "") == "user")
+            except Exception:
+                _user_turns = 99
+            _notes = _chat_memory.context_text(session_id, owner=owner or "",
+                                               new_chat=_user_turns <= 1)
+            if _notes:
+                _notes_at = max((i for i, m in enumerate(messages) if m.get("role") == "user"),
+                                default=len(messages))
+                messages.insert(_notes_at, untrusted_context_message("chat notes", _notes))
+        except Exception as _e:
+            logger.debug("chat notes skipped: %s", _e)
     if guide_only:
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = GUIDE_ONLY_DIRECTIVE + "\n\n" + (messages[0].get("content") or "")

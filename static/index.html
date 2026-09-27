@@ -1162,6 +1162,10 @@
         <div class="chat-input-right">
           <!-- Notify when done: a push to the phone (or any device) when the
                reply and anything queued behind it finish (notifyDone.js) -->
+          <!-- "Needs to know": this chat's notes, seen by the model every turn (chatNotes.js) -->
+          <span class="chat-notes-wrap">
+            <button type="button" class="input-icon-btn chat-notes-btn" id="chat-notes-btn" aria-label="This chat's notes" title="Needs to know: this chat's notes"></button>
+          </span>
           <span class="notify-done-wrap">
             <button type="button" class="input-icon-btn notify-done-btn" id="notify-done-btn" aria-label="Notify me when the reply is done" aria-pressed="false"></button>
           </span>

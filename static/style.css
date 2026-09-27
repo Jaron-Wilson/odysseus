@@ -36853,3 +36853,17 @@ body.theme-frosted .modal {
   background: none; border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent); text-decoration: none;
 }
 .bg-job-actions .danger { border-color: #d9644f; color: #d9644f; }
+/* "Needs to know": this chat's notes (chatNotes.js). */
+.chat-notes-wrap { position: relative; display: flex; }
+.chat-notes-btn.active { color: var(--accent, var(--fg)); opacity: 1; }
+.chat-notes-menu { min-width: 300px; max-width: 360px; }
+.chat-notes-text {
+  width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 13px;
+  padding: 8px; border-radius: 8px; background: var(--input-bg, transparent); color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.chat-notes-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.chat-notes-save {
+  padding: 4px 12px; border-radius: 8px; cursor: pointer; color: inherit; background: none;
+  border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent);
+}

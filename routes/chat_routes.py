@@ -1362,6 +1362,26 @@ def setup_chat_routes(
     # /api/chat/queue: messages queued behind the running reply, kept on the
     # server so they still go out after the page is closed (src/chat_queue.py)
     # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------ #
+    # /api/chat/memory: this chat's "Needs to know" notes (src/chat_memory.py)
+    # ------------------------------------------------------------------ #
+    @router.get("/api/chat/memory/{session_id}")
+    async def chat_memory_get(request: Request, session_id: str) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id)
+        from src import chat_memory
+        return chat_memory.get(session_id)
+
+    @router.put("/api/chat/memory/{session_id}")
+    async def chat_memory_put(request: Request, session_id: str) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id)
+        from src import chat_memory
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        return chat_memory.set_text(session_id, str(body.get("text") or ""), by="user",
+                                    owner=get_current_user(request) or "")
+
     @router.get("/api/chat/queue/{session_id}")
     async def chat_queue_get(request: Request, session_id: str) -> Dict[str, Any]:
         _verify_session_owner(request, session_id)
