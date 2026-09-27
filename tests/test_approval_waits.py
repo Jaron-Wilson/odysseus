@@ -42,3 +42,27 @@ def test_the_wiring():
     assert routes.count('elif data.get("ui_event"):') == 2        # chat and agent relays
     assert "keep_newer_than=120" in routes
     assert "Never cycle through tabs" in loop
+
+
+def test_one_request_per_machine_while_it_waits(tmp_path, monkeypatch):
+    """Seen live: each "try again" tried a screenshot and raised another
+    approval request while the first was still unanswered."""
+    monkeypatch.setattr(sca, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(sca, "APPROVALS_FILE", str(tmp_path / "sc.json"))
+    first = sca.request_grant("pc", "windows-desktop", "jaron", "screenshot", session_id="chat-a")
+    again = sca.request_grant("pc", "windows-desktop", "jaron", "screenshot", session_id="chat-b")
+    assert again["id"] == first["id"] and again.get("reused") and not first.get("reused")
+    assert sca._load()[first["id"]]["session_id"] == "chat-b"      # approving resumes the latest chat
+    # Another machine, or another user, gets its own request.
+    assert sca.request_grant("laptop", "laptop", "jaron", "x")["id"] != first["id"]
+    assert sca.request_grant("pc", "windows-desktop", "someone", "x")["id"] != first["id"]
+    # Once answered, the next attempt is a new request.
+    sca.set_status(first["id"], "denied", owner="jaron")
+    assert sca.request_grant("pc", "windows-desktop", "jaron", "x")["id"] != first["id"]
+
+
+def test_ssh_windows_rule():
+    loop = open(os.path.join(HERE, "src", "agent_loop.py"), encoding="utf-8").read()
+    assert "anything started over SSH (Start-Process, explorer, start) runs in a hidden session" in loop
+    mgr = open(os.path.join(HERE, "src", "mcp_manager.py"), encoding="utf-8").read()
+    assert 'if req.get("reused")' in mgr

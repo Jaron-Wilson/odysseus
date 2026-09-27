@@ -135,8 +135,24 @@ def _prune(data: Dict[str, dict]) -> Dict[str, dict]:
 
 def request_grant(server_id: str, server_name: str, owner: str,
                   reason: str, session_id: str = "") -> dict:
-    """Record a pending request and return it, including its id."""
+    """Record a pending request and return it, including its id.
+
+    One request per machine at a time: while one is still waiting, a new
+    attempt gets that same request back (with "reused" set), pointed at the
+    latest chat so approving resumes the conversation the user is in. Seen
+    live: each "try again" tried a screenshot and raised another request
+    while the first was still unanswered.
+    """
     data = _prune(_load())
+    for rec in data.values():
+        if (rec.get("status") == "pending" and rec.get("server_id") == server_id
+                and (rec.get("owner") or "") == (owner or "")):
+            if session_id:
+                rec["session_id"] = session_id
+            rec["reason"] = (reason or rec.get("reason") or "")[:500]
+            _save(data)
+            logger.info("Screen control still waiting for %s (%s)", server_name or server_id, rec["id"])
+            return dict(rec, reused=True)
     rec = {
         "id": uuid.uuid4().hex[:12],
         "server_id": server_id,
