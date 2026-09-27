@@ -69,7 +69,7 @@ The block executes automatically and you see the output."""
 _AGENT_RULES = """\
 ## Rules
 - Only use tools when needed. Don't search for things you already know.
-- Keep this chat's notes current with `chat_memory` when the task, a decision or what is pending changes (a PR opened, waiting on someone, the branch or folder that matters).
+- When something worth keeping for this chat comes up (the task, a decision, who or what you are waiting on), suggest it for Needs to know with `chat_memory` (the user decides), and remove items that are done or wrong.
 - For web lookup/search/latest/current requests, use `web_search` or `web_fetch`. Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
@@ -266,7 +266,8 @@ _DOMAIN_RULES = {
 - Never do it on your own initiative, including when a lookup fails because a page needs a login or is private. Say what is blocked and ask whether to use their device ("that repo is private; want me to check it in your Chrome on the PC?"). Their answer is the permission.
 - If you are unsure, do it in the background and then offer to open it on their device.
 - Using their browser (once they have said yes): unless they already said, ask with ask_user "A new Chrome window, or the one you already have open?". Open it by the exact name from list_apps ("Google Chrome"; never just "chrome", which also matches Chrome Remote Desktop).
-- Then drive it with the keyboard, not by looking: in a new window press ctrl+l, in their current window press ctrl+t for a new tab; type_text the full URL; press enter. Take ONE screenshot after the page loads and read what you need from it.
+- Look before you act: take one screenshot and read it. Is Chrome open at all? Which tabs are open (read the tab titles in the strip)? If the page is already open in a tab, click that tab once. Never cycle through tabs (ctrl+tab, clicking one after another) to find something.
+- Otherwise drive it with the keyboard: in a new window press ctrl+l, in their current window press ctrl+t for a new tab; type_text the full URL; press enter. Take ONE screenshot after the page loads and read what you need from it.
 - Never take screenshots back to back without acting in between. If two tries have not got you there, stop and tell the user what you see, rather than trying again.""",
     "settings": """\
 ## Settings/API rules
@@ -513,7 +514,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
     "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
-    "chat_memory": "- ```chat_memory``` — This chat's \"Needs to know\" notes, which you see on every turn and which survive long gaps and compaction. Args (JSON): {\"action\": \"set\", \"text\": \"Task: ...\\nDecided: ...\\nWaiting on: ...\"} replaces them; {\"action\": \"append\", \"text\": \"...\"} adds a line; {\"action\": \"get\"}. Update them when the task, a decision or what is pending changes (a PR opened, waiting for someone, a path or branch that matters). Keep them short: facts you would need if the conversation were cut off.",
+    "chat_memory": "- ```chat_memory``` — This chat's \"Needs to know\": a short list of facts kept for this chat, which you see on every turn (like memory, but per chat). {\"action\": \"suggest\", \"text\": \"Waiting on Will to merge PR #3\"} proposes an item: the user is asked to add it or not, and it is kept only if they accept, so do not ask again in your reply. Suggest when something worth keeping comes up (the task, a decision, who or what you are waiting on, a branch or folder that matters), one fact per item. {\"action\": \"add\", \"text\": \"...\"} only when the user asked you to put something in Needs to know. {\"action\": \"remove\", \"id\": \"...\"} when an item is done or wrong. {\"action\": \"list\"}.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
@@ -3199,6 +3200,9 @@ async def stream_agent_loop(
             for k in ("image_url", "image_prompt", "image_model", "image_size", "image_quality"):
                 if k in result:
                     tool_output_data[k] = result[k]
+            # A Needs to know suggestion: the page asks the user to add it or not.
+            if result.get("suggestion"):
+                tool_output_data["suggestion"] = result["suggestion"]
             # Forward screenshots from browser tools (base64 images)
             if result.get("images"):
                 img = result["images"][0]
@@ -3263,6 +3267,10 @@ async def stream_agent_loop(
                     "request_id": _appr_id,
                     "server_name": result.get("approval_server", ""),
                 }) + '\n\n'
+                # Wait for the answer. Carrying on here, the turn went on to ask
+                # questions and try more screen actions while the approval was
+                # still open; approving resumes the task (screen_control_resume).
+                _awaiting_user = True
 
             # Same pattern for notes: when manage_notes creates a note
             # and returns note_id, drop a `[View note](#note-<id>)` link

@@ -2652,6 +2652,10 @@ import './bgTasks.js';
               } else if (json.type === 'tool_output') {
                 if (_isBg) continue;
                 if ((json.tool || _lastToolName || '').toLowerCase() === 'ask_user') continue;
+                // The AI suggested a Needs to know item: ask right under the step.
+                if (json.suggestion && currentToolBubble && window.chatNotes) {
+                  try { currentToolBubble.after(window.chatNotes.suggestionPrompt(json.suggestion)); } catch (_) {}
+                }
                 // --- Update the current thread node ---
                 if (currentToolBubble) {
                   // Stop wave animation + the per-second cooking ticker

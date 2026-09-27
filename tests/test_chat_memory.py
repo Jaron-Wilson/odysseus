@@ -1,9 +1,11 @@
-""""Needs to know" notes per chat, and recent chats' notes in a new chat.
+""""Needs to know": a memory per chat, like Brain but per chat.
 
-Seen live on 2026-09-27: after a page reload, "okay check if he did merge
-it" went into a fresh, empty chat instead of the one about the PR, and the
-model had no idea who "he" was.
+Items the model sees on every turn in that chat. The model suggests items and
+the user decides; it adds directly only when asked. A new chat also sees the
+user's recent chats' items (seen live on 2026-09-27: after a reload, "okay
+check if he did merge it" went into a fresh, empty chat).
 """
+import json
 import os
 import time
 
@@ -16,52 +18,61 @@ from src import chat_memory as cm
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(cm, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(cm, "MEMORY_FILE", str(tmp_path / "chat_memory.json"))
-    monkeypatch.setattr(cm, "_chat_name", lambda sid: {"pr": "Will's PR", "old": "Old thing"}.get(sid, ""))
+    monkeypatch.setattr(cm, "_chat_name", lambda sid: {"pr": "Will's PR"}.get(sid, ""))
 
 
-def test_set_append_get_and_clear():
-    cm.set_text("pr", "Task: PR for will-scheduling-feature", owner="jaron")
-    cm.append("pr", "Waiting on: Will to merge PR #3")
-    rec = cm.get("pr")
-    assert rec["text"] == "Task: PR for will-scheduling-feature\nWaiting on: Will to merge PR #3"
-    assert rec["by"] == "model" and rec["updated"]
-    cm.set_text("pr", "x" * 5000)
-    assert len(cm.get("pr")["text"]) == cm.MAX_CHARS and cm.get("pr")["text"].startswith("…")
-    cm.set_text("pr", "")
-    assert cm.get("pr")["text"] == ""
+def test_notes_from_the_first_version_become_items():
+    with open(cm.MEMORY_FILE, "w") as f:
+        json.dump({"pr": {"text": "Task: PR\nWaiting on: Will", "updated": time.time(), "by": "user"}}, f)
+    items = cm.get("pr")["items"]
+    assert [i["text"] for i in items] == ["Task: PR", "Waiting on: Will"]
+    assert all(i["by"] == "you" and i["status"] == "active" for i in items)
 
 
-def test_the_chat_sees_its_own_notes():
-    cm.set_text("pr", "Task: PR for will-scheduling-feature")
-    text = cm.context_text("pr")
-    assert text.startswith("## Needs to know (this chat)") and "will-scheduling-feature" in text
-    assert "Recent chats" not in text
-    assert cm.context_text("empty") == ""
+def test_the_ai_suggests_and_the_user_decides():
+    out = cm.run_tool('{"action": "suggest", "text": "Waiting on Will to merge PR #3"}', session_id="pr")
+    sid = out["suggestion"]["id"]
+    assert "Suggested for Needs to know (id " in out["output"]
+    d = cm.get("pr")
+    assert d["items"] == [] and d["suggested"][0]["text"] == "Waiting on Will to merge PR #3"
+    # Not in the model's context until accepted.
+    assert cm.context_text("pr") == ""
+    cm.update("pr", sid, accept=True)
+    assert cm.get("pr")["items"][0]["text"] == "Waiting on Will to merge PR #3"
+    assert f"- [{sid}] Waiting on Will to merge PR #3" in cm.context_text("pr")
+    # Declining removes it.
+    other = cm.run_tool('{"action": "suggest", "text": "Use the fork"}', session_id="pr")["suggestion"]["id"]
+    cm.remove("pr", other)
+    assert cm.get("pr")["suggested"] == []
+    # Suggesting something already kept does not ask twice.
+    again = cm.run_tool('{"action": "suggest", "text": "waiting on will to merge pr #3"}', session_id="pr")
+    assert "Already in Needs to know" in again["output"] and "suggestion" not in again
 
 
-def test_a_new_chat_sees_recent_chats_notes():
-    cm.set_text("pr", "Waiting on: Will to merge PR #3", owner="jaron")
-    cm.set_text("old", "Something from long ago", owner="jaron")
-    cm.set_text("theirs", "Another user's chat", owner="someone")
-    data = cm._load()
-    data["old"]["updated"] = time.time() - 48 * 3600          # too old
-    cm._save(data)
-    text = cm.context_text("fresh", owner="jaron", new_chat=True)
-    assert "## Recent chats" in text
-    assert "\"Will's PR\" (chat pr" in text and "merge PR #3" in text
-    assert "long ago" not in text and "Another user's" not in text
-    # An established chat does not get them.
-    assert "Recent chats" not in cm.context_text("fresh", owner="jaron", new_chat=False)
-
-
-def test_the_tool():
-    out = cm.run_tool('{"action": "set", "text": "Task: rebrand"}', session_id="c1")
-    assert out["notes"] == "Task: rebrand"
-    out = cm.run_tool('{"action": "append", "text": "Branch: rebrand-2"}', session_id="c1")
-    assert out["notes"] == "Task: rebrand\nBranch: rebrand-2"
-    assert "Branch: rebrand-2" in cm.run_tool('{"action": "get"}', session_id="c1")["output"]
-    assert cm.run_tool("plain text becomes the notes", session_id="c2")["notes"] == "plain text becomes the notes"
+def test_add_edit_remove_and_the_tool():
+    cm.add("pr", "Branch: will-scheduling-feature")                     # by you
+    added = cm.run_tool('{"action": "add", "text": "Repo: GlooHackathon2026"}', session_id="pr")
+    assert "Added to Needs to know" in added["output"]
+    items = cm.get("pr")["items"]
+    assert [(i["text"], i["by"]) for i in items] == [
+        ("Branch: will-scheduling-feature", "you"), ("Repo: GlooHackathon2026", "ai")]
+    cm.update("pr", items[0]["id"], text="Branch: will-scheduling-v2")
+    assert cm.get("pr")["items"][0]["text"] == "Branch: will-scheduling-v2"
+    listed = cm.run_tool('{"action": "list"}', session_id="pr")["output"]
+    assert "will-scheduling-v2" in listed and "GlooHackathon2026" in listed
+    gone = cm.run_tool(json.dumps({"action": "remove", "id": items[1]["id"]}), session_id="pr")
+    assert gone["output"] == "Removed." and len(cm.get("pr")["items"]) == 1
     assert "only works inside a chat" in cm.run_tool("{}", session_id=None)["error"]
+
+
+def test_a_new_chat_sees_recent_chats_items():
+    cm.add("pr", "Waiting on Will to merge PR #3", owner="jaron")
+    cm.add("theirs", "Another user's chat", owner="someone")
+    cm.run_tool('{"action": "suggest", "text": "not accepted"}', session_id="pr")
+    text = cm.context_text("fresh", owner="jaron", new_chat=True)
+    assert "## Recent chats" in text and "\"Will's PR\" (chat pr" in text
+    assert "merge PR #3" in text and "Another user's" not in text and "not accepted" not in text
+    assert "Recent chats" not in cm.context_text("fresh", owner="jaron", new_chat=False)
 
 
 def test_wired_everywhere():
@@ -70,7 +81,12 @@ def test_wired_everywhere():
     from src.agent_tools import TOOL_TAGS
     from src.tool_index import ALWAYS_AVAILABLE
     assert "chat_memory" in TOOL_TAGS and "chat_memory" in ALWAYS_AVAILABLE
-    assert 'elif tool == "chat_memory":' in read("src", "tool_execution.py")
-    assert 'untrusted_context_message("chat notes", _notes)' in read("src", "agent_loop.py")
-    assert '"/api/chat/memory/{session_id}"' in read("routes", "chat_routes.py")
-    assert 'id="chat-notes-btn"' in read("static", "index.html")
+    routes = read("routes", "chat_routes.py")
+    for dec in ('@router.post("/api/chat/memory/{session_id}")',
+                '@router.patch("/api/chat/memory/{session_id}/{item_id}")',
+                '@router.delete("/api/chat/memory/{session_id}/{item_id}")'):
+        assert dec in routes
+    loop = read("src", "agent_loop.py")
+    assert 'tool_output_data["suggestion"] = result["suggestion"]' in loop
+    assert "window.chatNotes.suggestionPrompt(json.suggestion)" in read("static", "js", "chat.js")
+    assert "Suggested for Needs to know" in read("static", "js", "chatRenderer.js")
