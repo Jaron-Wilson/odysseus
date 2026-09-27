@@ -1199,21 +1199,45 @@ document.addEventListener('click', function(e) {
     const mm = id.match(/^(approve|deny)-(.+)$/);
     if (!mm) return;
     const [, verb, planId] = mm;
+    if (a.dataset.busy) return;          // a second click while the first is out
+    a.dataset.busy = '1';
     const label = a.textContent;
     a.textContent = verb === 'approve' ? 'Approving…' : 'Denying…';
+    // Settle both links for this plan, not just the one clicked: a decision
+    // that has been made should not still be offered.
+    const settle = (text) => {
+      document.querySelectorAll(
+        `a[href="#claudecode-approve-${planId}"], a[href="#claudecode-deny-${planId}"]`
+      ).forEach((el, i) => {
+        if (i === 0) {
+          el.replaceWith(Object.assign(document.createElement('span'), {
+            className: 'stopped-indicator', textContent: text,
+          }));
+        } else {
+          el.remove();
+        }
+      });
+    };
     fetch(`/api/claude_code/${verb}/${encodeURIComponent(planId)}`, {
       method: 'POST', credentials: 'same-origin',
     }).then(async res => {
       if (res.ok) {
-        a.replaceWith(Object.assign(document.createElement('span'), {
-          className: 'stopped-indicator',
-          textContent: verb === 'approve' ? '[Plan approved]' : '[Plan denied]',
-        }));
-      } else {
-        const detail = await res.json().catch(() => ({}));
-        a.textContent = `${label} — failed: ${detail.detail || res.status}`;
+        settle(verb === 'approve' ? '[Plan approved]' : '[Plan denied]');
+        return;
       }
-    }).catch(() => { a.textContent = `${label} — failed`; });
+      const detail = await res.json().catch(() => ({}));
+      const msg = String(detail.detail || res.status);
+      // "Plan is already approved/used/denied" is the plan's state, not a
+      // failure: seen live as "Approve plan — failed: Plan is already
+      // approved", twice over after a second click.
+      const already = /already (approved|used|denied)/i.exec(msg);
+      if (res.status === 409 && already) {
+        settle(already[1].toLowerCase() === 'denied' ? '[Plan denied]' : '[Plan approved]');
+        return;
+      }
+      delete a.dataset.busy;
+      a.textContent = `${label} (${msg})`;
+    }).catch(() => { delete a.dataset.busy; a.textContent = label; });
     return;
   }
   if (kind === 'screencontrol') {

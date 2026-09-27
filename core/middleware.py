@@ -69,7 +69,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         is_tool_render = path.startswith("/api/tools/") and path.endswith("/render")
         # PDF previews are embedded by the in-app document library. Keep the
         # exception route-scoped so normal app pages remain unframeable.
-        is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
+        # Any PDF this server returns may be shown in its own full-screen
+        # viewer (static/js/pdfViewer.js), framed by this origin only.
+        is_document_pdf_preview = (
+            (path.startswith("/api/document/") and path.endswith("/render-pdf"))
+            or response.headers.get("content-type", "").startswith("application/pdf"))
+        # The PDF viewer asks for ?inline=1: show the file in place rather than
+        # download it (routes set attachment so a plain link still downloads).
+        if (request.query_params.get("inline") == "1"
+                and response.headers.get("content-type", "").startswith("application/pdf")
+                and "content-disposition" in response.headers):
+            response.headers["content-disposition"] = response.headers["content-disposition"].replace(
+                "attachment", "inline", 1)
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
 
