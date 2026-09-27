@@ -1074,10 +1074,11 @@ FUNCTION_TOOL_SCHEMAS = [
                 "NOT for chores you can do yourself with bash: git add/commit/push, opening a PR "
                 "with `gh pr create`, checking status, running a known command. Those cost the "
                 "user's Claude usage for nothing; do them with bash.\n"
-                "Every run bills the user's Claude plan. Before the first call for a task, tell "
-                "the user in one line that you are using Claude Code and on which model "
-                "(default 'sonnet'). Only pick 'opus' or a larger model when the user asks.\n"
-                "Sends code to a cloud model, so never use it on anything that must stay local."
+                "Runs on OpenCode with the local model by default (free). engine 'claude' bills the "
+                "user's Claude plan: use it only when they ask for Claude, and then default to "
+                "'sonnet'. Before the first call for a task, say in one line which engine and model.\n"
+                "With engine 'claude' code goes to a cloud model; keep work that must stay local on "
+                "the default OpenCode engine."
             ),
             "parameters": {
                 "type": "object",
@@ -1086,7 +1087,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "cwd": {"type": "string", "description": "Absolute path to the project directory. Required: it is the only bound on what can be read or edited, so name the project and nothing broader."},
                     "action": {"type": "string", "enum": ["plan", "execute", "ask", "list", "status", "agents"], "description": "'agents' lists the Claude Code agents each chat has (chat name and id, folder, model, last task), so you can carry one on with from_chat. 'ask' converses with a read-only agent that can explore the codebase and spawn its own subagents — no approval needed since it cannot write. 'plan' (default) writes up an intended change, still changing nothing. 'execute' resumes that plan with write tools, and only works once the user has clicked Approve. 'list' shows the Claude Code sessions running on this host. 'status' reports on backgrounded runs — use it whenever the user asks how a job is going."},
                     "job_id": {"type": "string", "description": "For status: a specific background job. Omit to report every backgrounded run in this chat."},
-                    "engine": {"type": "string", "enum": ["claude", "opencode"], "description": "'claude' (default) uses Claude Code, a cloud model. 'opencode' uses the OpenCode CLI, which is wired to this host's LOCAL models — pick it when the user asks for a local model, says the work must not leave the machine, or names opencode. Same plan/approve/execute gate either way."},
+                    "engine": {"type": "string", "enum": ["opencode", "claude"], "description": "'opencode' (the default when omitted) runs the task on this host's LOCAL models (qwen3.8-27b), costing nothing. 'claude' uses Claude Code on the user's Claude plan: only when the user asks for Claude by name, or has said yes to using it for this task. Same plan/approve/execute gate either way."},
                     "session_id": {"type": "string", "description": "Required for execute: the session_id from the approved plan. Optional for ask/plan: each chat already carries on its own agent for the folder automatically, so this is rarely needed."},
                     "from_chat": {"type": "string", "description": "For ask/plan: carry on the Claude Code agent of ANOTHER chat (its id, id prefix, or part of its name), keeping everything that agent already read. Use when the user points at another chat or its id, or when action 'agents' shows a chat already working on this project. cwd defaults to that agent's folder."},
                     "new_agent": {"type": "boolean", "description": "Start a fresh agent instead of carrying on this chat's agent for the folder."},

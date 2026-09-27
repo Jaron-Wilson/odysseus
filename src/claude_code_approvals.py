@@ -59,7 +59,7 @@ def _prune(data: Dict[str, dict]) -> Dict[str, dict]:
 
 
 def record_plan(session_id: str, *, cwd: str, plan: str, owner: Optional[str] = None,
-                model: str = "") -> None:
+                model: str = "", engine: str = "") -> None:
     """Register a freshly produced plan as awaiting the user's answer. The
     model is kept so the approved run uses the one the user was shown."""
     data = _prune(_load())
@@ -69,6 +69,7 @@ def record_plan(session_id: str, *, cwd: str, plan: str, owner: Optional[str] = 
         "plan": (plan or "")[:20000],
         "owner": owner or "",
         "model": model or "",
+        "engine": engine or "",
         "created": time.time(),
     }
     _save(data)

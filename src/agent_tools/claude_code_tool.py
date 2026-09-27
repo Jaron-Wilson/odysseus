@@ -37,6 +37,7 @@ from src.constants import DATA_DIR
 
 PROMPT_DIR = os.path.join(DATA_DIR, "claude_code_prompts")
 PROGRESS_INTERVAL_S = 1.5
+STREAM_LINE_LIMIT = 64 * 1024 * 1024
 # Enough of the console to follow along. The whole transcript is kept on the
 # job (Background tasks) and in the saved console.
 PROGRESS_TAIL_LINES = 80
@@ -46,6 +47,14 @@ LINE_CHARS = 500
 # model), and nothing said which one ran. Set ODYSSEUS_CLAUDE_CODE_MODEL to
 # change it.
 DEFAULT_MODEL = os.environ.get("ODYSSEUS_CLAUDE_CODE_MODEL", "sonnet").strip() or "sonnet"
+# The engine when the agent names none: OpenCode on this host's local models.
+# Seen live: a request to draft video cuts went to Claude Code (the user's
+# Claude plan) when the local 27B via OpenCode would have done. Claude is used
+# when the user asks for it by name. ODYSSEUS_CODE_ENGINE=claude flips this.
+DEFAULT_ENGINE = (os.environ.get("ODYSSEUS_CODE_ENGINE", "opencode").strip().lower() or "opencode")
+if DEFAULT_ENGINE not in ("claude", "opencode"):
+    DEFAULT_ENGINE = "opencode"
+OPENCODE_DEFAULT_LABEL = "local default (vllm3090/qwen3.8-27b)"
 # 900s killed a real rebrand at ~15 minutes, after it had already written every
 # file — the work survived but the run was recorded as a timeout and the
 # approval was spent. Refactors across a large codebase genuinely take this long.
@@ -414,7 +423,11 @@ class ClaudeCodeTool:
                 "exit_code": 1,
             }
 
-        engine = (args.get("engine") or "claude").strip().lower()
+        engine = str(args.get("engine") or "").strip().lower()
+        if not engine and action == "execute":
+            # Carry on with the engine the approved plan was written with.
+            engine = str((approvals.get(resume_id) or {}).get("engine") or "")
+        engine = engine or DEFAULT_ENGINE
         if engine not in ("claude", "opencode"):
             return {"error": "engine must be 'claude' or 'opencode'", "exit_code": 1}
 
@@ -563,7 +576,8 @@ class ClaudeCodeTool:
                 model = str((approvals.get(resume_id) or {}).get("model") or "")
             model = model or DEFAULT_MODEL
             cmd += ["--model", model]
-        model_label = model or "opencode default"
+        model_label = model or OPENCODE_DEFAULT_LABEL
+        run_label = f"{'OpenCode' if engine == 'opencode' else 'Claude Code'} · {model_label}"
 
         # Detached mode: hand the run to bg_jobs and return now, so a refactor
         # that takes ten minutes does not hold the chat open. The monitor
@@ -600,6 +614,11 @@ class ClaudeCodeTool:
             # init, where it keeps burning CPU and tokens on a run nothing is
             # reading any more, and the user has no way to stop it.
             preexec_fn=_die_with_parent,
+            # One stream-json event per line, and an event carrying a big tool
+            # result (a whole file read) passes asyncio's default 64 KB line
+            # limit. Seen live: two 110 KB+ events killed the reader, the pipe
+            # was never drained, and the finished run was never noticed.
+            limit=STREAM_LINE_LIMIT,
         )
         # Claude takes the prompt over stdin, never argv: no shell, no escaping,
         # no length cap. OpenCode takes it positionally, so just close stdin.
@@ -679,7 +698,14 @@ class ClaudeCodeTool:
         async def _read_stdout():
             nonlocal final_text, is_error, thinking_tokens, session_id
             while True:
-                line = await proc.stdout.readline()
+                try:
+                    line = await proc.stdout.readline()
+                except (asyncio.LimitOverrunError, ValueError):
+                    # A line past even the raised limit: skip it rather than
+                    # stop reading, which would stall the run's end.
+                    await proc.stdout.read(STREAM_LINE_LIMIT)
+                    _add("… (an oversized event was skipped)")
+                    continue
                 if not line:
                     break
                 raw = line.decode("utf-8", errors="replace").strip()
@@ -719,7 +745,11 @@ class ClaudeCodeTool:
 
         async def _read_stderr():
             while True:
-                line = await proc.stderr.readline()
+                try:
+                    line = await proc.stderr.readline()
+                except (asyncio.LimitOverrunError, ValueError):
+                    await proc.stderr.read(STREAM_LINE_LIMIT)
+                    continue
                 if not line:
                     break
                 stderr_buf.append(line.decode("utf-8", errors="replace").rstrip())
@@ -800,6 +830,7 @@ class ClaudeCodeTool:
                         plan=body,
                         owner=(ctx or {}).get("owner") or "",
                         model=model,
+                    engine=engine,
                     )
                 except Exception as e:
                     return {
@@ -827,15 +858,15 @@ class ClaudeCodeTool:
 
                 result["nothing_changed"] = True
                 result["approval"] = {
-                    "approve": f"[Approve plan · runs on {model_label}](#claudecode-approve-{session_id})",
+                    "approve": f"[Approve plan · runs on {run_label}](#claudecode-approve-{session_id})",
                     "deny": f"[Deny](#claudecode-deny-{session_id})",
                 }
                 result["next_step"] = (
                     "Show the plan to the user in full. If the result has a `pdf` field, show that "
                     "link too so they can read it as a paginated document. Then show these two links "
                     "on their own line exactly as given so they can click one:\n"
-                    f"[Approve plan · runs on {model_label}](#claudecode-approve-{session_id})  ·  [Deny](#claudecode-deny-{session_id})\n"
-                    f"Say plainly that approving runs Claude Code on the model `{model_label}`. "
+                    f"[Approve plan · runs on {run_label}](#claudecode-approve-{session_id})  ·  [Deny](#claudecode-deny-{session_id})\n"
+                    f"Say plainly that approving runs it on {run_label}. "
                 "Tell them they can also just reply with changes they want instead of approving, "
                 "including a different model (for example 'haiku' for small changes). "
                     "Then STOP and wait. Calling execute before they click Approve will be refused by "
@@ -917,7 +948,7 @@ class ClaudeCodeTool:
                 "model": model_label,
                 "console": _tail_text()[-4000:],
                 "output": (
-                    f"Moved to the background as job `{job.id}` (Claude Code, {model_label}, "
+                    f"Moved to the background as job `{job.id}` ({run_label}, "
                     f"in {cwd_path}). It keeps running; its result will be posted in this chat "
                     "when it finishes, and it can be watched or stopped under Background tasks.\n"
                     "Do NOT wait or poll for it. Tell the user it is running in the background, "

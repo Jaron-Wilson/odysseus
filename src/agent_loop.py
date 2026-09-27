@@ -362,14 +362,14 @@ Then, only after the user approves the plan it returns:
 {"action": "execute", "session_id": "<id from the plan result>", "cwd": "/abs/path/to/project", "prompt": "Approved. <any changes the user asked for>"}
 ```
 Hand a CODING task to the Claude Code CLI on this host: it reads the project, edits files, runs commands and can fan work out to its own subagents, with its console streaming back live. Use it for work too large or intricate for single tool calls here — a multi-file refactor, a bug hunt across a codebase, a build that has to be run and iterated on — or when the user asks for it by name.
-Add `"engine": "opencode"` to run the task on this host's LOCAL models instead of the cloud — use it whenever the user asks for a local model, says the work must not leave the machine, or names opencode. Its models are `vllm3090/qwen3.8-27b` (the 27B) and `ollama-desktop/qwen3:8b`. The plan-and-approve gate is identical either way.
+It runs on OpenCode with this host's LOCAL models by default (`vllm3090/qwen3.8-27b`, free). Add `"engine": "claude"` for Claude Code on the user's Claude plan only when they ask for Claude by name or have said yes to it for this task. The plan-and-approve gate is identical either way.
 Other actions: `{"action":"ask", "prompt":"...", "cwd":"..."}` converses with a READ-ONLY agent that explores the codebase and answers — no approval needed because it cannot change anything, so use it for "what does this do", "where is X handled", "is this safe". Pass the returned `session_id` back on the next ask to keep the thread. `{"action":"list"}` shows the Claude Code sessions running on this host.
 Each chat keeps its own Claude Code agent per folder: a later ask/plan in the same chat carries it on automatically (pass `"new_agent": true` for a fresh one). `{"action":"agents"}` lists every chat's agents; to carry on another chat's agent, add `"from_chat": "<chat id or name>"` to an ask/plan. Do that when the user names another chat or pastes its id, or when `agents` shows a chat already working in the same project.
 ALWAYS plan first. The default `action` is `plan`: it reads with read-only tools and writes up what it intends to do, changing NOTHING. Show that plan to the user in full, then show the two links from the result's `approval` field on their own line so they can click one. Only call `action:"execute"` after they click Approve, passing the `session_id` from the plan so it keeps everything it already read. The server records the approval and refuses any execute it did not authorise, so executing early just fails — wait for them.
-`cwd` is REQUIRED and absolute: it is the only limit on what can be read or edited, so name the project directory and nothing broader. This sends code to a cloud model, so never point it at anything the user has said must stay local.
+`cwd` is REQUIRED and absolute: it is the only limit on what can be read or edited, so name the project directory and nothing broader. With engine "claude" code goes to a cloud model, so keep anything the user has said must stay local on the default OpenCode engine.
 For a one-line edit you could make with edit_file, just do that instead — this spawns a whole second agent.
 NOT for chores: committing, pushing, opening a PR (`gh pr create`), checking git status or running a known command. Do those yourself with `bash`; handing them to Claude Code spends the user's Claude plan for nothing.
-Every run bills the user's Claude plan. Before the first call for a task, say in one line that you are using Claude Code and on which model. Omitting `model` uses `sonnet`; use `haiku` for small changes and `opus` only when the user asks for it.""",
+Before the first call for a task, say in one line which engine and model you are using (default: OpenCode, local qwen3.8-27b). With engine "claude", omitting `model` uses `sonnet`; use `haiku` for small changes and `opus` only when the user asks for it.""",
 
     "trigger_research": """\
 ```trigger_research
@@ -922,6 +922,10 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("sessions")
     if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
         domains.add("files")
+    # Video work here is script-driven (a Resolve project built and rendered
+    # by Python over SSH), so it needs the shell, not just the desktop tools.
+    if has(r"\b(videos?|render(?:s|ing)?|timelines?|resolve|davinci|footage|clips?|edit(?:ing)? the video|cuts?)\b"):
+        domains.add("files")
     if has(r"\b(ssh|scp|rsync|ssh keys?|authorized_keys|tailscale|laptop|desktop|servers?|my pc|"
            r"my computer|machines?|devices?|remote|deploy|docker|containers?|wrangler|install)\b"):
         domains.add("files")
@@ -933,12 +937,44 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("settings")
 
     low_signal = not continuation and not domains
+    if low_signal:
+        # A short follow-up ("okay please make it!") after a detailed message
+        # is about that message. Seen live: a request to make the videos a
+        # brief had just described was judged low-signal, retrieval was
+        # skipped, and bash (the tool the job needed) was not offered.
+        context = _previous_reply_text(messages)
+        if context:
+            ctx = _classify_agent_request([], text + "\n" + context) if len(context) > 20 else {}
+            ctx_domains = set(ctx.get("domains") or [])
+            if ctx_domains:
+                return {
+                    "low_signal": False,
+                    "continuation": True,
+                    "domains": ctx_domains,
+                    "retrieval_query": (text + "\n" + context)[:800],
+                }
     return {
         "low_signal": low_signal,
         "continuation": continuation,
         "domains": domains,
         "retrieval_query": retrieval_query,
     }
+
+
+def _previous_reply_text(messages: List[Dict], max_chars: int = 1500) -> str:
+    """The assistant message just before the latest user message, as text."""
+    seen_user = False
+    for m in reversed(messages or []):
+        role = m.get("role")
+        if role == "user" and not seen_user:
+            seen_user = True
+            continue
+        if seen_user and role == "assistant":
+            c = m.get("content")
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+            return str(c or "")[-max_chars:]
+    return ""
 
 
 def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
