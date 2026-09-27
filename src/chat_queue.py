@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
@@ -62,7 +63,9 @@ def _load() -> Dict[str, Dict]:
 
 
 def _save(data: Dict[str, Dict]) -> None:
-    data = {k: v for k, v in data.items() if v.get("items") or v.get("notify")}
+    # {} is a real notify target (all devices), so test for None, not falsiness.
+    data = {k: v for k, v in data.items()
+            if v.get("items") or v.get("notify") is not None}
     os.makedirs(DATA_DIR, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=DATA_DIR, prefix=".chat_queue_", suffix=".json")
     try:
@@ -95,7 +98,7 @@ def get(session_id: str) -> Dict:
 
 
 def add(session_id: str, text: str, *, client_device: Optional[Dict] = None,
-        notify: Optional[Dict] = None) -> Dict:
+        notify: Optional[Dict] = None, base: str = "") -> Dict:
     text = (text or "").strip()[:MAX_TEXT]
     if not session_id or not text:
         raise ValueError("a chat and some text are needed")
@@ -107,7 +110,7 @@ def add(session_id: str, text: str, *, client_device: Optional[Dict] = None,
         e["items"].append({"id": uuid.uuid4().hex[:12], "text": text,
                            "client_device": client_device, "added": time.time()})
         if notify is not None:
-            e["notify"] = clean_notify(notify)
+            e["notify"] = _with_base(clean_notify(notify), base)
         _save(data)
         return _public(e)
 
@@ -166,8 +169,25 @@ def clean_notify(notify) -> Optional[Dict]:
     return out
 
 
-def set_notify(session_id: str, notify) -> None:
-    n = clean_notify(notify)
+_BASE_RE = re.compile(r"^https?://[A-Za-z0-9.\-:\[\]]+$")
+
+
+def _with_base(n: Optional[Dict], base: str) -> Optional[Dict]:
+    """Remember the address the request came in on (Tailscale Serve's https
+    name), so a notification sent later, with no request, can link back."""
+    if n is not None and base and _BASE_RE.match(base.rstrip("/")):
+        n["base"] = base.rstrip("/")
+    return n
+
+
+def chat_link(session_id: str, notify: Optional[Dict]) -> str:
+    """The chat's full address, for a phone to open, or "" when unknown."""
+    base = (notify or {}).get("base") or os.environ.get("ODYSSEUS_PUBLIC_URL", "").rstrip("/")
+    return f"{base}/#{session_id}" if base else ""
+
+
+def set_notify(session_id: str, notify, *, base: str = "") -> None:
+    n = _with_base(clean_notify(notify), base)
     with _lock:
         data = _load()
         if n is None:
@@ -401,8 +421,11 @@ async def send_done_notification(session_id: str, notify: Dict, *, failed: bool 
 
     async def _listener(device):
         from src import devices as _devices
-        r = await _devices.send_command(
-            device, "notify", {"text": f"Odysseus: {heading}. {body}"})
+        params = {"text": f"Odysseus: {heading}. {body}"}
+        link = chat_link(session_id, notify)
+        if link:
+            params["url"] = link          # tapping it opens the chat (Modes 1.x+)
+        r = await _devices.send_command(device, "notify", params)
         return device.get("name"), r
 
     targets = _listener_targets(notify)

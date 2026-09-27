@@ -101,6 +101,14 @@ def test_queue_is_stored_and_claims_are_atomic(q):
     assert q.get("c1") == {"items": [], "notify": None}
 
 
+def test_the_bell_remembers_where_it_was_set_from(q):
+    q.set_notify("c1", {"label": "all devices"}, base="https://odysseus.example.ts.net/")
+    assert q.get("c1")["notify"]["base"] == "https://odysseus.example.ts.net"
+    q.set_notify("c1", {}, base="javascript:alert(1)")
+    assert "base" not in q.get("c1")["notify"]
+    assert q.chat_link("c1", {"base": "https://h.ts.net"}) == "https://h.ts.net/#c1"
+
+
 def test_notify_targets_are_cleaned(q):
     assert q.clean_notify(None) is None
     assert q.clean_notify('{"off": true}') is None
@@ -234,6 +242,12 @@ def test_done_notification_also_goes_through_the_modes_listener(q, monkeypatch):
     assert sent_cmds == [("pixel-8a", "notify",
                           {"text": "Odysseus: Reply ready: Phone case. Found a case."})]
     assert out["listeners"] == {"pixel-8a": "shown"}
+
+    # With the address the bell was set from, tapping it opens the chat.
+    sent_cmds.clear()
+    asyncio.run(q.send_done_notification(
+        "c1", {"device": "pixel-8a", "base": "https://jaron-dev-server.tail90b62a.ts.net"}))
+    assert sent_cmds[0][2]["url"] == "https://jaron-dev-server.tail90b62a.ts.net/#c1"
 
     sent_cmds.clear()
     asyncio.run(q.send_done_notification("c1", {}))           # all devices

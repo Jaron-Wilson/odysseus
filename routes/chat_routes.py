@@ -314,6 +314,15 @@ async def _client_device_for(request: Request) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _public_base(request: Request) -> str:
+    """The address this request came in on, for links in later notifications."""
+    try:
+        from routes.enroll_routes import base_url
+        return base_url(request)
+    except Exception:
+        return ""
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -1303,7 +1312,7 @@ def setup_chat_routes(
 
         if notify_when_done is not None:
             try:
-                chat_queue.set_notify(session, notify_when_done)
+                chat_queue.set_notify(session, notify_when_done, base=_public_base(request))
             except Exception:
                 logger.exception("Could not save the notify request for %s", session)
         agent_runs.start(session, _safe_stream())
@@ -1363,7 +1372,7 @@ def setup_chat_routes(
         try:
             out = chat_queue.add(session_id, str(body.get("text") or ""),
                                  client_device=await _client_device_for(request),
-                                 notify=body.get("notify"))
+                                 notify=body.get("notify"), base=_public_base(request))
         except ValueError as e:
             raise HTTPException(400, str(e))
         if not agent_runs.is_active(session_id):
@@ -1386,7 +1395,7 @@ def setup_chat_routes(
             body = await request.json()
         except Exception:
             body = {}
-        chat_queue.set_notify(session_id, body.get("notify"))
+        chat_queue.set_notify(session_id, body.get("notify"), base=_public_base(request))
         return chat_queue.get(session_id)
 
     @router.delete("/api/chat/queue/{session_id}/{item_id}")
