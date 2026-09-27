@@ -66,3 +66,41 @@ def test_ssh_windows_rule():
     assert "anything started over SSH (Start-Process, explorer, start) runs in a hidden session" in loop
     mgr = open(os.path.join(HERE, "src", "mcp_manager.py"), encoding="utf-8").read()
     assert 'if req.get("reused")' in mgr
+
+
+def test_a_resumed_turn_gets_the_model_s_real_context(monkeypatch):
+    """Seen live: turns resumed after an approval ran on a 32K default and
+    dropped earlier messages, while qwen3.8-27b has 262K."""
+    import asyncio
+    from src import chat_queue, screen_control_resume as scr
+    seen = {}
+
+    async def fake_prepare(sess, sid, context):
+        return context, 262144
+
+    async def fake_loop(url, model, context, **kw):
+        seen.update(kw)
+        yield 'data: {"delta": "ok"}\n\n'
+
+    monkeypatch.setattr(chat_queue, "_prepare", fake_prepare)
+
+    class S:
+        id, model, endpoint_url, headers, owner = "c1", "qwen3.8-27b", "http://llm", {}, "jaron"
+
+    class SM:
+        def add_message(self, *a): pass
+        def save_sessions(self): pass
+
+    async def run():
+        async for _ in scr._resume_stream(S(), SM(), [{"role": "user", "content": "go"}], fake_loop):
+            pass
+    asyncio.run(run())
+    assert seen["context_length"] == 262144
+
+
+def test_screen_actions_are_capped_per_turn():
+    from src import agent_loop as al
+    loop = open(os.path.join(HERE, "src", "agent_loop.py"), encoding="utf-8").read()
+    assert al.MAX_SCREEN_ACTIONS_PER_TURN == 10 and "click" in al._SCREEN_ACTS
+    assert "_screen_acts > MAX_SCREEN_ACTIONS_PER_TURN" in loop
+    assert "Never click taskbar icons or press Win+number" in loop

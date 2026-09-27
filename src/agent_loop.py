@@ -269,6 +269,7 @@ _DOMAIN_RULES = {
 - Look before you act: take one screenshot and read it. Is Chrome open at all? Which tabs are open (read the tab titles in the strip)? If the page is already open in a tab, click that tab once. Never cycle through tabs (ctrl+tab, clicking one after another) to find something.
 - Otherwise drive it with the keyboard: in a new window press ctrl+l, in their current window press ctrl+t for a new tab; type_text the full URL; press enter. Take ONE screenshot after the page loads and read what you need from it.
 - On Windows, anything started over SSH (Start-Process, explorer, start) runs in a hidden session and never appears on the user's screen. To show something on their PC, use the desktop tools (after approval), or an interactive scheduled task (`schtasks /create ... /it`, then `/run`). Do not claim a window opened because an SSH command succeeded.
+- Never click taskbar icons or press Win+number to switch windows: those open whatever app is pinned in that slot, and the order is not what you think. Do not fight overlapping windows either; if what you need is hidden, say so and ask the user.
 - Never take screenshots back to back without acting in between. If two tries have not got you there, stop and tell the user what you see, rather than trying again.""",
     "settings": """\
 ## Settings/API rules
@@ -1943,6 +1944,12 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+# Tools that act on the user's own screen (see the per-turn cap in the loop).
+_SCREEN_ACTS = frozenset({"click", "double_click", "right_click", "move_mouse", "drag", "scroll",
+                          "type_text", "press_keys", "launch_app", "focus_app"})
+MAX_SCREEN_ACTIONS_PER_TURN = 10
+
+
 def _attach_screenshot(messages: List[Dict], img: Dict, model: str, endpoint_url: str,
                        attached: Optional[list] = None) -> None:
     """Show the model the newest screenshot, or tell it plainly that it
@@ -2482,6 +2489,7 @@ async def stream_agent_loop(
 
     _attached_shots: list = []   # screenshot parts attached this turn (see _attach_screenshot)
     _shot_streak = 0             # screenshots in a row with no other tool between
+    _screen_acts = 0             # clicks/keys/typing on the user's screen this turn
     for round_num in range(1, max_rounds + 1):
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
@@ -3038,7 +3046,24 @@ async def stream_agent_loop(
             # the user). The third in a row is refused with what to do instead.
             _is_shot = block.tool_type.endswith("__screenshot") or block.tool_type.endswith("browser_take_screenshot")
             _shot_streak = _shot_streak + 1 if _is_shot else 0
-            if _is_shot and _shot_streak > 2:
+            # Actions on the user's own screen, per turn. Seen live: 30+ rounds
+            # of clicks and keys fighting overlapping windows, clicking taskbar
+            # icons that opened the wrong app (an autoclicker). Past the cap the
+            # agent has to stop and tell the user what it sees.
+            _is_act = block.tool_type.startswith("mcp__") and block.tool_type.rsplit("__", 1)[-1] in _SCREEN_ACTS
+            if _is_act:
+                _screen_acts += 1
+            if _is_act and _screen_acts > MAX_SCREEN_ACTIONS_PER_TURN:
+                desc = f"{block.tool_type}: refused"
+                result = {
+                    "error": (f"Not done: that would be more than {MAX_SCREEN_ACTIONS_PER_TURN} actions on the "
+                              "user's screen in one turn. Stop now: tell the user what you see and what is "
+                              "in the way, and ask how they want to go on."),
+                    "exit_code": 1,
+                }
+                logger.info("[agent] refused screen action %d this turn", _screen_acts)
+                yield f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "round": round_num})}\n\n'
+            elif _is_shot and _shot_streak > 2:
                 desc = f"{block.tool_type}: refused"
                 result = {
                     "error": ("Not taken: that would be the third screenshot in a row with nothing "
