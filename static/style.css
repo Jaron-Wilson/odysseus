@@ -36867,3 +36867,4 @@ body.theme-frosted .modal {
   padding: 4px 12px; border-radius: 8px; cursor: pointer; color: inherit; background: none;
   border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent);
 }
+.bg-hint { font-size: 11.5px; color: color-mix(in srgb, var(--fg) 55%, transparent); }

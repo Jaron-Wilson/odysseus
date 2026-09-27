@@ -133,6 +133,15 @@ def setup_claude_code_routes() -> APIRouter:
                 out["cli_error"] = str(e)
         return out
 
+    @router.get("/api/claude_code/agents")
+    async def list_agents_by_chat(request: Request):
+        """The Claude Code agent each chat keeps (src/claude_code_agents.py)."""
+        _require_user(request)
+        from src import claude_code_agents
+        busy = {j.cli_session_id for j in jobs.list_jobs() if j.status == "running"}
+        return {"agents": [dict(a, busy=a.get("session_id") in busy)
+                           for a in claude_code_agents.list_all()[:50]]}
+
     @router.get("/api/claude_code/jobs/{job_id}")
     async def get_job(request: Request, job_id: str, lines: int = 400):
         job = _job_or_404(request, job_id)
