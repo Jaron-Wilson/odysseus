@@ -8610,6 +8610,8 @@ body.hide-thinking .thinking-section { display: none !important; }
 .live-reply-content {
   animation: fadeSlideIn 0.3s ease-out;
 }
+/* Tool calls drawn live in a chat opened on a second device (resumeStream). */
+.resume-live, .resume-live * { animation: none !important; }
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

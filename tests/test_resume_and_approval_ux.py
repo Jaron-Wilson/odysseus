@@ -32,7 +32,8 @@ _JS = _REPO / "static" / "js"
 def _resume_source():
     src = (_JS / "chat.js").read_text()
     i = src.index("export async function resumeStream(")
-    return src[i:i + 9000]
+    # To the end of the function, not a fixed length: it grows.
+    return src[i:src.index("\n  }\n", i)]
 
 
 def test_resume_shows_that_the_model_is_still_thinking():
