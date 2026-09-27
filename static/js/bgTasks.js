@@ -69,6 +69,7 @@ let _timer = null;
 let _open = null;             // job id whose output is expanded
 let _cliTick = 0;
 let _cli = null;
+let _agents = null;           // the Claude Code agent each chat keeps
 
 function _close() {
   if (_timer) { clearInterval(_timer); _timer = null; }
@@ -106,7 +107,10 @@ async function _render() {
     return;
   }
   if (!_panel) return;
-  if (wantCli) _cli = { sessions: d.cli_sessions || [], error: d.cli_error || '' };
+  if (wantCli) {
+    _cli = { sessions: d.cli_sessions || [], error: d.cli_error || '' };
+    try { _agents = (await _call('/api/claude_code/agents')).agents || []; } catch (_) { _agents = _agents || []; }
+  }
   const jobs = d.jobs || [];
   const body = _panel.querySelector('.bg-body');
   const logScroll = {};
@@ -116,6 +120,16 @@ async function _render() {
   body.innerHTML = `
     <div class="bg-section">From your chats</div>
     ${jobs.length ? jobs.map(_jobRow).join('') : '<div class="bg-empty">No Claude Code runs yet. A running Claude Code card in a chat has a "Send to background" button.</div>'}
+    <div class="bg-section">Claude Code agents by chat</div>
+    ${_agents && _agents.length ? _agents.map((a) => `
+      <div class="bg-job">
+        <div class="bg-job-head"><span class="bg-dot ${a.busy ? 'running' : 'ok'}"></span>
+          <span class="bg-job-title">${_esc(a.chat_name || 'Untitled chat')}</span>
+          <span class="bg-job-meta">${a.busy ? 'busy · ' : ''}${_esc(a.engine)} ${_esc(a.model)} · ${_dur(Date.now() / 1000 - (a.last_used || 0))} ago</span></div>
+        <div class="bg-job-sub"><code>${_esc(a.cwd)}</code> · chat ${_esc(String(a.chat_id).slice(0, 8))} · last: ${_esc(a.last_prompt || '')}</div>
+        <div class="bg-job-actions"><a href="#${_esc(a.chat_id)}" data-chat="${_esc(a.chat_id)}">Open chat</a>
+          <span class="bg-hint">Another chat can carry this agent on: "use the Claude agent from chat ${_esc(String(a.chat_id).slice(0, 8))}"</span></div>
+      </div>`).join('') : '<div class="bg-empty">No chat has a Claude Code agent yet.</div>'}
     <div class="bg-section">Claude Code background sessions on this host</div>
     ${_cli && _cli.sessions.length ? _cli.sessions.map((s) => `
       <div class="bg-job">

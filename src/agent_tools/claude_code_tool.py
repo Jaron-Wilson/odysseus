@@ -32,6 +32,7 @@ from typing import Dict, Optional
 
 from src import claude_code_approvals as approvals
 from src import claude_code_jobs
+from src import claude_code_agents
 from src.constants import DATA_DIR
 
 PROMPT_DIR = os.path.join(DATA_DIR, "claude_code_prompts")
@@ -310,6 +311,26 @@ class ClaudeCodeTool:
         lines.append("Attach with `claude attach <id>`, stop with `claude stop <id>`.")
         return {"output": "\n".join(lines), "sessions": sessions, "exit_code": 0}
 
+    def _chat_agents(self, chat_id: str) -> Dict:
+        """The Claude Code agents chats have used, so a chat can carry one on
+        with from_chat. The calling chat's own agents are marked."""
+        agents = claude_code_agents.list_all()
+        if not agents:
+            return {"output": "No chat has a Claude Code agent yet.", "agents": [], "exit_code": 0}
+        busy = {j.cli_session_id for j in claude_code_jobs.list_jobs() if j.status == "running"}
+        lines = []
+        for a in agents[:25]:
+            ago = int(time.time() - a.get("last_used", 0))
+            ago_s = f"{ago // 60}m ago" if ago < 3600 else f"{ago // 3600}h ago" if ago < 86400 else f"{ago // 86400}d ago"
+            mine = " (this chat)" if a["chat_id"] == chat_id else ""
+            state = " · busy" if a["session_id"] in busy else ""
+            lines.append(
+                f"- chat \"{a.get('chat_name') or '?'}\" `{a['chat_id'][:8]}`{mine}{state}: "
+                f"{a.get('engine')} {a.get('model')} in {a.get('cwd')}, {ago_s}. "
+                f"Last: {a.get('last_prompt') or '?'}")
+        lines.append("Carry one on with {\"action\": \"ask\" or \"plan\", \"from_chat\": \"<chat id>\", ...}.")
+        return {"output": "\n".join(lines), "agents": agents[:25], "exit_code": 0}
+
     async def _list_agents(self) -> Dict:
         """Report the Claude Code sessions running on this host."""
         cli = shutil.which("claude")
@@ -367,13 +388,15 @@ class ClaudeCodeTool:
             args = {"prompt": (content or "").strip()}
 
         action = (args.get("action") or "plan").strip().lower()
-        if action not in ("plan", "execute", "ask", "list", "status"):
-            return {"error": "action must be 'plan', 'execute', 'ask', 'list' or 'status'",
+        if action not in ("plan", "execute", "ask", "list", "status", "agents"):
+            return {"error": "action must be 'plan', 'execute', 'ask', 'list', 'status' or 'agents'",
                     "exit_code": 1}
 
         # Reads: no prompt, no directory, nothing spawned.
         if action == "list":
             return await self._list_agents()
+        if action == "agents":
+            return self._chat_agents((ctx or {}).get("session_id") or "")
         if action == "status":
             return await self._job_status(args.get("job_id"))
 
@@ -394,6 +417,55 @@ class ClaudeCodeTool:
         engine = (args.get("engine") or "claude").strip().lower()
         if engine not in ("claude", "opencode"):
             return {"error": "engine must be 'claude' or 'opencode'", "exit_code": 1}
+
+        # One agent per chat (src/claude_code_agents.py): an ask or plan in a
+        # chat carries on that chat's agent for the folder, so it keeps what it
+        # already read. `from_chat` carries on another chat's agent instead.
+        chat_id = (ctx or {}).get("session_id") or ""
+        agent_note = ""
+        agent_from = ""
+        if action in ("ask", "plan") and not resume_id:
+            from_chat = str(args.get("from_chat") or "").strip()
+            if from_chat:
+                matches = claude_code_agents.find_chat(from_chat)
+                if not matches:
+                    return {"error": (f"no chat matching {from_chat!r} has a Claude Code agent. "
+                                      "Use action 'agents' to see which chats do."), "exit_code": 1}
+                if len(matches) > 1:
+                    names = ", ".join(f"{claude_code_agents._chat_name(c) or '?'} ({c[:8]})"
+                                      for c in matches[:6])
+                    return {"error": f"{from_chat!r} matches several chats: {names}. Pass the chat id.",
+                            "exit_code": 1}
+                agent = claude_code_agents.for_chat(
+                    matches[0], cwd=str(args.get("cwd") or ""), engine=engine)
+                if not agent:
+                    return {"error": ("that chat has no Claude Code agent"
+                                      + (" for this folder" if args.get("cwd") else "")
+                                      + f" (engine {engine}). Use action 'agents' to see its agents."),
+                            "exit_code": 1}
+                resume_id = agent["session_id"]
+                args["cwd"] = args.get("cwd") or agent["cwd"]
+                agent_from = matches[0]
+                agent_note = (f"Carrying on the Claude Code agent from the chat "
+                              f"\"{claude_code_agents._chat_name(agent_from) or agent_from[:8]}\".")
+            elif chat_id and args.get("cwd") and not args.get("new_agent"):
+                agent = claude_code_agents.for_chat(chat_id, cwd=str(args["cwd"]), engine=engine)
+                if agent:
+                    resume_id = agent["session_id"]
+                    agent_from = chat_id
+                    agent_note = ("Carrying on this chat's Claude Code agent, which keeps what it "
+                                  "already read. Pass new_agent:true for a fresh one.")
+
+        # One run at a time per agent: two chats driving the same CLI session
+        # at once would interleave their turns in one transcript.
+        if resume_id:
+            busy = next((j for j in claude_code_jobs.list_jobs()
+                         if j.status == "running" and j.cli_session_id == resume_id), None)
+            if busy:
+                return {"error": (f"that Claude Code agent is busy with job {busy.id} "
+                                  f"({busy.action}, started from another run). Wait for it, watch "
+                                  "it under Background tasks, or pass new_agent:true for a fresh agent."),
+                        "exit_code": 1}
 
         cli = shutil.which("opencode" if engine == "opencode" else "claude")
         if not cli:
@@ -711,6 +783,15 @@ class ClaudeCodeTool:
                 "elapsed_s": round(time.time() - started, 1),
                 "exit_code": 1 if is_error else 0,
             }
+            if agent_note:
+                result["agent"] = agent_note
+            if chat_id and session_id and not is_error:
+                try:
+                    claude_code_agents.record(
+                        chat_id, session_id=session_id, cwd=str(cwd_path), engine=engine,
+                        model=model_label, action=action, prompt=prompt, summary=body)
+                except Exception:
+                    pass
             if action == "plan":
                 try:
                     approvals.record_plan(

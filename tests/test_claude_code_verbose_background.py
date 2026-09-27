@@ -53,6 +53,11 @@ def cli(tmp_path, monkeypatch):
         return argv_file
     monkeypatch.setattr(approvals, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(approvals, "APPROVALS_FILE", str(tmp_path / "appr.json"))
+    from src import claude_code_agents as agents_reg
+    monkeypatch.setattr(agents_reg, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(agents_reg, "AGENTS_FILE", str(tmp_path / "agents.json"))
+    monkeypatch.setattr(agents_reg, "_chat_name",
+                        lambda cid: {"chat-A": "Website rebrand", "chat-B": "Quick fixes"}.get(cid, ""))
 
     async def no_pdf(*a, **k):
         return None, "skipped in tests"
@@ -201,3 +206,70 @@ def test_routes_panel_and_rules_are_wired():
     assert "gh pr create" in desc and "on which model" in desc
     rules = open(os.path.join(here, "src", "agent_loop.py")).read()
     assert "NOT for chores: committing, pushing, opening a PR" in rules
+
+
+def _resume_of(argv):
+    return argv[argv.index("--resume") + 1] if "--resume" in argv else None
+
+
+def test_each_chat_carries_on_its_own_agent(cli, tmp_path):
+    argv_file = cli()
+    tool = cct.ClaudeCodeTool()
+    first = asyncio.run(tool.execute(json.dumps(
+        {"action": "ask", "prompt": "how is routing done?", "cwd": str(tmp_path)}),
+        {"session_id": "chat-A"}))
+    sid = first["session_id"]
+    again = asyncio.run(tool.execute(json.dumps(
+        {"action": "ask", "prompt": "and the auth?", "cwd": str(tmp_path)}),
+        {"session_id": "chat-A"}))
+    runs = _argv(argv_file)
+    assert _resume_of(runs[0]) is None and _resume_of(runs[1]) == sid
+    assert again["session_id"] == sid and "this chat's Claude Code agent" in again["agent"]
+    # Another chat does not pick it up by itself...
+    asyncio.run(tool.execute(json.dumps(
+        {"action": "ask", "prompt": "hi", "cwd": str(tmp_path)}), {"session_id": "chat-B"}))
+    assert _resume_of(_argv(argv_file)[2]) is None
+    # ...and new_agent starts fresh even in the same chat.
+    asyncio.run(tool.execute(json.dumps(
+        {"action": "ask", "prompt": "fresh", "cwd": str(tmp_path), "new_agent": True}),
+        {"session_id": "chat-A"}))
+    assert _resume_of(_argv(argv_file)[3]) is None
+
+
+def test_another_chat_can_carry_on_an_agent(cli, tmp_path):
+    argv_file = cli()
+    tool = cct.ClaudeCodeTool()
+    first = asyncio.run(tool.execute(json.dumps(
+        {"action": "plan", "prompt": "rebrand the site", "cwd": str(tmp_path)}),
+        {"session_id": "chat-A"}))
+    listing = tool._chat_agents("chat-B")
+    assert 'chat "Website rebrand" `chat-A`' in listing["output"]
+    assert "rebrand the site" in listing["output"]
+    # By name, and with no cwd: it defaults to the agent's folder.
+    out = asyncio.run(tool.execute(json.dumps(
+        {"action": "ask", "prompt": "what did you change?", "from_chat": "rebrand"}),
+        {"session_id": "chat-B"}))
+    assert _resume_of(_argv(argv_file)[1]) == first["session_id"]
+    assert out["cwd"] == str(tmp_path.resolve()) and "Website rebrand" in out["agent"]
+    bad = asyncio.run(tool.execute(json.dumps(
+        {"action": "ask", "prompt": "x", "from_chat": "nope"}), {"session_id": "chat-B"}))
+    assert "no chat matching" in bad["error"]
+
+
+def test_a_busy_agent_is_not_driven_twice(cli, tmp_path):
+    cli(delay=3)
+    tool = cct.ClaudeCodeTool()
+
+    async def run():
+        first = asyncio.create_task(tool.execute(json.dumps(
+            {"action": "ask", "prompt": "long one", "cwd": str(tmp_path),
+             "session_id": "11111111-2222-3333-4444-555555555555"}), {"session_id": "chat-A"}))
+        await asyncio.sleep(0.5)
+        second = await tool.execute(json.dumps(
+            {"action": "ask", "prompt": "me too", "cwd": str(tmp_path),
+             "session_id": "11111111-2222-3333-4444-555555555555"}), {"session_id": "chat-B"})
+        await first
+        return second
+
+    second = asyncio.run(run())
+    assert "busy with job" in second["error"]
