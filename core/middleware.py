@@ -118,10 +118,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
                 "font-src 'self' https://cdn.jsdelivr.net; "
-                "img-src 'self' data: blob:; "
-                "media-src 'self' blob:; "
+                # YouTube thumbnails, and media played in the chat: files in
+                # Odysseus' media folder or on https (markdown.js enhanceMedia).
+                "img-src 'self' data: blob: https://i.ytimg.com; "
+                "media-src 'self' blob: https:; "
                 "connect-src 'self'; "
-                "frame-src 'self'; "
+                # YouTube's privacy-enhanced player, loaded on click.
+                "frame-src 'self' https://www.youtube-nocookie.com; "
                 "frame-ancestors 'none'"
             )
         return response
