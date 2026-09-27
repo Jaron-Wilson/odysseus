@@ -1034,6 +1034,9 @@
     <!-- Background tasks running from this chat, with Watch here (bgTasks.js) -->
     <div id="bg-chip" class="bg-chip" hidden></div>
 
+    <!-- Mini music player above the composer (musicBar.js) -->
+    <div id="music-bar" class="music-bar" hidden></div>
+
     <!-- Attachments strip -->
     <div id="attach-strip" class="attach-strip"></div>
 
@@ -1166,6 +1169,8 @@
           <!-- Notify when done: a push to the phone (or any device) when the
                reply and anything queued behind it finish (notifyDone.js) -->
           <!-- "Needs to know": this chat's notes, seen by the model every turn (chatNotes.js) -->
+          <!-- Music bar: YouTube Music on your PC, controlled from here (musicBar.js) -->
+          <button type="button" class="input-icon-btn music-btn" id="music-btn" aria-label="Music" title="Music: show the player bar"></button>
           <span class="chat-notes-wrap">
             <button type="button" class="input-icon-btn chat-notes-btn" id="chat-notes-btn" aria-label="This chat's notes" title="Needs to know: this chat's notes"></button>
           </span>
