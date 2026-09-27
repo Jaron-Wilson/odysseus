@@ -26,6 +26,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
 import notifyDone from './notifyDone.js';
 import './chatNotes.js';
+import './musicBar.js';
 import './bgTasks.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;

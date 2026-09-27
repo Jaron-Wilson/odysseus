@@ -145,4 +145,113 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                      "volume, mute or output")
         return {"requested": action, "result": _payload(res)}
 
+    # ------------------------------------------------------------------ #
+    # Album art and lyrics for the music bar (static/js/musicBar.js). The
+    # Windows media session gives title and artist but no art or lyrics, so
+    # they are looked up by name: art from the iTunes Search API, lyrics
+    # from lrclib.net. Both are free and need no key. Art is fetched here
+    # and served from this origin, so the page needs no new image hosts.
+    # ------------------------------------------------------------------ #
+    @router.get("/art")
+    async def art(request: Request, title: str = "", artist: str = ""):
+        _require_user(request)
+        from fastapi.responses import Response
+        data = await asyncio.to_thread(_art_bytes, title, artist)
+        if not data:
+            raise HTTPException(404, "No art found")
+        return Response(data, media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=86400"})
+
+    @router.get("/lyrics")
+    async def lyrics(request: Request, title: str = "", artist: str = "", album: str = ""):
+        _require_user(request)
+        return await asyncio.to_thread(_lyrics, title, artist, album)
+
     return router
+
+
+# ── art and lyrics lookup ────────────────────────────────────────────────
+import hashlib as _hashlib
+import os as _os
+import re as _re
+
+_NOISE_RE = _re.compile(
+    r"\s*[\(\[](?:official|lyric|lyrics|audio|video|visualizer|hd|4k|remaster(?:ed)?|"
+    r"live|explicit|clean|music video|mv)[^\)\]]*[\)\]]", _re.I)
+_LYRICS_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _clean(title: str, artist: str):
+    t = _NOISE_RE.sub("", title or "").strip()
+    a = _re.sub(r"\s*-\s*Topic$", "", (artist or "").strip(), flags=_re.I)
+    a = a.split(",")[0].split("&")[0].strip()
+    # "Artist - Song" titles from video uploads, when the artist is the channel.
+    if " - " in t and (not a or t.lower().startswith(a.lower() + " - ")):
+        head, _, rest = t.partition(" - ")
+        a, t = (a or head.strip()), rest.strip()
+    return t, a
+
+
+def _art_bytes(title: str, artist: str) -> Optional[bytes]:
+    import httpx
+    t, a = _clean(title, artist)
+    if not t:
+        return None
+    from src.constants import DATA_DIR
+    cache_dir = _os.path.join(DATA_DIR, "cache", "music_art")
+    _os.makedirs(cache_dir, exist_ok=True)
+    key = _hashlib.sha1(f"{t}|{a}".lower().encode()).hexdigest()[:20]
+    path = _os.path.join(cache_dir, key + ".jpg")
+    if _os.path.exists(path):
+        with open(path, "rb") as f:
+            data = f.read()
+        return data or None
+    try:
+        r = httpx.get("https://itunes.apple.com/search",
+                      params={"term": f"{t} {a}".strip(), "entity": "song", "limit": 1},
+                      timeout=8)
+        results = r.json().get("results") or []
+        url = (results[0].get("artworkUrl100") or "") if results else ""
+        data = b""
+        if url:
+            img = httpx.get(url.replace("100x100bb", "600x600bb"), timeout=8)
+            if img.status_code == 200 and img.headers.get("content-type", "").startswith("image/"):
+                data = img.content
+    except Exception as e:
+        logger.debug("art lookup failed for %r: %s", t, e)
+        return None
+    with open(path, "wb") as f:
+        f.write(data)                        # empty file = looked up, none found
+    return data or None
+
+
+def _lyrics(title: str, artist: str, album: str = "") -> Dict[str, Any]:
+    import httpx
+    t, a = _clean(title, artist)
+    if not t:
+        return {"ok": False, "error": "no song"}
+    key = f"{t}|{a}".lower()
+    if key in _LYRICS_CACHE:
+        return _LYRICS_CACHE[key]
+    out: Dict[str, Any] = {"ok": False, "title": t, "artist": a}
+    try:
+        r = httpx.get("https://lrclib.net/api/get",
+                      params={"track_name": t, "artist_name": a}, timeout=8,
+                      headers={"User-Agent": "Odysseus (self-hosted)"})
+        if r.status_code != 200:
+            r = httpx.get("https://lrclib.net/api/search",
+                          params={"track_name": t, "artist_name": a}, timeout=8,
+                          headers={"User-Agent": "Odysseus (self-hosted)"})
+            hits = r.json() if r.status_code == 200 else []
+            d = hits[0] if isinstance(hits, list) and hits else {}
+        else:
+            d = r.json()
+        if d:
+            out = {"ok": bool(d.get("plainLyrics") or d.get("syncedLyrics")),
+                   "title": d.get("trackName") or t, "artist": d.get("artistName") or a,
+                   "plain": d.get("plainLyrics") or "", "synced": d.get("syncedLyrics") or "",
+                   "instrumental": bool(d.get("instrumental"))}
+    except Exception as e:
+        out["error"] = str(e)[:200]
+    _LYRICS_CACHE[key] = out
+    return out
