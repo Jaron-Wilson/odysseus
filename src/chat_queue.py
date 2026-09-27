@@ -43,11 +43,15 @@ CLAIM_GRACE_S = 4.0
 # A page that claimed a message has this long to start sending it before the
 # claim is treated as abandoned (tab closed mid-claim) and the server moves on.
 CLAIM_HOLD_S = 20.0
+# A question asked while a page is connected goes to the phone too if it is
+# still unanswered after this long.
+QUESTION_GRACE_S = 20.0
 MAX_ITEMS = 50
 MAX_TEXT = 20000
 
 _lock = threading.Lock()
 _pending: Dict[str, asyncio.Task] = {}      # session_id -> after-run task
+_bases: Dict[str, str] = {}                 # session_id -> address the last message came in on
 _claims: Dict[str, tuple] = {}              # session_id -> (when, item) a page claimed
 
 
@@ -207,9 +211,17 @@ def _with_base(n: Optional[Dict], base: str) -> Optional[Dict]:
     return n
 
 
+def remember_base(session_id: str, base: str) -> None:
+    """The address this chat was last used from, for links in notifications
+    sent with no bell setting (a question asked while the page was closed)."""
+    if session_id and base and _BASE_RE.match(base.rstrip("/")):
+        _bases[session_id] = base.rstrip("/")
+
+
 def chat_link(session_id: str, notify: Optional[Dict]) -> str:
     """The chat's full address, for a phone to open, or "" when unknown."""
-    base = (notify or {}).get("base") or os.environ.get("ODYSSEUS_PUBLIC_URL", "").rstrip("/")
+    base = ((notify or {}).get("base") or _bases.get(session_id)
+            or os.environ.get("ODYSSEUS_PUBLIC_URL", "").rstrip("/"))
     return f"{base}/#{session_id}" if base else ""
 
 
@@ -397,6 +409,16 @@ def _last_reply(session_id: str) -> str:
     return ""
 
 
+def _last_role(session_id: str) -> str:
+    try:
+        from src.ai_interaction import get_session_manager
+        sess = get_session_manager().get_session(session_id)
+        msgs = getattr(sess, "history", None) or getattr(sess, "messages", None) or []
+        return getattr(msgs[-1], "role", "") if msgs else ""
+    except Exception:
+        return ""
+
+
 def _session_title(session_id: str) -> str:
     try:
         from src.ai_interaction import get_session_manager
@@ -442,25 +464,30 @@ def _listener_targets(notify: Dict) -> List[Dict]:
 
 
 async def send_done_notification(session_id: str, notify: Dict, *, failed: bool = False) -> Dict:
-    """Push to the chosen browsers, and also show it through each chosen
-    device's Modes listener. Seen live: the push was accepted for the phone
-    but never shown with the site closed, while the listener was up."""
-    from src import webpush
-
+    """The chat has nothing left to do: push the start of the answer."""
     title = _session_title(session_id)
     head = "Reply failed" if failed else "Reply ready"
     body = _preview(_last_reply(session_id)) or (
         "The run stopped with an error." if failed else "Your reply is ready.")
     heading = f"{head}: {title}" if title else head
+    return await send_notification(session_id, notify, heading, body, kind="done")
+
+
+async def send_notification(session_id: str, notify: Dict, heading: str, body: str,
+                            *, kind: str = "done") -> Dict:
+    """Push to the chosen browsers, and also show it through each chosen
+    device's Modes listener. Seen live: the push was accepted for the phone
+    but never shown with the site closed, while the listener was up."""
+    from src import webpush
 
     async def _push():
         try:
             return await webpush.send(
                 heading, body,
                 device=notify.get("device", ""), endpoint=notify.get("endpoint", ""),
-                url=f"/#{session_id}", tag=f"odysseus-done-{session_id}")
+                url=f"/#{session_id}", tag=f"odysseus-{kind}-{session_id}")
         except Exception as e:
-            logger.warning("Done push for %s failed: %s", session_id, e)
+            logger.warning("%s push for %s failed: %s", kind, session_id, e)
             return {"sent": 0, "failed": 1, "errors": [str(e)]}
 
     async def _listener(device):
@@ -485,5 +512,30 @@ async def send_done_notification(session_id: str, notify: Dict, *, failed: bool 
         name, out = r
         listeners[name] = "shown" if out.get("ok") else out.get("error", "failed")
     result = {**push, "listeners": listeners}
-    logger.info("Done notification for %s: %s", session_id, result)
+    logger.info("%s notification for %s: %s", kind.capitalize(), session_id, result)
     return result
+
+
+async def notify_question(session_id: str, question: str,
+                          client_device: Optional[Dict] = None) -> Optional[Dict]:
+    """The agent asked the user something (ask_user) and no page is watching
+    the chat: send the question where they will see it. The chat's bell
+    target if set, else the device the message came from, else all devices."""
+    from src import agent_runs
+    if not session_id:
+        return None
+    if agent_runs.has_watchers(session_id):
+        # A page is connected, but a phone tab left in the background stays
+        # connected while nobody looks at it. Unanswered after a short wait,
+        # the question goes out anyway.
+        await asyncio.sleep(QUESTION_GRACE_S)
+        if agent_runs.is_active(session_id) or _last_role(session_id) != "assistant":
+            return None             # answered (a new turn started, or a reply saved)
+    notify = get(session_id).get("notify")
+    if notify is None:
+        dev = client_device or {}
+        notify = {"device": dev["name"]} if dev.get("registered") and dev.get("name") else {}
+    title = _session_title(session_id)
+    heading = f"Question: {title}" if title else "Odysseus has a question"
+    return await send_notification(session_id, notify, heading,
+                                   _preview(question, 200), kind="question")

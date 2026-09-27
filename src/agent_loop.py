@@ -261,8 +261,12 @@ _DOMAIN_RULES = {
     "background": """\
 ## Background first
 - Do work out of sight by default. To look something up, check a page, compare prices or read docs, use the built-in browser (`mcp__builtin_browser__*`, headless on this server and invisible to the user) or `web_search`/`web_fetch`, and report what you found in the chat.
-- Act on the user's own screen (open_url/open_app on their phone, launch_app, or click/type/screenshot on their computer) only when they ask to see it there ("open it on my phone", "show me", "pull it up on my PC"), or when the task needs their device (signing in, an app that only exists there, an approval).
-- If you are unsure, do it in the background and then offer to open it on their device.""",
+- Act on the user's own screen (open_url/open_app on their phone, launch_app, or click/type/screenshot on their computer) only when they ask to see it there ("open it on my phone", "show me", "pull it up on my PC").
+- Never do it on your own initiative, including when a lookup fails because a page needs a login or is private. Say what is blocked and ask whether to use their device ("that repo is private; want me to check it in your Chrome on the PC?"). Their answer is the permission.
+- If you are unsure, do it in the background and then offer to open it on their device.
+- Using their browser (once they have said yes): unless they already said, ask with ask_user "A new Chrome window, or the one you already have open?". Open it by the exact name from list_apps ("Google Chrome"; never just "chrome", which also matches Chrome Remote Desktop).
+- Then drive it with the keyboard, not by looking: in a new window press ctrl+l, in their current window press ctrl+t for a new tab; type_text the full URL; press enter. Take ONE screenshot after the page loads and read what you need from it.
+- Never take screenshots back to back without acting in between. If two tries have not got you there, stop and tell the user what you see, rather than trying again.""",
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
@@ -1899,6 +1903,46 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+def _attach_screenshot(messages: List[Dict], img: Dict, model: str, endpoint_url: str,
+                       attached: Optional[list] = None) -> None:
+    """Show the model the newest screenshot, or tell it plainly that it
+    cannot see one. Older screenshots are dropped to keep requests small."""
+    try:
+        from src.chat_helpers import model_supports_vision
+        can_see = model_supports_vision(model, endpoint_url)
+    except Exception:
+        can_see = False
+    # Earlier screenshots this turn attached, found by identity so no marker
+    # field is sent to the model's API.
+    if attached:
+        old = {id(p) for p in attached}
+        for m in messages:
+            c = m.get("content")
+            if isinstance(c, list) and any(id(p) in old for p in c):
+                m["content"] = [p for p in c if id(p) not in old] + [
+                    {"type": "text", "text": "[an earlier screenshot, no longer attached]"}]
+        attached.clear()
+    if not can_see:
+        note = ("[The screenshot was shown to the user, but this model cannot see images, so "
+                "you cannot see it. Do not rely on screen control; use other tools or ask.]")
+        last = messages[-1] if messages else None
+        if last and last.get("role") == "user" and isinstance(last.get("content"), str):
+            last["content"] += "\n\n" + note
+        else:
+            messages.append({"role": "user", "content": note})
+        return
+    url = f"data:{img.get('mimeType', 'image/png')};base64,{img.get('data', '')}"
+    part = {"type": "image_url", "image_url": {"url": url}}
+    if attached is not None:
+        attached.append(part)
+    last = messages[-1] if messages else None
+    if last and last.get("role") == "user" and isinstance(last.get("content"), str):
+        last["content"] = [{"type": "text", "text": last["content"]}, part]
+    else:
+        messages.append({"role": "user", "content": [
+            {"type": "text", "text": "The screenshot from the last tool call:"}, part]})
+
+
 def _deliver_queued_messages(session_id: Optional[str], messages: List[Dict]) -> List[Dict]:
     """Take whatever the user queued for this chat and add it to the running
     turn: saved in the chat as the user's messages, and added to the model's
@@ -2373,10 +2417,13 @@ async def stream_agent_loop(
     # so the user can resume instead of the turn silently stalling.
     _exhausted_rounds = False
 
+    _attached_shots: list = []   # screenshot parts attached this turn (see _attach_screenshot)
+    _shot_streak = 0             # screenshots in a row with no other tool between
     for round_num in range(1, max_rounds + 1):
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
         native_tool_calls = []  # populated if model uses function calling
+        _round_images = []      # screenshots from this round's tools, for the model to see
         # Reset doc streaming state per round
         _doc_acc = ""
         _doc_opened = False
@@ -2923,7 +2970,22 @@ async def stream_agent_loop(
             else:
                 cmd_display = block.content.strip()
 
-            if tool_policy and tool_policy.blocks(block.tool_type):
+            # Screenshots with nothing done in between are how a screen task
+            # gets lost (seen live: screenshot after screenshot, then asking
+            # the user). The third in a row is refused with what to do instead.
+            _is_shot = block.tool_type.endswith("__screenshot") or block.tool_type.endswith("browser_take_screenshot")
+            _shot_streak = _shot_streak + 1 if _is_shot else 0
+            if _is_shot and _shot_streak > 2:
+                desc = f"{block.tool_type}: refused"
+                result = {
+                    "error": ("Not taken: that would be the third screenshot in a row with nothing "
+                              "done in between. Act on what you already saw (type the URL, press a "
+                              "key, click), or stop and tell the user what is on screen."),
+                    "exit_code": 1,
+                }
+                logger.info("[agent] refused a %s screenshot in a row", _shot_streak)
+                yield f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "round": round_num})}\n\n'
+            elif tool_policy and tool_policy.blocks(block.tool_type):
                 desc = f"{block.tool_type}: BLOCKED"
                 result = {
                     "error": tool_policy.reason_for(block.tool_type),
@@ -3043,6 +3105,15 @@ async def stream_agent_loop(
                     f'data: {json.dumps({"type": "ask_user", "data": result["ask_user"]})}\n\n'
                 )
                 _awaiting_user = True
+                # A question asked with nobody on the page went unseen (seen
+                # live: the turn just stopped). Send it to the user's device.
+                try:
+                    from src import chat_queue as _cq
+                    asyncio.create_task(_cq.notify_question(
+                        session_id, str((result.get("ask_user") or {}).get("question") or ""),
+                        client_device))
+                except Exception:
+                    pass
 
             # update_plan: agent wrote back to the plan (ticked a step / revised).
             # Push it to the frontend so the stored plan + docked window update
@@ -3107,6 +3178,7 @@ async def stream_agent_loop(
             if result.get("images"):
                 img = result["images"][0]
                 tool_output_data["screenshot"] = f"data:{img['mimeType']};base64,{img['data']}"
+                _round_images.append(img)
             # Forward a file-write diff for inline before/after rendering
             if "diff" in result:
                 tool_output_data["diff"] = result["diff"]
@@ -3226,6 +3298,13 @@ async def stream_agent_loop(
         _append_tool_results(messages, round_response, native_tool_calls,
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning)
+
+        # Screenshots reach the model too. They used to go to the page only,
+        # while the model got the text "[Screenshot captured]", so screen
+        # control ran blind: seen live, a vision-capable model said it could
+        # not see the image and kept taking more.
+        if _round_images:
+            _attach_screenshot(messages, _round_images[-1], model, endpoint_url, _attached_shots)
 
         # Messages the user queued while this turn was running are read now,
         # at the tool-call boundary, in this same turn, the way Claude Code

@@ -80,6 +80,12 @@ def is_active(session_id: str) -> bool:
     return bool(r and r.status == "running")
 
 
+def has_watchers(session_id: str) -> bool:
+    """Whether a page is streaming this chat's run right now."""
+    r = _RUNS.get(session_id)
+    return bool(r and r.subscribers)
+
+
 def get_status(session_id: str) -> Optional[str]:
     r = _RUNS.get(session_id)
     return r.status if r else None

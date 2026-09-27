@@ -36854,3 +36854,11 @@ body.theme-frosted .modal {
 }
 .bg-job-actions .danger { border-color: #d9644f; color: #d9644f; }
 .bg-hint { font-size: 11.5px; color: color-mix(in srgb, var(--fg) 55%, transparent); }
+
+/* Bring back a question the agent asked (ask_user) after a reload or dismiss. */
+.ask-user-relaunch {
+  display: inline-block; margin: 6px 0 6px 18px; padding: 4px 12px; font-size: 12.5px;
+  border-radius: 999px; cursor: pointer; color: inherit; background: none;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--fg)) 45%, transparent);
+}
+.ask-user-relaunch:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }

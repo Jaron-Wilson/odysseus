@@ -1315,6 +1315,7 @@ def setup_chat_routes(
         if compare_mode:
             return StreamingResponse(_safe_stream(), media_type="text/event-stream")
 
+        chat_queue.remember_base(session, _public_base(request))
         if notify_when_done is not None:
             try:
                 chat_queue.set_notify(session, notify_when_done, base=_public_base(request))
