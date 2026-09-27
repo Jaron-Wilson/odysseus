@@ -352,20 +352,70 @@ def _preview(text: str, limit: int = 160) -> str:
     return t if len(t) <= limit else t[:limit - 1].rstrip() + "…"
 
 
+def _listener_targets(notify: Dict) -> List[Dict]:
+    """Registered devices whose Modes listener should show the notification:
+    the chosen device, or every device with a listener for "all devices".
+    "This browser" is a browser subscription, so no listener."""
+    if notify.get("endpoint"):
+        return []
+    try:
+        from src import devices as _devices
+        if notify.get("device"):
+            # The menu can name a push subscription ("android-phone")
+            # rather than the device it's linked to ("pixel-8a").
+            d = _devices.resolve(notify["device"])
+            if d is None:
+                owner = _devices.owner_of_alias(notify["device"])
+                d = _devices.get(owner) if owner else None
+            found = [d] if d else []
+        else:
+            found = _devices.list_devices()
+        return [d for d in found
+                if (d.get("endpoint") or "").strip() and _devices.supports(d, "notify")]
+    except Exception as e:
+        logger.debug("listener lookup failed: %s", e)
+        return []
+
+
 async def send_done_notification(session_id: str, notify: Dict, *, failed: bool = False) -> Dict:
+    """Push to the chosen browsers, and also show it through each chosen
+    device's Modes listener. Seen live: the push was accepted for the phone
+    but never shown with the site closed, while the listener was up."""
     from src import webpush
 
     title = _session_title(session_id)
     head = "Reply failed" if failed else "Reply ready"
     body = _preview(_last_reply(session_id)) or (
         "The run stopped with an error." if failed else "Your reply is ready.")
-    try:
-        result = await webpush.send(
-            f"{head}: {title}" if title else head, body,
-            device=notify.get("device", ""), endpoint=notify.get("endpoint", ""),
-            url=f"/#{session_id}", tag=f"odysseus-done-{session_id}")
-    except Exception as e:
-        logger.warning("Done notification for %s failed: %s", session_id, e)
-        return {"sent": 0, "failed": 1}
+    heading = f"{head}: {title}" if title else head
+
+    async def _push():
+        try:
+            return await webpush.send(
+                heading, body,
+                device=notify.get("device", ""), endpoint=notify.get("endpoint", ""),
+                url=f"/#{session_id}", tag=f"odysseus-done-{session_id}")
+        except Exception as e:
+            logger.warning("Done push for %s failed: %s", session_id, e)
+            return {"sent": 0, "failed": 1, "errors": [str(e)]}
+
+    async def _listener(device):
+        from src import devices as _devices
+        r = await _devices.send_command(
+            device, "notify", {"text": f"Odysseus: {heading}. {body}"})
+        return device.get("name"), r
+
+    targets = _listener_targets(notify)
+    results = await asyncio.gather(_push(), *[_listener(d) for d in targets],
+                                   return_exceptions=True)
+    push = results[0] if isinstance(results[0], dict) else {"sent": 0, "failed": 1}
+    listeners = {}
+    for r in results[1:]:
+        if isinstance(r, Exception):
+            listeners["?"] = str(r)
+            continue
+        name, out = r
+        listeners[name] = "shown" if out.get("ok") else out.get("error", "failed")
+    result = {**push, "listeners": listeners}
     logger.info("Done notification for %s: %s", session_id, result)
     return result
