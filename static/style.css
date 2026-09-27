@@ -36780,3 +36780,63 @@ body.theme-frosted .modal {
    the input beside it (.confirm-btn won't stretch on its own). */
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+
+/* Claude Code: send a running run to the background (bgTasks.js). */
+.cc-bg-btn {
+  margin: 0 6px 0 auto; padding: 2px 9px; font-size: 11.5px; cursor: pointer;
+  background: none; color: inherit; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.cc-bg-btn:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.cc-bg-btn.done, .cc-bg-btn:disabled { opacity: .6; cursor: default; }
+.bg-tasks-count {
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px;
+  display: inline-grid; place-items: center; background: var(--accent, #c96); color: var(--bg);
+}
+.bg-tasks-count[hidden] { display: none; }
+.bg-panel-backdrop {
+  position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, .45);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.bg-panel {
+  width: min(900px, 100%); max-height: 88vh; display: flex; flex-direction: column;
+  background: var(--bg); color: var(--fg); border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+}
+.bg-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; font-weight: 600;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.bg-close { background: none; border: 0; color: inherit; font-size: 22px; cursor: pointer; line-height: 1; }
+.bg-body { overflow: auto; padding: 8px 16px 16px; }
+.bg-section {
+  margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.bg-empty { font-size: 13px; color: color-mix(in srgb, var(--fg) 60%, transparent); padding: 6px 0; }
+.bg-job {
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); border-radius: 10px;
+  padding: 8px 10px; margin-bottom: 8px; font-size: 13px;
+}
+.bg-job-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.bg-job-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.bg-job-meta { font-size: 12px; color: color-mix(in srgb, var(--fg) 60%, transparent); white-space: nowrap; }
+.bg-job-sub { font-size: 12px; margin-top: 3px; color: color-mix(in srgb, var(--fg) 65%, transparent); overflow-wrap: anywhere; }
+.bg-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; background: #888; }
+.bg-dot.running { background: #e0b341; animation: bg-pulse 1.4s ease-in-out infinite; }
+.bg-dot.ok { background: #5fb36b; }
+.bg-dot.bad { background: #d9644f; }
+@keyframes bg-pulse { 50% { opacity: .35; } }
+.bg-job-log {
+  margin: 8px 0 0; padding: 8px; max-height: 45vh; overflow: auto; white-space: pre-wrap;
+  font-size: 11.5px; background: rgba(0, 0, 0, .22); border-radius: 6px;
+}
+.bg-job-actions { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+.bg-job-actions button, .bg-job-actions a {
+  font-size: 12px; padding: 3px 10px; border-radius: 8px; cursor: pointer; color: inherit;
+  background: none; border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent); text-decoration: none;
+}
+.bg-job-actions .danger { border-color: #d9644f; color: #d9644f; }

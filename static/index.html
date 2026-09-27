@@ -933,6 +933,19 @@
           <span class="grow">Tasks</span>
           <span id="assistant-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
         </div>
+        <!-- Background tasks: Claude Code runs sent to the background (bgTasks.js) -->
+        <div class="list-item" id="tool-bg-btn" title="Claude Code runs working in the background">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <rect x="2" y="4" width="20" height="14" rx="2"/>
+            <polyline points="6 9 9 11 6 13"/>
+            <line x1="11" y1="13" x2="15" y2="13"/>
+            <line x1="8" y1="21" x2="16" y2="21"/>
+          </svg>
+          <span class="grow">Background</span>
+          <span id="bg-tasks-count" class="bg-tasks-count" hidden></span>
+        </div>
 
         <div class="list-item" id="tool-theme-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"

@@ -15,6 +15,7 @@ import re
 from fastapi import APIRouter, HTTPException, Request
 
 from src import claude_code_approvals as approvals
+from src import claude_code_jobs as jobs
 from src.auth_helpers import _auth_disabled, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,9 @@ logger = logging.getLogger(__name__)
 # Still an allowlist, and still no "/", "." or "\", which is what matters:
 # the id is interpolated into a filename below.
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{8}$")
 
 
 def setup_claude_code_routes() -> APIRouter:
@@ -98,5 +102,58 @@ def setup_claude_code_routes() -> APIRouter:
             raise HTTPException(409, f"Plan is already {entry.get('status')}")
         logger.info("[claude_code] plan %s denied by %s", session_id[:8], user or "(auth off)")
         return {"session_id": session_id, "status": "denied"}
+
+    # ------------------------------------------------------------------ #
+    # Background tasks: Claude Code runs started from chats
+    # (src/claude_code_jobs.py), plus the CLI's own `--bg` sessions.
+    # ------------------------------------------------------------------ #
+    def _job_or_404(request: Request, job_id: str):
+        user = _require_user(request)
+        if not _JOB_ID_RE.fullmatch(job_id):
+            raise HTTPException(400, "Invalid job id")
+        job = jobs.get(job_id)
+        if job is None or not jobs.visible_to(job, user):
+            raise HTTPException(404, "No such job")
+        return job
+
+    @router.get("/api/claude_code/jobs")
+    async def list_jobs(request: Request, cli: int = 0):
+        user = _require_user(request)
+        out = {"jobs": [j.public() for j in jobs.list_jobs(user)]}
+        if cli:
+            # `claude agents --json` spawns the CLI, so only when asked.
+            try:
+                from src.agent_tools.claude_code_tool import ClaudeCodeTool
+                listing = await ClaudeCodeTool()._list_agents()
+                out["cli_sessions"] = [s for s in listing.get("sessions") or []
+                                       if s.get("kind") == "background"]
+                if listing.get("exit_code") != 0:
+                    out["cli_error"] = listing.get("error")
+            except Exception as e:
+                out["cli_error"] = str(e)
+        return out
+
+    @router.get("/api/claude_code/jobs/{job_id}")
+    async def get_job(request: Request, job_id: str, lines: int = 400):
+        job = _job_or_404(request, job_id)
+        return job.public(lines=max(1, min(int(lines or 400), jobs.MAX_LINES)))
+
+    @router.post("/api/claude_code/jobs/{job_id}/background")
+    async def background_job(request: Request, job_id: str):
+        """Send a running run to the background: the chat carries on, the CLI
+        keeps going, and its result is posted into the chat when it ends."""
+        job = _job_or_404(request, job_id)
+        if not jobs.detach(job_id):
+            raise HTTPException(409, f"Job is {job.status}" + (" and already in the background" if job.detached else ""))
+        logger.info("[claude_code] job %s sent to the background", job_id)
+        return job.public()
+
+    @router.post("/api/claude_code/jobs/{job_id}/stop")
+    async def stop_job(request: Request, job_id: str):
+        job = _job_or_404(request, job_id)
+        if not jobs.stop(job_id):
+            raise HTTPException(409, f"Job is {job.status}")
+        logger.info("[claude_code] job %s stopped", job_id)
+        return job.public()
 
     return router
