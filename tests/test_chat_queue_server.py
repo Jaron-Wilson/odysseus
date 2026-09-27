@@ -187,6 +187,7 @@ def test_done_notification_once_the_chat_has_nothing_left(q, monkeypatch):
 
     from src import webpush
     monkeypatch.setattr(webpush, "send", fake_send)
+    monkeypatch.setattr(q, "_listener_targets", lambda n: [])
     q.set_notify("c1", {"device": "pixel-8a", "label": "pixel-8a"})
 
     async def run():
@@ -200,6 +201,47 @@ def test_done_notification_once_the_chat_has_nothing_left(q, monkeypatch):
     assert body == "Found a Spigen case for $12."
     assert kw["device"] == "pixel-8a" and kw["url"] == "/#c1"
     assert q.get("c1")["notify"] is None           # one per batch
+
+
+def test_done_notification_also_goes_through_the_modes_listener(q, monkeypatch):
+    """Seen live: the push was accepted for the phone but never shown with the
+    site closed. The phone's Modes listener was up, so it shows it too."""
+    sess, sm = _install(monkeypatch)
+    sess.history.append(_Msg("assistant", "Found a case."))
+    from src import webpush, devices
+    phone = {"name": "pixel-8a", "endpoint": "http://pixel-8a:8778", "token": "t",
+             "commands": ["notify", "open_url"], "aliases": ["android-phone"]}
+    laptop = {"name": "jaron-laptop", "endpoint": "", "token": "t", "commands": ["notify"]}
+    monkeypatch.setattr(devices, "list_devices", lambda: [phone, laptop])
+    # resolve() matches names only; the subscription name is an alias.
+    monkeypatch.setattr(devices, "resolve", lambda n: phone if n == "pixel-8a" else None)
+    monkeypatch.setattr(devices, "owner_of_alias",
+                        lambda a: "pixel-8a" if a == "android-phone" else None)
+    monkeypatch.setattr(devices, "get", lambda n: phone if n == "pixel-8a" else None)
+    sent_cmds = []
+
+    async def fake_cmd(device, command, params=None, timeout=10.0):
+        sent_cmds.append((device["name"], command, params))
+        return {"ok": True}
+
+    async def fake_send(title, body, **kw):
+        return {"sent": 1, "failed": 0}
+
+    monkeypatch.setattr(devices, "send_command", fake_cmd)
+    monkeypatch.setattr(webpush, "send", fake_send)
+
+    out = asyncio.run(q.send_done_notification("c1", {"device": "android-phone"}))
+    assert sent_cmds == [("pixel-8a", "notify",
+                          {"text": "Odysseus: Reply ready: Phone case. Found a case."})]
+    assert out["listeners"] == {"pixel-8a": "shown"}
+
+    sent_cmds.clear()
+    asyncio.run(q.send_done_notification("c1", {}))           # all devices
+    assert [c[0] for c in sent_cmds] == ["pixel-8a"]          # only ones with a listener
+
+    sent_cmds.clear()
+    asyncio.run(q.send_done_notification("c1", {"endpoint": "https://fcm/x"}))
+    assert sent_cmds == []                                    # "this browser" is push only
 
 
 def test_stop_sends_nothing_and_runs_nothing(q, monkeypatch):

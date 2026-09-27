@@ -82,6 +82,8 @@ async function _targets() {
         const n = s.linked_to || s.device;
         if (n) names.add(n);
       }
+      // Devices with a Modes listener get it on the phone itself too.
+      for (const dev of d.devices || []) if (dev.endpoint) names.add(dev.name);
     }
   } catch (_) { /* fall through */ }
   if (!names.size) {
