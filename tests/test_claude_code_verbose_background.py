@@ -64,6 +64,8 @@ def cli(tmp_path, monkeypatch):
     import src.doc_pdf as doc_pdf
     monkeypatch.setattr(doc_pdf, "render_markdown_pdf", no_pdf)
     jobs._JOBS.clear()
+    # These drive a fake `claude` CLI, so pin the engine (the default is OpenCode).
+    monkeypatch.setattr(cct, "DEFAULT_ENGINE", "claude")
     return make
 
 
@@ -106,7 +108,7 @@ def test_an_unnamed_model_is_sonnet_and_shown(cli, tmp_path):
     assert argv[argv.index("--model") + 1] == "sonnet"
     assert out["model"] == "sonnet"
     assert "model sonnet" in out["console"]
-    assert "[Approve plan · runs on sonnet]" in out["approval"]["approve"]
+    assert "[Approve plan · runs on Claude Code · sonnet]" in out["approval"]["approve"]
     assert approvals.get(out["session_id"])["model"] == "sonnet"
     # Verbose, and the card knows it can be backgrounded.
     assert "  ⎿ a" in out["console"] and "✻ Look at the README first." in out["console"]
@@ -165,7 +167,7 @@ def test_a_running_run_can_be_sent_to_the_background(cli, tmp_path, monkeypatch)
     sid, msg = sm.msgs[-1]
     assert sid == "chat-1" and msg.role == "assistant"
     assert f"Background Claude Code job `{job.id}` finished" in msg.content
-    assert "All done." in msg.content and "[Approve plan · runs on sonnet]" in msg.content
+    assert "All done." in msg.content and "[Approve plan · runs on Claude Code · sonnet]" in msg.content
     assert msg.metadata["tool_events"][0]["tool"] == "claude_code"
 
 
@@ -203,7 +205,7 @@ def test_routes_panel_and_rules_are_wired():
     from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
     desc = next(t["function"]["description"] for t in FUNCTION_TOOL_SCHEMAS
                 if t.get("function", {}).get("name") == "claude_code")
-    assert "gh pr create" in desc and "on which model" in desc
+    assert "gh pr create" in desc and "which engine and model" in desc
     rules = open(os.path.join(here, "src", "agent_loop.py")).read()
     assert "NOT for chores: committing, pushing, opening a PR" in rules
 

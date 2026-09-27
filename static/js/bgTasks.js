@@ -50,6 +50,98 @@ document.addEventListener('click', async (ev) => {
   }
 }, true);
 
+// ── "Watch here": pull a background run's live output back into the chat ─
+const _watching = new Map();          // job id -> interval
+
+function _currentSid() {
+  const cm = window.chatModule;
+  return cm && typeof cm.currentSessionId === 'function' ? cm.currentSessionId() : null;
+}
+
+export async function watchInChat(jobId, chatId) {
+  if (chatId && chatId !== _currentSid() && window.sessionModule && window.sessionModule.selectSession) {
+    await window.sessionModule.selectSession(chatId);
+    await new Promise((r) => setTimeout(r, 600));
+  }
+  const box = document.getElementById('chat-history');
+  if (!box) return;
+  let card = document.querySelector(`.bg-watch[data-job="${jobId}"]`);
+  if (!card) {
+    card = document.createElement('div');
+    card.className = 'bg-watch';
+    card.dataset.job = jobId;
+    card.innerHTML = `<div class="bg-watch-head"><span class="bg-dot running"></span>
+      <span class="bg-watch-title">Background job ${_esc(jobId)}</span>
+      <span class="bg-watch-meta"></span>
+      <button type="button" class="bg-watch-stop" data-stop-watch="${_esc(jobId)}">Stop</button>
+      <button type="button" class="bg-watch-close" title="Hide (keeps running)">×</button></div>
+      <pre class="bg-watch-log">Connecting…</pre>`;
+    box.appendChild(card);
+    card.querySelector('.bg-watch-close').addEventListener('click', () => {
+      clearInterval(_watching.get(jobId)); _watching.delete(jobId); card.remove();
+    });
+    card.querySelector('.bg-watch-stop').addEventListener('click', async () => {
+      if (!confirm('Stop this run? Anything it has already changed stays changed.')) return;
+      try { await _call(`${API}/${encodeURIComponent(jobId)}/stop`, 'POST'); } catch (e) { _toast(e.message); }
+    });
+  }
+  card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  const log = card.querySelector('.bg-watch-log');
+  const tick = async () => {
+    let j;
+    try { j = await _call(`${API}/${encodeURIComponent(jobId)}?lines=120`); } catch (_) { return; }
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+    log.textContent = [j.banner, ...(j.lines || [])].filter(Boolean).join('\n');
+    if (atBottom) log.scrollTop = log.scrollHeight;
+    card.querySelector('.bg-watch-title').textContent =
+      `${j.engine === 'opencode' ? 'OpenCode' : 'Claude Code'} ${j.action} · ${j.model}`;
+    card.querySelector('.bg-watch-meta').textContent = `${j.status} · ${_dur(j.elapsed_s)}`;
+    if (j.status !== 'running') {
+      clearInterval(_watching.get(jobId)); _watching.delete(jobId);
+      refreshCount();
+      card.querySelector('.bg-dot').className = `bg-dot ${j.status === 'done' ? 'ok' : 'bad'}`;
+      const stop = card.querySelector('.bg-watch-stop'); if (stop) stop.remove();
+      // The server posts the result into the chat; show it.
+      setTimeout(() => {
+        if (window.sessionModule && window.sessionModule.selectSession && _currentSid()) {
+          window.sessionModule.selectSession(_currentSid());
+        }
+      }, 1500);
+    }
+  };
+  if (!_watching.has(jobId)) _watching.set(jobId, setInterval(tick, 2000));
+  tick();
+}
+
+// ── the chip above the composer ─────────────────────────────────────────
+function _renderChip(jobs) {
+  const chip = document.getElementById('bg-chip');
+  if (!chip) return;
+  const sid = _currentSid();
+  const running = jobs.filter((j) => j.status === 'running' && j.background);
+  const here = running.filter((j) => j.chat_session_id === sid);
+  if (!running.length) { chip.hidden = true; chip.innerHTML = ''; return; }
+  chip.hidden = false;
+  const first = here[0] || running[0];
+  chip.innerHTML = `<span class="bg-dot running"></span>
+    <span>${here.length ? `${here.length} background task${here.length > 1 ? 's' : ''} running in this chat`
+                        : `${running.length} background task${running.length > 1 ? 's' : ''} running`}</span>
+    <span class="bg-chip-what">${_esc(first.prompt || first.action)}</span>
+    <button type="button" data-chip-watch="${_esc(first.id)}" data-chip-chat="${_esc(first.chat_session_id || '')}">Watch here</button>
+    <button type="button" data-chip-all>All tasks</button>`;
+}
+
+document.addEventListener('click', (ev) => {
+  const w = ev.target.closest('[data-chip-watch],[data-chip-all],[data-watch]');
+  if (!w) return;
+  ev.preventDefault();
+  if (w.dataset.chipAll !== undefined) { openPanel(); return; }
+  const id = w.dataset.chipWatch || w.dataset.watch;
+  const chat = w.dataset.chipChat || w.dataset.watchChat || '';
+  if (w.dataset.watch) _close();
+  watchInChat(id, chat);
+});
+
 // ── sidebar count ────────────────────────────────────────────────────────
 let _running = 0;
 export async function refreshCount() {
@@ -58,6 +150,7 @@ export async function refreshCount() {
   try {
     const d = await _call(API);
     _running = (d.jobs || []).filter((j) => j.status === 'running' && j.background).length;
+    _renderChip(d.jobs || []);
   } catch (_) { return; }
   badge.hidden = !_running;
   badge.textContent = String(_running);
@@ -91,6 +184,7 @@ function _jobRow(j) {
       <div class="bg-job-actions">
         <button type="button" data-toggle="${_esc(j.id)}">${j.id === _open ? 'Hide output' : 'Show output'}</button>
         ${j.status === 'running' && !j.background ? `<button type="button" data-bg="${_esc(j.id)}">Send to background</button>` : ''}
+        ${j.status === 'running' && j.background ? `<button type="button" data-watch="${_esc(j.id)}" data-watch-chat="${_esc(j.chat_session_id || '')}">Watch in chat</button>` : ''}
         ${j.status === 'running' ? `<button type="button" class="danger" data-stop="${_esc(j.id)}">Stop</button>` : ''}
         ${j.chat_session_id ? `<a href="#${_esc(j.chat_session_id)}" data-chat="${_esc(j.chat_session_id)}">Open chat</a>` : ''}
       </div>
@@ -202,10 +296,10 @@ function _wire() {
   }
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && _panel) _close(); });
   refreshCount();
-  setInterval(() => { if (document.visibilityState === 'visible') refreshCount(); }, 15000);
+  setInterval(() => { if (document.visibilityState === 'visible') refreshCount(); }, 5000);
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _wire);
 else _wire();
 
-export default { openPanel, refreshCount };
+export default { openPanel, refreshCount, watchInChat };
