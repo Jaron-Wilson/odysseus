@@ -2227,6 +2227,12 @@ export function addMessage(role, content, modelName, metadata) {
             node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
+            // A Needs to know suggestion: offer Add / No thanks again here, so
+            // one left unanswered can still be answered after a reload.
+            if (ev.tool === 'chat_memory' && window.chatNotes) {
+              const sm = /Suggested for Needs to know \(id ([0-9a-f]{8})\): ([^\n]+)/.exec(ev.output || '');
+              if (sm) threadWrap.appendChild(window.chatNotes.suggestionPrompt({ id: sm[1], text: sm[2] }));
+            }
             // A question the agent asked (ask_user) is only drawn live, so a
             // reload or a dismissed card lost it. Offer it again from here.
             if (ev.tool === 'ask_user' && ev.command) {

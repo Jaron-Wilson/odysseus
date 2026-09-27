@@ -1041,16 +1041,17 @@ FUNCTION_TOOL_SCHEMAS = [
         "function": {
             "name": "chat_memory",
             "description": (
-                "This chat's 'Needs to know' notes, shown to you on every turn and kept across "
-                "long gaps and compaction. Update them when the task, a decision or what is "
-                "pending changes. Keep them short: what you would need if the conversation "
-                "were cut off."
+                "This chat's 'Needs to know': a short list of facts kept for this chat and shown to "
+                "you on every turn (like memory, but per chat). 'suggest' proposes an item and the "
+                "user decides whether to keep it; 'add' only when the user asked; 'remove' an item "
+                "that is done or wrong."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["get", "set", "append"], "description": "'set' replaces the notes, 'append' adds a line, 'get' reads them."},
-                    "text": {"type": "string", "description": "For set/append: the notes, e.g. 'Task: PR for will-scheduling-feature\\nWaiting on: Will to merge'."},
+                    "action": {"type": "string", "enum": ["suggest", "add", "remove", "list"], "description": "'suggest' (the user is asked), 'add' (only when the user asked), 'remove' by id, 'list'."},
+                    "text": {"type": "string", "description": "For suggest/add: one fact, e.g. 'Waiting on Will to merge PR #3'."},
+                    "id": {"type": "string", "description": "For remove: the item's id, shown in brackets in Needs to know."},
                 },
                 "required": ["action"]
             }

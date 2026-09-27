@@ -1030,6 +1030,11 @@ def setup_chat_routes(
                                         full_response += data["delta"]
                                         _stream_set(session, partial=full_response)
                                     yield chunk
+                                elif data.get("ui_event"):
+                                    # UI events carry no "type" (the screen-control
+                                    # approval popup is one), so the allowlist above
+                                    # dropped them and the popup never appeared.
+                                    yield chunk
                                 elif data.get("type") == "fallback":
                                     # Selected model failed; a fallback answered.
                                     # Forward the notice and remember the real model.
@@ -1207,6 +1212,11 @@ def setup_chat_routes(
                                     elif data.get("type") == "tool_start":
                                         _agent_tool_calls += 1
                                     yield chunk
+                                elif data.get("ui_event"):
+                                    # UI events carry no "type" (the screen-control
+                                    # approval popup is one), so the allowlist above
+                                    # dropped them and the popup never appeared.
+                                    yield chunk
                                 elif data.get("type") == "fallback":
                                     # Selected model failed; a fallback answered.
                                     # Forward the notice and remember the real
@@ -1354,7 +1364,8 @@ def setup_chat_routes(
         revoked = 0
         try:
             from src import screen_control_approvals as _approvals
-            revoked = _approvals.revoke(owner=get_current_user(request) or "")
+            revoked = _approvals.revoke(owner=get_current_user(request) or "",
+                                        keep_newer_than=120)
         except Exception:
             logger.exception("Could not release screen control on stop")
         return {"stopped": stopped, "screen_control_revoked": revoked}
@@ -1372,16 +1383,43 @@ def setup_chat_routes(
         from src import chat_memory
         return chat_memory.get(session_id)
 
-    @router.put("/api/chat/memory/{session_id}")
-    async def chat_memory_put(request: Request, session_id: str) -> Dict[str, Any]:
+    @router.post("/api/chat/memory/{session_id}")
+    async def chat_memory_add(request: Request, session_id: str) -> Dict[str, Any]:
+        """Add an item yourself."""
         _verify_session_owner(request, session_id)
         from src import chat_memory
         try:
             body = await request.json()
         except Exception:
             body = {}
-        return chat_memory.set_text(session_id, str(body.get("text") or ""), by="user",
-                                    owner=get_current_user(request) or "")
+        try:
+            chat_memory.add(session_id, str(body.get("text") or ""), by="you",
+                            owner=get_current_user(request) or "")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return chat_memory.get(session_id)
+
+    @router.patch("/api/chat/memory/{session_id}/{item_id}")
+    async def chat_memory_update(request: Request, session_id: str, item_id: str) -> Dict[str, Any]:
+        """Edit an item, or accept a suggestion ({"accept": true})."""
+        _verify_session_owner(request, session_id)
+        from src import chat_memory
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if chat_memory.update(session_id, item_id, text=body.get("text"),
+                              accept=bool(body.get("accept"))) is None:
+            raise HTTPException(404, "No such item (it may have been removed)")
+        return chat_memory.get(session_id)
+
+    @router.delete("/api/chat/memory/{session_id}/{item_id}")
+    async def chat_memory_remove(request: Request, session_id: str, item_id: str) -> Dict[str, Any]:
+        """Remove an item, or decline a suggestion."""
+        _verify_session_owner(request, session_id)
+        from src import chat_memory
+        chat_memory.remove(session_id, item_id)
+        return chat_memory.get(session_id)
 
     @router.get("/api/chat/queue/{session_id}")
     async def chat_queue_get(request: Request, session_id: str) -> Dict[str, Any]:

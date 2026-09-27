@@ -190,16 +190,24 @@ def active_grant(server_id: str, owner: str = "") -> Optional[dict]:
     return None
 
 
-def revoke(server_id: str = "", owner: str = "") -> int:
+def revoke(server_id: str = "", owner: str = "", keep_newer_than: float = 0) -> int:
     """Drop live grants, for a server or all of them. Returns how many.
 
     Owner-scoped when an owner is given, for the same reason active_grant
     is: stopping your own run must not quietly disarm someone else's.
+
+    keep_newer_than spares grants given in the last that-many seconds. Seen
+    live: the user approved, the approved run did not show on their page,
+    so they pressed regenerate five seconds later; its Stop revoked the
+    grant they had just given, and the new turn asked for approval again.
     """
     data = _prune(_load())
     dropped = 0
+    now = time.time()
     for key, rec in list(data.items()):
         if rec.get("status") != "approved":
+            continue
+        if keep_newer_than and now - (rec.get("decided_at") or 0) < keep_newer_than:
             continue
         if server_id and rec.get("server_id") != server_id:
             continue

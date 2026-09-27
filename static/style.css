@@ -36876,3 +36876,42 @@ body.theme-frosted .modal {
   border: 1px solid color-mix(in srgb, var(--accent, var(--fg)) 45%, transparent);
 }
 .ask-user-relaunch:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+
+/* Needs to know as a list (chatNotes.js). */
+.chat-notes-menu { min-width: 320px; max-width: 380px; max-height: 60vh; overflow: auto; }
+.chat-notes-btn.has-suggestion::after {
+  content: ""; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--accent, #c96);
+}
+.cn-count { font-weight: 400; opacity: .6; margin-left: 4px; }
+.cn-sub { padding-top: 0; }
+.cn-section { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; opacity: .6; margin: 8px 8px 2px; }
+.cn-item {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent); font-size: 13px;
+}
+.cn-item:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.cn-suggested { border: 1px dashed color-mix(in srgb, var(--fg) 22%, transparent); margin: 4px 0; }
+.cn-text { flex: 1; min-width: 0; overflow-wrap: anywhere; cursor: text; }
+.cn-meta { font-size: 11px; opacity: .55; white-space: nowrap; }
+.cn-x { background: none; border: 0; color: inherit; opacity: .55; cursor: pointer; font-size: 16px; line-height: 1; }
+.cn-x:hover { opacity: 1; }
+.cn-btn {
+  padding: 3px 10px; border-radius: 8px; cursor: pointer; color: inherit; background: none; font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent);
+}
+.cn-accept { border-color: color-mix(in srgb, var(--accent, var(--fg)) 60%, transparent); }
+.cn-add { display: flex; gap: 6px; margin-top: 8px; }
+.cn-input {
+  flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 8px;
+  background: var(--input-bg, transparent); color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.cm-suggest {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 6px 18px;
+  padding: 8px 10px; border-radius: 10px; font-size: 13px; max-width: 640px;
+  border: 1px dashed color-mix(in srgb, var(--accent, var(--fg)) 45%, transparent);
+}
+.cm-q { font-weight: 600; }
+.cm-text { flex: 1 1 200px; opacity: .85; }
+.cm-done { opacity: .65; font-size: 12.5px; }
