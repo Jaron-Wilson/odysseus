@@ -78,6 +78,16 @@ async def _resume_stream(sess, sm, context, agent_loop=None, *,
     from core.models import ChatMessage
 
     st = {"full": "", "tools": [], "round": 1}
+    if not context_length:
+        # The setup an ordinary send does (auth headers, model, and the
+        # context sized to the model). Without it a resumed turn ran on a
+        # 32K default: seen live, qwen3.8-27b (262K) "was given a 32,000-token
+        # budget" and dropped earlier messages, losing the thread.
+        try:
+            from src.chat_queue import _prepare
+            context, context_length = await _prepare(sess, sess.id, context)
+        except Exception as e:
+            logger.debug("resumed turn setup skipped: %s", e)
     try:
         async for chunk in agent_loop(
             sess.endpoint_url, sess.model, context,
