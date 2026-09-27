@@ -1898,6 +1898,44 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+def _deliver_queued_messages(session_id: Optional[str], messages: List[Dict]) -> List[Dict]:
+    """Take whatever the user queued for this chat and add it to the running
+    turn: saved in the chat as the user's messages, and added to the model's
+    context. Returns what was delivered, for the page."""
+    if not session_id:
+        return []
+    try:
+        from src import chat_queue
+        items = chat_queue.take_all(session_id)
+    except Exception:
+        return []
+    if not items:
+        return []
+    try:
+        from src.ai_interaction import get_session_manager
+        from core.models import ChatMessage
+        sm = get_session_manager()
+        if sm:
+            for it in items:
+                sm.add_message(session_id, ChatMessage(
+                    "user", it["text"], metadata={"source": "queued_midturn"}))
+            sm.save_sessions()
+    except Exception as e:
+        logger.warning("[agent] could not save queued messages for %s: %s", session_id, e)
+    note = "\n\n".join(it["text"] for it in items)
+    text = ("[The user sent this while you were working. Take it into account now, "
+            "then carry on.]\n" + note)
+    # Two user messages in a row are refused by some backends, so fold into
+    # a trailing user message (text tool results) rather than add another.
+    last = messages[-1] if messages else None
+    if last and last.get("role") == "user" and isinstance(last.get("content"), str):
+        last["content"] = last["content"] + "\n\n" + text
+    else:
+        messages.append({"role": "user", "content": text})
+    logger.info("[agent] delivered %d queued message(s) mid-turn in %s", len(items), session_id)
+    return items
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -3187,6 +3225,13 @@ async def stream_agent_loop(
         _append_tool_results(messages, round_response, native_tool_calls,
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning)
+
+        # Messages the user queued while this turn was running are read now,
+        # at the tool-call boundary, in this same turn, the way Claude Code
+        # does it, instead of waiting for the whole turn to end.
+        _delivered = _deliver_queued_messages(session_id, messages)
+        if _delivered:
+            yield f'data: {json.dumps({"type": "queued_delivered", "items": _delivered})}\n\n'
 
         # Emit agent_step event
         yield (

@@ -8237,7 +8237,18 @@ button.hamburger {
   background: none; border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
   color: inherit; border-radius: 8px; padding: 2px 8px; font-size: 12px; cursor: pointer;
 }
-.chat-queue-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+/* Queued messages read as the user's own, greyed until the agent reads them
+   (as in Claude Code). */
+.chat-queue-item {
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 3px 0;
+}
+.chat-queue-item .chat-queue-text {
+  flex: 0 1 auto; max-width: 80%; padding: 6px 10px; border-radius: 12px;
+  border: 1px dashed color-mix(in srgb, var(--fg) 22%, transparent);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  white-space: pre-wrap;
+}
 .chat-queue-n {
   flex: 0 0 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
   font-size: 11px; background: color-mix(in srgb, var(--fg) 12%, transparent);

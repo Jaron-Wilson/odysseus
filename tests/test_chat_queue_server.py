@@ -312,9 +312,57 @@ def test_routes_and_composer_are_wired():
                  '"/api/chat/queue/{session_id}/notify"'):
         assert path in routes
     stop = routes[routes.index("async def chat_stop"):]
-    assert "chat_queue.clear(session_id)" in stop[:600]
+    assert "chat_queue.after_stop(session_id)" in stop[:900]
     js = open(os.path.join(here, "static", "js", "chat.js"), encoding="utf-8").read()
     assert "fd.append('notify', notifyDone.payload());" in js
     assert "_queueCall(sid, '/claim', 'POST')" in js
     html = open(os.path.join(here, "static", "index.html"), encoding="utf-8").read()
     assert 'id="notify-done-btn"' in html
+
+
+def test_stop_sends_the_queue_next_like_claude_code(q, monkeypatch):
+    """Escape in Claude Code interrupts and then sends what is queued."""
+    sess, sm = _install(monkeypatch)
+    import src.agent_loop as al
+    monkeypatch.setattr(al, "stream_agent_loop", _fake_loop("On it."))
+    q.add("c1", "actually, use the other repo", notify={"label": "all devices"})
+
+    async def run():
+        agent_runs.start("c1", _fake_loop("slow", delay=5)("", "", []))
+        await asyncio.sleep(0.02)
+        agent_runs.stop("c1")
+        q.after_stop("c1")
+        await asyncio.sleep(0.5)
+
+    asyncio.run(run())
+    assert [m.content for m in sess.history if m.role == "user"] == ["actually, use the other repo"]
+    assert q.get("c1")["items"] == []
+
+
+def test_stop_with_nothing_queued_drops_the_notify(q):
+    q.set_notify("c1", {"label": "all devices"})
+    q.after_stop("c1")
+    assert q.get("c1")["notify"] is None
+
+
+def test_queued_messages_are_read_mid_turn(q, monkeypatch):
+    """At a tool-call boundary the running turn takes the queue."""
+    sess, sm = _install(monkeypatch)
+    from src.agent_loop import _deliver_queued_messages
+    q.add("c1", "also bump the version")
+    q.add("c1", "and open the PR against dev")
+    # Text tool results arrive as a user message: fold into it.
+    messages = [{"role": "user", "content": "do it"}, {"role": "assistant", "content": "x"},
+                {"role": "user", "content": "[tool result] ok"}]
+    got = _deliver_queued_messages("c1", messages)
+    assert [g["text"] for g in got] == ["also bump the version", "and open the PR against dev"]
+    assert len(messages) == 3 and "also bump the version" in messages[-1]["content"]
+    assert "while you were working" in messages[-1]["content"]
+    assert [m.content for m in sess.history] == ["also bump the version", "and open the PR against dev"]
+    assert q.get("c1")["items"] == []
+    # Native tool results end in a tool message: a new user message follows.
+    q.add("c1", "one more thing")
+    messages = [{"role": "tool", "content": "ok", "tool_call_id": "1"}]
+    _deliver_queued_messages("c1", messages)
+    assert messages[-1]["role"] == "user" and "one more thing" in messages[-1]["content"]
+    assert _deliver_queued_messages("c1", messages) == []

@@ -1195,6 +1195,7 @@ def setup_chat_routes(
                                     # never reached the page, so a long run showed
                                     # only a spinner.
                                     "tool_start", "tool_progress", "tool_output", "agent_step",
+                                    "queued_delivered",
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
                                     "rounds_exhausted",
@@ -1341,8 +1342,8 @@ def setup_chat_routes(
     async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
         _verify_session_owner(request, session_id)
         stopped = agent_runs.stop(session_id)
-        # Stop means stop: nothing queued goes out after it, and no "done" ping.
-        chat_queue.clear(session_id)
+        # Like Escape in Claude Code: anything queued goes out next.
+        chat_queue.after_stop(session_id)
         # Stop has to mean the computer too. Cancelling the task ends this
         # loop, but the screen-control grant would outlive it for the rest
         # of its window, so the next run could pick straight up where this

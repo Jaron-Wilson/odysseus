@@ -36,10 +36,17 @@ import './bgTasks.js';
   let isStreaming = false;
 
   // ── Message queue ────────────────────────────────────────────────────────
-  // Pressing Enter mid-reply used to STOP the reply. Now, with text in the
-  // box, it queues the message instead ("...and send it to my phone"), and
-  // queued messages go out one at a time as each reply finishes. An empty
-  // box still means Stop, and Stop clears the queue: stopping means stop.
+  // Modeled on Claude Code's queue (code.claude.com/docs/en/interactive-mode):
+  // - Enter mid-reply queues the message; queued messages show greyed until
+  //   the agent reads them.
+  // - The agent reads them at its next tool-call boundary, in the same turn
+  //   (src/agent_loop.py _deliver_queued_messages); whatever is left when the
+  //   reply ends is sent next, one per message, in order.
+  // - Stop (empty box + Enter, or the button) interrupts the reply, keeps
+  //   what it wrote, and the queue is sent next. Clear empties it.
+  // - Up arrow on the box's first line takes queued messages back into the
+  //   box to edit, one per line. Ctrl+Enter sends everything queued now,
+  //   interrupting the reply.
   //
   // The queue is kept on the server (src/chat_queue.py), so it still goes
   // out with this page closed. With the page open, the page claims the next
@@ -47,6 +54,7 @@ import './bgTasks.js';
   // server sends it itself. _queues is this page's copy of the server's.
   const _queues = new Map();               // sessionId -> [{id, text}, ...]
   let _restoreDraft = null;                // what the user was typing when a queued send went out
+  let _sendNowText = null;                 // Ctrl+Enter: sent as soon as the interrupted reply ends
   const _queueWatch = new Set();           // chats whose queue the server may be sending
 
   function _escQ(s) {
@@ -83,19 +91,18 @@ import './bgTasks.js';
     box.hidden = false;
     box.innerHTML = `
       <div class="chat-queue-head">
-        <span>Queued: sends when the current reply finishes</span>
+        <span>${isStreaming ? 'Queued: read at the next step, or when this reply ends' : 'Sending next…'}</span>
         <span class="chat-queue-actions">
-          ${isStreaming ? '<button type="button" data-queue-stop>Stop now</button>' : ''}
+          ${isStreaming ? '<button type="button" data-queue-sendnow title="Interrupt the reply and send these now (Ctrl+Enter)">Send now</button>' : ''}
           <button type="button" data-queue-clear>Clear</button>
         </span>
       </div>
       ${q.map((it) => `
         <div class="chat-queue-item">
-          <span class="chat-queue-n">${q.indexOf(it) + 1}</span>
           <span class="chat-queue-text" title="${_escQ(it.text)}">${_escQ(it.text)}</span>
           ${it.id ? `<button type="button" class="chat-queue-x" data-queue-remove="${_escQ(it.id)}" title="Remove" aria-label="Remove">×</button>` : ''}
         </div>`).join('')}
-      <div class="chat-queue-note">Saved on the server: these still send if you leave the page.</div>`;
+      <div class="chat-queue-note">↑ to edit · Ctrl+Enter to send now · Stop sends these next · kept if you leave the page</div>`;
   }
 
   // Pull the server's copy. If the server started sending a queued message
@@ -149,6 +156,13 @@ import './bgTasks.js';
     if (isStreaming) return;
     const sid = sessionModule.getCurrentSessionId();
     if (!sid) return;
+    if (_sendNowText !== null) {
+      // Ctrl+Enter: everything queued goes out together, as one message.
+      const text = _sendNowText;
+      _sendNowText = null;
+      _submitText(text);
+      return;
+    }
     let item = null;
     try { item = (await _queueCall(sid, '/claim', 'POST')).item; } catch (_) { /* server drains it */ }
     if (!item) { refreshQueue(sid); return; }
@@ -162,14 +176,98 @@ import './bgTasks.js';
     const q = (_queues.get(sid) || []).filter((it) => it.id !== item.id);
     _setQueue(sid, q.length ? q : null);
     renderQueue();
+    _submitText(item.text);
+  }
+
+  function _submitText(text) {
+    const ta = document.getElementById('message');
+    if (!ta) return;
     // Whatever is half-typed in the box is put back once the send has read
     // the queued text (see updateSubmitButton's 'streaming' branch).
     _restoreDraft = ta.value && ta.value.trim() ? ta.value : null;
-    ta.value = item.text;
+    ta.value = text;
     const form = document.getElementById('chat-form');
     if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
     else if (form) form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
   }
+
+  function _stopReply() {
+    const ta = document.getElementById('message');
+    const draft = ta ? ta.value : '';
+    if (ta) ta.value = '';                   // empty box + submit = Stop
+    handleChatSubmit({ preventDefault() {} });
+    if (ta && draft) ta.value = draft;
+  }
+
+  // Ctrl+Enter mid-reply: interrupt, then send everything queued (and what is
+  // in the box) as one message, so the agent reads it all at once.
+  async function sendQueuedNow() {
+    const sid = sessionModule.getCurrentSessionId();
+    if (!sid || !isStreaming) return false;
+    const ta = document.getElementById('message');
+    const typed = ta ? (ta.value || '').trim() : '';
+    const texts = (_queues.get(sid) || []).map((it) => it.text);
+    if (typed) texts.push(typed);
+    if (!texts.length) return false;
+    _queues.delete(sid);
+    renderQueue();
+    try { await _queueCall(sid, '', 'DELETE'); } catch (_) { /* best effort */ }
+    if (ta) { ta.value = ''; if (uiModule.autoResize) uiModule.autoResize(ta); }
+    _sendNowText = texts.join('\n\n');
+    _stopReply();
+    return true;
+  }
+
+  // Up arrow on the first line: take queued messages back into the box, one
+  // per line, ahead of anything already typed. They leave the queue.
+  async function takeBackQueued() {
+    const sid = sessionModule.getCurrentSessionId();
+    const q = (sid && _queues.get(sid)) || [];
+    const ta = document.getElementById('message');
+    if (!q.length || !ta) return false;
+    const texts = q.map((it) => it.text);
+    _queues.delete(sid);
+    renderQueue();
+    _queueCall(sid, '', 'DELETE').catch(() => {});
+    ta.value = texts.join('\n') + (ta.value ? '\n' + ta.value : '');
+    try { ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (_) {}
+    if (uiModule.autoResize) uiModule.autoResize(ta);
+    if (window._updateSendBtnIcon) window._updateSendBtnIcon();
+    return true;
+  }
+
+  // The agent read these mid-turn: they are the user's messages now.
+  export function markQueuedDelivered(items) {
+    const sid = sessionModule.getCurrentSessionId();
+    if (!sid || !Array.isArray(items) || !items.length) return;
+    const ids = new Set(items.map((it) => it.id));
+    const texts = new Set(items.map((it) => it.text));
+    _setQueue(sid, (_queues.get(sid) || []).filter((it) => !ids.has(it.id) && !texts.has(it.text)));
+    renderQueue();
+    for (const it of items) {
+      try { chatRenderer.addMessage('user', it.text, null, { source: 'queued_midturn' }); } catch (_) {}
+    }
+    uiModule.scrollHistory();
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (!e.target || e.target.id !== 'message' || e.isComposing) return;
+    const sid = sessionModule.getCurrentSessionId();
+    const hasQueue = !!(sid && (_queues.get(sid) || []).length);
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && isStreaming) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      sendQueuedNow();
+    } else if (e.key === 'ArrowUp' && hasQueue && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      const ta = e.target;
+      const firstBreak = ta.value.indexOf('\n');
+      const onFirstLine = firstBreak === -1 || ta.selectionStart <= firstBreak;
+      if (!onFirstLine) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      takeBackQueued();
+    }
+  }, true);
 
   // The chat on screen changes in several places with no event to hook, so
   // watch for it cheaply and show that chat's own queue. While a chat has a
@@ -188,7 +286,7 @@ import './bgTasks.js';
   });
 
   document.addEventListener('click', (ev) => {
-    const t = ev.target.closest('[data-queue-remove],[data-queue-clear],[data-queue-stop]');
+    const t = ev.target.closest('[data-queue-remove],[data-queue-clear],[data-queue-sendnow]');
     if (!t) return;
     ev.preventDefault();
     const sid = sessionModule.getCurrentSessionId();
@@ -201,12 +299,8 @@ import './bgTasks.js';
         .catch(() => refreshQueue(sid));
     } else if (t.dataset.queueClear !== undefined) {
       clearQueue(sid);
-    } else if (t.dataset.queueStop !== undefined) {
-      const ta = document.getElementById('message');
-      const draft = ta ? ta.value : '';
-      if (ta) ta.value = '';                 // empty box = Stop
-      handleChatSubmit({ preventDefault() {} });
-      if (ta && draft) ta.value = draft;
+    } else if (t.dataset.queueSendnow !== undefined) {
+      sendQueuedNow();
     }
   });
   // Continuous stall watchdog: while streaming, if the SSE stream produces
@@ -490,7 +584,8 @@ import './bgTasks.js';
         if (window._updateSendBtnIcon) window._updateSendBtnIcon();
         return;
       }
-      clearQueue(sessionModule.getCurrentSessionId());   // an explicit Stop stops everything
+      // Stop interrupts the reply; anything queued is sent next (Claude Code's
+      // Escape). Clear, in the queue panel, is what empties it.
     }
 
     // If currently streaming, stop it
@@ -787,7 +882,11 @@ import './bgTasks.js';
     // Reset tracking variables at start
     currentAccumulated = '';
     currentHolder = null;
-    
+    // Declared out here because the catch below reads it: declared inside the
+    // try, every Stop (an abort) threw "streamingTTS is not defined" halfway
+    // through the abort handling.
+    let streamingTTS = false;
+
     try {
       // Re-enable auto-scroll when user sends a message
       uiModule.setAutoScroll(true);
@@ -1257,7 +1356,7 @@ import './bgTasks.js';
       let isThinking = false;
       let thinkingStartTime = null;
       // Streaming TTS: synthesize sentence-by-sentence during streaming
-      const streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
+      streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
       if (streamingTTS) window.aiTTSManager.streamingStart();
       // Multi-bubble agent tracking
       let roundHolder = holder;       // Current AI text bubble (changes per round)
@@ -2313,6 +2412,10 @@ import './bgTasks.js';
                 }, 50);
                 uiModule.scrollHistory();
 
+              } else if (json.type === 'queued_delivered') {
+                // The agent read queued messages at a tool-call boundary.
+                if (_isBg) continue;
+                markQueuedDelivered(json.items);
               } else if (json.type === 'tool_progress') {
                 // Long-running subprocess (bash, python) is still in
                 // flight — refresh the running tool card with the
@@ -3769,6 +3872,9 @@ import './bgTasks.js';
             if (liveTools.length || liveRunning) { queueLiveTools(); continue; }
             if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
             renderDelta();
+          } else if (json.type === 'queued_delivered') {
+            rich = true;
+            markQueuedDelivered(json.items);
           } else if (json.type === 'agent_step') {
             rich = true;
             liveRound = Number(json.round) || liveRound + 1;
