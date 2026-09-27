@@ -37,6 +37,7 @@ from src.constants import DATA_DIR
 
 PROMPT_DIR = os.path.join(DATA_DIR, "claude_code_prompts")
 PROGRESS_INTERVAL_S = 1.5
+STREAM_LINE_LIMIT = 64 * 1024 * 1024
 # Enough of the console to follow along. The whole transcript is kept on the
 # job (Background tasks) and in the saved console.
 PROGRESS_TAIL_LINES = 80
@@ -613,6 +614,11 @@ class ClaudeCodeTool:
             # init, where it keeps burning CPU and tokens on a run nothing is
             # reading any more, and the user has no way to stop it.
             preexec_fn=_die_with_parent,
+            # One stream-json event per line, and an event carrying a big tool
+            # result (a whole file read) passes asyncio's default 64 KB line
+            # limit. Seen live: two 110 KB+ events killed the reader, the pipe
+            # was never drained, and the finished run was never noticed.
+            limit=STREAM_LINE_LIMIT,
         )
         # Claude takes the prompt over stdin, never argv: no shell, no escaping,
         # no length cap. OpenCode takes it positionally, so just close stdin.
@@ -692,7 +698,14 @@ class ClaudeCodeTool:
         async def _read_stdout():
             nonlocal final_text, is_error, thinking_tokens, session_id
             while True:
-                line = await proc.stdout.readline()
+                try:
+                    line = await proc.stdout.readline()
+                except (asyncio.LimitOverrunError, ValueError):
+                    # A line past even the raised limit: skip it rather than
+                    # stop reading, which would stall the run's end.
+                    await proc.stdout.read(STREAM_LINE_LIMIT)
+                    _add("… (an oversized event was skipped)")
+                    continue
                 if not line:
                     break
                 raw = line.decode("utf-8", errors="replace").strip()
@@ -732,7 +745,11 @@ class ClaudeCodeTool:
 
         async def _read_stderr():
             while True:
-                line = await proc.stderr.readline()
+                try:
+                    line = await proc.stderr.readline()
+                except (asyncio.LimitOverrunError, ValueError):
+                    await proc.stderr.read(STREAM_LINE_LIMIT)
+                    continue
                 if not line:
                     break
                 stderr_buf.append(line.decode("utf-8", errors="replace").rstrip())

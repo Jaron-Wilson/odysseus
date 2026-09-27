@@ -275,3 +275,31 @@ def test_a_busy_agent_is_not_driven_twice(cli, tmp_path):
 
     second = asyncio.run(run())
     assert "busy with job" in second["error"]
+
+
+def test_a_huge_event_line_does_not_stall_the_run(tmp_path, monkeypatch):
+    """Seen live: stream-json events of 110 KB+ (a whole file read) passed
+    asyncio's 64 KB line limit, the reader died, and the finished run was
+    never noticed, so its result was never posted."""
+    monkeypatch.setattr(approvals, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(approvals, "APPROVALS_FILE", str(tmp_path / "appr.json"))
+    import src.doc_pdf as doc_pdf
+
+    async def no_pdf(*a, **k):
+        return None, "skipped"
+    monkeypatch.setattr(doc_pdf, "render_markdown_pdf", no_pdf)
+    monkeypatch.setattr(cct, "DEFAULT_ENGINE", "claude")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    exe = bindir / "claude"
+    exe.write_text(
+        f"#!{sys.executable}\nimport json, sys\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', "
+        "'content': 'x' * 200000}]}}), flush=True)\n"
+        "print(json.dumps({'type': 'result', 'result': 'Plan after a big read.', "
+        "'is_error': False, 'duration_ms': 10}), flush=True)\n")
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    out = asyncio.run(asyncio.wait_for(cct.ClaudeCodeTool().execute(
+        json.dumps({"action": "ask", "prompt": "read it", "cwd": str(tmp_path)}), {}), timeout=20))
+    assert out["exit_code"] == 0 and out["output"] == "Plan after a big read."
