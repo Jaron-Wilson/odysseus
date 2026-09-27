@@ -2227,6 +2227,21 @@ export function addMessage(role, content, modelName, metadata) {
             node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
+            // A question the agent asked (ask_user) is only drawn live, so a
+            // reload or a dismissed card lost it. Offer it again from here.
+            if (ev.tool === 'ask_user' && ev.command) {
+              try {
+                const aq = JSON.parse(ev.command);
+                if (aq && aq.question && Array.isArray(aq.options) && aq.options.length) {
+                  const again = document.createElement('button');
+                  again.type = 'button';
+                  again.className = 'ask-user-relaunch';
+                  again.dataset.askuser = JSON.stringify(aq);
+                  again.textContent = 'Show the question again';
+                  threadWrap.appendChild(again);
+                }
+              } catch (_) { /* not JSON: nothing to relaunch */ }
+            }
           }
           // Check if next round has text — extend line down to connect
           const nextTxt = (roundTexts[r + 1] || '').trim();

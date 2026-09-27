@@ -304,6 +304,192 @@ import './bgTasks.js';
       sendQueuedNow();
     }
   });
+
+  // The agent's multiple-choice question (ask_user). Drawn from the live
+  // stream, and again from a "Show the question again" button: on the saved
+  // message after a reload, or left behind when the card is dismissed.
+  export function showAskUserCard(_aq) {
+    _aq = _aq || {};
+    const _opts = Array.isArray(_aq.options) ? _aq.options : [];
+    if (!(_aq.question && _opts.length)) return false;
+    document.querySelectorAll('.ask-user-relaunch-live').forEach((n) => n.remove());
+      const chatBox = document.getElementById('chat-history');
+      // Drop any prior unanswered card so only the latest shows.
+      // Clear any earlier unanswered question, wherever it lives.
+      document.querySelectorAll('.ask-user-overlay, .ask-user-card')
+        .forEach(n => n.remove());
+      const card = document.createElement('div');
+      card.className = 'ask-user-card';
+      const multi = !!_aq.multi;
+      // Group the choices for assistive tech and label the group with
+      // the question (set below); make the card focusable so it can be
+      // moved to when it appears.
+      card.setAttribute('role', 'group');
+      card.tabIndex = -1;
+      // Render any emoji in agent-supplied text through the app's
+      // pipeline: escape, then svgify to monochrome theme-tinted
+      // glyphs (project rule: never colorful emoji; respects the
+      // "Text-only Emojis" setting like the rest of the chat).
+      const _emo = (s) => svgifyEmoji(uiModule.esc(String(s)));
+
+      // Header row holds the close (×) to dismiss the affordances and
+      // just type a reply instead.
+      const head = document.createElement('div');
+      head.className = 'ask-user-head';
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'modal-close ask-user-close';
+      closeBtn.setAttribute('aria-label', 'Dismiss question');
+      closeBtn.textContent = '×';
+      closeBtn.addEventListener('click', () => {
+        (card.closest('.ask-user-overlay') || card).remove();
+        _leaveAskUserRelaunch(_aq);   // dismissed, not answered: keep a way back
+        const mi = uiModule.el('message');
+        if (mi) mi.focus();
+      });
+      head.appendChild(closeBtn);
+      card.appendChild(head);
+
+      // Render the question inside the card so it's self-contained:
+      // some models call ask_user without first narrating the question
+      // as assistant text, in which case the card would otherwise show
+      // bare options with no prompt.
+      if (_aq.question) {
+        const q = document.createElement('div');
+        q.className = 'ask-user-question';
+        q.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+        q.innerHTML = _emo(_aq.question);
+        card.appendChild(q);
+        // Label the choice group with the question for screen readers.
+        card.setAttribute('aria-labelledby', q.id);
+      } else {
+        card.setAttribute('aria-label', 'Question from the assistant');
+      }
+
+      const list = document.createElement('div');
+      list.className = 'ask-user-options';
+      card.appendChild(list);
+
+      const _send = (text) => {
+        if (!text) return;
+        // Remove the card once answered — the choice is sent as a
+        // normal user message (and the question persists as the
+        // assistant text above), so the affordances are spent.
+        (card.closest('.ask-user-overlay') || card).remove();
+        const mi = uiModule.el('message');
+        if (mi) mi.value = text;
+        const sb = document.querySelector('.send-btn');
+        if (sb) sb.click();
+      };
+
+      _opts.forEach((opt, i) => {
+        const label = (opt && opt.label) ? String(opt.label) : String(opt || '');
+        if (!label) return;
+        const descr = (opt && opt.description) ? String(opt.description) : '';
+        const row = document.createElement(multi ? 'label' : 'button');
+        row.className = 'ask-user-option';
+        if (multi) {
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.value = label;
+          row.appendChild(cb);
+        }
+        const txt = document.createElement('span');
+        txt.className = 'ask-user-option-label';
+        txt.innerHTML = _emo(label);
+        row.appendChild(txt);
+        if (descr) {
+          const d = document.createElement('span');
+          d.className = 'ask-user-option-desc';
+          d.innerHTML = _emo(descr);
+          row.appendChild(d);
+        }
+        if (!multi) {
+          row.type = 'button';
+          row.addEventListener('click', () => _send(label));
+        }
+        list.appendChild(row);
+      });
+
+      // Free-text "Other" — type a custom answer + send (Enter or →).
+      const other = document.createElement('div');
+      other.className = 'ask-user-other';
+      const otherInput = document.createElement('input');
+      otherInput.type = 'text';
+      otherInput.className = 'styled-prompt-input ask-user-other-input';
+      otherInput.placeholder = multi ? 'Other (added to selection)…' : 'Other… (type your own answer)';
+      otherInput.setAttribute('aria-label', multi ? 'Add a custom option' : 'Type a custom answer');
+      const otherSend = document.createElement('button');
+      otherSend.type = 'button';
+      otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
+      otherSend.setAttribute('aria-label', 'Send answer');
+      otherSend.textContent = multi ? 'Send selection' : 'Send';
+      const _submit = () => {
+        const free = otherInput.value.trim();
+        if (multi) {
+          const picked = Array.from(card.querySelectorAll('.ask-user-option input:checked')).map(c => c.value);
+          if (free) picked.push(free);
+          if (picked.length) _send(picked.join(', '));
+        } else if (free) {
+          _send(free);
+        }
+      };
+      otherSend.addEventListener('click', _submit);
+      otherInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+          e.preventDefault();
+          _submit();
+        }
+      });
+      other.appendChild(otherInput);
+      other.appendChild(otherSend);
+      card.appendChild(other);
+
+      // A question that ends the turn should interrupt, not join
+      // the scroll: appended to the history it scrolls away with
+      // everything else and gets missed on a long answer.
+      const askOverlay = document.createElement('div');
+      askOverlay.className = 'ask-user-overlay';
+      askOverlay.appendChild(card);
+      // Clicking the backdrop dismisses the buttons and leaves the
+      // composer focused. Dismissing is not an answer -- the turn
+      // has already ended, so typing a reply is always available.
+      askOverlay.addEventListener('click', (ev) => {
+        if (ev.target !== askOverlay) return;
+        askOverlay.remove();
+        _leaveAskUserRelaunch(_aq);
+        const mi = uiModule.el('message');
+        if (mi) mi.focus();
+      });
+      document.body.appendChild(askOverlay);
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      // Move focus to the card so keyboard/screen-reader users land on
+      // the question + choices when it appears.
+      try { card.focus(); } catch (_) {}
+
+    return true;
+  }
+
+  function _leaveAskUserRelaunch(aq) {
+    const box = document.getElementById('chat-history');
+    if (!box) return;
+    document.querySelectorAll('.ask-user-relaunch-live').forEach((n) => n.remove());
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ask-user-relaunch ask-user-relaunch-live';
+    btn.textContent = 'Show the question again';
+    btn.addEventListener('click', () => { btn.remove(); showAskUserCard(aq); });
+    box.appendChild(btn);
+  }
+
+  // Saved messages carry the question in their ask_user tool event.
+  document.addEventListener('click', (ev) => {
+    const b = ev.target.closest('.ask-user-relaunch[data-askuser]');
+    if (!b) return;
+    ev.preventDefault();
+    try { showAskUserCard(JSON.parse(b.dataset.askuser)); } catch (_) { /* malformed */ }
+  });
+
   // Continuous stall watchdog: while streaming, if the SSE stream produces
   // NOTHING for STALL_THRESHOLD_MS (no deltas, no tool heartbeat — tools beat
   // every 2s, so a full minute of silence means it's genuinely stuck or the
@@ -2633,161 +2819,7 @@ import './bgTasks.js';
                 // user's pick is sent as the next message and the agent resumes.
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
-                const _aq = json.data || {};
-                const _opts = Array.isArray(_aq.options) ? _aq.options : [];
-                if (_aq.question && _opts.length) {
-                  const chatBox = document.getElementById('chat-history');
-                  // Drop any prior unanswered card so only the latest shows.
-                  // Clear any earlier unanswered question, wherever it lives.
-                  document.querySelectorAll('.ask-user-overlay, .ask-user-card')
-                    .forEach(n => n.remove());
-                  const card = document.createElement('div');
-                  card.className = 'ask-user-card';
-                  const multi = !!_aq.multi;
-                  // Group the choices for assistive tech and label the group with
-                  // the question (set below); make the card focusable so it can be
-                  // moved to when it appears.
-                  card.setAttribute('role', 'group');
-                  card.tabIndex = -1;
-                  // Render any emoji in agent-supplied text through the app's
-                  // pipeline: escape, then svgify to monochrome theme-tinted
-                  // glyphs (project rule: never colorful emoji; respects the
-                  // "Text-only Emojis" setting like the rest of the chat).
-                  const _emo = (s) => svgifyEmoji(uiModule.esc(String(s)));
-
-                  // Header row holds the close (×) to dismiss the affordances and
-                  // just type a reply instead.
-                  const head = document.createElement('div');
-                  head.className = 'ask-user-head';
-                  const closeBtn = document.createElement('button');
-                  closeBtn.type = 'button';
-                  closeBtn.className = 'modal-close ask-user-close';
-                  closeBtn.setAttribute('aria-label', 'Dismiss question');
-                  closeBtn.textContent = '×';
-                  closeBtn.addEventListener('click', () => {
-                    (card.closest('.ask-user-overlay') || card).remove();
-                    const mi = uiModule.el('message');
-                    if (mi) mi.focus();
-                  });
-                  head.appendChild(closeBtn);
-                  card.appendChild(head);
-
-                  // Render the question inside the card so it's self-contained:
-                  // some models call ask_user without first narrating the question
-                  // as assistant text, in which case the card would otherwise show
-                  // bare options with no prompt.
-                  if (_aq.question) {
-                    const q = document.createElement('div');
-                    q.className = 'ask-user-question';
-                    q.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
-                    q.innerHTML = _emo(_aq.question);
-                    card.appendChild(q);
-                    // Label the choice group with the question for screen readers.
-                    card.setAttribute('aria-labelledby', q.id);
-                  } else {
-                    card.setAttribute('aria-label', 'Question from the assistant');
-                  }
-
-                  const list = document.createElement('div');
-                  list.className = 'ask-user-options';
-                  card.appendChild(list);
-
-                  const _send = (text) => {
-                    if (!text) return;
-                    // Remove the card once answered — the choice is sent as a
-                    // normal user message (and the question persists as the
-                    // assistant text above), so the affordances are spent.
-                    (card.closest('.ask-user-overlay') || card).remove();
-                    const mi = uiModule.el('message');
-                    if (mi) mi.value = text;
-                    const sb = document.querySelector('.send-btn');
-                    if (sb) sb.click();
-                  };
-
-                  _opts.forEach((opt, i) => {
-                    const label = (opt && opt.label) ? String(opt.label) : String(opt || '');
-                    if (!label) return;
-                    const descr = (opt && opt.description) ? String(opt.description) : '';
-                    const row = document.createElement(multi ? 'label' : 'button');
-                    row.className = 'ask-user-option';
-                    if (multi) {
-                      const cb = document.createElement('input');
-                      cb.type = 'checkbox';
-                      cb.value = label;
-                      row.appendChild(cb);
-                    }
-                    const txt = document.createElement('span');
-                    txt.className = 'ask-user-option-label';
-                    txt.innerHTML = _emo(label);
-                    row.appendChild(txt);
-                    if (descr) {
-                      const d = document.createElement('span');
-                      d.className = 'ask-user-option-desc';
-                      d.innerHTML = _emo(descr);
-                      row.appendChild(d);
-                    }
-                    if (!multi) {
-                      row.type = 'button';
-                      row.addEventListener('click', () => _send(label));
-                    }
-                    list.appendChild(row);
-                  });
-
-                  // Free-text "Other" — type a custom answer + send (Enter or →).
-                  const other = document.createElement('div');
-                  other.className = 'ask-user-other';
-                  const otherInput = document.createElement('input');
-                  otherInput.type = 'text';
-                  otherInput.className = 'styled-prompt-input ask-user-other-input';
-                  otherInput.placeholder = multi ? 'Other (added to selection)…' : 'Other… (type your own answer)';
-                  otherInput.setAttribute('aria-label', multi ? 'Add a custom option' : 'Type a custom answer');
-                  const otherSend = document.createElement('button');
-                  otherSend.type = 'button';
-                  otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
-                  otherSend.setAttribute('aria-label', 'Send answer');
-                  otherSend.textContent = multi ? 'Send selection' : 'Send';
-                  const _submit = () => {
-                    const free = otherInput.value.trim();
-                    if (multi) {
-                      const picked = Array.from(card.querySelectorAll('.ask-user-option input:checked')).map(c => c.value);
-                      if (free) picked.push(free);
-                      if (picked.length) _send(picked.join(', '));
-                    } else if (free) {
-                      _send(free);
-                    }
-                  };
-                  otherSend.addEventListener('click', _submit);
-                  otherInput.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-                      e.preventDefault();
-                      _submit();
-                    }
-                  });
-                  other.appendChild(otherInput);
-                  other.appendChild(otherSend);
-                  card.appendChild(other);
-
-                  // A question that ends the turn should interrupt, not join
-                  // the scroll: appended to the history it scrolls away with
-                  // everything else and gets missed on a long answer.
-                  const askOverlay = document.createElement('div');
-                  askOverlay.className = 'ask-user-overlay';
-                  askOverlay.appendChild(card);
-                  // Clicking the backdrop dismisses the buttons and leaves the
-                  // composer focused. Dismissing is not an answer -- the turn
-                  // has already ended, so typing a reply is always available.
-                  askOverlay.addEventListener('click', (ev) => {
-                    if (ev.target !== askOverlay) return;
-                    askOverlay.remove();
-                    const mi = uiModule.el('message');
-                    if (mi) mi.focus();
-                  });
-                  document.body.appendChild(askOverlay);
-                  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                  // Move focus to the card so keyboard/screen-reader users land on
-                  // the question + choices when it appears.
-                  try { card.focus(); } catch (_) {}
-                }
+                showAskUserCard(json.data || {});
 
               } else if (json.type === 'plan_update') {
                 if (_isBg) continue;

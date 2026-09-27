@@ -59,6 +59,11 @@ SENSITIVE_TOOLS = {
     # Annotating captures the screen to draw on it, so it is a screenshot
     # by another name and belongs behind the same gate.
     "annotate_screen",
+    # Opening or raising a window takes over the user's screen as surely as a
+    # click does. Ungated, a turn that could not reach a private repo opened
+    # Chrome on the PC (and Chrome Remote Desktop, by a loose name match)
+    # before anyone was asked.
+    "launch_app", "focus_app", "vscode_open", "open_app", "open_url", "open_file",
     # Volume is not screen control: it changes a system setting, not what is
     # on screen, and gating it would put an approval click in front of
     # "turn it down" — the exact friction this was meant to remove.
