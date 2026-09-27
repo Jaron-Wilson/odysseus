@@ -1190,7 +1190,11 @@ def setup_chat_routes(
                                     web_sources = data.get("data", [])
                                     yield chunk
                                 elif data.get("type") in (
-                                    "tool_start", "tool_output", "agent_step",
+                                    # tool_progress: the live console of a running
+                                    # tool (bash, claude_code). Missing here, it
+                                    # never reached the page, so a long run showed
+                                    # only a spinner.
+                                    "tool_start", "tool_progress", "tool_output", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
                                     "rounds_exhausted",

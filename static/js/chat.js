@@ -25,6 +25,7 @@ import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
 import notifyDone from './notifyDone.js';
+import './bgTasks.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -2327,12 +2328,34 @@ import notifyDone from './notifyDone.js';
                   if (!tailEl) {
                     tailEl = document.createElement('pre');
                     tailEl.className = 'agent-thread-tail';
-                    tailEl.style.cssText = 'margin:4px 0 0;padding:6px 8px;font-size:11px;background:rgba(0,0,0,0.18);border-radius:4px;max-height:140px;overflow:auto;white-space:pre-wrap;opacity:0.85;';
+                    // Taller for Claude Code, whose console is verbose on purpose.
+                    tailEl.style.cssText = 'margin:4px 0 0;padding:6px 8px;font-size:11px;background:rgba(0,0,0,0.18);border-radius:4px;max-height:' + (json.job_id ? '360px' : '140px') + ';overflow:auto;white-space:pre-wrap;opacity:0.85;';
                     const content = currentToolBubble.querySelector('.agent-thread-content');
                     if (content) content.appendChild(tailEl);
                   }
+                  // Only follow the output if the reader is already at the bottom.
+                  const _atBottom = tailEl.scrollHeight - tailEl.scrollTop - tailEl.clientHeight < 24;
                   tailEl.textContent = tailStr;
-                  tailEl.scrollTop = tailEl.scrollHeight;
+                  if (_atBottom) tailEl.scrollTop = tailEl.scrollHeight;
+                }
+                // Claude Code: send this run to the background (claude_code_jobs).
+                if (json.job_id && json.can_background
+                    && !currentToolBubble.querySelector('.cc-bg-btn')) {
+                  const _bgBtn = document.createElement('button');
+                  _bgBtn.type = 'button';
+                  _bgBtn.className = 'cc-bg-btn';
+                  _bgBtn.dataset.jobId = json.job_id;
+                  _bgBtn.textContent = 'Send to background';
+                  _bgBtn.title = 'Keep it running without holding the chat. The result is posted here when it finishes.';
+                  // Show the console straight away: it is the point of a
+                  // verbose run. Collapsing the card still works.
+                  currentToolBubble.classList.add('open');
+                  // In the header: the body is collapsed until the card is opened.
+                  const _hdr = currentToolBubble.querySelector('.agent-thread-header');
+                  if (_hdr) {
+                    const _chev = _hdr.querySelector('.agent-thread-chevron');
+                    _hdr.insertBefore(_bgBtn, _chev || null);
+                  }
                 }
                 uiModule.scrollHistory();
 

@@ -58,14 +58,17 @@ def _prune(data: Dict[str, dict]) -> Dict[str, dict]:
     return {k: v for k, v in data.items() if now - float(v.get("created", 0)) < APPROVAL_TTL_S}
 
 
-def record_plan(session_id: str, *, cwd: str, plan: str, owner: Optional[str] = None) -> None:
-    """Register a freshly produced plan as awaiting the user's answer."""
+def record_plan(session_id: str, *, cwd: str, plan: str, owner: Optional[str] = None,
+                model: str = "") -> None:
+    """Register a freshly produced plan as awaiting the user's answer. The
+    model is kept so the approved run uses the one the user was shown."""
     data = _prune(_load())
     data[session_id] = {
         "status": "pending",
         "cwd": cwd,
         "plan": (plan or "")[:20000],
         "owner": owner or "",
+        "model": model or "",
         "created": time.time(),
     }
     _save(data)

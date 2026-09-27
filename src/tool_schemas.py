@@ -1049,7 +1049,13 @@ FUNCTION_TOOL_SCHEMAS = [
                 "If the user says 'claude', 'claude code', 'claude agent' or 'claude subagents', "
                 "you MUST call this tool. Do NOT invoke the claude CLI through bash: that skips "
                 "the plan-and-approve gate the user relies on. Prefer this over bash/write_file/"
-                "edit_file for anything bigger than a single known one-line edit.\n"
+                "edit_file for real code changes.\n"
+                "NOT for chores you can do yourself with bash: git add/commit/push, opening a PR "
+                "with `gh pr create`, checking status, running a known command. Those cost the "
+                "user's Claude usage for nothing; do them with bash.\n"
+                "Every run bills the user's Claude plan. Before the first call for a task, tell "
+                "the user in one line that you are using Claude Code and on which model "
+                "(default 'sonnet'). Only pick 'opus' or a larger model when the user asks.\n"
                 "Sends code to a cloud model, so never use it on anything that must stay local."
             ),
             "parameters": {
@@ -1061,8 +1067,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "job_id": {"type": "string", "description": "For status: a specific background job. Omit to report every backgrounded run in this chat."},
                     "engine": {"type": "string", "enum": ["claude", "opencode"], "description": "'claude' (default) uses Claude Code, a cloud model. 'opencode' uses the OpenCode CLI, which is wired to this host's LOCAL models — pick it when the user asks for a local model, says the work must not leave the machine, or names opencode. Same plan/approve/execute gate either way."},
                     "session_id": {"type": "string", "description": "Required for execute: the session_id from the approved plan. Optional for ask/plan: pass the previous session_id to continue that conversation instead of starting fresh."},
-                    "model": {"type": "string", "description": "Optional. For engine 'claude', valid values ONLY: 'opus', 'sonnet', 'haiku', or a full id like 'claude-opus-5' / 'claude-sonnet-5' / 'claude-haiku-4-5-20251001'. For engine 'opencode', use provider/model, e.g. 'vllm3090/qwen3.8-27b' (the 27B on the 3090) or 'ollama-desktop/qwen3:8b'. Never invent an id — the run fails outright. Omit to use the CLI's own default."},
-                    "background": {"type": "boolean", "description": "Run detached and return immediately with a job id, leaving the chat free. You are re-invoked with the output when it finishes, so do not wait or poll. Use for anything expected to take minutes, or when the user says to push it to the background."},
+                    "model": {"type": "string", "description": "Optional. For engine 'claude', valid values ONLY: 'opus', 'sonnet', 'haiku', or a full id like 'claude-opus-5' / 'claude-sonnet-5' / 'claude-haiku-4-5-20251001'. For engine 'opencode', use provider/model, e.g. 'vllm3090/qwen3.8-27b' (the 27B on the 3090) or 'ollama-desktop/qwen3:8b'. Never invent an id — the run fails outright. Omit to use the server default ('sonnet'); an execute reuses its plan's model. Use 'haiku' for small changes, and 'opus' only when the user asks for it."},
+                    "background": {"type": "boolean", "description": "Run detached from the start and return immediately with a job id, leaving the chat free. Do not wait or poll. Use for anything expected to take minutes, or when the user says to push it to the background. (A run already in progress can also be sent to the background from its card.)"},
                     "timeout": {"type": "integer", "description": "Seconds before the run is killed (default 900). Ignored when background is true."},
                     "allowed_tools": {"type": "string", "description": "Comma-separated tool allowlist. Defaults are read-only for plan, read+write+bash for execute."},
                 },
