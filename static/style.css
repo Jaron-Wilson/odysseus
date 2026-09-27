@@ -37012,3 +37012,30 @@ body.theme-frosted .modal {
 .mp-device { width: 100%; padding: 5px 8px; border-radius: 8px; background: var(--input-bg, transparent); color: var(--fg);
   border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); }
 .mp-note { font-size: 11.5px; opacity: .55; margin-top: 10px; }
+
+/* Full-screen PDF viewer (pdfViewer.js) and its "Open PDF" button. */
+.pdf-open-btn {
+  margin-left: 6px; padding: 1px 9px; font-size: 12px; border-radius: 8px; cursor: pointer;
+  color: inherit; background: none; vertical-align: 1px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--fg)) 50%, transparent);
+}
+.pdf-open-btn:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+body.pdf-viewer-open { overflow: hidden; }
+.pdf-viewer { position: fixed; inset: 0; z-index: 2000; display: flex; flex-direction: column; background: rgba(12, 12, 14, .96); }
+.pdfv-bar {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: #eee; font-size: 13px;
+  border-bottom: 1px solid rgba(255, 255, 255, .12);
+}
+.pdfv-title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdfv-count { opacity: .6; white-space: nowrap; }
+.pdfv-btn {
+  padding: 4px 10px; border-radius: 8px; color: #eee; background: none; text-decoration: none; cursor: pointer; font-size: 12.5px;
+  border: 1px solid rgba(255, 255, 255, .22); white-space: nowrap;
+}
+.pdfv-close { font-size: 18px; line-height: 1; padding: 2px 10px; }
+.pdfv-body { flex: 1; min-height: 0; overflow: auto; }
+.pdfv-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+.pdfv-pages { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 14px 8px 40px; }
+.pdfv-page { width: min(1000px, 100%); height: auto; background: #fff; box-shadow: 0 4px 20px rgba(0, 0, 0, .5); }
+.pdfv-loading { color: #ccc; padding: 30px; text-align: center; }
+@media (max-width: 640px) { .pdfv-bar { flex-wrap: wrap; } .pdfv-btn { padding: 4px 8px; } }

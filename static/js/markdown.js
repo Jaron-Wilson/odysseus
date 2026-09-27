@@ -861,6 +861,23 @@ export function enhanceMedia(container) {
   let added = 0;
   for (const a of links) {
     a.dataset.mediaDone = '1';
+    // A PDF link gets "Open PDF" beside it: a full-screen viewer (pdfViewer.js)
+    // rather than a download or the documents sidebar.
+    const _href = a.getAttribute('href') || '';
+    let _p = _href;
+    try { _p = new URL(_href, window.location.href).pathname; } catch (_) { /* relative */ }
+    if (/\.pdf$/i.test(_p) || /\/pdf$/i.test(_p)) {
+      if (!a.closest('pre, code') && !(a.nextElementSibling && a.nextElementSibling.classList.contains('pdf-open-btn'))) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'pdf-open-btn';
+        btn.dataset.pdf = _href;
+        btn.dataset.title = (a.textContent || '').replace(/^download\s+/i, '').trim();
+        btn.textContent = 'Open PDF';
+        a.after(btn);
+      }
+      continue;
+    }
     if (added >= 6) break;                 // a list of 20 links should not become 20 players
     if (a.closest('pre, code, .agent-thread-content, .media-embed')) continue;
     const el = _mediaFor(a.getAttribute('href'));

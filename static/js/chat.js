@@ -27,6 +27,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 import notifyDone from './notifyDone.js';
 import './chatNotes.js';
 import './musicBar.js';
+import './pdfViewer.js';
 import './bgTasks.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
