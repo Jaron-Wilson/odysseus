@@ -1984,7 +1984,8 @@ function initializeEventListeners() {
     if (!inputLeft || !overflowMenu || !overflowWrapper) return;
 
     // Buttons that can be collapsed (in reverse priority — last collapsed first)
-    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn'];
+    // Screen share goes first: phone browsers cannot share a screen anyway.
+    const collapsibleIds = ['screenshare-toggle-btn', 'bash-toggle-btn', 'web-toggle-btn'];
     const collapsibleBtns = collapsibleIds.map(id => el(id)).filter(Boolean);
     // Map of toolbar btn id → overflow mirror element (created dynamically)
     const overflowMirrors = new Map();
@@ -2091,6 +2092,16 @@ function initializeEventListeners() {
     window.addEventListener('resize', () => requestAnimationFrame(checkToolbarOverflow));
     // Run immediately (state is already restored by this point)
     checkToolbarOverflow();
+    // And whenever the right-hand group changes width: its music, Claude
+    // Code, notes and notify buttons are added and shown by later modules.
+    const _rightGroup = document.querySelector('.chat-input-right');
+    if (_rightGroup && window.ResizeObserver) {
+      let _rgW = 0;
+      new ResizeObserver(([e]) => {
+        const w = Math.round(e.contentRect.width);
+        if (w !== _rgW) { _rgW = w; requestAnimationFrame(checkToolbarOverflow); }
+      }).observe(_rightGroup);
+    }
     // Re-check when sidebar toggles (changes available width)
     document.addEventListener('overflow-state-change', () =>
       requestAnimationFrame(checkToolbarOverflow));

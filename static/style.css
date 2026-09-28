@@ -37128,3 +37128,22 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .mb-handoff { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 12px; cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent); background: transparent; color: inherit; }
 .mb-handoff:hover { border-color: var(--accent, #c96); }
+/* "Playing on <phone>" when nothing plays on this machine: its own line. */
+.music-bar:has(.mb-elsewhere) { flex-wrap: wrap; }
+.mb-elsewhere { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0;
+  padding: 4px 2px 1px; border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); }
+.mb-elsewhere-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mb-elsewhere .mb-handoff { padding: 2px 9px; flex: none; }
+
+/* Narrow chat bar (phones): the bottom row gained music, Claude Code, notes
+   and notify buttons, and at 412px the right group needed 383px of 342 - the
+   send button hung off the bar and the + menu was squeezed away ("mobile
+   message bar looks so jumbled"). Slimmer buttons, still 44px tall to tap. */
+@container chatbar (max-width: 420px) {
+  .chat-input-bottom .input-icon-btn { min-width: 34px; width: 34px; padding: 10px 4px; }
+  .chat-input-bottom .chat-input-right { gap: 2px; }
+  .chat-input-bottom .chat-input-left { gap: 2px; flex: 0 1 auto; }
+  .chat-input-bottom { gap: 4px; }
+  .chat-input-bottom .mode-toggle-btn { padding: 0 9px; }
+  .chat-input-bottom .chat-input-right > .send-btn { margin-left: 2px; }
+}

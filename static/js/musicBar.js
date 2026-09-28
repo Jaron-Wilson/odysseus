@@ -159,8 +159,20 @@ function _renderBarInto(bar) {
         ? `<button type="button" class="mb-btn" data-mb="popout" title="Pop out: the frameless player on your PC, on top of apps and games">${ICONS.popout}</button>
            <button type="button" class="mb-btn" data-mb="expand" title="Expand">${ICONS.expand}</button>`
         : ''}
-    </span>`;
+    </span>
+    ${!playing && (_state.elsewhere || []).length ? _elsewhereHtml(_state.elsewhere[0]) : ''}`;
   _wireArt(bar);
+}
+
+// Nothing playing here, but something is on another device: say so, and
+// offer to control it from here or bring the song here.
+function _elsewhereHtml(e) {
+  const here = (_state.device && _state.device.server_id) || '';
+  return `<span class="mb-elsewhere">
+      <span class="mb-elsewhere-text">${e.kind === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} Playing on ${_esc(e.name)}: ${_esc(e.title)}${e.artist ? ' \u00B7 ' + _esc(e.artist) : ''}</span>
+      <button type="button" class="mb-handoff" data-mb-control="${_esc(e.server_id)}" title="Control ${_esc(e.name)} from this bar">Control</button>
+      ${here ? `<button type="button" class="mb-handoff" data-mb-handoff="${_esc(here)}" data-mb-handoff-from="${_esc(e.server_id)}" title="Pause it on ${_esc(e.name)} and play it here">Listen here</button>` : ''}
+    </span>`;
 }
 
 // ── expanded panel ───────────────────────────────────────────────────────
@@ -360,7 +372,7 @@ document.addEventListener('click', async (ev) => {
   if (h.dataset.busy) return;
   h.dataset.busy = '1';
   const to = h.dataset.mbHandoff;
-  const from = _device() || (_state && _state.device && _state.device.server_id) || '';
+  const from = h.dataset.mbHandoffFrom || _device() || (_state && _state.device && _state.device.server_id) || '';
   const label = h.textContent;
   h.textContent = 'Moving it\u2026';
   try {
@@ -380,6 +392,16 @@ document.addEventListener('click', async (ev) => {
     delete h.dataset.busy;
     h.textContent = label;
   }
+});
+
+document.addEventListener('click', (ev) => {
+  const c = ev.target.closest('[data-mb-control]');
+  if (!c) return;
+  ev.preventDefault();
+  localStorage.setItem(KEY_DEVICE, c.dataset.mbControl);   // same as picking it in the panel
+  _autoDevice = '';
+  _state = null;
+  _tick();
 });
 
 document.addEventListener('click', (ev) => {
