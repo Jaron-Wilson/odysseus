@@ -37140,6 +37140,20 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
   padding: 4px 2px 1px; border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); }
 .mb-elsewhere-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mb-elsewhere .mb-handoff { padding: 2px 9px; flex: none; }
+/* A song from another device, playing in this browser (musicBar.js). */
+.mb-listen {
+  max-width: var(--chat-max); width: min(100%, 420px); margin: 0 auto 6px; box-sizing: border-box;
+  padding: 6px 8px 8px; border-radius: 14px; font-size: 12.5px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.mb-listen-head { display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: 6px; }
+.mb-listen-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mb-listen-note { opacity: .6; flex: none; }
+.mb-listen-frame { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 9px; }
+.mb-listen-frame[hidden] { display: none; }
+.mb-listen-fallback a { color: var(--accent, #c96); }
 
 /* Narrow chat bar (phones): the bottom row gained music, Claude Code, notes
    and notify buttons, and at 412px the right group needed 383px of 342 - the

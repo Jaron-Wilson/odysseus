@@ -102,7 +102,13 @@ function _appVol() { const a = _app(); return a ? a.volume : null; }
 function _appLabel() { const a = _app(); return a ? (a.label || a.app || 'App') : 'App'; }
 function _volTarget() { return localStorage.getItem(KEY_VOLTARGET) === 'app' && _app() ? 'app' : 'pc'; }
 function _targetVol() { return _volTarget() === 'app' ? _appVol() : _vol(); }
-function _targetName() { return _volTarget() === 'app' ? _appLabel() : 'PC'; }
+// The device being controlled, by name: the volume badge said "PC" while
+// the bar drove the phone.
+function _devName() {
+  const d = _state && _state.device;
+  return (d && d.name) || 'PC';
+}
+function _targetName() { return _volTarget() === 'app' ? _appLabel() : _devName(); }
 function _artUrl(np) {
   if (!np.title) return '';
   // The phone sends its player's own art (Modes now_playing).
@@ -150,10 +156,10 @@ function _renderBarInto(bar) {
       <button type="button" class="mb-btn" data-mb="previous" title="Previous">${ICONS.prev}</button>
       <button type="button" class="mb-btn mb-main" data-mb="play_pause" title="${playing ? 'Pause' : 'Play'}">${playing ? ICONS.pause : ICONS.play}</button>
       <button type="button" class="mb-btn" data-mb="next" title="Next">${ICONS.next}</button>
-      ${_app() ? `<button type="button" class="mb-voltarget" data-mb="voltarget" title="Volume buttons change: ${_volTarget() === 'app' ? _esc(_appLabel()) + ' only. Click for the whole computer' : 'the whole computer. Click for ' + _esc(_appLabel()) + ' only'}">${_esc(_targetName())}</button>` : ''}
+      ${_app() ? `<button type="button" class="mb-voltarget" data-mb="voltarget" title="Volume buttons change: ${_volTarget() === 'app' ? _esc(_appLabel()) + ' only. Click for all of ' + _esc(_devName()) : 'all of ' + _esc(_devName()) + '. Click for ' + _esc(_appLabel()) + ' only'}">${_esc(_targetName())}</button>` : ''}
       <button type="button" class="mb-btn" data-mb="voldown" title="${_esc(_targetName())} volume down">${ICONS.down}</button>
       <button type="button" class="mb-btn" data-mb="volup" title="${_esc(_targetName())} volume up">${ICONS.up}</button>
-      <button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute computer' : 'Mute computer'}">${_muted() ? ICONS.muted : ICONS.mute}</button>
+      <button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute' : 'Mute'} ${_esc(_devName())}">${_muted() ? ICONS.muted : ICONS.mute}</button>
       <span class="mb-vol-badge"${Date.now() - _volShownAt < 2500 && _targetVol() !== null ? '' : ' hidden'}>${_esc(_targetName())} ${_targetVol() ?? ''}%</span>
       ${bar.ownerDocument === document
         ? `<button type="button" class="mb-btn" data-mb="popout" title="Pop out: the frameless player on your PC, on top of apps and games">${ICONS.popout}</button>
@@ -167,11 +173,10 @@ function _renderBarInto(bar) {
 // Nothing playing here, but something is on another device: say so, and
 // offer to control it from here or bring the song here.
 function _elsewhereHtml(e) {
-  const here = (_state.device && _state.device.server_id) || '';
   return `<span class="mb-elsewhere">
       <span class="mb-elsewhere-text">${e.kind === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} Playing on ${_esc(e.name)}: ${_esc(e.title)}${e.artist ? ' \u00B7 ' + _esc(e.artist) : ''}</span>
       <button type="button" class="mb-handoff" data-mb-control="${_esc(e.server_id)}" title="Control ${_esc(e.name)} from this bar">Control</button>
-      ${here ? `<button type="button" class="mb-handoff" data-mb-handoff="${_esc(here)}" data-mb-handoff-from="${_esc(e.server_id)}" title="Pause it on ${_esc(e.name)} and play it here">Listen here</button>` : ''}
+      <button type="button" class="mb-handoff" data-mb-listen="${_esc(e.server_id)}" title="Pause it on ${_esc(e.name)} and play it in this browser (nothing to install)">Listen here</button>
     </span>`;
 }
 
@@ -201,12 +206,12 @@ async function _renderPanel() {
       <button type="button" class="mb-btn mb-main" data-mb="play_pause" title="Play / pause">${np.playing ? ICONS.pause : ICONS.play}</button>
       <button type="button" class="mb-btn" data-mb="next" title="Next">${ICONS.next}</button>
     </div>
-    <div class="mp-volrow"><span class="mp-vollabel">Computer</span><button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute computer' : 'Mute computer'}">${_muted() ? ICONS.muted : ICONS.mute}</button>
-    <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${vol ?? 50}" data-mb-vol aria-label="Computer volume" ${vol === null ? 'disabled' : ''}>${ICONS.up}<span>${vol ?? '–'}</span></label></div>
+    <div class="mp-volrow"><span class="mp-vollabel">${_esc(_devName())}</span><button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute' : 'Mute'} ${_esc(_devName())}">${_muted() ? ICONS.muted : ICONS.mute}</button>
+    <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${vol ?? 50}" data-mb-vol aria-label="${_esc(_devName())} volume" ${vol === null ? 'disabled' : ''}>${ICONS.up}<span>${vol ?? '–'}</span></label></div>
     ${_app() ? `<div class="mp-volrow"><span class="mp-vollabel" title="${_esc(_app().app || '')} in the Windows volume mixer">${_esc(_appLabel())}</span><span class="mp-volgap"></span>
     <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${_appVol()}" data-mb-appvol aria-label="${_esc(_appLabel())} volume">${ICONS.up}<span>${_appVol()}</span></label></div>` : ''}
-    ${np.title && devs.filter((d) => d.server_id !== current).length ? `<div class="mp-section">Play on</div>
-    <div class="mp-handoff">${devs.filter((d) => d.server_id !== current).map((d) =>
+    ${np.title ? `<div class="mp-section">Play on</div>
+    <div class="mp-handoff"><button type="button" class="mb-handoff" data-mb-listen="${_esc(current)}" title="Pause it on ${_esc(_devName())} and play it in this browser">\u{1F310} This browser</button>${devs.filter((d) => d.server_id !== current).map((d) =>
       `<button type="button" class="mb-handoff" data-mb-handoff="${_esc(d.server_id)}" title="Pause it here and play it on ${_esc(d.name || d.server_id)}">${d.kind === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} ${_esc(d.name || d.server_id)}</button>`).join('')}</div>` : ''}
     <div class="mp-section">Lyrics</div>
     <div class="mp-lyrics" id="mp-lyrics">${np.title ? 'Looking up lyrics…' : 'Play something to see its lyrics.'}</div>
@@ -391,6 +396,83 @@ document.addEventListener('click', async (ev) => {
   } finally {
     delete h.dataset.busy;
     h.textContent = label;
+  }
+});
+
+// ── Listen in this browser ──────────────────────────────────────────────
+// The song another device is playing, in an embedded YouTube player here:
+// paused there, picked up at the same point. Asked for: "stream it over to my
+// PC or my laptop so that I don't need YouTube Music installed". YouTube
+// streams it, not the other device; phones do not let music apps' audio be
+// captured, so this is the way that works everywhere.
+const YT_ORIGIN = 'https://www.youtube-nocookie.com';
+let _listen = null;          // {el, iframe, title, url}
+
+function _closeListen() {
+  if (_listen) { _listen.el.remove(); _listen = null; }
+}
+
+function _openListen(d) {
+  _closeListen();
+  const bar = document.getElementById('music-bar');
+  const el = document.createElement('div');
+  el.id = 'mb-listen';
+  el.className = 'mb-listen';
+  el.innerHTML = `<div class="mb-listen-head">
+      <span class="mb-listen-title">\u{1F310} In this browser: ${_esc(d.title)}${d.artist ? ' \u00B7 ' + _esc(d.artist) : ''}</span>
+      <span class="mb-listen-note">from ${_esc(d.from_name)}</span>
+      <button type="button" class="mb-btn" data-mb-listen-close title="Stop and close">\u00D7</button>
+    </div>
+    <iframe class="mb-listen-frame" allow="autoplay; encrypted-media" referrerpolicy="strict-origin-when-cross-origin"
+      src="${YT_ORIGIN}/embed/${encodeURIComponent(d.video_id)}?autoplay=1&start=${Number(d.start_s) || 0}&enablejsapi=1&rel=0&playsinline=1&origin=${encodeURIComponent(location.origin)}"
+      title="${_esc(d.title)}"></iframe>
+    <div class="mb-listen-fallback" hidden>This one cannot play outside YouTube. <a href="${_esc(d.url)}" target="_blank" rel="noopener">Open it on YouTube Music</a></div>`;
+  if (bar && bar.parentNode) bar.parentNode.insertBefore(el, bar);
+  else document.body.appendChild(el);
+  const iframe = el.querySelector('iframe');
+  // Ask the player for its events (no API script needed), to catch videos
+  // whose owners block embedding (errors 101 / 150).
+  iframe.addEventListener('load', () => {
+    try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 'mb-listen' }), YT_ORIGIN); } catch (_) {}
+  });
+  _listen = { el, iframe, title: d.title, url: d.url };
+}
+
+window.addEventListener('message', (ev) => {
+  if (!_listen || ev.origin !== YT_ORIGIN || ev.source !== _listen.iframe.contentWindow) return;
+  let m;
+  try { m = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data; } catch (_) { return; }
+  if (m && m.event === 'onError') {
+    _listen.iframe.hidden = true;
+    const fb = _listen.el.querySelector('.mb-listen-fallback');
+    if (fb) fb.hidden = false;
+  }
+});
+
+document.addEventListener('click', async (ev) => {
+  if (ev.target.closest('[data-mb-listen-close]')) { ev.preventDefault(); _closeListen(); return; }
+  const b = ev.target.closest('[data-mb-listen]');
+  if (!b) return;
+  ev.preventDefault();
+  if (b.dataset.busy) return;
+  b.dataset.busy = '1';
+  const label = b.textContent;
+  b.textContent = 'Starting\u2026';
+  try {
+    const r = await fetch('/api/media/listen', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: b.dataset.mbListen }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    _openListen(d);
+    if (window.showToast) window.showToast(`${d.title}: paused on ${d.from_name}, playing here`);
+    setTimeout(_tick, 1500);
+  } catch (e) {
+    if (window.showToast) window.showToast(`Could not play it here: ${e.message}`);
+  } finally {
+    delete b.dataset.busy;
+    b.textContent = label;
   }
 });
 

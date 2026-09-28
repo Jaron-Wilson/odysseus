@@ -120,7 +120,7 @@ def test_ui_labels_both_volumes():
     read = lambda *p: open(os.path.join(_HERE, *p), encoding="utf-8").read()
     js = read("static", "js", "musicBar.js")
     assert "data-mb-appvol" in js and "_control('app_volume', nv)" in js
-    assert 'data-mb="voltarget"' in js and ">Computer</span>" in js
+    assert 'data-mb="voltarget"' in js and '<span class="mp-vollabel">${_esc(_devName())}</span>' in js
     assert "_control(app ? 'app_volume' : 'volume', nv)" in js
     ov = read("tools", "music_overlay", "music_overlay.py")
     assert "Volume buttons: computer" in ov and '"<MouseWheel>"' in ov

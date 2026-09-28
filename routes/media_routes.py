@@ -251,6 +251,38 @@ def setup_media_routes(mcp_manager) -> APIRouter:
         return {"ok": True, "title": title, "artist": artist, "url": url,
                 "from": known[src_id].get("name"), "to": known[dst_id].get("name")}
 
+    @router.post("/listen")
+    async def listen_here(request: Request):
+        """Play what another device is playing in this browser instead: pause
+        it there and hand back the song's YouTube video, to play in an
+        embedded player. Nothing needs installing where you listen. Asked
+        for: "stream it over to my PC or my laptop so that I don't need
+        YouTube Music installed"."""
+        _require_user(request)
+        from src import device_routing
+        body = await request.json() if request.headers.get("content-type", "").startswith(
+            "application/json") else {}
+        src_id = str(body.get("from") or "").strip()
+        known = {d.get("server_id"): d for d in device_routing.all_devices(mcp_manager)}
+        if src_id not in known:
+            raise HTTPException(400, "Pick a connected device")
+        np = _payload(await _call(src_id, "now_playing"))
+        title, artist = (np.get("title") or "").strip(), (np.get("artist") or "").strip()
+        if not title:
+            raise HTTPException(409, f"Nothing is playing on {known[src_id].get('name')}")
+        vid = await asyncio.to_thread(_youtube_id, title, artist)
+        if not vid:
+            raise HTTPException(404, f"Could not find {title!r} on YouTube")
+        if np.get("playing"):
+            await _call(src_id, "media_control", {"action": "pause" if src_id.startswith("device:") else "play_pause"})
+        try:
+            start_s = max(0, int((np.get("position_ms") or 0) / 1000))
+        except (TypeError, ValueError):
+            start_s = 0
+        return {"ok": True, "title": title, "artist": artist, "video_id": vid, "start_s": start_s,
+                "url": f"https://music.youtube.com/watch?v={vid}",
+                "from": src_id, "from_name": known[src_id].get("name") or src_id}
+
     @router.post("/overlay")
     async def overlay(request: Request):
         """Open the frameless desktop music overlay (tools/music_overlay) on
