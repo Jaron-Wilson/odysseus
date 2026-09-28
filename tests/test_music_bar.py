@@ -81,3 +81,17 @@ def test_volume_feedback_and_pop_out():
     assert 'data-mb="mute"' in js and "_control('mute', next)" in js
     routes = read("routes", "media_routes.py")
     assert '"volume_up", "volume_down"):' in routes
+
+
+def test_an_automatic_machine_pick_is_not_saved():
+    """Seen live: right after a restart only the laptop had reconnected, the
+    bar auto-picked it and saved it, and the PC's browser then showed the
+    laptop ("Nothing playing") and sent the overlay there (400)."""
+    read = lambda *p: open(os.path.join(HERE, *p), encoding="utf-8").read()
+    js = read("static", "js", "musicBar.js")
+    assert "_autoDevice = _state.available[0].server_id;" in js
+    assert "localStorage.setItem(KEY_DEVICE, _state.available" not in js
+    assert "localStorage.removeItem('odysseus.musicBar.device')" in js
+    assert "Desktop overlay unavailable" in js
+    routes = read("routes", "media_routes.py")
+    assert 'target = next((d for d in devices if d.get("server_id") == dev.get("server_id")), None)' in routes

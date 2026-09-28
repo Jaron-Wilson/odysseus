@@ -170,10 +170,16 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             "application/json") else {}
         ip = _client_ip(request)
         dev = device_routing.for_client(mcp_manager, ip)
+        devices = device_routing.all_devices(mcp_manager)
         sid = str(body.get("server_id") or "").strip() or (dev or {}).get("server_id", "")
-        target = next((d for d in device_routing.all_devices(mcp_manager) if d.get("server_id") == sid), None)
+        target = next((d for d in devices if d.get("server_id") == sid), None)
+        if not target and dev:
+            # A stale pick (a machine no longer offered): the overlay belongs
+            # on the machine this browser is on.
+            target = next((d for d in devices if d.get("server_id") == dev.get("server_id")), None)
         if not target:
-            raise HTTPException(400, "No machine to open the overlay on")
+            raise HTTPException(400, "No machine to open the overlay on"
+                                + (f" ({sid} is not connected)" if sid else ""))
         all_peers = await asyncio.to_thread(machines.peers)
         peer = machines.find_peer(all_peers, target.get("host", ""))
         if not peer:

@@ -13,7 +13,16 @@
 // machine it is controlling.
 
 const KEY_OPEN = 'odysseus.musicBar.open';
-const KEY_DEVICE = 'odysseus.musicBar.device';
+// A machine the user picked in the panel. Only an explicit pick is saved:
+// an automatic one (the only machine on offer, from a phone) is kept in
+// memory. Seen live: right after a server restart only the laptop had
+// reconnected, the bar auto-picked it and saved it, and from then on the
+// PC's browser showed the laptop ("Nothing playing") and opened the overlay
+// there. The old key held such picks, so it is dropped once.
+const KEY_DEVICE = 'odysseus.musicBar.pick';
+try { localStorage.removeItem('odysseus.musicBar.device'); } catch (_) { /* private mode */ }
+let _autoDevice = '';
+let _autoAt = 0;          // re-made every 30s, so a machine that reconnects wins again
 const KEY_VOLTARGET = 'odysseus.musicBar.volTarget';   // 'pc' or 'app': what the bar's +/- drive
 const POLL_MS = 4000;
 
@@ -44,7 +53,7 @@ let _busy = false;
 let _pip = null;          // the popped-out window (Document Picture-in-Picture)
 let _volShownAt = 0;
 
-function _device() { return localStorage.getItem(KEY_DEVICE) || ''; }
+function _device() { return localStorage.getItem(KEY_DEVICE) || _autoDevice || ''; }
 
 async function _fetchState() {
   const dev = _device();
@@ -187,7 +196,7 @@ async function _renderPanel() {
     <div class="mp-section">Controlling</div>
     <select class="mp-device" data-mb-device>
       <option value="">This machine (automatic)</option>
-      ${devs.map((d) => `<option value="${_esc(d.server_id)}" ${d.server_id === current && _device() ? 'selected' : ''}>${_esc(d.name || d.server_id)}</option>`).join('')}
+      ${devs.map((d) => `<option value="${_esc(d.server_id)}" ${d.server_id === current && localStorage.getItem(KEY_DEVICE) ? 'selected' : ''}>${_esc(d.name || d.server_id)}</option>`).join('')}
     </select>
     <div class="mp-note">Queue and playlists need the YouTube Music desktop app's API, which Windows' media controls do not expose.</div>`;
   _wireArt(panel);
@@ -225,11 +234,13 @@ async function _tick() {
   // While popped out (say over a game) this page is hidden, but the window is not.
   if ((!open && !_panelOpen && !pipOpen) || (document.visibilityState !== 'visible' && !pipOpen) || _busy) return;
   try {
+    if (_autoDevice && Date.now() - _autoAt > 30000) _autoDevice = '';
     const prevKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}|${_appVol()}`;
     _state = await _fetchState();
     // Browsing from a phone: with one machine to control, use it.
     if (_state && !_state.ok && !_device() && (_state.available || []).length === 1) {
-      localStorage.setItem(KEY_DEVICE, _state.available[0].server_id);
+      _autoDevice = _state.available[0].server_id;
+      _autoAt = Date.now();
       _state = await _fetchState();
     }
     const nowKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}|${_appVol()}`;
@@ -303,6 +314,10 @@ async function _popOut() {
       if (window.showToast) window.showToast(`Music overlay opened on ${d.machine}. Right-click it to close.`);
       return;
     }
+    // Say why before falling back, rather than silently showing the old
+    // browser pop-out.
+    const d = await r.json().catch(() => ({}));
+    if (window.showToast) window.showToast(`Desktop overlay unavailable (${d.detail || r.status}); using the browser pop-out.`);
   } catch (_) { /* fall back */ }
   if (_pip && !_pip.closed) { _pip.focus(); return; }
   if (!('documentPictureInPicture' in window)) {
@@ -350,6 +365,7 @@ document.addEventListener('change', (ev) => {
   } else if (ev.target.matches('[data-mb-device]')) {
     if (ev.target.value) localStorage.setItem(KEY_DEVICE, ev.target.value);
     else localStorage.removeItem(KEY_DEVICE);
+    _autoDevice = '';
     _state = null;
     _tick();
   }
