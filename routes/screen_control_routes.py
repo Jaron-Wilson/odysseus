@@ -29,6 +29,26 @@ def setup_screen_control_routes() -> APIRouter:
             raise HTTPException(401, "Sign in to approve screen control.")
         return user
 
+    def _where(request: Request, server_id: str) -> dict:
+        from src import machines
+        fwd = request.headers.get("x-forwarded-for", "")
+        ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")
+        all_peers = machines.peers()
+        info = machines.client_device(ip, all_peers)
+        you = (info or {}).get("peer")
+        target = None
+        from src.database import McpServer, SessionLocal
+        db = SessionLocal()
+        try:
+            srv = db.query(McpServer).filter(McpServer.id == server_id).first()
+            host = machines.url_host(srv.url) if srv and srv.url else ""
+        finally:
+            db.close()
+        if host:
+            target = machines.find_peer(all_peers, host)
+        return {"you_are_on": (you or {}).get("host", ""),
+                "other_machine": bool(you and target and you.get("host") != target.get("host"))}
+
     @router.get("/pending")
     async def pending(request: Request):
         """What is waiting on this person right now.
@@ -47,7 +67,16 @@ def setup_screen_control_routes() -> APIRouter:
         rec = _prune(_load()).get(request_id)
         if not rec:
             raise HTTPException(404, "That request has expired or was already answered.")
-        return {k: v for k, v in rec.items() if k != "owner"}
+        out = {k: v for k, v in rec.items() if k != "owner"}
+        # Which machine the person answering is on, so the prompt can say
+        # plainly when the request is for a different one. Seen live: a
+        # request for the laptop was approved from the PC without noticing.
+        try:
+            import asyncio
+            out.update(await asyncio.to_thread(_where, request, rec.get("server_id", "")))
+        except Exception:
+            pass
+        return out
 
     @router.post("/approve/{request_id}")
     async def approve(request_id: str, request: Request):
