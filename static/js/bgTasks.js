@@ -179,7 +179,7 @@ function _jobRow(j) {
         <span class="bg-job-title">${_esc(j.prompt || j.action)}</span>
         <span class="bg-job-meta">${_esc(j.status)} · ${_esc(where)} · ${_dur(j.elapsed_s)}</span>
       </div>
-      <div class="bg-job-sub">Claude Code ${_esc(j.action)} · <b>${_esc(j.model)}</b> · <code>${_esc(j.cwd)}</code> · job ${_esc(j.id)}</div>
+      <div class="bg-job-sub">${j.engine === 'opencode' ? 'OpenCode' : 'Claude Code'} ${_esc(j.action)} · <b>${_esc(j.model)}</b> · <code>${_esc(j.cwd)}</code> · job ${_esc(j.id)}</div>
       ${j.id === _open ? `<pre class="bg-job-log" data-log="${_esc(j.id)}">Loading…</pre>` : ''}
       <div class="bg-job-actions">
         <button type="button" data-toggle="${_esc(j.id)}">${j.id === _open ? 'Hide output' : 'Show output'}</button>
@@ -213,8 +213,8 @@ async function _render() {
   });
   body.innerHTML = `
     <div class="bg-section">From your chats</div>
-    ${jobs.length ? jobs.map(_jobRow).join('') : '<div class="bg-empty">No Claude Code runs yet. A running Claude Code card in a chat has a "Send to background" button.</div>'}
-    <div class="bg-section">Claude Code agents by chat</div>
+    ${jobs.length ? jobs.map(_jobRow).join('') : '<div class="bg-empty">No coding-agent runs yet. A running OpenCode or Claude Code card in a chat has a "Send to background" button.</div>'}
+    <div class="bg-section">Coding agents by chat</div>
     ${_agents && _agents.length ? _agents.map((a) => `
       <div class="bg-job">
         <div class="bg-job-head"><span class="bg-dot ${a.busy ? 'running' : 'ok'}"></span>
@@ -223,7 +223,7 @@ async function _render() {
         <div class="bg-job-sub"><code>${_esc(a.cwd)}</code> · chat ${_esc(String(a.chat_id).slice(0, 8))} · last: ${_esc(a.last_prompt || '')}</div>
         <div class="bg-job-actions"><a href="#${_esc(a.chat_id)}" data-chat="${_esc(a.chat_id)}">Open chat</a>
           <span class="bg-hint">Another chat can carry this agent on: "use the Claude agent from chat ${_esc(String(a.chat_id).slice(0, 8))}"</span></div>
-      </div>`).join('') : '<div class="bg-empty">No chat has a Claude Code agent yet.</div>'}
+      </div>`).join('') : '<div class="bg-empty">No chat has a coding agent yet.</div>'}
     <div class="bg-section">Claude Code background sessions on this host</div>
     ${_cli && _cli.sessions.length ? _cli.sessions.map((s) => `
       <div class="bg-job">
@@ -276,7 +276,7 @@ export function openPanel() {
       if (t.dataset.toggle) {
         _open = _open === t.dataset.toggle ? null : t.dataset.toggle;
       } else if (t.dataset.stop) {
-        if (!confirm('Stop this Claude Code run? Anything it has already changed stays changed.')) return;
+        if (!confirm('Stop this run? Anything it has already changed stays changed.')) return;
         await _call(`${API}/${encodeURIComponent(t.dataset.stop)}/stop`, 'POST');
       } else if (t.dataset.bg) {
         await _call(`${API}/${encodeURIComponent(t.dataset.bg)}/background`, 'POST');

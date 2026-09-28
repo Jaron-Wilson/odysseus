@@ -1,11 +1,12 @@
 """Per-chat switches the user sets for one chat only.
 
-For now one switch: whether the agent may use Claude Code (the claude_code
-tool, either engine) in this chat. Asked for: "let me disable and enable
-claude code per chat please, this one keeps using it to do stuff when I said
-don't". Off is enforced twice: the tool is left out of the agent's tool list
-for the chat (src/agent_loop.py), and the tool itself refuses when called
-from it (claude_code_tool), so no path around the list reaches it.
+For now, which coding agents the agent may use in this chat: Claude Code and
+OpenCode, separately (both engines of the claude_code tool). Asked for: "let
+me disable and enable claude code per chat", then "disabling claude code
+should be separate from opencode, but disabling coding agents should disable
+both". With both off the tool is left out of the agent's tool list for the
+chat (src/agent_loop.py); the tool itself refuses a switched-off engine
+(claude_code_tool), and bash refuses its CLI (tool_execution).
 """
 
 import json
@@ -16,7 +17,7 @@ from typing import Dict
 from src.constants import DATA_DIR
 
 PREFS_FILE = os.path.join(DATA_DIR, "chat_prefs.json")
-DEFAULTS = {"claude_code": True}
+DEFAULTS = {"claude": True, "opencode": True}
 
 
 def _load() -> Dict[str, dict]:
@@ -45,16 +46,20 @@ def _save(data: Dict[str, dict]) -> None:
 
 
 def get(session_id: str) -> dict:
-    return {**DEFAULTS, **(_load().get(session_id or "") or {})}
+    stored = dict(_load().get(session_id or "") or {})
+    # Before the two were separate, one "claude_code" switch covered both.
+    legacy = stored.pop("claude_code", None)
+    out = {**DEFAULTS, **({"claude": False, "opencode": False} if legacy is False else {}), **stored}
+    return {k: out[k] for k in DEFAULTS}
 
 
 def set_pref(session_id: str, key: str, value) -> dict:
     if key not in DEFAULTS:
         raise ValueError(f"unknown setting {key!r}")
     data = _load()
-    entry = data.get(session_id) or {}
+    entry = get(session_id)                    # folds in the old single switch
     entry[key] = type(DEFAULTS[key])(value)
-    if entry == {k: v for k, v in DEFAULTS.items() if k in entry}:
+    if entry == DEFAULTS:
         data.pop(session_id, None)              # back to the defaults: nothing to keep
     else:
         data[session_id] = entry
@@ -62,5 +67,14 @@ def set_pref(session_id: str, key: str, value) -> dict:
     return get(session_id)
 
 
+def engine_allowed(session_id: str, engine: str) -> bool:
+    """Whether this chat allows the coding agent `engine` ("claude" or
+    "opencode")."""
+    if not session_id:
+        return True
+    return bool(get(session_id).get("claude" if engine == "claude" else "opencode", True))
+
+
 def claude_code_allowed(session_id: str) -> bool:
-    return not session_id or bool(get(session_id).get("claude_code", True))
+    """Whether any coding agent is allowed in this chat (the tool at all)."""
+    return engine_allowed(session_id, "claude") or engine_allowed(session_id, "opencode")
