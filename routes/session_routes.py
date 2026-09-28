@@ -210,6 +210,21 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     OPENAI_API_KEY = config.get("OPENAI_API_KEY")
     SESSIONS_FILE = config.get("SESSIONS_FILE")
     
+    @router.get("/session/{session_id}/stamp")
+    def session_stamp(request: Request, session_id: str):
+        """How many messages a chat has, for an open page to notice replies
+        saved while it was not attached (a run approved from a notification
+        or the desktop overlay, a finished background job). Seen live: the
+        work was done and saved, but the open chat showed nothing new."""
+        user = effective_user(request)
+        try:
+            sess = session_manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "No such chat")
+        if user and getattr(sess, "owner", None) and sess.owner != user:
+            raise HTTPException(404, "No such chat")
+        return {"id": session_id, "message_count": len(getattr(sess, "history", None) or [])}
+
     @router.get("/sessions")
     def list_sessions(request: Request):
         user = effective_user(request)
