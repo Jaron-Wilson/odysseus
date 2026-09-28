@@ -1442,7 +1442,7 @@ def setup_chat_routes(
         if not agent_runs.is_active(session_id):
             # Nothing running to wait for (it finished while this was typed):
             # start the drain now rather than leaving it until a reply ends.
-            chat_queue.on_run_finished(session_id, "done")
+            chat_queue.schedule_drain(session_id)
         return out
 
     @router.post("/api/chat/queue/{session_id}/claim")

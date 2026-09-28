@@ -3198,9 +3198,11 @@ async def stream_agent_loop(
                 # live: the turn just stopped). Send it to the user's device.
                 try:
                     from src import chat_queue as _cq
+                    _aq = result.get("ask_user") or {}
                     asyncio.create_task(_cq.notify_question(
-                        session_id, str((result.get("ask_user") or {}).get("question") or ""),
-                        client_device))
+                        session_id, str(_aq.get("question") or ""), client_device,
+                        options=[(o.get("label") if isinstance(o, dict) else str(o))
+                                 for o in (_aq.get("options") or [])]))
                 except Exception:
                     pass
 

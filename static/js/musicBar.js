@@ -132,7 +132,7 @@ function _renderBarInto(bar) {
       <button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute' : 'Mute'}">${_muted() ? ICONS.muted : ICONS.mute}</button>
       <span class="mb-vol-badge"${Date.now() - _volShownAt < 2500 && _vol() !== null ? '' : ' hidden'}>${_vol() ?? ''}%</span>
       ${bar.ownerDocument === document
-        ? `<button type="button" class="mb-btn" data-mb="popout" title="Pop out: a small window that stays on top of other apps and games">${ICONS.popout}</button>
+        ? `<button type="button" class="mb-btn" data-mb="popout" title="Pop out: the frameless player on your PC, on top of apps and games">${ICONS.popout}</button>
            <button type="button" class="mb-btn" data-mb="expand" title="Expand">${ICONS.expand}</button>`
         : ''}
     </span>`;
@@ -268,6 +268,20 @@ async function _act(what) {
 // ── pop out: an always-on-top window (over other apps, and games in
 // borderless fullscreen, like Factorio's default) ───────────────────────
 async function _popOut() {
+  // First choice: the frameless overlay on the PC (no title bar, no X), via
+  // its MusicOverlay task. The browser pop-out below is the fallback.
+  try {
+    const body = _device() ? { server_id: _device() } : {};
+    const r = await fetch('/api/media/overlay', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (r.ok) {
+      const d = await r.json();
+      if (window.showToast) window.showToast(`Music overlay opened on ${d.machine}. Right-click it to close.`);
+      return;
+    }
+  } catch (_) { /* fall back */ }
   if (_pip && !_pip.closed) { _pip.focus(); return; }
   if (!('documentPictureInPicture' in window)) {
     if (window.showToast) window.showToast('Pop out needs Chrome or Edge on a computer.');

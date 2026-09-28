@@ -361,6 +361,32 @@ async def start_services(peer: Dict, user: str) -> Dict:
             if "Permission denied" in last else (last[:300] or "SSH failed")}
 
 
+# Tasks on a machine the web app may start on request, by exact name. Kept
+# out of the Odysseus* services pattern above so the health loop never
+# starts them on its own.
+USER_TASKS = {"MusicOverlay"}
+
+
+async def run_user_task(peer: Dict, user: str, task: str) -> Dict:
+    """Start one allowlisted scheduled task on a Windows machine over SSH.
+    The task runs on the logged-in desktop (see start_command)."""
+    if task not in USER_TASKS:
+        return {"ok": False, "error": f"{task!r} is not a task Odysseus may start"}
+    if peer.get("os") != "windows":
+        return {"ok": False, "error": "only Windows machines have this task"}
+    host = peer["dns"] or (peer["ips"][0] if peer["ips"] else peer["host"])
+    remote = ["powershell", "-NoProfile", "-Command", f"Start-ScheduledTask -TaskName '{task}'"]
+    last = ""
+    for key in _ssh_keys():
+        r = await _run(_ssh_argv(user, host, key, remote, "windows"), timeout=30)
+        if r["rc"] == 0:
+            return {"ok": True}
+        last = r["err"] or r["out"]
+        if "Permission denied" not in last:
+            break
+    return {"ok": False, "error": last[:300] or "SSH failed"}
+
+
 async def tailscale_ping(peer: Dict) -> bool:
     target = peer["ips"][0] if peer["ips"] else peer["host"]
     r = await _run(["tailscale", "ping", "-c", "1", "--timeout", "5s", target], timeout=12)

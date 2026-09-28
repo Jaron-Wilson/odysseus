@@ -148,6 +148,30 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                      "volume_up, volume_down, volume, mute or output")
         return {"requested": action, "result": _payload(res)}
 
+    @router.post("/overlay")
+    async def overlay(request: Request):
+        """Open the frameless desktop music overlay (tools/music_overlay) on
+        the machine this browser controls, through its MusicOverlay task."""
+        _require_user(request)
+        import getpass
+        from src import device_routing, machines
+        body = await request.json() if request.headers.get("content-type", "").startswith(
+            "application/json") else {}
+        ip = _client_ip(request)
+        dev = device_routing.for_client(mcp_manager, ip)
+        sid = str(body.get("server_id") or "").strip() or (dev or {}).get("server_id", "")
+        target = next((d for d in device_routing.all_devices(mcp_manager) if d.get("server_id") == sid), None)
+        if not target:
+            raise HTTPException(400, "No machine to open the overlay on")
+        all_peers = await asyncio.to_thread(machines.peers)
+        peer = machines.find_peer(all_peers, target.get("host", ""))
+        if not peer:
+            raise HTTPException(404, "That machine is not on the tailnet")
+        r = await machines.run_user_task(peer, getpass.getuser(), "MusicOverlay")
+        if not r.get("ok"):
+            raise HTTPException(502, f"Could not open the overlay: {r.get('error')}")
+        return {"ok": True, "machine": target.get("name") or sid}
+
     # ------------------------------------------------------------------ #
     # Album art and lyrics for the music bar (static/js/musicBar.js). The
     # Windows media session gives title and artist but no art or lyrics, so

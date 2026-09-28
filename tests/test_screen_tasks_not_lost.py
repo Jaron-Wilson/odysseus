@@ -55,7 +55,7 @@ def test_a_question_reaches_the_user_when_no_page_is_watching(tmp_path, monkeypa
     monkeypatch.setattr(chat_queue, "_session_title", lambda sid: "Will's PR")
     sent = []
 
-    async def fake_send(sid, notify, heading, body, *, kind="done"):
+    async def fake_send(sid, notify, heading, body, *, kind="done", **kw):
         sent.append((sid, notify, heading, body, kind))
         return {"sent": 1}
 

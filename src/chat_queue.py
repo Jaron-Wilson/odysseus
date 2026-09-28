@@ -255,7 +255,7 @@ def after_stop(session_id: str) -> None:
             e["notify"] = None
             _save(data)
     if has_items:
-        on_run_finished(session_id, "done")
+        schedule_drain(session_id)
 
 
 def on_run_started(session_id: str) -> None:
@@ -265,10 +265,25 @@ def on_run_started(session_id: str) -> None:
 
 def on_run_finished(session_id: str, status: str) -> None:
     """agent_runs calls this from its drain task when a run ends."""
+    if status == "done":
+        # For the desktop overlay: a reply that finished with no page watching.
+        try:
+            from src import agent_runs, overlay_inbox
+            if not agent_runs.has_watchers(session_id):
+                title = _session_title(session_id)
+                overlay_inbox.record(session_id, "done", f"Reply ready: {title}" if title else "Reply ready",
+                                     _preview(_last_reply(session_id)) or "Your reply is ready.")
+        except Exception:
+            pass
     if status == "stopped":
         # Stopped by the user or replaced by a newer message. Stop clears the
         # queue itself; a replacing message has its own run to finish.
         return
+    schedule_drain(session_id, status)
+
+
+def schedule_drain(session_id: str, status: str = "done") -> None:
+    """Send what is queued (or the done notification) after the claim grace."""
     with _lock:
         if session_id not in _load():
             return              # nothing queued, no notify asked for
@@ -474,11 +489,16 @@ async def send_done_notification(session_id: str, notify: Dict, *, failed: bool 
 
 
 async def send_notification(session_id: str, notify: Dict, heading: str, body: str,
-                            *, kind: str = "done") -> Dict:
+                            *, kind: str = "done", _options: Optional[List[str]] = None) -> Dict:
     """Push to the chosen browsers, and also show it through each chosen
     device's Modes listener. Seen live: the push was accepted for the phone
     but never shown with the site closed, while the listener was up."""
     from src import webpush
+    try:
+        from src import overlay_inbox
+        overlay_inbox.record(session_id, kind, heading, body, options=_options)
+    except Exception:
+        pass
 
     async def _push():
         try:
@@ -517,7 +537,8 @@ async def send_notification(session_id: str, notify: Dict, heading: str, body: s
 
 
 async def notify_question(session_id: str, question: str,
-                          client_device: Optional[Dict] = None) -> Optional[Dict]:
+                          client_device: Optional[Dict] = None,
+                          options: Optional[List[str]] = None) -> Optional[Dict]:
     """The agent asked the user something (ask_user) and no page is watching
     the chat: send the question where they will see it. The chat's bell
     target if set, else the device the message came from, else all devices."""
@@ -538,4 +559,4 @@ async def notify_question(session_id: str, question: str,
     title = _session_title(session_id)
     heading = f"Question: {title}" if title else "Odysseus has a question"
     return await send_notification(session_id, notify, heading,
-                                   _preview(question, 200), kind="question")
+                                   _preview(question, 200), kind="question", _options=options)
