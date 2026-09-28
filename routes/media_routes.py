@@ -124,7 +124,10 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             raise HTTPException(
                 400, "No controllable machine for this browser. Pass server_id to choose one.")
 
-        if action in ("play_pause", "play", "pause", "next", "previous", "stop"):
+        if action in ("play_pause", "play", "pause", "next", "previous", "stop",
+                      "volume_up", "volume_down"):
+            # volume_up/down are the Windows volume keys: they always do
+            # something, and Windows shows its own volume display.
             res = await _call(sid, "media_control", {"action": action})
         elif action == "volume":
             try:
@@ -142,7 +145,7 @@ def setup_media_routes(mcp_manager) -> APIRouter:
         else:
             raise HTTPException(
                 400, "action must be play_pause, play, pause, next, previous, stop, "
-                     "volume, mute or output")
+                     "volume_up, volume_down, volume, mute or output")
         return {"requested": action, "result": _payload(res)}
 
     # ------------------------------------------------------------------ #

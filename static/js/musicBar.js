@@ -23,6 +23,9 @@ const ICONS = {
   pause: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>',
   down: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M16 12h5"/></svg>',
   up: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M16 12h5M18.5 9.5v5"/></svg>',
+  mute: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>',
+  muted: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M16 9l5 6M21 9l-5 6"/></svg>',
+  popout: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="13" height="13" rx="2"/><path d="M14 3h7v7M21 3l-9 9"/></svg>',
   expand: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>',
 };
 
@@ -36,6 +39,8 @@ let _timer = null;
 let _panelOpen = false;
 let _lyricsFor = '';
 let _busy = false;
+let _pip = null;          // the popped-out window (Document Picture-in-Picture)
+let _volShownAt = 0;
 
 function _device() { return localStorage.getItem(KEY_DEVICE) || ''; }
 
@@ -73,20 +78,35 @@ function _vol() {
   const v = _state && _state.get_volume;
   return v && typeof v.volume === 'number' ? v.volume : null;
 }
+function _muted() {
+  const v = _state && _state.get_volume;
+  return !!(v && v.muted);
+}
 function _artUrl(np) {
   if (!np.title) return '';
   return `/api/media/art?title=${encodeURIComponent(np.title)}&artist=${encodeURIComponent(np.artist || '')}`;
 }
 
 // ── mini bar ─────────────────────────────────────────────────────────────
-function _renderBar() {
+function _barTargets() {
+  const out = [];
   const bar = document.getElementById('music-bar');
-  if (!bar) return;
   const open = localStorage.getItem(KEY_OPEN) === '1';
-  bar.hidden = !open;
+  if (bar) { bar.hidden = !open; if (open) out.push(bar); }
   const btn = document.getElementById('music-btn');
-  if (btn) btn.classList.toggle('active', open);
-  if (!open) return;
+  if (btn) btn.classList.toggle('active', open || !!_pip);
+  if (_pip && !_pip.closed) {
+    const pb = _pip.document.getElementById('music-bar');
+    if (pb) out.push(pb);
+  }
+  return out;
+}
+
+function _renderBar() {
+  for (const bar of _barTargets()) _renderBarInto(bar);
+}
+
+function _renderBarInto(bar) {
   if (!_state) { bar.innerHTML = '<span class="mb-status">Connecting…</span>'; return; }
   if (!_state.ok) {
     bar.innerHTML = `<span class="mb-status">${_esc(_state.reason || 'No machine to control')}</span>
@@ -109,7 +129,12 @@ function _renderBar() {
       <button type="button" class="mb-btn" data-mb="next" title="Next">${ICONS.next}</button>
       <button type="button" class="mb-btn" data-mb="voldown" title="Volume down">${ICONS.down}</button>
       <button type="button" class="mb-btn" data-mb="volup" title="Volume up">${ICONS.up}</button>
-      <button type="button" class="mb-btn" data-mb="expand" title="Expand">${ICONS.expand}</button>
+      <button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute' : 'Mute'}">${_muted() ? ICONS.muted : ICONS.mute}</button>
+      <span class="mb-vol-badge"${Date.now() - _volShownAt < 2500 && _vol() !== null ? '' : ' hidden'}>${_vol() ?? ''}%</span>
+      ${bar.ownerDocument === document
+        ? `<button type="button" class="mb-btn" data-mb="popout" title="Pop out: a small window that stays on top of other apps and games">${ICONS.popout}</button>
+           <button type="button" class="mb-btn" data-mb="expand" title="Expand">${ICONS.expand}</button>`
+        : ''}
     </span>`;
   _wireArt(bar);
 }
@@ -140,7 +165,8 @@ async function _renderPanel() {
       <button type="button" class="mb-btn mb-main" data-mb="play_pause" title="Play / pause">${np.playing ? ICONS.pause : ICONS.play}</button>
       <button type="button" class="mb-btn" data-mb="next" title="Next">${ICONS.next}</button>
     </div>
-    <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${vol ?? 50}" data-mb-vol ${vol === null ? 'disabled' : ''}>${ICONS.up}<span>${vol ?? '–'}</span></label>
+    <div class="mp-volrow"><button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute' : 'Mute'}">${_muted() ? ICONS.muted : ICONS.mute}</button>
+    <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${vol ?? 50}" data-mb-vol ${vol === null ? 'disabled' : ''}>${ICONS.up}<span>${vol ?? '–'}</span></label></div>
     <div class="mp-section">Lyrics</div>
     <div class="mp-lyrics" id="mp-lyrics">${np.title ? 'Looking up lyrics…' : 'Play something to see its lyrics.'}</div>
     <div class="mp-section">Controlling</div>
@@ -180,11 +206,18 @@ async function _loadLyrics(np, key) {
 // ── polling ──────────────────────────────────────────────────────────────
 async function _tick() {
   const open = localStorage.getItem(KEY_OPEN) === '1';
-  if ((!open && !_panelOpen) || document.visibilityState !== 'visible' || _busy) return;
+  const pipOpen = !!(_pip && !_pip.closed);
+  // While popped out (say over a game) this page is hidden, but the window is not.
+  if ((!open && !_panelOpen && !pipOpen) || (document.visibilityState !== 'visible' && !pipOpen) || _busy) return;
   try {
-    const prevKey = `${_np().title}|${_np().playing}|${_vol()}`;
+    const prevKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}`;
     _state = await _fetchState();
-    const nowKey = `${_np().title}|${_np().playing}|${_vol()}`;
+    // Browsing from a phone: with one machine to control, use it.
+    if (_state && !_state.ok && !_device() && (_state.available || []).length === 1) {
+      localStorage.setItem(KEY_DEVICE, _state.available[0].server_id);
+      _state = await _fetchState();
+    }
+    const nowKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}`;
     if (nowKey !== prevKey) { _renderBar(); if (_panelOpen) _renderPanel(); }
     else if (!document.querySelector('#music-bar .mb-controls, #music-bar .mb-status')) _renderBar();
   } catch (_) { /* keep the last state */ }
@@ -202,7 +235,25 @@ async function _act(what) {
   try {
     if (what === 'volup' || what === 'voldown') {
       const v = _vol();
-      if (v !== null) await _control('volume', Math.max(0, Math.min(100, v + (what === 'volup' ? 5 : -5))));
+      if (v !== null) {
+        const nv = Math.max(0, Math.min(100, v + (what === 'volup' ? 10 : -10)));
+        await _control('volume', nv);
+        if (_state && _state.get_volume) _state.get_volume.volume = nv;   // show it now
+      } else {
+        // Level unknown: the Windows volume keys still work (and show their own display).
+        await _control(what === 'volup' ? 'volume_up' : 'volume_down');
+      }
+      _volShownAt = Date.now();
+      _renderBar();
+      setTimeout(_renderBar, 2600);
+    } else if (what === 'mute') {
+      const next = !_muted();
+      await _control('mute', next);
+      if (_state && _state.get_volume) _state.get_volume.muted = next;
+      _renderBar();
+      if (_panelOpen) _renderPanel();
+    } else if (what === 'popout') {
+      await _popOut();
     } else {
       await _control(what);
     }
@@ -212,6 +263,35 @@ async function _act(what) {
     _busy = false;
   }
   setTimeout(_tick, 350);
+}
+
+// ── pop out: an always-on-top window (over other apps, and games in
+// borderless fullscreen, like Factorio's default) ───────────────────────
+async function _popOut() {
+  if (_pip && !_pip.closed) { _pip.focus(); return; }
+  if (!('documentPictureInPicture' in window)) {
+    if (window.showToast) window.showToast('Pop out needs Chrome or Edge on a computer.');
+    return;
+  }
+  const pip = await window.documentPictureInPicture.requestWindow({ width: 420, height: 64 });
+  for (const node of document.querySelectorAll('link[rel="stylesheet"], style')) {
+    pip.document.head.appendChild(node.cloneNode(true));
+  }
+  pip.document.documentElement.dataset.theme = document.documentElement.dataset.theme || '';
+  pip.document.body.className = 'music-pip-body ' + document.body.className;
+  pip.document.body.innerHTML = '<div id="music-bar" class="music-bar music-bar-pip"></div>';
+  pip.document.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-mb]');
+    if (!b) return;
+    ev.preventDefault();
+    _act(b.dataset.mb);
+  });
+  // Timers in the popped-out window keep running while this tab is hidden.
+  const t = pip.setInterval(_tick, POLL_MS);
+  pip.addEventListener('pagehide', () => { pip.clearInterval(t); _pip = null; _renderBar(); });
+  _pip = pip;
+  _renderBar();
+  _tick();
 }
 
 document.addEventListener('click', (ev) => {

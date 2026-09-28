@@ -67,3 +67,17 @@ def test_wiring():
     js = read("static", "js", "musicBar.js")
     assert "/api/media/control" in js and "/api/media/lyrics" in js and 'onerror="' not in js
     assert "import './musicBar.js';" in read("static", "js", "chat.js")
+
+
+def test_volume_feedback_and_pop_out():
+    """Seen live: volume up/down seemed to do nothing (5% steps, no feedback,
+    and nothing at all while the level was unknown). And a player that stays
+    on top of Factorio: a popped-out always-on-top window."""
+    read = lambda *p: open(os.path.join(HERE, *p), encoding="utf-8").read()
+    js = read("static", "js", "musicBar.js")
+    assert "v + (what === 'volup' ? 10 : -10)" in js and "mb-vol-badge" in js
+    assert "_control(what === 'volup' ? 'volume_up' : 'volume_down')" in js
+    assert "documentPictureInPicture.requestWindow" in js and "pip.setInterval(_tick" in js
+    assert 'data-mb="mute"' in js and "_control('mute', next)" in js
+    routes = read("routes", "media_routes.py")
+    assert '"volume_up", "volume_down"):' in routes
