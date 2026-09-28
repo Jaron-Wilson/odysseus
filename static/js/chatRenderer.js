@@ -2491,6 +2491,18 @@ export function addMessage(role, content, modelName, metadata) {
       if (attachments?.length) {
         b.appendChild(buildAttachCards(attachments));
       }
+
+      // Prompts Odysseus writes for a button (Approve, Bring back to chat):
+      // a one-line note, the full instructions folded away. Seen live: each
+      // showed as a long "You" message the user never typed.
+      const _auto = String(textRaw || '').match(/^\[(Brought back from the background|Plan approved) \u00b7 (?:job|run) ([0-9a-f]{6,}) \u00b7 ([^\]\n]+)\]/);
+      if (_auto) {
+        const _what = _auto[1] === 'Plan approved' ? '\u2713 Plan approved' : '\u21A9 Brought back to the chat';
+        const _full = b.innerHTML;
+        b.innerHTML = `<span class="auto-prompt-tag">${_what} \u00b7 ${uiModule.esc(_auto[3])} ${_auto[1] === 'Plan approved' ? 'run' : 'job'} ${uiModule.esc(_auto[2])}</span>`
+          + `<details class="auto-prompt-details"><summary>What the agent was told</summary>${_full}</details>`;
+        wrap.classList.add('msg-auto-prompt');
+      }
     }
 
     wrap.appendChild(r);

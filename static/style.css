@@ -37167,3 +37167,11 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
   .chat-input-bottom .mode-toggle-btn { padding: 0 9px; }
   .chat-input-bottom .chat-input-right > .send-btn { margin-left: 2px; }
 }
+
+/* Prompts Odysseus wrote for a button (Approve, Bring back): a short note
+   with the full instructions folded away (chatRenderer.js). */
+.msg-auto-prompt .body { font-size: 12.5px; }
+.auto-prompt-tag { display: inline-block; padding: 2px 9px; border-radius: 10px; opacity: .85;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); }
+.auto-prompt-details { margin-top: 4px; opacity: .7; }
+.auto-prompt-details > summary { cursor: pointer; font-size: 11.5px; }

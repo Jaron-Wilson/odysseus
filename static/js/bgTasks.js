@@ -58,7 +58,10 @@ function _currentSid() {
   return cm && typeof cm.currentSessionId === 'function' ? cm.currentSessionId() : null;
 }
 
-export async function watchInChat(jobId, chatId) {
+// `into`: the element the card goes in (a reply section following the run),
+// and `reloadWhenDone: false` when a chat turn carries on after the run - it
+// reports the result itself.
+export async function watchInChat(jobId, chatId, { into = null, reloadWhenDone = true } = {}) {
   if (chatId && chatId !== _currentSid() && window.sessionModule && window.sessionModule.selectSession) {
     await window.sessionModule.selectSession(chatId);
     await new Promise((r) => setTimeout(r, 600));
@@ -76,7 +79,7 @@ export async function watchInChat(jobId, chatId) {
       <button type="button" class="bg-watch-stop" data-stop-watch="${_esc(jobId)}">Stop</button>
       <button type="button" class="bg-watch-close" title="Hide (keeps running)">×</button></div>
       <pre class="bg-watch-log">Connecting…</pre>`;
-    box.appendChild(card);
+    (into || box).appendChild(card);
     card.querySelector('.bg-watch-close').addEventListener('click', () => {
       clearInterval(_watching.get(jobId)); _watching.delete(jobId); card.remove();
     });
@@ -102,7 +105,7 @@ export async function watchInChat(jobId, chatId) {
       card.querySelector('.bg-dot').className = `bg-dot ${j.status === 'done' ? 'ok' : 'bad'}`;
       const stop = card.querySelector('.bg-watch-stop'); if (stop) stop.remove();
       // The server posts the result into the chat; show it.
-      setTimeout(() => {
+      if (reloadWhenDone) setTimeout(() => {
         if (window.sessionModule && window.sessionModule.selectSession && _currentSid()) {
           window.sessionModule.selectSession(_currentSid());
         }
@@ -181,6 +184,12 @@ document.addEventListener('click', async (ev) => {
       window.chatModule.resumeStream(chat);
     }
     if (d.queued && window.chatModule && window.chatModule.watchQueue) window.chatModule.watchQueue(chat);
+    // Show it at once, the way Watch here does: the chat's model can take
+    // minutes to get to the attach call, and until then there was only
+    // "Working...". Asked for: "if I bring it back from background it should
+    // show how we do the watch here section". The turn reports the result,
+    // so no reload when it ends.
+    watchInChat(b.dataset.bringBack, chat, { reloadWhenDone: false });
     if (window.showToast) {
       window.showToast(d.queued ? (d.reason || 'It comes back as soon as the current reply finishes')
         : (d.already ? 'It is already being followed in the chat' : 'Back in the chat: its output streams in the card below'));
