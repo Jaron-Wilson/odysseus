@@ -102,3 +102,40 @@ def test_open_media_url_only_opens_youtube():
                 "https://music.youtube.com.evil.example/"):
         assert not dms.open_media_url(bad)["ok"], bad
     assert dms._MEDIA_URL_RE.match("https://music.youtube.com/watch?v=q6gO89g1hJc")
+
+
+def test_the_pc_bar_says_what_the_phone_is_playing(env):
+    # Reported: "the music didn't work from my phone, I was playing yet my PC
+    # saw nothing".
+    c, sent, mcp, st = env
+
+    class _IdlePC:
+        async def call_tool(self, name, args):
+            if name.endswith("__now_playing"):
+                return {"stdout": json.dumps({"playing": False, "title": ""})}
+            return {"stdout": json.dumps({"ok": True})}
+
+    def fresh():
+        app = FastAPI()
+        app.include_router(media_routes.setup_media_routes(_IdlePC()))
+        return TestClient(app)
+
+    pc = fresh()
+    r = pc.get("/api/media/state", headers={"x-forwarded-for": "100.102.86.125"}).json()
+    assert r["device"]["server_id"] == "19d772b0" and not r["now_playing"]["playing"]
+    assert r["elsewhere"] == [{"server_id": "device:pixel-8a", "name": "pixel-8a", "kind": "phone",
+                               "title": "Save My Love", "artist": "Marshmello"}]
+    asks = sum(1 for cmd, _ in sent if cmd == "now_playing")
+    pc.get("/api/media/state", headers={"x-forwarded-for": "100.102.86.125"})
+    assert sum(1 for cmd, _ in sent if cmd == "now_playing") == asks      # cached: the bar polls often
+
+    st["playing"] = False
+    r = fresh().get("/api/media/state", headers={"x-forwarded-for": "100.102.86.125"}).json()
+    assert r["elsewhere"] == []                                              # paused is not "playing on"
+
+
+def test_the_bar_offers_control_and_listen_here():
+    js = open(os.path.join(HERE, "static", "js", "musicBar.js"), encoding="utf-8").read()
+    assert "(_state.elsewhere || []).length ? _elsewhereHtml(_state.elsewhere[0])" in js
+    assert 'data-mb-control="' in js and 'data-mb-handoff-from="' in js
+    assert "h.dataset.mbHandoffFrom ||" in js

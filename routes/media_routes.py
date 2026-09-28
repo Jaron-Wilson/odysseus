@@ -132,7 +132,41 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                 out[name] = {"ok": False, "error": str(res)}
             else:
                 out[name] = _payload(res)
+        # Nothing playing here: say where it is playing. Reported: "the music
+        # didn't work from my phone, I was playing yet my PC saw nothing".
+        if not (out.get("now_playing") or {}).get("playing"):
+            out["elsewhere"] = await _playing_elsewhere(
+                [d for d in device_routing.all_devices(mcp_manager) if d.get("server_id") != sid])
         return out
+
+    _elsewhere_cache: Dict[str, tuple] = {}
+
+    async def _playing_elsewhere(devs) -> list:
+        """What the other devices are playing, for a "Playing on" row. Each
+        is asked at most every 8 s (the bar polls far more often) and given
+        3 s: a phone that is asleep must not hold up this machine's bar."""
+        import time
+
+        async def one(d):
+            sid = d.get("server_id") or ""
+            if "now_playing" not in set(d.get("tools") or ["now_playing"]):
+                return None
+            hit = _elsewhere_cache.get(sid)
+            if hit and time.time() - hit[0] < 8:
+                np = hit[1]
+            else:
+                try:
+                    np = _payload(await asyncio.wait_for(_call(sid, "now_playing"), 3))
+                except Exception:
+                    np = {}
+                _elsewhere_cache[sid] = (time.time(), np)
+            if not np.get("playing") or not np.get("title"):
+                return None
+            return {"server_id": sid, "name": d.get("name") or sid, "kind": d.get("kind"),
+                    "title": np.get("title"), "artist": np.get("artist") or ""}
+
+        found = await asyncio.gather(*[one(d) for d in devs])
+        return [f for f in found if f]
 
     @router.post("/control")
     async def control(request: Request):
