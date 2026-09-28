@@ -164,7 +164,7 @@ def test_overlay_lists_and_answers_plans(env, monkeypatch, tmp_path):
 
 def test_overlay_shows_plans_above_the_player():
     ov = open(os.path.join(HERE, "tools", "music_overlay", "music_overlay.py"), encoding="utf-8").read()
-    assert "self.msg_above = self.ay >= MSG_H" in ov and "def _sync_plans(self, plans):" in ov
-    assert 'api/overlay/plan/{ev[\'plan_id\']}/{verb}' in ov and "self.dismissed_plan" in ov
+    assert "def _alert_pos(self):" in ov and "def _sync_plans(self, plans):" in ov
+    assert 'api/overlay/plan/{plan_id}/{verb}' in ov and "self.dismissed_plans" in ov
     loop = open(os.path.join(HERE, "src", "agent_loop.py"), encoding="utf-8").read()
     assert "PLANS always run on OpenCode" in loop

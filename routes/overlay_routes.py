@@ -70,6 +70,63 @@ def setup_overlay_routes() -> APIRouter:
                 # above the player while any is pending, and hides again after.
                 "plans": _pending_plans(owner)}
 
+    def _own_plan(request: Request, plan_id: str) -> dict:
+        from src import claude_code_approvals as approvals
+        from routes.claude_code_routes import _SESSION_ID_RE
+        owner = _owner(request)
+        if not _SESSION_ID_RE.fullmatch(plan_id):
+            raise HTTPException(400, "Unknown plan")
+        entry = approvals.get(plan_id)
+        if not entry or (owner and entry.get("owner") and entry["owner"] != owner):
+            raise HTTPException(404, "No such plan (it may have expired)")
+        return entry
+
+    def _plan_pdf(plan_id: str) -> str:
+        import os
+        from src.doc_pdf import PDF_DIR
+        path = os.path.join(PDF_DIR, f"plan-{plan_id}.pdf")
+        return path if os.path.isfile(path) else ""
+
+    @router.get("/api/overlay/plan/{plan_id}")
+    async def plan_doc(request: Request, plan_id: str) -> Dict[str, Any]:
+        """The whole plan, for reading it in the overlay (over a game)."""
+        from src.chat_queue import _session_title
+        entry = _own_plan(request, plan_id)
+        pages = 0
+        pdf = _plan_pdf(plan_id)
+        if pdf:
+            try:
+                import pymupdf as fitz
+                with fitz.open(pdf) as doc:
+                    pages = doc.page_count
+            except Exception:
+                pages = 0
+        chat = entry.get("chat_session_id") or ""
+        engine = "OpenCode" if entry.get("engine") == "opencode" else "Claude Code"
+        return {"id": plan_id, "status": entry.get("status"), "plan": entry.get("plan") or "",
+                "chat": _session_title(chat) if chat else "", "session_id": chat,
+                "runs_on": f"{engine} · {entry.get('model') or 'local default'}",
+                "cwd": entry.get("cwd") or "", "pages": pages,
+                "pdf_url": f"/api/claude_code/plan/{plan_id}/pdf?inline=1" if pdf else ""}
+
+    @router.get("/api/overlay/plan/{plan_id}/page/{n}.png")
+    async def plan_page(request: Request, plan_id: str, n: int, w: int = 620):
+        """One page of the plan's PDF as an image."""
+        from fastapi.responses import Response
+        _own_plan(request, plan_id)
+        pdf = _plan_pdf(plan_id)
+        if not pdf:
+            raise HTTPException(404, "No PDF was rendered for this plan")
+        import pymupdf as fitz
+        w = max(300, min(int(w or 620), 1600))
+        with fitz.open(pdf) as doc:
+            if not 1 <= n <= doc.page_count:
+                raise HTTPException(404, "No such page")
+            pg = doc[n - 1]
+            zoom = w / max(pg.rect.width, 1)
+            png = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False).tobytes("png")
+        return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
     @router.post("/api/overlay/plan/{plan_id}/{verb}")
     async def answer_plan(request: Request, plan_id: str, verb: str) -> Dict[str, Any]:
         """Approve or deny a pending plan from the overlay, as the chat's

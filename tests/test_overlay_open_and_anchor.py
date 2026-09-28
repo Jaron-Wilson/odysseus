@@ -53,6 +53,7 @@ def test_page_and_overlay_are_wired():
 def test_the_player_is_placed_from_its_anchor_only():
     ov = open(os.path.join(HERE, "tools", "music_overlay", "music_overlay.py"), encoding="utf-8").read()
     assert "winfo_x()" not in ov and "winfo_y()" not in ov        # no read-back positions
-    assert 'self.root.geometry(f"{W}x{H}+{self.ax}+{self.ay}")' in ov
-    assert "self.ay - MSG_H if self.msg_above else self.ay" in ov
+    assert 'root.geometry(f"{W}x{H}+{self.ax}+{self.ay}")' in ov         # placed once, never resized
+    assert "self.root.geometry(f\"{W}x{H + MSG_H}" not in ov
+    assert "return self.ax, self.ay - MSG_H - 6" in ov               # alerts: their own window
     assert '"launch_handler"' in open(os.path.join(HERE, "static", "manifest.json")).read()
