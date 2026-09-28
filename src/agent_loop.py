@@ -3341,6 +3341,20 @@ async def stream_agent_loop(
                 tool_output_data["label"] = result["engine_label"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
 
+            # A file shared from one of the user's machines plays in the chat
+            # only if the reply links it. Seen live: the agent shared six
+            # tracks and then listed them without their links (once as a
+            # table, once as bare paths), so nothing could be played. The
+            # link goes into the reply here, whatever the model writes.
+            if block.tool_type.endswith("__share_media"):
+                try:
+                    _sm = json.loads(output_text) if output_text.strip().startswith("{") else {}
+                except Exception:
+                    _sm = {}
+                if isinstance(_sm, dict) and str(_sm.get("link", "")).startswith("/api/device-media/"):
+                    _line = f"\n\n[{_sm.get('name') or 'Play'}]({_sm['link']})\n"
+                    yield f'data: {json.dumps({"delta": _line})}\n\n'
+
             # Native document tools open in the editor + carry the REAL doc id.
             # Emit a doc_update so the frontend opens/activates it and sends it
             # back as active_doc_id next turn (otherwise the agent can't "see"

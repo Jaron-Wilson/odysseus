@@ -855,9 +855,50 @@ function _mediaFor(href) {
 }
 
 /** Add players under media links in a rendered message. Safe to call again. */
+// A media path written as plain text ("/api/device-media/<token>/song.mp3")
+// instead of a link: seen live, the agent listed six shared tracks that way
+// and none of them played. Such paths become links, so they get players.
+const _BARE_MEDIA_RE = /(^|[\s(])(\/api\/(?:device|chat)-media\/[^\s<>()"']+\.(?:mp3|wav|ogg|oga|m4a|aac|flac|opus|mp4|webm|mov|m4v|ogv))(?=$|[\s).,;!?])/gi;
+
+function _linkBareMediaPaths(container) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      if (!n.nodeValue || n.nodeValue.indexOf('/api/') < 0) return NodeFilter.FILTER_REJECT;
+      if (n.parentElement && n.parentElement.closest('a, pre, code, .agent-thread-content')) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const text = node.nodeValue;
+    _BARE_MEDIA_RE.lastIndex = 0;
+    if (!_BARE_MEDIA_RE.test(text)) continue;
+    _BARE_MEDIA_RE.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let m;
+    while ((m = _BARE_MEDIA_RE.exec(text))) {
+      const start = m.index + m[1].length;
+      frag.appendChild(document.createTextNode(text.slice(last, start)));
+      const a = document.createElement('a');
+      a.href = m[2];
+      let name = m[2].split('/').pop();
+      try { name = decodeURIComponent(name); } catch (_) { /* keep it */ }
+      a.textContent = name;
+      frag.appendChild(a);
+      last = start + m[2].length;
+    }
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    node.replaceWith(frag);
+  }
+}
+
 export function enhanceMedia(container) {
   if (!container || !container.querySelectorAll) return;
+  _linkBareMediaPaths(container);
   const links = container.querySelectorAll('a[href]:not([data-media-done])');
+  const played = new Set(Array.from(container.querySelectorAll('.media-embed[src]')).map((el) => el.getAttribute('src')));
   let added = 0;
   for (const a of links) {
     a.dataset.mediaDone = '1';
@@ -880,8 +921,11 @@ export function enhanceMedia(container) {
     }
     if (added >= 6) break;                 // a list of 20 links should not become 20 players
     if (a.closest('pre, code, .agent-thread-content, .media-embed')) continue;
-    const el = _mediaFor(a.getAttribute('href'));
+    const href = a.getAttribute('href');
+    if (played.has(href)) continue;          // one player per file, even if linked twice
+    const el = _mediaFor(href);
     if (!el) continue;
+    played.add(href);
     // After the link's paragraph or list item, so the text still reads.
     const anchor = a.closest('li, p') || a;
     anchor.after(el);
