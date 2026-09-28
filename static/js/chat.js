@@ -26,6 +26,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
 import notifyDone from './notifyDone.js';
 import './chatNotes.js';
+import './chatSkipOffscreen.js';
 import './buildBadge.js';
 import './chatClaudeToggle.js';
 import './musicBar.js';
@@ -1062,6 +1063,13 @@ import './bgTasks.js';
     let _renderStream = () => {};
     let _cancelThinkingTimer = () => {};
     let _removeThinkingSpinner = () => {};
+    // Space the thinking dots left behind (see _removeThinkingSpinner).
+    const _releaseHeldSpace = () => {
+      document.querySelectorAll('#chat-history [data-held-space]').forEach((m) => {
+        m.style.minHeight = '';
+        delete m.dataset.heldSpace;
+      });
+    };
     let timeoutId = null;
     let responseTimeoutCleared = false;
     let clearResponseTimeout = () => {};
@@ -1586,6 +1594,15 @@ import './bgTasks.js';
         const el = document.querySelector('.agent-thinking-dots');
         if (el) {
           if (el._spinner) el._spinner.destroy();
+          // Hand its space to the reply above so the page does not shrink:
+          // on a slow model the dots come and go between tokens, and each
+          // removal pulled a reader at the bottom up by its height.
+          const prev = el.previousElementSibling;
+          const h = el.offsetHeight;
+          if (prev && h) {
+            prev.style.minHeight = `${prev.offsetHeight + h}px`;
+            prev.dataset.heldSpace = '1';
+          }
           el.remove();
         }
       };
@@ -1632,6 +1649,7 @@ import './bgTasks.js';
 
       function _showThinkingSpinner(label) {
         if (document.querySelector('.agent-thinking-dots')) return;
+        _releaseHeldSpace();   // the dots take that space back, same frame
         const _thinkMsg = document.createElement('div');
         _thinkMsg.className = 'msg msg-ai agent-thinking-dots';
         const _thinkBody = document.createElement('div');
@@ -3003,6 +3021,7 @@ import './bgTasks.js';
       _renderStream();
       _cancelThinkingTimer();
       _removeThinkingSpinner();
+      _releaseHeldSpace();
       // Stop any thread pulse animations
       document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
       // --- Final render (skip if stream was ever backgrounded or currently in background) ---
@@ -3270,6 +3289,7 @@ import './bgTasks.js';
       if (spinner && spinner.element) spinner.destroy();
       _cancelThinkingTimer();
       _removeThinkingSpinner();
+      _releaseHeldSpace();
       document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
       // Check if this stream was running in background
       const _isBgCatch = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
