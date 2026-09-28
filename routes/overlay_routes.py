@@ -29,7 +29,13 @@ def setup_overlay_routes() -> APIRouter:
     async def inbox(request: Request, since: float = 0.0) -> Dict[str, Any]:
         from src import overlay_inbox
         owner = _owner(request)
-        return {"now": time.time(), "events": overlay_inbox.since(owner, since)}
+        now = time.time()
+        # How long since a browser page on the overlay's own machine last
+        # talked to us: the overlay closes itself when Odysseus is closed there.
+        seen = (getattr(request.app.state, "browser_seen", {}) or {}).get(
+            request.client.host if request.client else "")
+        return {"now": now, "events": overlay_inbox.since(owner, since),
+                "page_seen_ago": round(now - seen, 1) if seen else None}
 
     @router.post("/api/overlay/reply")
     async def reply(request: Request) -> Dict[str, Any]:

@@ -93,7 +93,7 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             }
 
         tools = set((dev or {}).get("tools") or [])
-        wanted = [t for t in ("now_playing", "get_volume", "list_audio_devices")
+        wanted = [t for t in ("now_playing", "get_volume", "get_app_volume", "list_audio_devices")
                   if not tools or t in tools]
         # Fetched together: rendering a panel from three sequential calls is
         # three chances to show it half-filled.
@@ -111,7 +111,7 @@ def setup_media_routes(mcp_manager) -> APIRouter:
 
     @router.post("/control")
     async def control(request: Request):
-        """play_pause, next, previous, stop, volume, mute, output."""
+        """play_pause, next, previous, stop, volume (system), app_volume, mute, output."""
         _require_user(request)
         from src import device_routing
         body = await request.json() if request.headers.get("content-type", "").startswith(
@@ -135,6 +135,17 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             except (TypeError, ValueError):
                 raise HTTPException(400, "volume needs an integer value 0-100")
             res = await _call(sid, "set_volume", {"percent": pct})
+        elif action == "app_volume":
+            # The playing app's level in the Windows mixer; "volume" is the
+            # whole computer.
+            try:
+                pct = int(body.get("value"))
+            except (TypeError, ValueError):
+                raise HTTPException(400, "app_volume needs an integer value 0-100")
+            args = {"percent": pct}
+            if body.get("app"):
+                args["app"] = str(body["app"])
+            res = await _call(sid, "set_app_volume", args)
         elif action == "mute":
             res = await _call(sid, "set_mute", {"muted": bool(body.get("value", True))})
         elif action == "output":
@@ -145,7 +156,7 @@ def setup_media_routes(mcp_manager) -> APIRouter:
         else:
             raise HTTPException(
                 400, "action must be play_pause, play, pause, next, previous, stop, "
-                     "volume_up, volume_down, volume, mute or output")
+                     "volume_up, volume_down, volume, app_volume, mute or output")
         return {"requested": action, "result": _payload(res)}
 
     @router.post("/overlay")

@@ -37055,3 +37055,13 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .mb-btn.mb-on { color: var(--accent-error, #d9644f); opacity: 1; }
 .mp-volrow { display: flex; align-items: center; gap: 6px; }
 .mp-volrow .mp-vol { flex: 1; }
+/* Two volumes: the computer's and the playing app's (musicBar.js). */
+.mp-vollabel { width: 64px; flex: none; font-size: 12px; opacity: .75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-volgap { width: 28px; flex: none; }
+.mb-voltarget {
+  font: inherit; font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 8px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent); background: transparent; color: inherit; opacity: .8;
+  max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mb-voltarget:hover { opacity: 1; border-color: var(--accent, #c96); }
+.mp-volrow .mp-vol, .mp-volrow .mp-vol input { min-width: 0; }
