@@ -137,5 +137,42 @@ def test_the_pc_bar_says_what_the_phone_is_playing(env):
 def test_the_bar_offers_control_and_listen_here():
     js = open(os.path.join(HERE, "static", "js", "musicBar.js"), encoding="utf-8").read()
     assert "(_state.elsewhere || []).length ? _elsewhereHtml(_state.elsewhere[0])" in js
-    assert 'data-mb-control="' in js and 'data-mb-handoff-from="' in js
-    assert "h.dataset.mbHandoffFrom ||" in js
+    assert 'data-mb-control="' in js and 'data-mb-listen="${_esc(e.server_id)}"' in js
+
+
+def test_listen_here_plays_it_in_the_browser(env):
+    # Asked for: "stream it over to my PC or my laptop so that I don't need
+    # YouTube Music installed".
+    c, sent, mcp, st = env
+    real_send = devices.send_command
+
+    async def with_position(dev, cmd, params=None):
+        r = await real_send(dev, cmd, params)
+        if cmd == "now_playing":
+            r["result"]["position_ms"] = 83500
+        return r
+    devices.send_command = with_position
+    try:
+        r = c.post("/api/media/listen", json={"from": "device:pixel-8a"}).json()
+    finally:
+        devices.send_command = real_send
+    assert r["video_id"] == "q6gO89g1hJc" and r["start_s"] == 83 and r["from_name"] == "pixel-8a"
+    assert ("media_control", {"action": "pause"}) in sent and st["playing"] is False   # paused there
+    assert not any(n.endswith("open_media_url") for n, _ in mcp)                     # nothing opened on a PC
+    assert c.post("/api/media/listen", json={"from": "nope"}).status_code == 400
+    assert c.post("/api/media/listen", json={"from": "device:pixel-8a"}).status_code == 200  # paused: still has a title
+
+
+def test_the_browser_player_and_device_names():
+    js = open(os.path.join(HERE, "static", "js", "musicBar.js"), encoding="utf-8").read()
+    assert "const YT_ORIGIN = 'https://www.youtube-nocookie.com';" in js      # the one frame-src the CSP allows
+    assert "/embed/${encodeURIComponent(d.video_id)}?autoplay=1&start=" in js
+    assert "m.event === 'onError'" in js                                       # embedding blocked: link instead
+    # The app sends Referrer-Policy: no-referrer; without this the player
+    # refuses to play at all (error 153).
+    assert 'referrerpolicy="strict-origin-when-cross-origin"' in js
+    # Reported: "when I change volume it says PC instead of what device".
+    assert "function _targetName() { return _volTarget() === 'app' ? _appLabel() : _devName(); }" in js
+    assert "'PC'; }" not in js.split("function _targetName")[1][:120]
+    css = open(os.path.join(HERE, "core", "middleware.py"), encoding="utf-8").read()
+    assert "frame-src 'self' https://www.youtube-nocookie.com" in css
