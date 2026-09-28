@@ -979,6 +979,15 @@ async def _startup_event():
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
+    # Claude Code runs that outlived the previous server process: follow them
+    # to the end and post their results (src/claude_code_jobs.py).
+    try:
+        from src.agent_tools.claude_code_tool import reattach_runs
+        _n = reattach_runs()
+        if _n:
+            logger.info("Reattached %d Claude Code run(s) from before the restart", _n)
+    except Exception as _e:
+        logger.warning("Could not reattach Claude Code runs: %s", _e)
     # MCP servers can be slow or blocked by local tooling. Connect them after
     # the web server is accepting traffic instead of delaying the whole UI.
     async def _startup_mcp_connections():

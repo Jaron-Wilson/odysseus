@@ -64,6 +64,8 @@ def cli(tmp_path, monkeypatch):
     import src.doc_pdf as doc_pdf
     monkeypatch.setattr(doc_pdf, "render_markdown_pdf", no_pdf)
     jobs._JOBS.clear()
+    monkeypatch.setattr(jobs, "RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setattr(jobs, "JOBS_FILE", str(tmp_path / "jobs.json"))
     # These drive a fake `claude` CLI, so pin the engine (the default is OpenCode).
     monkeypatch.setattr(cct, "DEFAULT_ENGINE", "claude")
     return make
@@ -289,6 +291,8 @@ def test_a_huge_event_line_does_not_stall_the_run(tmp_path, monkeypatch):
         return None, "skipped"
     monkeypatch.setattr(doc_pdf, "render_markdown_pdf", no_pdf)
     monkeypatch.setattr(cct, "DEFAULT_ENGINE", "claude")
+    monkeypatch.setattr(jobs, "RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setattr(jobs, "JOBS_FILE", str(tmp_path / "jobs.json"))
     bindir = tmp_path / "bin"
     bindir.mkdir()
     exe = bindir / "claude"

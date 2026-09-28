@@ -22,6 +22,7 @@ the existing UI renders a live console with no frontend work.
 import asyncio
 import collections
 import json
+import logging
 import os
 import re
 import shutil
@@ -34,6 +35,8 @@ from src import claude_code_approvals as approvals
 from src import claude_code_jobs
 from src import claude_code_agents
 from src.constants import DATA_DIR
+
+logger = logging.getLogger(__name__)
 
 PROMPT_DIR = os.path.join(DATA_DIR, "claude_code_prompts")
 PROGRESS_INTERVAL_S = 1.5
@@ -77,19 +80,6 @@ def _strip_ansi(s: str) -> str:
     """Drop terminal escapes. `claude --bg` and `claude logs` both colour their
     output, and the raw codes make the id unparseable and the logs unreadable."""
     return _ANSI_RE.sub("", s or "")
-
-
-def _die_with_parent() -> None:
-    """Ask the kernel to SIGKILL this child if the server process goes away.
-
-    Linux-only (PR_SET_PDEATHSIG = 1); a no-op anywhere else, which just
-    restores the previous orphaning behaviour rather than breaking the call.
-    """
-    try:
-        import ctypes
-        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, 9, 0, 0, 0)
-    except Exception:
-        pass
 
 
 def _summarize_opencode(event: dict) -> Optional[str]:
@@ -470,15 +460,33 @@ class ClaudeCodeTool:
                                   "already read. Pass new_agent:true for a fresh one.")
 
         # One run at a time per agent: two chats driving the same CLI session
-        # at once would interleave their turns in one transcript.
+        # at once would interleave their turns in one transcript. And never a
+        # second run of an approved plan: seen live, a restart mid-run and a
+        # second Approve started another CLI doing the same work beside the
+        # first. Runs that outlived a restart are back in the registry
+        # (reattach_runs); the process check catches anything untracked.
         if resume_id:
-            busy = next((j for j in claude_code_jobs.list_jobs()
-                         if j.status == "running" and j.cli_session_id == resume_id), None)
+            busy = claude_code_jobs.running_for(
+                cli_session_id=resume_id,
+                plan_id=resume_id if action == "execute" else "",
+                job_id=str((approvals.get(resume_id) or {}).get("run_id") or "") if action == "execute" else "")
+            if busy and action == "execute" and busy.plan_id == resume_id:
+                return {"error": (f"this approved plan is already running as job {busy.id} "
+                                  f"(started {round(time.time() - busy.started)}s ago). Do NOT start it "
+                                  "again: its result will be posted in this chat when it finishes. Tell "
+                                  "the user it is running and can be watched under Background tasks."),
+                        "job_id": busy.id, "already_running": True, "exit_code": 1}
             if busy:
                 return {"error": (f"that Claude Code agent is busy with job {busy.id} "
                                   f"({busy.action}, started from another run). Wait for it, watch "
                                   "it under Background tasks, or pass new_agent:true for a fresh agent."),
-                        "exit_code": 1}
+                        "job_id": busy.id, "exit_code": 1}
+            pid = _os_process_for(resume_id)
+            if pid:
+                return {"error": (f"a {engine} process (pid {pid}) is already working in this session "
+                                  "on this host. Do NOT start another: wait for it to finish, or pass "
+                                  "new_agent:true for a fresh agent."),
+                        "pid": pid, "already_running": True, "exit_code": 1}
 
         cli = shutil.which("opencode" if engine == "opencode" else "claude")
         if not cli:
@@ -603,50 +611,56 @@ class ClaudeCodeTool:
         except (TypeError, ValueError):
             timeout = DEFAULT_TIMEOUT_S
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(cwd_path),
-            env=env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            # Die with the server. Without this a restart reparents the CLI to
-            # init, where it keeps burning CPU and tokens on a run nothing is
-            # reading any more, and the user has no way to stop it.
-            preexec_fn=_die_with_parent,
-            # One stream-json event per line, and an event carrying a big tool
-            # result (a whole file read) passes asyncio's default 64 KB line
-            # limit. Seen live: two 110 KB+ events killed the reader, the pipe
-            # was never drained, and the finished run was never noticed.
-            limit=STREAM_LINE_LIMIT,
-        )
-        # Claude takes the prompt over stdin, never argv: no shell, no escaping,
-        # no length cap. OpenCode takes it positionally, so just close stdin.
-        try:
-            if prompt_via_stdin:
-                proc.stdin.write(prompt.encode())
-                await proc.stdin.drain()
-            proc.stdin.close()
-        except Exception:
-            pass
-
-        started = time.time()
-        tail = collections.deque(maxlen=PROGRESS_TAIL_LINES)
-        final_text = ""
-        is_error = False
-        stderr_buf: list[str] = []
-        thinking_tokens = 0
-
-        # Registered so the run can be sent to the background from its tool
-        # card and watched in Background tasks (src/claude_code_jobs.py).
+        # Registered before the CLI starts, so its run directory exists to
+        # write into. An approved plan's run takes the id the approval was
+        # given, which is what the chat already shows for it.
+        run_id = ""
+        if action == "execute":
+            run_id = str((approvals.get(resume_id) or {}).get("run_id") or "")
         job = claude_code_jobs.register(
-            chat_session_id=(ctx or {}).get("session_id") or "",
-            owner=(ctx or {}).get("owner") or "",
+            job_id=run_id,
+            chat_session_id=chat_id, owner=(ctx or {}).get("owner") or "",
             action=action, cwd=str(cwd_path), model=model_label, engine=engine,
             prompt=prompt)
+        job.cli_session_id = session_id or ""
+        job.plan_id = resume_id if action == "execute" else ""
+        job.spec = {
+            "action": action, "session_id": session_id or "", "cwd": str(cwd_path),
+            "model": model, "model_label": model_label, "engine": engine,
+            "run_label": run_label, "args_model": str(args.get("model") or ""),
+            "chat_id": chat_id, "owner": (ctx or {}).get("owner") or "",
+            "prompt": prompt, "agent_note": agent_note, "timeout": timeout,
+        }
+
+        # The CLI runs in its own session, writing to files rather than pipes
+        # into this process, so a server restart neither kills it nor loses
+        # its output: the restarted server reattaches (reattach_runs). The
+        # shell wrapper records the exit code, which nothing else would be
+        # around to collect. Claude takes the prompt on stdin (no argv length
+        # cap, nothing to escape); OpenCode takes it positionally.
+        os.makedirs(job.run_dir, exist_ok=True)
+        prompt_path = os.path.join(job.run_dir, "prompt.txt")
+        if prompt_via_stdin:
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write(prompt)
+        wrapped = ["/bin/sh", "-c", '"$@"; echo $? > "$0/exit"', job.run_dir, *cmd]
+        try:
+            with open(os.path.join(job.run_dir, "out.jsonl"), "ab") as out_f, \
+                 open(os.path.join(job.run_dir, "err.log"), "ab") as err_f, \
+                 open(prompt_path if prompt_via_stdin else os.devnull, "rb") as in_f:
+                proc = await asyncio.create_subprocess_exec(
+                    *wrapped, cwd=str(cwd_path), env=env,
+                    stdin=in_f, stdout=out_f, stderr=err_f, start_new_session=True)
+        except Exception as e:
+            claude_code_jobs.finish(job, "failed", {"error": str(e), "exit_code": 1})
+            return {"error": f"could not start {engine}: {e}", "exit_code": 1}
         job.proc = proc
         job.pid = proc.pid
-        job.cli_session_id = session_id or ""
+
+        started = time.time()
+        job.spec["started"] = started
+        tail = collections.deque(maxlen=PROGRESS_TAIL_LINES)
+        stream = _Stream(engine, session_id or "")
 
         # What was actually spawned, stated up front. Without this the user sees
         # an opaque spinner and has to go hunting in `ps` to find out whether a
@@ -660,10 +674,11 @@ class ClaudeCodeTool:
             )
         banner = (
             f"$ {engine} {_grant}\n"
-            f"  pid {proc.pid} · session {(session_id or 'pending')[:12]} · cwd {cwd_path}\n"
-            f"  model {model_label} · kill with: kill {proc.pid}"
+            f"  job {job.id} · pid {proc.pid} · session {(session_id or 'pending')[:12]} · cwd {cwd_path}\n"
+            f"  model {model_label} · kill with: kill -- -{proc.pid}"
         )
         job.banner = banner
+        claude_code_jobs.save()
 
         def _add(ln: str) -> None:
             ln = _clip(ln, LINE_CHARS)
@@ -672,14 +687,9 @@ class ClaudeCodeTool:
 
         def _tail_text() -> str:
             head = banner
-            if thinking_tokens:
-                head += f"\n  thinking… {thinking_tokens} tokens"
+            if stream.thinking_tokens:
+                head += f"\n  thinking… {stream.thinking_tokens} tokens"
             body = "\n".join(tail)
-            return head + ("\n" + body if body else "")
-
-        def _full_console() -> str:
-            head = banner + (f"\n  thinking… {thinking_tokens} tokens" if thinking_tokens else "")
-            body = "\n".join(job.lines)
             return head + ("\n" + body if body else "")
 
         def _progress() -> dict:
@@ -695,65 +705,6 @@ class ClaudeCodeTool:
             except Exception:
                 pass
 
-        async def _read_stdout():
-            nonlocal final_text, is_error, thinking_tokens, session_id
-            while True:
-                try:
-                    line = await proc.stdout.readline()
-                except (asyncio.LimitOverrunError, ValueError):
-                    # A line past even the raised limit: skip it rather than
-                    # stop reading, which would stall the run's end.
-                    await proc.stdout.read(STREAM_LINE_LIMIT)
-                    _add("… (an oversized event was skipped)")
-                    continue
-                if not line:
-                    break
-                raw = line.decode("utf-8", errors="replace").strip()
-                if not raw:
-                    continue
-                try:
-                    event = json.loads(raw)
-                except json.JSONDecodeError:
-                    _add(_strip_ansi(raw))
-                    continue
-                if engine == "opencode":
-                    # OpenCode allocates the session itself, so the id is only
-                    # knowable from the stream — and it is what a later
-                    # --session resume, and the approval record, both key on.
-                    if not session_id and event.get("sessionID"):
-                        session_id = event["sessionID"]
-                        job.cli_session_id = session_id
-                    summary = _summarize_opencode(event)
-                    if summary:
-                        for ln in summary.splitlines():
-                            _add(ln)
-                        if event.get("type") == "text":
-                            final_text = (final_text + "\n" + summary).strip()
-                    continue
-                if event.get("type") == "result":
-                    final_text = event.get("result") or final_text
-                    is_error = bool(event.get("is_error"))
-                elif event.get("subtype") == "thinking_tokens":
-                    # Counted rather than printed: it is the only signal during
-                    # a long silent reasoning phase, but one line per tick would
-                    # flood the console.
-                    thinking_tokens = event.get("estimated_tokens") or thinking_tokens
-                summary = _summarize(event)
-                if summary:
-                    for ln in summary.splitlines():
-                        _add(ln)
-
-        async def _read_stderr():
-            while True:
-                try:
-                    line = await proc.stderr.readline()
-                except (asyncio.LimitOverrunError, ValueError):
-                    await proc.stderr.read(STREAM_LINE_LIMIT)
-                    continue
-                if not line:
-                    break
-                stderr_buf.append(line.decode("utf-8", errors="replace").rstrip())
-
         async def _emit_progress():
             while True:
                 await asyncio.sleep(PROGRESS_INTERVAL_S)
@@ -762,152 +713,26 @@ class ClaudeCodeTool:
                 except Exception:
                     pass
 
-        readers = [asyncio.create_task(_read_stdout()), asyncio.create_task(_read_stderr())]
-        prog = asyncio.create_task(_emit_progress()) if progress_cb else None
-
-        async def _finalize(timed_out: bool) -> Dict:
-            """The tool result, once the CLI has exited (or been killed)."""
-            # Keep the banner in the saved console so the pid, cwd and tool grant
-            # are still on the record after the run ends, not just while it streams.
-            console = _full_console()
-            if timed_out:
-                restored = action == "execute" and approvals.restore_approval(session_id)
-                return {
-                    "error": (
-                        f"claude_code timed out after {timeout}s"
-                        + (" — the approval has been restored, so this can be retried "
-                           "with a longer `timeout` without planning again." if restored else "")
-                    ),
-                    "output": console[-MAX_RESULT_CHARS:],
-                    "session_id": session_id,
-                    "approval_restored": restored,
-                    "exit_code": 124,
-                }
-            if proc.returncode != 0 and not final_text:
-                if action == "execute":
-                    approvals.restore_approval(session_id)
-                detail = "\n".join(stderr_buf[-10:]) or console[-2000:]
-                hint = ""
-                if args.get("model"):
-                    # The common cause by far: an invented id like claude-opus-4.
-                    # The CLI's own message does not always make that obvious.
-                    hint = (
-                        f" — note model was set to {args['model']!r}; valid values are "
-                        "'opus', 'sonnet', 'haiku' or a full id such as 'claude-opus-5'. "
-                        "Retry without `model` to use the default."
-                    )
-                return {
-                    "error": f"claude_code exited {proc.returncode}: {detail[:400]}{hint}",
-                    "session_id": session_id,
-                    "exit_code": proc.returncode or 1,
-                }
-
-            body = final_text or console
-            result = {
-                "action": action,
-                "output": body[:MAX_RESULT_CHARS],
-                "console": console[-12000:],
-                "session_id": session_id,
-                "cwd": str(cwd_path),
-                "model": model_label,
-                "elapsed_s": round(time.time() - started, 1),
-                "exit_code": 1 if is_error else 0,
-            }
-            if agent_note:
-                result["agent"] = agent_note
-            if chat_id and session_id and not is_error:
-                try:
-                    claude_code_agents.record(
-                        chat_id, session_id=session_id, cwd=str(cwd_path), engine=engine,
-                        model=model_label, action=action, prompt=prompt, summary=body)
-                except Exception:
-                    pass
-            if action == "plan":
-                try:
-                    approvals.record_plan(
-                        session_id,
-                        cwd=str(cwd_path),
-                        plan=body,
-                        owner=(ctx or {}).get("owner") or "",
-                        model=model,
-                    engine=engine,
-                    )
-                except Exception as e:
-                    return {
-                        "error": f"plan produced but could not be recorded for approval: {e}",
-                        "output": body[:MAX_RESULT_CHARS],
-                        "exit_code": 1,
-                    }
-                # A plan is the thing the user actually reads before saying yes, so
-                # give them a paginated copy in the house style. Cosmetic: a render
-                # failure still leaves the plan text in the reply.
-                try:
-                    from src.doc_pdf import render_markdown_pdf
-                    pdf_path, pdf_err = await render_markdown_pdf(
-                        body,
-                        f"plan-{session_id}",
-                        running_title=f"Plan · {cwd_path.name} · jaronwilson.dev",
-                    )
-                except Exception as e:
-                    pdf_path, pdf_err = None, str(e)
-                if pdf_path:
-                    result["pdf"] = f"[Download plan PDF](/api/claude_code/plan/{session_id}/pdf)"
-                    result["pdf_path"] = pdf_path
-                elif pdf_err:
-                    result["pdf_error"] = pdf_err
-
-                result["nothing_changed"] = True
-                result["approval"] = {
-                    "approve": f"[Approve plan · runs on {run_label}](#claudecode-approve-{session_id})",
-                    "deny": f"[Deny](#claudecode-deny-{session_id})",
-                }
-                result["next_step"] = (
-                    "Show the plan to the user in full. If the result has a `pdf` field, show that "
-                    "link too so they can read it as a paginated document. Then show these two links "
-                    "on their own line exactly as given so they can click one:\n"
-                    f"[Approve plan · runs on {run_label}](#claudecode-approve-{session_id})  ·  [Deny](#claudecode-deny-{session_id})\n"
-                    f"Say plainly that approving runs it on {run_label}. "
-                "Tell them they can also just reply with changes they want instead of approving, "
-                "including a different model (for example 'haiku' for small changes). "
-                    "Then STOP and wait. Calling execute before they click Approve will be refused by "
-                    "the server, so there is nothing to gain by trying."
-                )
-            return result
-
-        def _job_status(result: Dict) -> str:
-            code = result.get("exit_code")
-            return "done" if code == 0 else "timed_out" if code == 124 else "failed"
-
-        async def _drain_readers() -> None:
-            # The CLI has exited, so the pipes are at EOF: let the readers take
-            # the last lines rather than cancelling them mid-buffer.
-            try:
-                await asyncio.wait_for(asyncio.gather(*readers, return_exceptions=True), timeout=5)
-            except asyncio.TimeoutError:
-                for r in readers:
-                    r.cancel()
-                await asyncio.gather(*readers, return_exceptions=True)
-
         wait_task = asyncio.create_task(proc.wait())
+        out_tail = _FileTail(os.path.join(job.run_dir, "out.jsonl"))
+        follow_task = asyncio.create_task(
+            _follow(job, stream, _add, wait_task.done, out_tail))
+        prog = asyncio.create_task(_emit_progress()) if progress_cb else None
         detach_task = asyncio.create_task(job.detach_event.wait())
         try:
-            done, _ = await asyncio.wait({wait_task, detach_task}, timeout=timeout,
+            done, _ = await asyncio.wait({follow_task, detach_task}, timeout=timeout,
                                          return_when=asyncio.FIRST_COMPLETED)
         except asyncio.CancelledError:
             # The chat's Stop, while the run is still in the foreground.
             detach_task.cancel()
             if prog:
                 prog.cancel()
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            for r in readers:
-                r.cancel()
+            claude_code_jobs.kill_run(job)
+            follow_task.cancel()
             claude_code_jobs.finish(job, "stopped")
             raise
 
-        if detach_task in done and wait_task not in done:
+        if detach_task in done and follow_task not in done:
             # Sent to the background: the chat's turn ends now, the CLI keeps
             # going, and its result is posted into the chat when it finishes.
             if prog:
@@ -918,21 +743,21 @@ class ClaudeCodeTool:
                 job.notify = chat_queue.get(job.chat_session_id).get("notify")
             except Exception:
                 job.notify = None
+            claude_code_jobs.save()
 
             async def _carry_on():
                 timed_out = False
                 try:
-                    await asyncio.wait_for(wait_task, timeout=remaining)
+                    await asyncio.wait_for(asyncio.shield(follow_task), timeout=remaining)
                 except asyncio.TimeoutError:
                     timed_out = True
+                    claude_code_jobs.kill_run(job)
                     try:
-                        proc.kill()
-                        await asyncio.wait_for(proc.wait(), timeout=5)
+                        await asyncio.wait_for(follow_task, timeout=10)
                     except Exception:
                         pass
-                await _drain_readers()
                 try:
-                    result = await _finalize(timed_out)
+                    result = await _build_result(job, stream, _exit_code(job), timed_out)
                 except Exception as e:
                     result = {"error": f"could not finish the background run: {e}", "exit_code": 1}
                 claude_code_jobs.finish(job, _job_status(result), result)
@@ -958,20 +783,345 @@ class ClaudeCodeTool:
             }
 
         detach_task.cancel()
-        timed_out = wait_task not in done
+        timed_out = follow_task not in done
         if timed_out:
-            wait_task.cancel()
+            claude_code_jobs.kill_run(job)
             try:
-                proc.kill()
-                await asyncio.wait_for(proc.wait(), timeout=5)
+                await asyncio.wait_for(follow_task, timeout=10)
             except Exception:
                 pass
         if prog:
             prog.cancel()
-        await _drain_readers()
-        result = await _finalize(timed_out)
+        result = await _build_result(job, stream, _exit_code(job), timed_out)
         claude_code_jobs.finish(job, _job_status(result), result)
         return result
+
+
+# ── the run, independent of the chat turn that started it ────────────────
+# Module level so a run picked up again after a restart finishes exactly as a
+# live one would (reattach_runs).
+
+FOLLOW_POLL_S = 0.25
+
+
+class _Stream:
+    """The CLI's event stream, turned into console lines and the final result."""
+
+    def __init__(self, engine: str, session_id: str = ""):
+        self.engine = engine
+        self.session_id = session_id
+        self.final_text = ""
+        self.is_error = False
+        self.thinking_tokens = 0
+
+    def feed(self, raw: str) -> list:
+        raw = (raw or "").strip()
+        if not raw:
+            return []
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            return [_strip_ansi(raw)]
+        if not isinstance(event, dict):
+            return [_strip_ansi(raw)]
+        if self.engine == "opencode":
+            # OpenCode allocates the session itself, so the id is only
+            # knowable from the stream — and it is what a later --session
+            # resume, and the approval record, both key on.
+            if not self.session_id and event.get("sessionID"):
+                self.session_id = event["sessionID"]
+            summary = _summarize_opencode(event)
+            if not summary:
+                return []
+            if event.get("type") == "text":
+                self.final_text = (self.final_text + "\n" + summary).strip()
+            return summary.splitlines()
+        if event.get("type") == "result":
+            self.final_text = event.get("result") or self.final_text
+            self.is_error = bool(event.get("is_error"))
+        elif event.get("subtype") == "thinking_tokens":
+            # Counted rather than printed: it is the only signal during a long
+            # silent reasoning phase, but one line per tick would flood it.
+            self.thinking_tokens = event.get("estimated_tokens") or self.thinking_tokens
+        summary = _summarize(event)
+        return summary.splitlines() if summary else []
+
+
+class _FileTail:
+    """Complete lines appended to a file since the last read. No line length
+    limit: seen live, stream-json events of 110 KB+ (a whole file read) broke
+    a line-limited pipe reader and the finished run was never noticed."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.pos = 0
+        self.buf = b""
+
+    def lines(self, final: bool = False) -> list:
+        try:
+            with open(self.path, "rb") as f:
+                f.seek(self.pos)
+                data = f.read()
+                self.pos = f.tell()
+        except FileNotFoundError:
+            data = b""
+        self.buf += data
+        parts = self.buf.split(b"\n")
+        self.buf = parts.pop()
+        if final and self.buf:
+            parts.append(self.buf)
+            self.buf = b""
+        return [p.decode("utf-8", errors="replace") for p in parts]
+
+
+async def _follow(job, stream: "_Stream", add, exited, tail: "_FileTail") -> None:
+    """Feed the run's output to `stream` until `exited()` is true."""
+    while True:
+        done = exited()                    # checked first, so the last read gets everything
+        for raw in tail.lines(final=done):
+            for ln in stream.feed(raw):
+                add(ln)
+        if stream.session_id and job.cli_session_id != stream.session_id:
+            job.cli_session_id = stream.session_id
+            job.spec["session_id"] = stream.session_id
+            claude_code_jobs.save()
+        if done:
+            return
+        await asyncio.sleep(FOLLOW_POLL_S)
+
+
+def _exit_code(job) -> int:
+    """The CLI's exit code, as the wrapper recorded it. Missing means the run
+    was killed before it could say (Stop, a timeout, or a reboot)."""
+    try:
+        with open(os.path.join(job.run_dir, "exit"), "r") as f:
+            return int(f.read().strip() or -9)
+    except (FileNotFoundError, ValueError):
+        rc = getattr(job.proc, "returncode", None)
+        return rc if rc not in (None, 0) else -9
+
+
+def _stderr_tail(job, n: int = 10) -> list:
+    try:
+        with open(os.path.join(job.run_dir, "err.log"), "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 16000))
+            text = f.read().decode("utf-8", errors="replace")
+        return [ln.rstrip() for ln in text.splitlines() if ln.strip()][-n:]
+    except OSError:
+        return []
+
+
+def _job_status(result: Dict) -> str:
+    code = result.get("exit_code")
+    return "done" if code == 0 else "timed_out" if code == 124 else "failed"
+
+
+async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool) -> Dict:
+    """The tool result, once the CLI has exited (or been killed)."""
+    spec = job.spec
+    action = spec.get("action", job.action)
+    session_id = stream.session_id or spec.get("session_id", "")
+    cwd = spec.get("cwd", job.cwd)
+    model_label = spec.get("model_label", job.model)
+    run_label = spec.get("run_label", model_label)
+    timeout = spec.get("timeout", DEFAULT_TIMEOUT_S)
+    started = spec.get("started", job.started)
+    # Keep the banner in the saved console so the pid, cwd and tool grant are
+    # still on the record after the run ends, not just while it streams.
+    head = job.banner + (f"\n  thinking… {stream.thinking_tokens} tokens" if stream.thinking_tokens else "")
+    body_lines = "\n".join(job.lines)
+    console = head + ("\n" + body_lines if body_lines else "")
+    final_text = stream.final_text
+
+    if timed_out:
+        restored = action == "execute" and approvals.restore_approval(session_id)
+        return {
+            "error": (
+                f"claude_code timed out after {timeout}s"
+                + (" — the approval has been restored, so this can be retried "
+                   "with a longer `timeout` without planning again." if restored else "")
+            ),
+            "output": console[-MAX_RESULT_CHARS:],
+            "session_id": session_id,
+            "approval_restored": restored,
+            "exit_code": 124,
+        }
+    if returncode != 0 and not final_text:
+        if action == "execute":
+            approvals.restore_approval(session_id)
+        detail = "\n".join(_stderr_tail(job)) or console[-2000:]
+        hint = ""
+        if spec.get("args_model"):
+            # The common cause by far: an invented id like claude-opus-4. The
+            # CLI's own message does not always make that obvious.
+            hint = (
+                f" — note model was set to {spec['args_model']!r}; valid values are "
+                "'opus', 'sonnet', 'haiku' or a full id such as 'claude-opus-5'. "
+                "Retry without `model` to use the default."
+            )
+        return {
+            "error": f"claude_code exited {returncode}: {detail[:400]}{hint}",
+            "session_id": session_id,
+            "exit_code": returncode or 1,
+        }
+
+    body = final_text or console
+    result = {
+        "action": action,
+        "output": body[:MAX_RESULT_CHARS],
+        "console": console[-12000:],
+        "session_id": session_id,
+        "cwd": cwd,
+        "model": model_label,
+        "elapsed_s": round(time.time() - started, 1),
+        "exit_code": 1 if stream.is_error else 0,
+    }
+    if job.id:
+        result["job_id"] = job.id
+    if spec.get("agent_note"):
+        result["agent"] = spec["agent_note"]
+    chat_id = spec.get("chat_id", "")
+    if chat_id and session_id and not stream.is_error:
+        try:
+            claude_code_agents.record(
+                chat_id, session_id=session_id, cwd=cwd, engine=spec.get("engine", job.engine),
+                model=model_label, action=action, prompt=spec.get("prompt", ""), summary=body)
+        except Exception:
+            pass
+    if action == "plan":
+        try:
+            approvals.record_plan(
+                session_id,
+                cwd=cwd,
+                plan=body,
+                owner=spec.get("owner", ""),
+                model=spec.get("model", ""),
+                engine=spec.get("engine", job.engine),
+                chat_session_id=chat_id,
+            )
+        except Exception as e:
+            return {
+                "error": f"plan produced but could not be recorded for approval: {e}",
+                "output": body[:MAX_RESULT_CHARS],
+                "exit_code": 1,
+            }
+        # A plan is the thing the user actually reads before saying yes, so
+        # give them a paginated copy in the house style. Cosmetic: a render
+        # failure still leaves the plan text in the reply.
+        try:
+            from src.doc_pdf import render_markdown_pdf
+            pdf_path, pdf_err = await render_markdown_pdf(
+                body,
+                f"plan-{session_id}",
+                running_title=f"Plan · {Path(cwd).name} · jaronwilson.dev",
+            )
+        except Exception as e:
+            pdf_path, pdf_err = None, str(e)
+        if pdf_path:
+            result["pdf"] = f"[Download plan PDF](/api/claude_code/plan/{session_id}/pdf)"
+            result["pdf_path"] = pdf_path
+        elif pdf_err:
+            result["pdf_error"] = pdf_err
+
+        result["nothing_changed"] = True
+        result["approval"] = {
+            "approve": f"[Approve plan · runs on {run_label}](#claudecode-approve-{session_id})",
+            "deny": f"[Deny](#claudecode-deny-{session_id})",
+        }
+        result["next_step"] = (
+            "Show the plan to the user in full. If the result has a `pdf` field, show that "
+            "link too so they can read it as a paginated document. Then show these two links "
+            "on their own line exactly as given so they can click one:\n"
+            f"[Approve plan · runs on {run_label}](#claudecode-approve-{session_id})  ·  [Deny](#claudecode-deny-{session_id})\n"
+            f"Say plainly that approving runs it on {run_label}. "
+            "Tell them they can also just reply with changes they want instead of approving, "
+            "including a different model (for example 'haiku' for small changes). "
+            "Then STOP and wait. Approving starts the run by itself, in this chat; calling "
+            "execute before they click Approve will be refused by the server."
+        )
+    return result
+
+
+async def _reattached(job) -> None:
+    """Follow a run that outlived the server that started it, then finish it
+    as the live run would have, posting the result into its chat."""
+    stream = _Stream(job.engine, job.cli_session_id)
+
+    def add(ln: str) -> None:
+        job.lines.append(_clip(ln, LINE_CHARS))
+
+    exit_path = os.path.join(job.run_dir, "exit")
+
+    def exited() -> bool:
+        return os.path.exists(exit_path) or not claude_code_jobs.pid_alive(job.pid, job.run_dir)
+
+    tail = _FileTail(os.path.join(job.run_dir, "out.jsonl"))
+    timeout = float(job.spec.get("timeout") or DEFAULT_TIMEOUT_S)
+    remaining = max(5.0, float(job.spec.get("started") or job.started) + timeout - time.time())
+    timed_out = False
+    try:
+        await asyncio.wait_for(_follow(job, stream, add, exited, tail), timeout=remaining)
+    except asyncio.TimeoutError:
+        timed_out = True
+        claude_code_jobs.kill_run(job)
+        for _ in range(40):
+            if exited():
+                break
+            await asyncio.sleep(0.25)
+        for raw in tail.lines(final=True):
+            for ln in stream.feed(raw):
+                add(ln)
+    try:
+        result = await _build_result(job, stream, _exit_code(job), timed_out)
+    except Exception as e:
+        result = {"error": f"could not finish the run: {e}", "exit_code": 1}
+    claude_code_jobs.finish(job, _job_status(result), result)
+    await _post_background_result(job, result)
+
+
+def reattach_runs() -> int:
+    """After a restart: pick up every recorded run, live or finished while
+    the server was down, and see it through. Call from the running loop."""
+    n = 0
+    for rec in claude_code_jobs.load_records():
+        if claude_code_jobs.get(rec["id"]):
+            continue
+        if time.time() - float(rec.get("started") or 0) > claude_code_jobs.MAX_REATTACH_AGE_S:
+            continue
+        if not os.path.isdir(os.path.join(claude_code_jobs.RUNS_DIR, rec["id"])):
+            continue
+        job = claude_code_jobs.adopt(rec)
+        job.task = asyncio.create_task(_reattached(job))
+        n += 1
+        logger.info("Reattached Claude Code job %s (pid %s, chat %s)",
+                    job.id, job.pid, (job.chat_session_id or "-")[:8])
+    claude_code_jobs.save()
+    return n
+
+
+def _os_process_for(session_id: str) -> Optional[int]:
+    """A claude/opencode process on this host already working in CLI session
+    `session_id`, tracked or not."""
+    if not session_id or not os.path.isdir("/proc"):
+        return None
+    me = os.getpid()
+    for d in os.listdir("/proc"):
+        if not d.isdigit() or int(d) == me:
+            continue
+        try:
+            with open(f"/proc/{d}/cmdline", "rb") as f:
+                args = [a.decode("utf-8", "replace") for a in f.read().split(b"\0") if a]
+        except OSError:
+            continue
+        if not args:
+            continue
+        head = " ".join(os.path.basename(a) for a in args[:2]).lower()
+        if "claude" not in head and "opencode" not in head:
+            continue
+        if any(a == session_id or a.endswith(f"/{session_id}.jsonl") for a in args):
+            return int(d)
+    return None
 
 
 async def _post_background_result(job, result: Dict) -> None:
@@ -981,10 +1131,11 @@ async def _post_background_result(job, result: Dict) -> None:
     if not sid:
         return
     ok = result.get("exit_code") == 0
-    head = (f"**Background Claude Code job `{job.id}` "
+    head = (f"**{'Claude Code' if job.reattached else 'Background Claude Code'} job `{job.id}` "
             f"{'finished' if ok else 'stopped' if job.status == 'stopped' else 'failed'}** "
             f"({job.action}, {job.model}, {round((job.finished or time.time()) - job.started)}s, "
-            f"in `{job.cwd}`)")
+            f"in `{job.cwd}`"
+            + ("; it kept running through a server restart" if job.reattached else "") + ")")
     body = result.get("output") or result.get("error") or ""
     parts = [head, "", body.strip()]
     if result.get("pdf"):
