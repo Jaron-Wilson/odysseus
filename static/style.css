@@ -37068,6 +37068,14 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 /* Claude Code switched off for this chat (chatClaudeToggle.js). */
 .claude-toggle-btn.off { color: var(--accent-error, #d9644f); opacity: 1; }
 .claude-toggle-btn[hidden] { display: none; }
+/* The latest merged PR the server runs (buildBadge.js). */
+.build-badge {
+  font-size: 11px; opacity: .55; padding: 1px 6px; border-radius: 8px; white-space: nowrap;
+  font-variant-numeric: tabular-nums; cursor: default;
+}
+.build-badge.newer { opacity: 1; cursor: pointer; color: var(--accent, #c96);
+  background: color-mix(in srgb, var(--accent, #c96) 14%, transparent); }
+.build-badge[hidden] { display: none; }
 /* Screen control asked for a machine other than the one the user is on. */
 .sc-modal-warn {
   margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; font-weight: 600;
