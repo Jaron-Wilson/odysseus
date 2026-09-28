@@ -88,6 +88,8 @@ def test_streamed_through_odysseus_with_seeking(video, device, monkeypatch):
 
 def test_wiring():
     read = lambda *p: open(os.path.join(HERE, *p), encoding="utf-8").read()
-    assert "NEVER copy it: call that machine's share_media" in read("src", "agent_loop.py")
+    loop = read("src", "agent_loop.py")
+    assert "NEVER copy it: call that machine's share_media" in loop
+    assert "give DIRECT links to the audio file itself" in loop
     assert "setup_device_media_routes(mcp_manager)" in read("app.py")
     assert 'custom_route("/media/{token}"' in read("tools", "mcp", "linux_desktop_mcp_server.py")
