@@ -27,6 +27,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 import notifyDone from './notifyDone.js';
 import './chatNotes.js';
 import './musicBar.js';
+import './openRequests.js';
 import './pdfViewer.js';
 import './bgTasks.js';
 
