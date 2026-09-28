@@ -278,8 +278,12 @@ class Overlay:
         self.token = self.settings.get("token") or ""
         self.current = None                            # the message on show
         self.msg_open = False
-        self.msg_above = True
-        self.dismissed_plan = None
+        self.items = []                                # the message queue
+        self.idx = 0
+        self._seq = 0
+        self.plans = {}
+        self.dismissed_plans = set()
+        self.reader = None
         if self.token:
             threading.Thread(target=self._poll_inbox, daemon=True).start()
         root.after(200, self._drain)
@@ -291,10 +295,11 @@ class Overlay:
         except Exception:
             return False
 
-    def _round_corners(self):
+    def _round_corners(self, win=None):
         # Windows 11: ask DWM for rounded corners (harmless elsewhere).
         try:
-            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            w = win or self.root
+            hwnd = ctypes.windll.user32.GetParent(w.winfo_id()) or w.winfo_id()
             pref = ctypes.c_int(2)                      # DWMWCP_ROUND
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
         except Exception:
@@ -336,11 +341,13 @@ class Overlay:
     # dragging
     def _drag_start(self, e):
         # Relative to the window's top-left, which is known from the anchor.
-        self._dx, self._dy = e.x_root - self.ax, e.y_root - (self.ay - self._msg_offset())
+        self._dx, self._dy = e.x_root - self.ax, e.y_root - self.ay
 
     def _drag(self, e):
-        self.ax, self.ay = e.x_root - self._dx, e.y_root - self._dy + self._msg_offset()
-        self.root.geometry(f"+{self.ax}+{self.ay - self._msg_offset()}")
+        self.ax, self.ay = e.x_root - self._dx, e.y_root - self._dy
+        self.root.geometry(f"+{self.ax}+{self.ay}")
+        if self.current is not None and "alert_x" not in self.settings:
+            self._place_alert()                        # it follows until given its own spot
 
     def _drag_end(self, e):
         # Saved as the player's own position, whether or not a message is open.
@@ -363,6 +370,7 @@ class Overlay:
         cwo = tk.BooleanVar(value=bool(self.settings.get("close_with_odysseus", True)))
         m.add_checkbutton(label="Close with Odysseus", variable=cwo,
                           command=lambda: self._set("close_with_odysseus", cwo.get()))
+        m.add_command(label="Put alerts back above the player", command=self._reset_alert)
         m.add_separator()
         m.add_command(label="Open Odysseus", command=lambda: webbrowser.open(ODYSSEUS_URL))
         m.add_command(label="Close", command=self.root.destroy)
@@ -374,11 +382,13 @@ class Overlay:
 
     def _alpha(self, a):
         self.root.attributes("-alpha", a)
+        self.alert.attributes("-alpha", a)
         self.settings["alpha"] = a
         save_settings(self.settings)
 
     def _topmost(self, on):
         self.root.attributes("-topmost", on)
+        self.alert.attributes("-topmost", on)
         self.settings["topmost"] = on
         save_settings(self.settings)
 
@@ -443,8 +453,11 @@ class Overlay:
         self._flash(f"PC {new}%")
 
     def _wheel(self, e):
-        # Over the player row only, not the message box below it.
-        if str(e.widget).startswith(str(self.msg)):
+        # Over the player row only: not the message box, not the plan reader.
+        try:
+            if e.widget.winfo_toplevel() is not self.root:
+                return
+        except Exception:
             return
         step = 5 if e.delta > 0 else -5
         try:
@@ -472,14 +485,18 @@ class Overlay:
                 if isinstance(item, dict) and item.get("_quit"):
                     self.root.destroy()
                     return
-                if isinstance(item, dict) and "_plans" in item:
+                if isinstance(item, dict) and item.get("_call"):
+                    item["_call"]()
+                elif isinstance(item, dict) and "_plans" in item:
                     self._sync_plans(item["_plans"])
                 elif isinstance(item, dict) and item.get("_message"):
-                    self._show_message(item)
+                    self._enqueue(item)
                 elif isinstance(item, dict) and item.get("_status"):
-                    self.msg_status.configure(text=item["_status"])
-                    if item.get("collapse"):
-                        self.root.after(1800, self._hide_message)
+                    if item.get("key") in (None, (self.current or {}).get("_key")):
+                        self.msg_status.configure(text=item["_status"])
+                    if item.get("done"):
+                        # Answered: after a moment, on to the next message.
+                        self.root.after(1500, lambda k=item["done"]: self._remove(k))
                 else:
                     self._show(item)
         except queue.Empty:
@@ -493,6 +510,12 @@ class Overlay:
             "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=15) as r:
             return json.loads(r.read().decode() or "{}")
+
+    def _api_bytes(self, path):
+        req = urllib.request.Request(self.url + path.lstrip("/"),
+                                     headers={"Authorization": f"Bearer {self.token}"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read()
 
     def _poll_inbox(self):
         since = None
@@ -517,13 +540,27 @@ class Overlay:
             time.sleep(INBOX_S)
 
     def _build_messages(self):
-        r = self.root
-        f = self.msg = tk.Frame(r, bg=BG)
+        # Alerts live in their own window, not stacked onto the player's.
+        # Asked for: "make the music and the alerts 2 separate ones so it's
+        # not pushing one down farther than I want". It opens above the
+        # player until dragged somewhere else, and keeps that spot.
+        a = self.alert = tk.Toplevel(self.root)
+        a.overrideredirect(True)
+        a.attributes("-topmost", self.settings.get("topmost", True))
+        a.attributes("-alpha", float(self.settings.get("alpha", 0.86)))
+        a.configure(bg=BG)
+        a.withdraw()
+        f = self.msg = tk.Frame(a, bg=BG)
+        f.place(x=0, y=0, width=W, height=MSG_H)
         self.msg_head = tk.Label(f, bg=BG, fg=ACCENT, anchor="w", font=("Segoe UI Semibold", 9))
-        self.msg_head.place(x=10, y=2, width=W - 60, height=18)
+        self.msg_head.place(x=10, y=2, width=W - 110, height=18)
         close = tk.Label(f, bg=BG, fg=DIM, text="\u00d7", font=("Segoe UI", 12), cursor="hand2")
         close.place(x=W - 28, y=0, width=22, height=20)
-        close.bind("<Button-1>", lambda e: self._hide_message(dismissed=True))
+        close.bind("<Button-1>", lambda e: self._close_current())
+        self.msg_nav = tk.Label(f, bg=BG, fg=DIM, text="", font=("Segoe UI", 9), cursor="hand2")
+        self.msg_nav.place(x=W - 92, y=1, width=60, height=18)
+        # Left half of "‹ 1/2 ›" goes back, the right half forward.
+        self.msg_nav.bind("<Button-1>", lambda e: self._step_msg(-1 if e.x < 30 else 1))
         self.msg_body = tk.Label(f, bg=BG, fg=FG, anchor="nw", justify="left", wraplength=W - 20,
                                  font=("Segoe UI", 9))
         self.msg_body.place(x=10, y=20, width=W - 20, height=52)
@@ -542,100 +579,202 @@ class Overlay:
         opn.bind("<Button-1>", lambda e: self.current and self._open_chat(self.current["session_id"]))
         self.msg_status = tk.Label(f, bg=BG, fg=DIM, anchor="w", font=("Segoe UI", 8))
         self.msg_status.place(x=10, y=127, width=W - 20, height=16)
+        for w in (f, self.msg_head, self.msg_body, self.msg_status):
+            w.bind("<ButtonPress-1>", self._alert_drag_start)
+            w.bind("<B1-Motion>", self._alert_drag)
+            w.bind("<ButtonRelease-1>", self._alert_drag_end)
 
-    def _show_message(self, ev):
-        self.current = ev
-        self.msg_head.configure(text=(({"question": "Question", "plan": "Plan waiting"}.get(ev.get("kind"), "Odysseus"))
-                                      + (f" \u00b7 {ev['chat']}" if ev.get("chat") else "")))
+    # the alert window's own position
+    def _alert_pos(self):
+        if "alert_x" in self.settings:
+            return int(self.settings["alert_x"]), int(self.settings["alert_y"])
+        if self.ay >= MSG_H + 6:
+            return self.ax, self.ay - MSG_H - 6        # just above the player
+        return self.ax, self.ay + H + 6                # no room above: below it
+
+    def _place_alert(self):
+        x, y = self._alert_pos()
+        self.alert.geometry(f"{W}x{MSG_H}+{x}+{y}")
+
+    def _alert_drag_start(self, e):
+        x, y = self._alert_pos()
+        self._adx, self._ady = e.x_root - x, e.y_root - y
+
+    def _alert_drag(self, e):
+        self._alert_xy = (e.x_root - self._adx, e.y_root - self._ady)
+        self.alert.geometry(f"+{self._alert_xy[0]}+{self._alert_xy[1]}")
+
+    def _alert_drag_end(self, e):
+        if getattr(self, "_alert_xy", None):
+            self.settings.update(alert_x=self._alert_xy[0], alert_y=self._alert_xy[1])
+            save_settings(self.settings)
+            self._alert_xy = None
+
+    def _reset_alert(self):
+        self.settings.pop("alert_x", None)
+        self.settings.pop("alert_y", None)
+        save_settings(self.settings)
+        if self.current is not None:
+            self._place_alert()
+
+    # ── the message queue ─────────────────────────────────────────────────
+    # Everything waiting to be read, oldest first. Seen live: two replies
+    # finishing together, the second replaced the first before it was read.
+    # Now the head says "1/2", the arrows flip between them, and closing or
+    # answering one shows the next.
+    def _enqueue(self, ev):
+        self._seq += 1
+        ev = dict(ev)
+        ev.setdefault("_key", f"m{self._seq}")
+        if any(it["_key"] == ev["_key"] for it in self.items):
+            return
+        self.items.append(ev)
+        if self.current is None:
+            self.idx = len(self.items) - 1
+            self._render()
+        else:
+            self._render_head()
+        self._attention()
+        log(f"message: {ev.get('kind')} {ev.get('heading')}")
+
+    def _remove(self, key):
+        keep = [it for it in self.items if it["_key"] != key]
+        if len(keep) == len(self.items):
+            return
+        cur_key = (self.current or {}).get("_key")
+        self.items = keep
+        if not self.items:
+            self._collapse()
+            return
+        if cur_key == key:
+            self.idx = min(self.idx, len(self.items) - 1)
+            self._render()
+        else:
+            self.idx = next((n for n, it in enumerate(self.items) if it["_key"] == cur_key), 0)
+            self._render_head()
+
+    def _step_msg(self, delta):
+        if len(self.items) > 1:
+            self.idx = (self.idx + delta) % len(self.items)
+            self._render()
+
+    def _close_current(self):
+        ev = self.current
+        if not ev:
+            return
+        if ev.get("kind") == "plan":
+            self.dismissed_plans.add(ev.get("plan_id"))     # do not bring it back
+        self._remove(ev["_key"])
+
+    def _render_head(self):
+        ev = self.current
+        if not ev:
+            return
+        label = {"question": "Question", "plan": "Plan waiting"}.get(ev.get("kind"), "Odysseus")
+        self.msg_head.configure(text=label + (f" \u00b7 {ev['chat']}" if ev.get("chat") else ""))
+        n = len(self.items)
+        self.msg_nav.configure(text=f"\u2039 {self.idx + 1}/{n} \u203a" if n > 1 else "")
+
+    def _render(self):
+        ev = self.current = self.items[self.idx]
+        self._render_head()
         self.msg_body.configure(text=ev.get("body") or ev.get("heading") or "")
         for w in self.msg_opts.winfo_children():
             w.destroy()
-        for label in (ev.get("options") or [])[:4]:
-            b = tk.Label(self.msg_opts, bg="#34343c", fg=FG, text=label[:28], cursor="hand2",
+
+        def button(text, cmd):
+            b = tk.Label(self.msg_opts, bg="#34343c", fg=FG, text=text[:28], cursor="hand2",
                          font=("Segoe UI", 8), padx=6)
             b.pack(side="left", padx=(0, 6))
-            if ev.get("kind") == "plan":
-                b.bind("<Button-1>", lambda e, v=label.lower(): self._answer_plan(v))
-            else:
-                b.bind("<Button-1>", lambda e, t=label: self._send(t))
+            b.bind("<Button-1>", lambda e: cmd())
+
+        if ev.get("kind") == "plan":
+            pid = ev["plan_id"]
+            button("Approve", lambda: self._answer_plan(pid, "approve"))
+            button("Deny", lambda: self._answer_plan(pid, "deny"))
+            plans = [it["plan_id"] for it in self.items if it.get("kind") == "plan"]
+            button(f"Read {len(plans)} plans" if len(plans) > 1 else "Read plan",
+                   lambda: self._open_reader(plans if len(plans) > 1 else [pid]))
+        else:
+            for label in (ev.get("options") or [])[:4]:
+                button(label, lambda t=label: self._send(t))
         self.msg_status.configure(text={"question": "Type a reply and press Enter",
-                                        "plan": "Approve, Deny, or type the changes you want"}.get(
+                                        "plan": "Approve, Deny, Read it here, or type changes"}.get(
                                             ev.get("kind"), "Reply, or Open the chat"))
         self.entry.delete(0, "end")
         if not self.msg_open:
-            # Open above the player (asked for: "above the music, not below
-            # it"), unless the player sits at the very top of the screen.
-            self.msg_above = self.ay >= MSG_H
-            self.root.geometry(f"{W}x{H + MSG_H}+{self.ax}+{self.ay - MSG_H if self.msg_above else self.ay}")
+            self._place_alert()
+            self.alert.deiconify()
             self.msg_open = True
-        if self.msg_above:
-            self.msg.place(x=0, y=0, width=W, height=MSG_H)
-            self.player.place(x=0, y=MSG_H, width=W, height=H)
-        else:
-            self.player.place(x=0, y=0, width=W, height=H)
-            self.msg.place(x=0, y=H, width=W, height=MSG_H)
+            self.root.after(50, lambda: self._round_corners(self.alert))
+
+    def _attention(self):
         # Back on top, over a game that took focus, and a gentle chime.
-        self.root.attributes("-topmost", False)
-        self.root.attributes("-topmost", True)
-        self.root.lift()
+        for w in (self.root, self.alert):
+            w.attributes("-topmost", False)
+            w.attributes("-topmost", True)
+            w.lift()
         try:
             import winsound
             winsound.MessageBeep(0x40)
         except Exception:
             pass
-        log(f"message: {ev.get('kind')} {ev.get('heading')}")
 
-    def _msg_offset(self):
-        return MSG_H if self.msg_open and self.msg_above else 0
-
-    def _hide_message(self, dismissed=False):
-        if dismissed and self.current and self.current.get("kind") == "plan":
-            self.dismissed_plan = self.current.get("plan_id")    # do not bring it back
+    def _collapse(self):
         self.current = None
+        self.items = []
+        self.idx = 0
         if not self.msg_open:
             return
-        self.msg.place_forget()
-        self.player.place(x=0, y=0, width=W, height=H)
+        self.alert.withdraw()
         self.msg_open = False
-        self.root.geometry(f"{W}x{H}+{self.ax}+{self.ay}")
 
     # ── plans waiting on an answer ───────────────────────────────────────
     def _sync_plans(self, plans):
-        """Show the newest pending plan while there is one; hide it after."""
-        cur = self.current
-        if plans:
-            p = plans[0]
-            if p["id"] == self.dismissed_plan:
-                return
-            if cur is None or (cur.get("kind") == "plan" and cur.get("plan_id") != p["id"]):
-                first = " ".join(ln.strip("#*- ").strip() for ln in (p.get("plan") or "").splitlines()
-                                 if ln.strip())[:220]
-                self._show_message({"kind": "plan", "plan_id": p["id"], "session_id": p["session_id"],
-                                    "chat": p.get("chat", ""), "heading": "Plan waiting",
-                                    "body": f"Runs on {p.get('runs_on', '')}. {first}",
-                                    "options": ["Approve", "Deny"]})
-        elif cur and cur.get("kind") == "plan":
-            self._hide_message()
+        """Every pending plan is in the queue while it is pending, and leaves
+        it once answered (here, in the chat, or anywhere else)."""
+        self.plans = {p["id"]: p for p in plans}
+        for key in [it["_key"] for it in self.items
+                    if it.get("kind") == "plan" and it["plan_id"] not in self.plans]:
+            self._remove(key)
+        for p in reversed(plans):                          # oldest first into the queue
+            if p["id"] in self.dismissed_plans:
+                continue
+            first = " ".join(ln.strip("#*- ").strip() for ln in (p.get("plan") or "").splitlines()
+                             if ln.strip())[:220]
+            self._enqueue({"kind": "plan", "_key": "plan:" + p["id"], "plan_id": p["id"],
+                           "session_id": p.get("session_id", ""), "chat": p.get("chat", ""),
+                           "heading": "Plan waiting",
+                           "body": f"Runs on {p.get('runs_on', '')}. {first}"})
+        if self.reader is not None:
+            self.reader.sync(set(self.plans))
 
-    def _answer_plan(self, verb):
-        ev = self.current
-        if not ev:
-            return
-        self.msg_status.configure(text="Approving\u2026" if verb == "approve" else "Denying\u2026")
+    def _answer_plan(self, plan_id, verb, on_done=None):
+        key = "plan:" + plan_id
+        if (self.current or {}).get("_key") == key:
+            self.msg_status.configure(text="Approving\u2026" if verb == "approve" else "Denying\u2026")
 
         def go():
             try:
-                d = self._api("POST", f"api/overlay/plan/{ev['plan_id']}/{verb}")
+                d = self._api("POST", f"api/overlay/plan/{plan_id}/{verb}")
                 if verb == "approve":
                     msg = (f"Approved \u2713 run {d.get('run_id', '')} starting in the chat"
                            if d.get("resuming") else f"Approved \u2713 run {d.get('run_id', '')}")
                 else:
                     msg = "Denied \u2713"
-                self.q.put({"_status": msg, "collapse": True})
+                self.q.put({"_status": msg, "key": key, "done": key})
             except Exception as e:
                 log(f"plan {verb} failed: {e}")
-                self.q.put({"_status": f"Could not {verb}: {e}"[:80]})
+                msg = f"Could not {verb}: {e}"[:80]
+                self.q.put({"_status": msg, "key": key})
+            if on_done:
+                self.q.put({"_call": lambda: on_done(msg)})
         threading.Thread(target=go, daemon=True).start()
+
+    def _open_reader(self, plan_ids):
+        if self.reader is not None:
+            self.reader.close()
+        self.reader = PlanReader(self, plan_ids)
 
     def _open_chat(self, sid):
         """Bring up the Odysseus tab already open on this machine, switched
@@ -680,7 +819,8 @@ class Overlay:
             try:
                 d = self._api("POST", "api/overlay/reply", {"session_id": ev["session_id"], "text": text})
                 self.q.put({"_status": "Sent \u2713 (queued behind the current reply)"
-                            if d.get("queued_behind_reply") else "Sent \u2713", "collapse": True})
+                            if d.get("queued_behind_reply") else "Sent \u2713",
+                            "key": ev["_key"], "done": ev["_key"]})
             except Exception as e:
                 log(f"reply failed: {e}")
                 self.q.put({"_status": f"Could not send: {e}"[:80]})
@@ -721,6 +861,194 @@ class Overlay:
 
     def run(self):
         self.root.mainloop()
+
+
+class PlanReader:
+    """Read plans over a game, and answer them there.
+
+    A frameless window above the player with the plan's PDF pages, scrolled
+    with the wheel, and Approve / Deny / PDF under each. Several plans sit
+    side by side (asked for: "if it's 2 plans, open side by side")."""
+    COL_W = 600
+    PAD = 10
+    HEAD_H = 30
+
+    def __init__(self, ov, plan_ids):
+        self.ov = ov
+        self.ids = list(plan_ids)[:3]
+        self.q: "queue.Queue" = queue.Queue()
+        self.images = {}                              # plan id -> PhotoImages (kept alive)
+        self.cols = {}
+        n = len(self.ids)
+        t = self.top = tk.Toplevel(ov.root)
+        t.overrideredirect(True)
+        t.attributes("-topmost", True)
+        t.configure(bg=BG)
+        w = n * self.COL_W + (n + 1) * self.PAD
+        h = min(int(t.winfo_screenheight() * 0.78), 1100)
+        # Right edge on the player's right edge, bottom just above the overlay
+        # (never over it): shorter if need be, below it only if there is no
+        # room above at all.
+        x = max(0, ov.ax + W - w)
+        # Above whichever of the two windows is higher on screen.
+        top = ov.ay
+        if ov.msg_open:
+            top = min(top, ov._alert_pos()[1])
+        room_above = top - 16
+        if room_above >= 420:
+            h = min(h, room_above)
+            y = room_above - h + 8
+        else:
+            y = ov.ay + H + 8
+            h = min(h, max(300, t.winfo_screenheight() - y - 8))
+        t.geometry(f"{w}x{h}+{x}+{y}")
+        self.rx, self.ry = x, y
+        head = tk.Frame(t, bg=BG)
+        head.place(x=0, y=0, width=w, height=self.HEAD_H)
+        title = tk.Label(head, bg=BG, fg=ACCENT, anchor="w", font=("Segoe UI Semibold", 10),
+                         text="Plan waiting" if n == 1 else f"{n} plans waiting")
+        title.place(x=self.PAD, y=4, width=w - 60, height=22)
+        close = tk.Label(head, bg=BG, fg=DIM, text="\u00d7", font=("Segoe UI", 13), cursor="hand2")
+        close.place(x=w - 32, y=2, width=26, height=24)
+        close.bind("<Button-1>", lambda e: self.close())
+        for wd in (head, title):
+            wd.bind("<ButtonPress-1>", self._drag_start)
+            wd.bind("<B1-Motion>", self._drag)
+        body_h = h - self.HEAD_H - self.PAD
+        for i, pid in enumerate(self.ids):
+            self._column(pid, self.PAD + i * (self.COL_W + self.PAD), self.HEAD_H, body_h)
+            threading.Thread(target=self._load, args=(pid,), daemon=True).start()
+        t.after(100, self._pump)
+
+    # layout
+    def _column(self, pid, x, y, h):
+        f = tk.Frame(self.top, bg="#232329")
+        f.place(x=x, y=y, width=self.COL_W, height=h)
+        head = tk.Label(f, bg="#232329", fg=FG, anchor="w", justify="left", font=("Segoe UI", 9),
+                        text="Loading\u2026", wraplength=self.COL_W - 16)
+        head.place(x=8, y=4, width=self.COL_W - 16, height=36)
+        canvas = tk.Canvas(f, bg="#2b2b31", highlightthickness=0)
+        canvas.place(x=8, y=44, width=self.COL_W - 16, height=h - 44 - 44)
+        canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 40), "units"))
+        canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
+        canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
+        bar = tk.Frame(f, bg="#232329")
+        bar.place(x=8, y=h - 38, width=self.COL_W - 16, height=32)
+        status = tk.Label(bar, bg="#232329", fg=DIM, anchor="e", font=("Segoe UI", 8), text="")
+        buttons = []
+        for label, cmd in (("Approve", lambda: self._answer(pid, "approve")),
+                           ("Deny", lambda: self._answer(pid, "deny")),
+                           ("PDF in browser", lambda: self._pdf(pid))):
+            b = tk.Label(bar, bg="#34343c", fg=FG, text=label, cursor="hand2", font=("Segoe UI", 9), padx=10)
+            b.pack(side="left", padx=(0, 8), ipady=4)
+            b.bind("<Button-1>", lambda e, c=cmd: c())
+            buttons.append(b)
+        status.pack(side="right")
+        self.cols[pid] = {"head": head, "canvas": canvas, "status": status, "buttons": buttons,
+                          "doc": None, "answered": False}
+
+    # data (threads) -> Tk thread through self.q
+    def _load(self, pid):
+        try:
+            doc = self.ov._api("GET", f"api/overlay/plan/{pid}")
+            self.q.put(("doc", pid, doc))
+            for n in range(1, min(int(doc.get("pages") or 0), 30) + 1):
+                data = self.ov._api_bytes(f"api/overlay/plan/{pid}/page/{n}.png?w={self.COL_W - 32}")
+                self.q.put(("page", pid, data))
+        except Exception as e:
+            log(f"reader: could not load plan {pid}: {e}")
+            self.q.put(("error", pid, str(e)))
+
+    def _pump(self):
+        try:
+            while True:
+                kind, pid, data = self.q.get_nowait()
+                col = self.cols.get(pid)
+                if not col:
+                    continue
+                if kind == "doc":
+                    col["doc"] = data
+                    col["head"].configure(text=(f"{data.get('chat') or 'Plan'}\n"
+                                                f"Runs on {data.get('runs_on', '')} \u00b7 {data.get('cwd', '')}"))
+                    if not data.get("pages"):
+                        self._text(col, data.get("plan") or "(empty plan)")
+                elif kind == "page":
+                    self._add_page(pid, col, data)
+                elif kind == "error":
+                    col["head"].configure(text=f"Could not load this plan: {data}"[:120])
+        except queue.Empty:
+            pass
+        except tk.TclError:
+            return                                    # closed
+        self.top.after(100, self._pump)
+
+    def _add_page(self, pid, col, data):
+        c = col["canvas"]
+        if Image is None:
+            self._text(col, (col["doc"] or {}).get("plan") or "")
+            return
+        img = ImageTk.PhotoImage(Image.open(io.BytesIO(data)))
+        self.images.setdefault(pid, []).append(img)
+        y = c.bbox("all")[3] + 8 if c.bbox("all") else 8
+        c.create_image((self.COL_W - 16) // 2, y, image=img, anchor="n")
+        c.configure(scrollregion=c.bbox("all"))
+
+    def _text(self, col, text):
+        c = col["canvas"]
+        c.create_text(12, 10, text=text, anchor="nw", fill=FG, font=("Segoe UI", 10),
+                      width=self.COL_W - 44)
+        c.configure(scrollregion=c.bbox("all"))
+
+    # actions
+    def _answer(self, pid, verb):
+        col = self.cols[pid]
+        if col["answered"]:
+            return
+        col["status"].configure(text="Approving\u2026" if verb == "approve" else "Denying\u2026")
+        self.ov._answer_plan(pid, verb, on_done=lambda msg, p=pid: self._answered(p, msg))
+
+    def _answered(self, pid, msg):
+        col = self.cols.get(pid)
+        if not col:
+            return
+        col["status"].configure(text=msg)
+        if msg.startswith(("Approved", "Denied")):
+            col["answered"] = True
+            for b in col["buttons"][:2]:
+                b.configure(fg=DIM, cursor="arrow")
+            if all(c["answered"] for c in self.cols.values()):
+                self.top.after(1500, self.close)
+
+    def _pdf(self, pid):
+        doc = (self.cols.get(pid) or {}).get("doc") or {}
+        if doc.get("pdf_url"):
+            webbrowser.open(self.ov.url + doc["pdf_url"].lstrip("/"))
+        elif doc.get("session_id"):
+            self.ov._open_chat(doc["session_id"])
+
+    def sync(self, pending):
+        """A plan answered elsewhere (the chat, a phone) shows as such here."""
+        for pid, col in self.cols.items():
+            if not col["answered"] and col["doc"] is not None and pid not in pending:
+                self._answered(pid, "Answered elsewhere")
+                col["answered"] = True
+        if self.cols and all(c["answered"] for c in self.cols.values()):
+            self.top.after(1500, self.close)
+
+    def close(self):
+        try:
+            self.top.destroy()
+        except tk.TclError:
+            pass
+        if self.ov.reader is self:
+            self.ov.reader = None
+
+    def _drag_start(self, e):
+        self._dx, self._dy = e.x_root - self.rx, e.y_root - self.ry
+
+    def _drag(self, e):
+        self.rx, self.ry = e.x_root - self._dx, e.y_root - self._dy
+        self.top.geometry(f"+{self.rx}+{self.ry}")
 
 
 def main():

@@ -1080,6 +1080,7 @@ _BG_TASKS: set = set()
 # With the chat open, the plan is probably being read: wait this long before
 # also sending a notification, and skip it if the plan was answered meanwhile.
 PLAN_NOTIFY_GRACE_S = 120.0
+PLAN_TURN_WAIT_S = 20 * 60
 
 _CLAUDE_NAMED = re.compile(r"\b(claude(?![_\w])|opus|sonnet|haiku|fable)\b", re.I)
 
@@ -1115,6 +1116,14 @@ async def _notify_plan(plan_id: str, chat_id: str, run_label: str, plan: str) ->
         return
     try:
         from src import agent_runs, chat_queue
+        # Only once the chat shows the plan: the turn that ran it is still
+        # writing it up (a local model takes minutes). Seen live: the
+        # notification came first, and the chat it opened looked empty
+        # until the reply landed two minutes later.
+        waited = 0.0
+        while agent_runs.is_active(chat_id) and waited < PLAN_TURN_WAIT_S:
+            await asyncio.sleep(2.0)
+            waited += 2.0
         if agent_runs.has_watchers(chat_id):
             await asyncio.sleep(PLAN_NOTIFY_GRACE_S)
         if (approvals.get(plan_id) or {}).get("status") != "pending":
