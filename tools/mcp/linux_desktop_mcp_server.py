@@ -646,6 +646,21 @@ async def _media_route(request):
 
 
 
+
+_MEDIA_URL_RE = re.compile(r"^https://(?:www\.|m\.)?(?:music\.youtube\.com|youtube\.com|youtu\.be)/\S+$")
+
+
+@mcp.tool()
+def open_media_url(url: str) -> Dict[str, Any]:
+    """Open a YouTube / YouTube Music link on this machine so it plays here
+    (music handed over from another device). Only those links: this is not a
+    general "open any URL" tool."""
+    url = (url or "").strip()
+    if not _MEDIA_URL_RE.match(url):
+        return {"ok": False, "error": "only https YouTube or YouTube Music links"}
+    subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"ok": True, "opened": url}
+
 if __name__ == "__main__":
     import uvicorn  # noqa: F401
     # HOST/PORT come from the module scope above, where the Host allowlist was

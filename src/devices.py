@@ -41,6 +41,12 @@ KNOWN_COMMANDS = {
     "notify": "Show a plain notification (always supported)",
     "list_apps": "List the apps installed on the device",
     "install_app": "Open the Play Store page for a package so it can be installed",
+    # Music on the phone (Modes 0.1.60+), for the music bar opened on the phone.
+    "now_playing": "What is playing on the device",
+    "media_control": "Play, pause or skip what is playing",
+    "get_volume": "The device's music volume",
+    "set_volume": "Set the device's music volume",
+    "set_mute": "Mute or unmute the device's music",
 }
 
 # Commands that need a reachable listener on the device rather than just a
