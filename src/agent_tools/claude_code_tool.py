@@ -420,8 +420,12 @@ class ClaudeCodeTool:
         result["job_id"] = job.id
         result["brought_back"] = True
         result.setdefault("engine_label", engine_label(job.engine))
-        result["next_step"] = ("This run was brought back from the background. Report what it did, "
-                               "then carry on with the conversation where the user left off.")
+        # Keep the run's own next step: for a plan it says to show the Approve
+        # and Deny links. Replacing it lost them - seen live, a brought-back
+        # plan showed as text with nothing to approve it by.
+        own = result.get("next_step") or ("Report what it did, then carry on with the "
+                                          "conversation where the user left off.")
+        result["next_step"] = "This run was brought back from the background. " + own
         return result
 
     async def execute(self, content: str, ctx: dict) -> Dict:

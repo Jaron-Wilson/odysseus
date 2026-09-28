@@ -209,3 +209,38 @@ def test_button_prompts_are_a_short_note_and_recall_no_skills():
         assert prompt.startswith(("[Brought back from the background ·", "[Plan approved ·"))
     loop = _src("src", "agent_loop.py")
     assert "if _skill_max_injected > 0 and not _button_prompt else []" in loop
+
+
+def test_a_brought_back_plan_still_offers_approve_and_deny(env, monkeypatch):
+    # Seen live: a plan brought back came through as text only; the Approve
+    # and Deny links were in the plan's next_step, which bring-back replaced.
+    make, tmp_path, posted = env
+    make(delay=1)
+    import src.doc_pdf as doc_pdf
+
+    async def no_pdf(*a, **k):
+        return None, "skipped in tests"
+    monkeypatch.setattr(doc_pdf, "render_markdown_pdf", no_pdf)
+
+    async def run():
+        task = asyncio.create_task(cct.ClaudeCodeTool().execute(
+            json.dumps({"action": "plan", "prompt": "a preview for Erik", "cwd": str(tmp_path)}),
+            {"session_id": "chat-1"}))
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if jobs.list_jobs():
+                break
+        job = jobs.list_jobs()[0]
+        await asyncio.sleep(0.2)
+        assert jobs.detach(job.id)
+        assert (await asyncio.wait_for(task, timeout=5))["background"]
+        out = await cct.ClaudeCodeTool().execute(json.dumps({"action": "attach", "job_id": job.id}),
+                                                 {"session_id": "chat-1"})
+        await asyncio.wait_for(job.task, timeout=10)
+        return out
+    out = asyncio.run(run())
+    assert out["brought_back"] and out["next_step"].startswith("This run was brought back")
+    assert "#claudecode-approve-" in out["next_step"] and "#claudecode-deny-" in out["next_step"]
+    pending = [a for a in approvals._load().values() if a.get("status") == "pending"] \
+        if isinstance(approvals._load(), dict) else []
+    assert pending                                                   # recorded, so Approve works
