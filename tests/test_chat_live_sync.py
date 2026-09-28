@@ -12,7 +12,6 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_stamp_counts_the_chats_messages(monkeypatch):
-    from fastapi import FastAPI
     import routes.session_routes as sr
 
     class _Sess:
@@ -28,14 +27,18 @@ def test_stamp_counts_the_chats_messages(monkeypatch):
     sm = _SM()
     monkeypatch.setattr(sr, "effective_user", lambda request: "jaron")
     sr.setup_session_routes(sm, {})
-    app = FastAPI()
-    app.include_router(sr.router)
-    c = TestClient(app)
-    assert c.get("/api/session/chat-1/stamp").json()["message_count"] == 0
+    # The router is shared by every setup call in the test run; take the
+    # handler this call just registered (the app registers it once).
+    stamp = [r for r in sr.router.routes if r.path == "/api/session/{session_id}/stamp"][-1].endpoint
+    import pytest
+    from fastapi import HTTPException
+    assert stamp(None, "chat-1")["message_count"] == 0
     sm.s["chat-1"].history.append("a reply saved by a background run")
-    assert c.get("/api/session/chat-1/stamp").json()["message_count"] == 1
-    assert c.get("/api/session/nope/stamp").status_code == 404
-    assert c.get("/api/session/theirs/stamp").status_code == 404
+    assert stamp(None, "chat-1")["message_count"] == 1
+    for sid in ("nope", "theirs"):
+        with pytest.raises(HTTPException) as e:
+            stamp(None, sid)
+        assert e.value.status_code == 404
 
 
 def test_the_page_checks_and_rerenders():
