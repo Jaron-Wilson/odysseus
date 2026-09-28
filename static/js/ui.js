@@ -445,14 +445,20 @@ export function showError(msg) {
  * Throttled during streaming so it doesn't fight user scrolling.
  */
 let _scrollThrottleTimer = null;
+let _scrollPending = false;
 export function scrollHistory() {
   if (!autoScrollEnabled) return;
   if (!_scrollBox) {
     _scrollBox = document.getElementById('chat-history');
   }
-  // Throttle: only start a new scroll animation every 500ms
-  if (_scrollThrottleTimer) return;
-  _scrollThrottleTimer = setTimeout(() => { _scrollThrottleTimer = null; }, 500);
+  // Throttle: start a new scroll animation at most every 500ms. A call inside
+  // the window is kept for its end, not dropped - dropping it left a streaming
+  // reply's last lines below the fold until the next token arrived.
+  if (_scrollThrottleTimer) { _scrollPending = true; return; }
+  _scrollThrottleTimer = setTimeout(() => {
+    _scrollThrottleTimer = null;
+    if (_scrollPending) { _scrollPending = false; scrollHistory(); }
+  }, 500);
   if (!_scrollRafId) {
     _scrollRafId = requestAnimationFrame(_smoothScrollStep);
   }
