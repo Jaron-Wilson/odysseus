@@ -178,3 +178,34 @@ def test_queue_items_keep_a_label_and_are_not_added_twice(tmp_path, monkeypatch)
     items = chat_queue.get("c")["items"]
     assert [i.get("label") for i in items] == ["Bring back job 1", None]
     assert chat_queue.claim("c")["text"] == "a long server-written prompt"
+
+
+def _src(*p):
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return open(os.path.join(here, *p), encoding="utf-8").read()
+
+
+def test_bringing_back_shows_the_live_output_like_watch_here():
+    # Asked for: "if I bring it back from background it should show how we do
+    # the watch here section". Seen live: only "Working..." for the whole run,
+    # and the model took over two minutes to get to the attach call.
+    bg = _src("static", "js", "bgTasks.js")
+    assert "watchInChat(b.dataset.bringBack, chat, { reloadWhenDone: false });" in bg
+    assert "(into || box).appendChild(card);" in bg and "if (reloadWhenDone) setTimeout(" in bg
+    chat = _src("static", "js", "chat.js")
+    assert "json.type === 'tool_progress' && json.job_id && !_watchedJobs.has(json.job_id)" in chat
+    assert "{ into: holder.querySelector('.body'), reloadWhenDone: false }" in chat
+
+
+def test_button_prompts_are_a_short_note_and_recall_no_skills():
+    import re
+    import routes.claude_code_routes as ccr
+    renderer = _src("static", "js", "chatRenderer.js")
+    pattern = re.search(r"String\(textRaw \|\| ''\)\.match\(/(.+?)/\);", renderer).group(1)
+    pattern = pattern.replace("\\u00b7", "·")
+    for prompt in (ccr._BRING_BACK_PROMPT.format(job_id="878698a8", engine="OpenCode", args="{}"),
+                   ccr._EXECUTE_PROMPT.format(run_id="beae9b52", engine="OpenCode", args="{}")):
+        assert re.match(pattern, prompt), prompt[:60]
+        assert prompt.startswith(("[Brought back from the background ·", "[Plan approved ·"))
+    loop = _src("src", "agent_loop.py")
+    assert "if _skill_max_injected > 0 and not _button_prompt else []" in loop

@@ -3858,6 +3858,7 @@ import './bgTasks.js';
     // (not _backgroundStreams) so checkBackgroundStream doesn't mistake this
     // for a same-tab POST stream and spawn its own spinner+poll on re-entry.
     _resumingStreams.add(sessionId);
+    const _watchedJobs = new Set();          // coding-agent runs shown live in this reply
 
     let res;
     try {
@@ -4082,6 +4083,15 @@ import './bgTasks.js';
                 || (mod.default && mod.default.showScreenControlModal);
               if (fn) fn(json.request_id, json.server_name);
             }).catch(() => {});
+          } else if (json.type === 'tool_progress' && json.job_id && !_watchedJobs.has(json.job_id)) {
+            // A coding agent running in this turn (a brought-back or approved
+            // run the page did not start): show its live output. Seen live:
+            // brought back, the chat showed only "Working..." for its whole run.
+            rich = true;
+            _watchedJobs.add(json.job_id);
+            if (spinner) { try { spinner.destroy(); } catch (_) {} }
+            import('./bgTasks.js').then((m) => (m.watchInChat || (m.default && m.default.watchInChat))(
+              json.job_id, null, { into: holder.querySelector('.body'), reloadWhenDone: false })).catch(() => {});
           } else if (json.type === 'tool_start' || json.type === 'tool_output' ||
                      json.type === 'tool_progress' || json.type === 'agent_step' ||
                      json.type === 'web_sources' || json.type === 'rag_sources' ||

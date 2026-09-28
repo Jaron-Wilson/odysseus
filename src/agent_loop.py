@@ -1324,13 +1324,19 @@ def _build_system_prompt(
                 except (TypeError, ValueError):
                     _skill_max_injected = 3
                 _skill_max_injected = max(0, min(12, _skill_max_injected))
+                # A prompt Odysseus wrote for a button (Approve, Bring back to
+                # chat) is not a request to match skills against: seen live,
+                # a bring-back recalled an ADS-B setup skill and the model
+                # spent its reply calling it a prompt injection.
+                _button_prompt = str(last_user or "").lstrip().startswith(
+                    ("[Brought back from the background \u00b7", "[Plan approved \u00b7"))
                 relevant_skills = sm.get_relevant_skills(
                     last_user,
                     skills=sm.load(owner=owner),
                     threshold=0.25,
                     max_items=_skill_max_injected,
                     min_confidence=_skill_min_conf,
-                ) if _skill_max_injected > 0 else []
+                ) if _skill_max_injected > 0 and not _button_prompt else []
                 lines = [""]
                 if relevant_skills:
                     # Bump the "uses" counter on every skill we actually surface
