@@ -37076,3 +37076,9 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .build-badge.newer { opacity: 1; cursor: pointer; color: var(--accent, #c96);
   background: color-mix(in srgb, var(--accent, #c96) 14%, transparent); }
 .build-badge[hidden] { display: none; }
+/* Screen control asked for a machine other than the one the user is on. */
+.sc-modal-warn {
+  margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; font-weight: 600;
+  background: color-mix(in srgb, var(--accent-error, #d9644f) 18%, transparent);
+  color: var(--accent-error, #d9644f);
+}

@@ -2692,27 +2692,41 @@ export function showScreenControlModal(requestId, serverName) {
 
   const body = document.getElementById('sc-modal-body');
   const srv = document.getElementById('sc-modal-server');
-  // Opened from an inline link there is no name to hand over, and "a
-  // machine" is the one detail that matters here -- which computer is
-  // about to be driven. The request record knows, so ask it.
-  if (!serverName) {
-    fetch(`/api/screen_control/pending/${encodeURIComponent(requestId)}`,
-          { credentials: 'same-origin' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((rec) => {
-        const name = rec && rec.server_name;
-        if (!name || modal.dataset.requestId !== requestId) return;
-        if (srv) srv.textContent = name;
-        if (body) body.textContent = body.textContent.replace('a machine', name);
-      })
-      .catch(() => { /* the generic wording stands */ });
-  }
   if (body) body.textContent =
     `The assistant wants to control the screen on ${serverName || 'a machine'} `
     + `to carry on with what you asked. Approving covers up to 25 actions or `
     + `15 minutes, whichever comes first, and Stop ends it immediately.`;
   if (srv) srv.textContent = serverName || 'that machine';
   modal.classList.remove('hidden');
+  // Which computer is about to be driven is the one detail that matters
+  // here, and whether it is the one in front of the user: seen live, a
+  // request for the laptop was approved from the PC without noticing. The
+  // request record knows both, so always ask it.
+  fetch(`/api/screen_control/pending/${encodeURIComponent(requestId)}`,
+        { credentials: 'same-origin' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((rec) => {
+      if (!rec || modal.dataset.requestId !== requestId) return;
+      const name = rec.server_name;
+      if (name) {
+        if (srv) srv.textContent = name;
+        if (body) body.textContent = body.textContent.replace('a machine', name);
+      }
+      if (body && rec.reason) body.textContent += ` It asked for: ${rec.reason}.`;
+      let warn = modal.querySelector('.sc-modal-warn');
+      if (rec.other_machine) {
+        if (!warn) {
+          warn = document.createElement('div');
+          warn.className = 'sc-modal-warn';
+          body.parentNode.insertBefore(warn, body);
+        }
+        warn.textContent = `Heads up: this is ${name || 'another machine'}, not `
+          + `${rec.you_are_on || 'the computer you are on'}.`;
+      } else if (warn) {
+        warn.remove();
+      }
+    })
+    .catch(() => { /* the generic wording stands */ });
 
   const finish = () => {
     modal.classList.add('hidden');
