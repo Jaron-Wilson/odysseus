@@ -712,11 +712,19 @@ class ClaudeCodeTool:
         # expensive model with nothing saying so. An execute carries on with
         # the model its plan was written with, unless told otherwise.
         model = str(args.get("model") or "").strip()
+        # Run limits: from the agent's arguments, else what the user chose when
+        # approving the plan.
+        limits = normalize_limits({k: args.get(k) for k in ("max_turns", "max_cost_usd", "take_your_time")})
+        if (not any(limits.values())) and action == "execute":
+            limits = normalize_limits((approvals.get(resume_id) or {}).get("limits"))
         if engine != "opencode":
             if not model and action == "execute":
                 model = str((approvals.get(resume_id) or {}).get("model") or "")
             model = model or DEFAULT_MODEL
             cmd += ["--model", model]
+            if limits.get("max_cost_usd"):
+                # The CLI's own hard stop, at the point where the wrap-up starts.
+                cmd += ["--max-budget-usd", f"{BUDGET_WRAP_AT * limits['max_cost_usd']:.2f}"]
         model_label = model or OPENCODE_DEFAULT_LABEL
         run_label = f"{'OpenCode' if engine == 'opencode' else 'Claude Code'} · {model_label}"
 
@@ -743,6 +751,8 @@ class ClaudeCodeTool:
             timeout = max(30, min(3600, int(args.get("timeout") or DEFAULT_TIMEOUT_S)))
         except (TypeError, ValueError):
             timeout = DEFAULT_TIMEOUT_S
+        if limits.get("take_your_time"):
+            timeout = TAKE_YOUR_TIME_TIMEOUT_S
 
         # Registered before the CLI starts, so its run directory exists to
         # write into. An approved plan's run takes the id the approval was
@@ -762,7 +772,7 @@ class ClaudeCodeTool:
             "model": model, "model_label": model_label, "engine": engine,
             "run_label": run_label, "args_model": str(args.get("model") or ""),
             "chat_id": chat_id, "owner": (ctx or {}).get("owner") or "",
-            "prompt": prompt, "agent_note": agent_note, "timeout": timeout,
+            "prompt": prompt, "agent_note": agent_note, "timeout": timeout, "limits": limits,
             "engine_note": engine_note,
         }
 
@@ -811,6 +821,7 @@ class ClaudeCodeTool:
             f"$ {engine} {_grant}\n"
             f"  job {job.id} · pid {proc.pid} · session {(session_id or 'pending')[:12]} · cwd {cwd_path}\n"
             f"  model {model_label} · kill with: kill -- -{proc.pid}"
+            + (f"\n  limits: {_limit_text(limits)}" if any(limits.values()) else "")
         )
         job.banner = banner
         claude_code_jobs.save()
@@ -831,6 +842,7 @@ class ClaudeCodeTool:
             return {"elapsed_s": round(time.time() - started, 1), "tail": _tail_text(),
                     "job_id": job.id, "can_background": not job.detached,
                     "model": model_label, "engine_label": engine_label(engine),
+                    "usage": {"turns": stream.turns, "cost_usd": round(stream.cost, 2), "limits": limits},
                     "agent_status": job.agent_status}
 
         if progress_cb:
@@ -949,6 +961,19 @@ class _Stream:
         self.final_text = ""
         self.is_error = False
         self.thinking_tokens = 0
+        # For run limits: turns taken and dollars spent so far. Claude reports
+        # the exact total only at the end (result.total_cost_usd); until then
+        # it is estimated from each message's token usage.
+        self.turns = 0
+        self.cost_exact: Optional[float] = None
+        self.result_subtype = ""
+        self._msg_usage: Dict[str, tuple] = {}
+
+    @property
+    def cost(self) -> float:
+        if self.cost_exact is not None:
+            return self.cost_exact
+        return sum(_price(model, u) for model, u in self._msg_usage.values())
 
     def feed(self, raw: str) -> list:
         raw = (raw or "").strip()
@@ -966,15 +991,34 @@ class _Stream:
             # resume, and the approval record, both key on.
             if not self.session_id and event.get("sessionID"):
                 self.session_id = event["sessionID"]
+            if event.get("type") == "step_start":
+                self.turns += 1
+            elif event.get("type") == "step_finish":
+                try:
+                    self.cost_exact = (self.cost_exact or 0.0) + float((event.get("part") or {}).get("cost") or 0)
+                except (TypeError, ValueError):
+                    pass
             summary = _summarize_opencode(event)
             if not summary:
                 return []
             if event.get("type") == "text":
                 self.final_text = (self.final_text + "\n" + summary).strip()
             return summary.splitlines()
+        if event.get("type") == "assistant":
+            msg = event.get("message") or {}
+            mid = msg.get("id") or ""
+            if mid and mid not in self._msg_usage:
+                self.turns += 1
+            if mid:
+                self._msg_usage[mid] = (msg.get("model") or "", msg.get("usage") or {})
         if event.get("type") == "result":
             self.final_text = event.get("result") or self.final_text
             self.is_error = bool(event.get("is_error"))
+            self.result_subtype = str(event.get("subtype") or "")
+            if isinstance(event.get("total_cost_usd"), (int, float)):
+                self.cost_exact = float(event["total_cost_usd"])
+            if isinstance(event.get("num_turns"), int):
+                self.turns = max(self.turns, event["num_turns"])
         elif event.get("subtype") == "thinking_tokens":
             # Counted rather than printed: it is the only signal during a long
             # silent reasoning phase, but one line per tick would flood it.
@@ -1020,6 +1064,8 @@ async def _follow(job, stream: "_Stream", add, exited, tail: "_FileTail") -> Non
                 add(ln)
         for raw in status_tail.lines(final=done):
             _take_status(job, raw)
+        if not done:
+            _check_limits(job, stream, add)
         if stream.session_id and job.cli_session_id != stream.session_id:
             job.cli_session_id = stream.session_id
             job.spec["session_id"] = stream.session_id
@@ -1089,6 +1135,128 @@ async def _notify_needs_input(job, detail: str) -> None:
         logger.warning("Could not send the needs-input notification for %s: %s", job.id, e)
 
 
+# ── run limits: turns, budget, or take your time ─────────────────────────
+# Asked for: "set how many turns it should take, total cost (try to stay under;
+# when hit, finish up right away!) or select take your time and it does
+# unlimited". A limit reached stops the run and resumes the same session for
+# one short wrap-up turn, so the work is summarized instead of cut off.
+BUDGET_WRAP_AT = 0.8            # of the budget: leaves room for the wrap-up
+TAKE_YOUR_TIME_TIMEOUT_S = 4 * 3600
+# Dollars per million tokens: input, output, cache read, cache write.
+# Calibrated against a real run (claude-opus-5-5, 12.3M cache reads + 277K
+# cache writes + 115K output = $6.98 reported). Only an estimate: the CLI's own
+# --max-budget-usd enforces the real spend on Claude runs.
+_PRICES = {"haiku": (1.0, 5.0, 0.1, 2.0), "sonnet": (3.0, 15.0, 0.3, 6.0), "opus": (3.0, 15.0, 0.3, 6.0)}
+WRAP_UP_PROMPT = (
+    "STOP: you have reached the {reason} the user set for this run. Do not start anything new "
+    "and do not change any more files. In a few short lines, report: what is done, what is left, "
+    "and anything half-finished the user should know about.")
+
+
+def _price(model: str, usage: dict) -> float:
+    m = (model or "").lower()
+    rate = next((v for k, v in _PRICES.items() if k in m), _PRICES["opus"])
+    u = usage or {}
+    return (rate[0] * float(u.get("input_tokens") or 0) + rate[1] * float(u.get("output_tokens") or 0)
+            + rate[2] * float(u.get("cache_read_input_tokens") or 0)
+            + rate[3] * float(u.get("cache_creation_input_tokens") or 0)) / 1_000_000
+
+
+def normalize_limits(raw) -> Dict:
+    """{"max_turns", "max_cost_usd", "take_your_time"} from a request or the
+    agent's arguments; anything missing or invalid means no such limit."""
+    raw = raw if isinstance(raw, dict) else {}
+    out = {"max_turns": None, "max_cost_usd": None, "take_your_time": bool(raw.get("take_your_time"))}
+    if out["take_your_time"]:
+        return out
+    try:
+        t = int(raw.get("max_turns") or 0)
+        out["max_turns"] = t if 1 <= t <= 1000 else None
+    except (TypeError, ValueError):
+        pass
+    try:
+        c = float(raw.get("max_cost_usd") or 0)
+        out["max_cost_usd"] = round(c, 2) if 0 < c <= 1000 else None
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
+def _limit_text(limits: Dict) -> str:
+    if not limits:
+        return ""
+    if limits.get("take_your_time"):
+        return "take your time (no turn or cost limit)"
+    parts = []
+    if limits.get("max_turns"):
+        parts.append(f"{limits['max_turns']} turns")
+    if limits.get("max_cost_usd"):
+        parts.append(f"${limits['max_cost_usd']:.2f}")
+    return " · ".join(parts)
+
+
+def _check_limits(job, stream: "_Stream", add) -> None:
+    """Stop the run once a limit is reached; the wrap-up follows in _build_result."""
+    limits = (job.spec or {}).get("limits") or {}
+    if job.spec.get("limit_hit") or job.status != "running" or limits.get("take_your_time"):
+        return
+    reason = ""
+    if limits.get("max_turns") and stream.turns >= limits["max_turns"]:
+        reason = f"turn limit ({limits['max_turns']} turns)"
+    elif limits.get("max_cost_usd") and stream.cost >= BUDGET_WRAP_AT * limits["max_cost_usd"]:
+        reason = f"budget (${limits['max_cost_usd']:.2f})"
+    if not reason:
+        return
+    job.spec["limit_hit"] = reason
+    add(f"\u25a0 Reached the {reason}: stopping and asking for a short wrap-up.")
+    claude_code_jobs.save()
+    claude_code_jobs.kill_run(job)
+
+
+async def _wrap_up(job, reason: str) -> str:
+    """One short turn in the same session: what is done, what is left."""
+    spec = job.spec
+    engine = spec.get("engine", job.engine)
+    sid = job.cli_session_id or spec.get("session_id") or ""
+    cli = shutil.which("opencode" if engine == "opencode" else "claude")
+    if not cli or not sid:
+        return ""
+    prompt = WRAP_UP_PROMPT.format(reason=reason)
+    if engine == "opencode":
+        cmd = [cli, "run", "--format", "json", "--dir", spec.get("cwd") or job.cwd,
+               "--agent", "plan", "--session", sid]
+        if spec.get("args_model"):
+            cmd += ["--model", spec["args_model"]]
+        cmd.append(prompt)
+        stdin_data = None
+    else:
+        cmd = [cli, "-p", "--output-format", "stream-json", "--verbose", "--resume", sid,
+               "--permission-mode", "plan", "--allowedTools", "Read"]
+        if spec.get("model"):
+            cmd += ["--model", spec["model"]]
+        cost_cap = ((spec.get("limits") or {}).get("max_cost_usd") or 0) * (1 - BUDGET_WRAP_AT)
+        if cost_cap:
+            cmd += ["--max-budget-usd", f"{max(0.05, cost_cap):.2f}"]
+        stdin_data = prompt.encode()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
+    env["HOME"] = str(Path.home())
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=spec.get("cwd") or job.cwd, env=env,
+            stdin=asyncio.subprocess.PIPE if stdin_data else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            limit=STREAM_LINE_LIMIT, start_new_session=True)
+        out, _ = await asyncio.wait_for(proc.communicate(stdin_data), timeout=180)
+    except Exception as e:
+        logger.warning("Wrap-up for job %s failed: %s", job.id, e)
+        return ""
+    s = _Stream(engine, sid)
+    for line in out.decode("utf-8", "replace").splitlines():
+        for ln in s.feed(line):
+            job.lines.append(_clip(ln, LINE_CHARS))
+    return (s.final_text or "").strip()
+
+
 def _exit_code(job) -> int:
     """The CLI's exit code, as the wrapper recorded it. Missing means the run
     was killed before it could say (Stop, a timeout, or a reboot)."""
@@ -1133,6 +1301,20 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
     console = head + ("\n" + body_lines if body_lines else "")
     final_text = stream.final_text
 
+    limits = spec.get("limits") or {}
+    reason = spec.get("limit_hit") or ""
+    if not reason and limits.get("max_cost_usd") and "budget" in (stream.result_subtype or "").lower():
+        reason = f"budget (${limits['max_cost_usd']:.2f})"          # the CLI's own stop
+    if reason:
+        summary = await _wrap_up(job, reason)
+        spent = f"{stream.turns} turns, about ${stream.cost:.2f}"
+        body = (f"**Stopped at the {reason} you set** ({spent}).\n\n"
+                + (summary or final_text or "It stopped before it could summarize; see the console."))
+        return {"action": action, "output": body[:MAX_RESULT_CHARS], "console": console[-12000:],
+                "session_id": session_id, "cwd": cwd, "model": model_label, "limit_hit": reason,
+                "usage": {"turns": stream.turns, "cost_usd": round(stream.cost, 2), "limits": limits},
+                "engine_label": engine_label(spec.get("engine", job.engine)), "exit_code": 0,
+                "job_id": job.id}
     if timed_out:
         restored = action == "execute" and approvals.restore_approval(session_id)
         return {

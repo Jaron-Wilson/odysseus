@@ -54,7 +54,7 @@ _EXECUTE_PROMPT = (
 )
 
 
-def approve_plan(session_id: str, user: str) -> dict:
+def approve_plan(session_id: str, user: str, limits: dict = None) -> dict:
     """Approve a plan and start its run in the plan's chat. Shared by the
     chat's Approve link and the desktop overlay (routes/overlay_routes.py)."""
     entry = approvals.get(session_id)
@@ -71,6 +71,10 @@ def approve_plan(session_id: str, user: str) -> dict:
     if not approvals.set_status(session_id, "approved", owner=user):
         raise HTTPException(409, f"Plan is already {entry.get('status')}")
     run_id = approvals.assign_run_id(session_id)
+    if limits:
+        # Turns / budget / take your time, chosen in the Approve dialog.
+        from src.agent_tools.claude_code_tool import normalize_limits
+        approvals.set_limits(session_id, normalize_limits(limits))
     logger.info("[claude_code] plan %s approved by %s (run %s)",
                 session_id[:8], user or "(auth off)", run_id)
     # Carry the plan out now, in the chat it came from, rather than waiting
@@ -148,7 +152,13 @@ def setup_claude_code_routes() -> APIRouter:
         call must target the same directory the plan was made for."""
         user = _require_user(request)
         _validate(session_id)
-        return approve_plan(session_id, user)
+        limits = None
+        try:
+            if int(request.headers.get("content-length") or 0) > 0:
+                limits = (await request.json()).get("limits")
+        except Exception:
+            limits = None
+        return approve_plan(session_id, user, limits)
 
     @router.post("/api/claude_code/deny/{session_id}")
     async def deny(request: Request, session_id: str):

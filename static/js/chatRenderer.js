@@ -1200,6 +1200,15 @@ document.addEventListener('click', function(e) {
     if (!mm) return;
     const [, verb, planId] = mm;
     if (a.dataset.busy) return;          // a second click while the first is out
+    // Approving first asks for run limits (turns, budget, or take your time).
+    if (verb === 'approve' && !a.dataset.limitsChosen) {
+      showRunLimits(a, (limits) => {
+        a.dataset.limitsChosen = '1';
+        a._runLimits = limits;
+        a.click();
+      });
+      return;
+    }
     a.dataset.busy = '1';
     const label = a.textContent;
     a.textContent = verb === 'approve' ? 'Approving…' : 'Denying…';
@@ -1227,9 +1236,13 @@ document.addEventListener('click', function(e) {
     const attempt = async () => {
       let res;
       try {
-        res = await fetch(`/api/claude_code/${verb}/${encodeURIComponent(planId)}`, {
+        const withLimits = verb === 'approve' && a._runLimits;
+        res = await fetch(`/api/claude_code/${verb}/${encodeURIComponent(planId)}`, Object.assign({
           method: 'POST', credentials: 'same-origin',
-        });
+        }, withLimits ? {
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limits: a._runLimits }),
+        } : {}));
       } catch (_) {
         res = null;                                      // offline mid-restart
       }
@@ -2665,7 +2678,55 @@ export function toolDisplayName(ev) {
   return 'Coding agent';
 }
 
+// Run limits for an approved plan: turns, a budget (the run wraps up on its
+// own when it gets close), or take your time. Asked for: "set how many turns
+// it should take, total cost (try to stay under, when hit finish up right
+// away!) or select take your time and it does unlimited". The last choice is
+// remembered for next time.
+const RUN_LIMITS_KEY = 'odysseus.runLimits';
+export function showRunLimits(anchor, onApprove) {
+  document.querySelectorAll('.run-limits').forEach((n) => n.remove());
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(RUN_LIMITS_KEY) || '{}') || {}; } catch (_) { saved = {}; }
+  const box = document.createElement('div');
+  box.className = 'run-limits';
+  box.innerHTML = `
+    <div class="run-limits-title">Run limits</div>
+    <label>Max turns <input type="number" min="1" max="1000" step="1" data-rl="turns" placeholder="no limit"></label>
+    <label>Budget $ <input type="number" min="0.05" max="1000" step="0.05" data-rl="cost" placeholder="no limit"></label>
+    <label class="run-limits-free"><input type="checkbox" data-rl="free"> Take your time (no turn or cost limit)</label>
+    <div class="run-limits-note">At the limit it stops and writes a short wrap-up of what is done and what is left.</div>
+    <div class="run-limits-actions"><button type="button" data-rl="ok">Approve</button><button type="button" data-rl="cancel">Cancel</button></div>`;
+  const turns = box.querySelector('[data-rl="turns"]');
+  const cost = box.querySelector('[data-rl="cost"]');
+  const free = box.querySelector('[data-rl="free"]');
+  if (saved.max_turns) turns.value = saved.max_turns;
+  if (saved.max_cost_usd) cost.value = saved.max_cost_usd;
+  free.checked = !!saved.take_your_time;
+  const sync = () => { turns.disabled = cost.disabled = free.checked; };
+  free.addEventListener('change', sync);
+  sync();
+  box.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-rl="ok"],[data-rl="cancel"]');
+    if (!b) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (b.dataset.rl === 'ok') {
+      const limits = free.checked ? { take_your_time: true }
+        : { max_turns: parseInt(turns.value, 10) || null, max_cost_usd: parseFloat(cost.value) || null };
+      try { localStorage.setItem(RUN_LIMITS_KEY, JSON.stringify(limits)); } catch (_) { /* private mode */ }
+      box.remove();
+      onApprove(limits);
+    } else {
+      box.remove();
+    }
+  });
+  (anchor.closest('p, li') || anchor).after(box);
+  turns.focus();
+}
+
 const chatRenderer = {
+  showRunLimits,
   toolDisplayName,
   shortModel,
   sameModelName,

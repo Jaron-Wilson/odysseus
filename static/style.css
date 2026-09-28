@@ -37099,3 +37099,16 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .agent-status-done { color: var(--accent-success, #6fae6f); }
 .agent-status-failed { color: var(--accent-error, #d9644f); }
 .bg-job-status { margin: 2px 0 2px 16px; }
+
+/* Run limits for an approved plan (chatRenderer.showRunLimits). */
+.run-limits { margin: 8px 0; padding: 10px 12px; border-radius: 10px; max-width: 360px;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  background: color-mix(in srgb, var(--fg) 5%, transparent); font-size: 13px; }
+.run-limits-title { font-weight: 600; margin-bottom: 6px; }
+.run-limits label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; }
+.run-limits input[type=number] { width: 110px; }
+.run-limits .run-limits-free { justify-content: flex-start; }
+.run-limits-note { opacity: .65; font-size: 12px; margin: 6px 0; }
+.run-limits-actions { display: flex; gap: 8px; }
+.run-limits-actions button { padding: 4px 12px; border-radius: 8px; cursor: pointer; }
+.run-usage { font-size: 12px; opacity: .7; margin: 2px 0 2px 22px; font-variant-numeric: tabular-nums; }
