@@ -24,8 +24,11 @@ logger = logging.getLogger(__name__)
 
 APPROVALS_FILE = os.path.join(DATA_DIR, "claude_code_approvals.json")
 
-# A plan the user never answered should not stay executable indefinitely.
-APPROVAL_TTL_S = 60 * 60
+# A plan the user never answered should not stay executable indefinitely, but
+# an hour was far too short: seen live, a plan approved the next day had
+# expired, so the agent planned it all over again. A week, and the user gets
+# a notification when a plan is waiting (claude_code_tool._notify_plan).
+APPROVAL_TTL_S = 7 * 24 * 60 * 60
 
 
 def _load() -> Dict[str, dict]:
@@ -128,6 +131,21 @@ def restore_approval(session_id: str) -> bool:
     entry.pop("used_at", None)
     _save(data)
     return True
+
+
+def pending_for(owner: str = "") -> list:
+    """Plans waiting on this person's answer, newest first."""
+    out = []
+    for sid, e in _prune(_load()).items():
+        if e.get("status") != "pending":
+            continue
+        if owner and e.get("owner") and e["owner"] != owner:
+            continue
+        out.append({"session_id": sid, "chat_session_id": e.get("chat_session_id", ""),
+                    "cwd": e.get("cwd", ""), "engine": e.get("engine", ""),
+                    "model": e.get("model", ""), "created": e.get("created", 0),
+                    "plan": (e.get("plan") or "")[:600]})
+    return sorted(out, key=lambda x: x["created"], reverse=True)
 
 
 def get(session_id: str) -> Optional[dict]:

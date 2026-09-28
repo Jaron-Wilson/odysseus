@@ -420,6 +420,19 @@ class ClaudeCodeTool:
         engine = engine or DEFAULT_ENGINE
         if engine not in ("claude", "opencode"):
             return {"error": "engine must be 'claude' or 'opencode'", "exit_code": 1}
+        # Plans are written on OpenCode (the local model) unless the user
+        # named Claude themselves. Seen live: the agent asked for Claude and
+        # opus on its own for a plan, spending the user's Claude plan on
+        # read-only recon. The approved run carries on with the plan's engine.
+        engine_note = ""
+        if (action == "plan" and engine == "claude" and DEFAULT_ENGINE == "opencode"
+                and not _user_named_claude((ctx or {}).get("session_id") or "")):
+            engine = "opencode"
+            args.pop("model", None)                  # a Claude model name means nothing to OpenCode
+            if resume_id and not resume_id.startswith("ses_"):
+                resume_id = ""                       # a Claude session cannot continue on OpenCode
+            engine_note = ("Planned on OpenCode (the local model): plans use it unless the user "
+                           "asks for Claude by name. Say so when showing the plan.")
 
         # One agent per chat (src/claude_code_agents.py): an ask or plan in a
         # chat carries on that chat's agent for the folder, so it keeps what it
@@ -630,6 +643,7 @@ class ClaudeCodeTool:
             "run_label": run_label, "args_model": str(args.get("model") or ""),
             "chat_id": chat_id, "owner": (ctx or {}).get("owner") or "",
             "prompt": prompt, "agent_note": agent_note, "timeout": timeout,
+            "engine_note": engine_note,
         }
 
         # The CLI runs in its own session, writing to files rather than pipes
@@ -981,6 +995,8 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
         result["job_id"] = job.id
     if spec.get("agent_note"):
         result["agent"] = spec["agent_note"]
+    if spec.get("engine_note"):
+        result["engine_note"] = spec["engine_note"]
     chat_id = spec.get("chat_id", "")
     if chat_id and session_id and not stream.is_error:
         try:
@@ -1040,7 +1056,64 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
             "Then STOP and wait. Approving starts the run by itself, in this chat; calling "
             "execute before they click Approve will be refused by the server."
         )
+        # Nobody may be looking: say a plan is waiting, where they will see it.
+        t = asyncio.create_task(_notify_plan(session_id, chat_id, run_label, body))
+        _BG_TASKS.add(t)
+        t.add_done_callback(_BG_TASKS.discard)
     return result
+
+
+_BG_TASKS: set = set()
+# With the chat open, the plan is probably being read: wait this long before
+# also sending a notification, and skip it if the plan was answered meanwhile.
+PLAN_NOTIFY_GRACE_S = 120.0
+
+_CLAUDE_NAMED = re.compile(r"\b(claude(?![_\w])|opus|sonnet|haiku|fable)\b", re.I)
+
+
+def _user_named_claude(chat_id: str) -> bool:
+    """Whether the user's own last messages in the chat ask for Claude."""
+    if not chat_id:
+        return False
+    try:
+        from src.ai_interaction import get_session_manager
+        sess = get_session_manager().get_session(chat_id)
+    except Exception:
+        return False
+    seen = 0
+    for msg in reversed(getattr(sess, "history", None) or []):
+        if getattr(msg, "role", "") != "user":
+            continue
+        if (getattr(msg, "metadata", None) or {}).get("source") in (
+                "claude_code_plan_approved", "screen_control_approved"):
+            continue                                 # our own notes, not the user
+        if _CLAUDE_NAMED.search(str(getattr(msg, "content", "") or "")):
+            return True
+        seen += 1
+        if seen >= 2:
+            break
+    return False
+
+
+async def _notify_plan(plan_id: str, chat_id: str, run_label: str, plan: str) -> None:
+    """Tell the user a plan is waiting for Approve or Deny: push, the Modes
+    listener and the desktop overlay (chat_queue.send_notification)."""
+    if not chat_id:
+        return
+    try:
+        from src import agent_runs, chat_queue
+        if agent_runs.has_watchers(chat_id):
+            await asyncio.sleep(PLAN_NOTIFY_GRACE_S)
+        if (approvals.get(plan_id) or {}).get("status") != "pending":
+            return
+        notify = chat_queue.get(chat_id).get("notify") or {}
+        title = chat_queue._session_title(chat_id)
+        first = next((ln.strip("#*- ").strip() for ln in (plan or "").splitlines() if ln.strip()), "")
+        await chat_queue.send_notification(
+            chat_id, notify, f"Plan ready: {title}" if title else "Plan ready",
+            f"Approve or deny (runs on {run_label}). {first}"[:220], kind="plan")
+    except Exception as e:
+        logger.warning("Could not send the plan notification for %s: %s", chat_id, e)
 
 
 async def _reattached(job) -> None:

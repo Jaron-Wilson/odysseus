@@ -45,6 +45,48 @@ _EXECUTE_PROMPT = (
 )
 
 
+def approve_plan(session_id: str, user: str) -> dict:
+    """Approve a plan and start its run in the plan's chat. Shared by the
+    chat's Approve link and the desktop overlay (routes/overlay_routes.py)."""
+    entry = approvals.get(session_id)
+    if not entry:
+        raise HTTPException(404, "No such plan (it may have expired)")
+    chat_id = entry.get("chat_session_id") or ""
+    if entry.get("status") in ("approved", "used") and entry.get("run_id"):
+        # A retry of an Approve whose answer was lost (the server was
+        # restarting): same run, and never a second one.
+        job = jobs.get(entry["run_id"])
+        return {"session_id": session_id, "status": entry["status"], "already": True,
+                "run_id": entry["run_id"], "chat_session_id": chat_id,
+                "running": bool(job and job.status == "running"), "resuming": False}
+    if not approvals.set_status(session_id, "approved", owner=user):
+        raise HTTPException(409, f"Plan is already {entry.get('status')}")
+    run_id = approvals.assign_run_id(session_id)
+    logger.info("[claude_code] plan %s approved by %s (run %s)",
+                session_id[:8], user or "(auth off)", run_id)
+    # Carry the plan out now, in the chat it came from, rather than waiting
+    # for the user to say "go". Registered before this returns so the page
+    # can attach and show it running.
+    from src.screen_control_resume import start_turn
+    resuming = start_turn(chat_id, _EXECUTE_PROMPT.format(
+        run_id=run_id, args=json.dumps({
+            "action": "execute", "session_id": session_id, "cwd": entry.get("cwd") or "",
+            "prompt": "Carry out the approved plan."})),
+        note_source="claude_code_plan_approved", reply_source="claude_code_plan_run")
+    return {"session_id": session_id, "status": "approved", "run_id": run_id,
+            "chat_session_id": chat_id, "resuming": resuming}
+
+
+def deny_plan(session_id: str, user: str) -> dict:
+    entry = approvals.get(session_id)
+    if not entry:
+        raise HTTPException(404, "No such plan (it may have expired)")
+    if not approvals.set_status(session_id, "denied", owner=user):
+        raise HTTPException(409, f"Plan is already {entry.get('status')}")
+    logger.info("[claude_code] plan %s denied by %s", session_id[:8], user or "(auth off)")
+    return {"session_id": session_id, "status": "denied"}
+
+
 def setup_claude_code_routes() -> APIRouter:
     router = APIRouter(tags=["claude_code"])
 
@@ -96,45 +138,13 @@ def setup_claude_code_routes() -> APIRouter:
         call must target the same directory the plan was made for."""
         user = _require_user(request)
         _validate(session_id)
-        entry = approvals.get(session_id)
-        if not entry:
-            raise HTTPException(404, "No such plan (it may have expired)")
-        chat_id = entry.get("chat_session_id") or ""
-        if entry.get("status") in ("approved", "used") and entry.get("run_id"):
-            # A retry of an Approve whose answer was lost (the server was
-            # restarting): same run, and never a second one.
-            job = jobs.get(entry["run_id"])
-            return {"session_id": session_id, "status": entry["status"], "already": True,
-                    "run_id": entry["run_id"], "chat_session_id": chat_id,
-                    "running": bool(job and job.status == "running"), "resuming": False}
-        if not approvals.set_status(session_id, "approved", owner=user):
-            raise HTTPException(409, f"Plan is already {entry.get('status')}")
-        run_id = approvals.assign_run_id(session_id)
-        logger.info("[claude_code] plan %s approved by %s (run %s)",
-                    session_id[:8], user or "(auth off)", run_id)
-        # Carry the plan out now, in the chat it came from, rather than
-        # waiting for the user to say "go". Registered before this returns so
-        # the page can attach and show it running.
-        from src.screen_control_resume import start_turn
-        resuming = start_turn(chat_id, _EXECUTE_PROMPT.format(
-            run_id=run_id, args=json.dumps({
-                "action": "execute", "session_id": session_id, "cwd": entry.get("cwd") or "",
-                "prompt": "Carry out the approved plan."})),
-            note_source="claude_code_plan_approved", reply_source="claude_code_plan_run")
-        return {"session_id": session_id, "status": "approved", "run_id": run_id,
-                "chat_session_id": chat_id, "resuming": resuming}
+        return approve_plan(session_id, user)
 
     @router.post("/api/claude_code/deny/{session_id}")
     async def deny(request: Request, session_id: str):
         user = _require_user(request)
         _validate(session_id)
-        entry = approvals.get(session_id)
-        if not entry:
-            raise HTTPException(404, "No such plan (it may have expired)")
-        if not approvals.set_status(session_id, "denied", owner=user):
-            raise HTTPException(409, f"Plan is already {entry.get('status')}")
-        logger.info("[claude_code] plan %s denied by %s", session_id[:8], user or "(auth off)")
-        return {"session_id": session_id, "status": "denied"}
+        return deny_plan(session_id, user)
 
     # ------------------------------------------------------------------ #
     # Background tasks: Claude Code runs started from chats
