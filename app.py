@@ -645,6 +645,13 @@ from routes.overlay_routes import setup_overlay_routes
 app.include_router(setup_overlay_routes())
 from routes.chat_prefs_routes import setup_chat_prefs_routes
 app.include_router(setup_chat_prefs_routes())
+
+
+@app.get("/api/version")
+async def api_version():
+    """The code this server process started with (src/build_info.py)."""
+    from src import build_info
+    return build_info.INFO
 from routes.screen_control_routes import setup_screen_control_routes
 app.include_router(setup_screen_control_routes())
 
