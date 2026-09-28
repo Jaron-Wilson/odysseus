@@ -30,6 +30,7 @@ import './buildBadge.js';
 import './chatClaudeToggle.js';
 import './musicBar.js';
 import './openRequests.js';
+import './chatLiveSync.js';
 import './pdfViewer.js';
 import './bgTasks.js';
 
