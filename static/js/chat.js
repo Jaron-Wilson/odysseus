@@ -2627,6 +2627,21 @@ import './bgTasks.js';
                   const t = currentToolBubble.querySelector('.agent-thread-tool');
                   if (t && t.textContent !== json.engine_label) t.textContent = json.engine_label;
                 }
+                // Turns and spend so far, against the run's limits.
+                if (json.usage && (json.usage.turns || json.usage.cost_usd)) {
+                  const u = json.usage;
+                  const lim = u.limits || {};
+                  let el = currentToolBubble.querySelector('.run-usage');
+                  if (!el) {
+                    el = document.createElement('div');
+                    el.className = 'run-usage';
+                    const head = currentToolBubble.querySelector('.agent-thread-header');
+                    if (head) head.after(el); else currentToolBubble.prepend(el);
+                  }
+                  const t = `turn ${u.turns}${lim.max_turns ? ` / ${lim.max_turns}` : ''}`;
+                  const c = `$${Number(u.cost_usd || 0).toFixed(2)}${lim.max_cost_usd ? ` / $${Number(lim.max_cost_usd).toFixed(2)}` : ''}`;
+                  el.textContent = `${t} \u00b7 ${c}${lim.take_your_time ? ' \u00b7 taking its time' : ''}`;
+                }
                 // What the coding agent says it is doing, under the card's title.
                 if (json.agent_status && json.agent_status.detail) {
                   const st = json.agent_status;

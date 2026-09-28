@@ -115,6 +115,14 @@ def assign_run_id(session_id: str) -> str:
     return entry["run_id"]
 
 
+def set_limits(session_id: str, limits: dict) -> None:
+    """The run limits chosen when approving (turns, budget, take your time)."""
+    data = _prune(_load())
+    if session_id in data:
+        data[session_id]["limits"] = limits
+        _save(data)
+
+
 def restore_approval(session_id: str) -> bool:
     """Put a spent approval back after a run that never really ran.
 
