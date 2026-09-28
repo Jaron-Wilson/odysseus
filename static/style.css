@@ -37112,3 +37112,13 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .run-limits-actions { display: flex; gap: 8px; }
 .run-limits-actions button { padding: 4px 12px; border-radius: 8px; cursor: pointer; }
 .run-usage { font-size: 12px; opacity: .7; margin: 2px 0 2px 22px; font-variant-numeric: tabular-nums; }
+
+/* Long chats: skip layout and paint of messages far off screen. Seen with
+   ~230 items: every change to the page re-laid out all of them, and the page
+   stuttered while a reply streamed. The newest message is left alone, and the
+   browser remembers each message's measured height (auto), so scrolling and
+   the scroll position are unaffected. */
+#chat-history > .msg:not(:last-child):not(:nth-last-child(2)) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 350px;
+}
