@@ -384,6 +384,46 @@ class ClaudeCodeTool:
             "exit_code": 0,
         }
 
+    async def _attach(self, job_id: str, ctx: dict) -> Dict:
+        """Follow a background run in this chat turn again ("bring it back"):
+        its live output streams into the card here and its result is returned
+        to the chat, which carries on from it. Asked for: "after pushing a
+        task to background let me pull it back into the chat"."""
+        job = claude_code_jobs.get(job_id)
+        if not job:
+            return {"error": f"no run {job_id!r} (it may have finished long ago)", "exit_code": 1}
+        progress_cb = ctx.get("progress_cb")
+        if job.status == "running":
+            job.attached = True
+            try:
+                while job.status == "running" and job.attached:
+                    if progress_cb:
+                        body = "\n".join(list(job.lines)[-PROGRESS_TAIL_LINES:])
+                        try:
+                            await progress_cb({
+                                "elapsed_s": round(time.time() - job.started, 1),
+                                "tail": job.banner + ("\n" + body if body else ""),
+                                "job_id": job.id, "can_background": True, "model": job.model,
+                                "engine_label": engine_label(job.engine),
+                                "agent_status": job.agent_status})
+                        except Exception:
+                            pass
+                    await asyncio.sleep(PROGRESS_INTERVAL_S)
+            except asyncio.CancelledError:
+                job.attached = False       # the chat's Stop: it carries on in the background
+                raise
+            if job.status == "running":    # sent to the background again
+                return {"background": True, "job_id": job.id, "exit_code": 0,
+                        "output": (f"Sent back to the background as job `{job.id}`. Its result will be "
+                                   "posted in this chat when it finishes. Do NOT wait for it.")}
+        result = dict(job.result or {"output": "The run finished without a result.", "exit_code": 1})
+        result["job_id"] = job.id
+        result["brought_back"] = True
+        result.setdefault("engine_label", engine_label(job.engine))
+        result["next_step"] = ("This run was brought back from the background. Report what it did, "
+                               "then carry on with the conversation where the user left off.")
+        return result
+
     async def execute(self, content: str, ctx: dict) -> Dict:
         progress_cb = (ctx or {}).get("progress_cb")
 
@@ -409,9 +449,11 @@ class ClaudeCodeTool:
                         "disabled": True, "exit_code": 1}
         except Exception:
             pass
-        if action not in ("plan", "execute", "ask", "list", "status", "agents"):
-            return {"error": "action must be 'plan', 'execute', 'ask', 'list', 'status' or 'agents'",
+        if action not in ("plan", "execute", "ask", "list", "status", "agents", "attach"):
+            return {"error": "action must be 'plan', 'execute', 'ask', 'list', 'status', 'agents' or 'attach'",
                     "exit_code": 1}
+        if action == "attach":
+            return await self._attach(str(args.get("job_id") or ""), ctx or {})
 
         # Reads: no prompt, no directory, nothing spawned.
         if action == "list":
@@ -1386,8 +1428,8 @@ async def _post_background_result(job, result: Dict) -> None:
     """Put a backgrounded run's result into the chat it came from, and send
     the chat's done notification if one was asked for."""
     sid = job.chat_session_id
-    if not sid:
-        return
+    if not sid or job.attached:
+        return                          # brought back: the chat turn following it reports it
     ok = result.get("exit_code") == 0
     name = engine_label(job.engine)
     head = (f"**{name if job.reattached else 'Background ' + name} job `{job.id}` "

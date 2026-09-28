@@ -32,6 +32,15 @@ _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{8}$")
 
+# Posted in the chat when a background run is brought back into it.
+_BRING_BACK_PROMPT = (
+    "[Brought back from the background · job {job_id} · {engine}]\n\n"
+    "The user brought this run back into the chat. Call claude_code with exactly\n"
+    "{args}\n"
+    "and nothing else first: it follows the run here and returns its result when it finishes. "
+    "Then report what it did and carry on with the conversation where the user left off."
+)
+
 # Posted in the chat when a plan is approved, starting the agent on it. The
 # approval already exists server-side; this only saves the user typing "go".
 _EXECUTE_PROMPT = (
@@ -200,6 +209,36 @@ def setup_claude_code_routes() -> APIRouter:
             raise HTTPException(409, f"Job is {job.status}" + (" and already in the background" if job.detached else ""))
         logger.info("[claude_code] job %s sent to the background", job_id)
         return job.public()
+
+    @router.post("/api/claude_code/jobs/{job_id}/foreground")
+    async def foreground_job(request: Request, job_id: str):
+        """Bring a background run back into its chat: a turn there follows it
+        live and carries on from its result. Queued behind a reply that is
+        already running in that chat."""
+        job = _job_or_404(request, job_id)
+        if job.status != "running":
+            raise HTTPException(409, f"Job is {job.status}: its result is already in the chat")
+        if job.attached:
+            return {"ok": True, "already": True, "chat_session_id": job.chat_session_id}
+        chat_id = job.chat_session_id
+        if not chat_id:
+            raise HTTPException(409, "This run has no chat to come back to")
+        from src.agent_tools.claude_code_tool import engine_label
+        prompt = _BRING_BACK_PROMPT.format(job_id=job.id, engine=engine_label(job.engine),
+                                            args=json.dumps({"action": "attach", "job_id": job.id}))
+        from src.screen_control_resume import start_turn
+        started = start_turn(chat_id, prompt, note_source="claude_code_brought_back",
+                             reply_source="claude_code_brought_back_run")
+        queued = False
+        if not started:
+            from src import chat_queue
+            try:
+                chat_queue.add(chat_id, prompt)
+                queued = True
+            except Exception as e:
+                raise HTTPException(409, f"Could not bring it back: {e}")
+        logger.info("[claude_code] job %s brought back into chat %s", job.id, chat_id[:8])
+        return {"ok": True, "resuming": started, "queued": queued, "chat_session_id": chat_id}
 
     @router.post("/api/claude_code/jobs/{job_id}/stop")
     async def stop_job(request: Request, job_id: str):

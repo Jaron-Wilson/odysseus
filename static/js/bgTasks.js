@@ -136,10 +136,44 @@ function _renderChip(jobs) {
     <span>${count} background task${count > 1 ? 's' : ''} running ${where}</span>
     <span class="bg-chip-what">${first.agent_status && first.agent_status.detail ? _statusHtml(first.agent_status) : _esc(first.prompt || first.action)}</span>
     <button type="button" data-chip-watch="${_esc(first.id)}" data-chip-chat="${_esc(first.chat_session_id || '')}">${here.length ? 'Watch here' : 'Go to chat'}</button>
+    ${first.chat_session_id ? `<button type="button" data-bring-back="${_esc(first.id)}" data-chat="${_esc(first.chat_session_id)}" title="Follow it in its chat again and carry on the conversation from its result">Bring back to chat</button>` : ''}
     <button type="button" data-chip-all>All tasks</button>`;
 }
 // Redrawn as soon as the chat changes, not at the next poll.
 setInterval(() => { if (_currentSid() !== _chipSid) _renderChip(_chipJobs); }, 500);
+
+// Bring a background run back into its chat (routes/claude_code_routes.py
+// foreground): a turn there follows it live and carries on from its result.
+document.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-bring-back]');
+  if (!b) return;
+  ev.preventDefault();
+  if (b.dataset.busy) return;
+  b.dataset.busy = '1';
+  const chat = b.dataset.chat;
+  const label = b.textContent;
+  b.textContent = 'Bringing it back\u2026';
+  try {
+    const r = await fetch(`/api/claude_code/jobs/${encodeURIComponent(b.dataset.bringBack)}/foreground`,
+                          { method: 'POST', credentials: 'same-origin' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    _close();
+    if (chat && chat !== _currentSid() && window.sessionModule && window.sessionModule.selectSession) {
+      await window.sessionModule.selectSession(chat);           // attaches to the run there
+    } else if (d.resuming && window.chatModule && window.chatModule.resumeStream) {
+      window.chatModule.resumeStream(chat);
+    }
+    if (window.showToast) {
+      window.showToast(d.queued ? 'It comes back as soon as the current reply finishes' : 'Back in the chat');
+    }
+  } catch (e) {
+    if (window.showToast) window.showToast(`Could not bring it back: ${e.message}`);
+  } finally {
+    delete b.dataset.busy;
+    b.textContent = label;
+  }
+});
 
 document.addEventListener('click', (ev) => {
   const w = ev.target.closest('[data-chip-watch],[data-chip-all],[data-watch]');
@@ -202,6 +236,7 @@ function _jobRow(j) {
       <div class="bg-job-actions">
         <button type="button" data-toggle="${_esc(j.id)}">${j.id === _open ? 'Hide output' : 'Show output'}</button>
         ${j.status === 'running' && !j.background ? `<button type="button" data-bg="${_esc(j.id)}">Send to background</button>` : ''}
+        ${j.status === 'running' && j.background && j.chat_session_id ? `<button type="button" data-bring-back="${_esc(j.id)}" data-chat="${_esc(j.chat_session_id)}">Bring back to chat</button>` : ''}
         ${j.status === 'running' && j.background ? `<button type="button" data-watch="${_esc(j.id)}" data-watch-chat="${_esc(j.chat_session_id || '')}">Watch in chat</button>` : ''}
         ${j.status === 'running' ? `<button type="button" class="danger" data-stop="${_esc(j.id)}">Stop</button>` : ''}
         ${j.chat_session_id ? `<a href="#${_esc(j.chat_session_id)}" data-chat="${_esc(j.chat_session_id)}">Open chat</a>` : ''}
