@@ -725,7 +725,15 @@ export function updateModelPicker() {
       if ((item.url || '').replace(/\/+$/, '') === epUrl) epName = item.endpoint_name || '';
     }
   }
-  if (epName && copies > 1) displayName += ` \u00b7 ${epName}`;
+  // Always the server's nickname when it has one (asked for: "on the model
+  // chip include the nickname of the server too"); a server still named by
+  // its bare address only when the model name is ambiguous.
+  let isDefaultName = false;
+  try {
+    const u = new URL(epUrl);
+    isDefaultName = !epName || epName === u.host || epName === u.hostname;
+  } catch (_) { isDefaultName = !epName; }
+  if (epName && (!isDefaultName || copies > 1)) displayName += ` \u00b7 ${epName}`;
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
   label.title = modelId ? (epName ? `${modelId} on ${epName}` : modelId) : '';

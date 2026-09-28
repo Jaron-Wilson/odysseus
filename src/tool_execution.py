@@ -437,6 +437,59 @@ async def _document_tool_dispatch(
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+# The running Odysseus install. The agent's own tools must not change it:
+# a feature for Odysseus is built in its copy under ~/odysseus-data/workspaces/
+# and delivered as a PR (see the agent prompt). Reading it stays allowed.
+import os as _os
+_ODYSSEUS_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+
+
+def _live_install_change(tool: str, content: str) -> str:
+    """Why this call would change the live install, or "" if it would not."""
+    root = _ODYSSEUS_ROOT.rstrip("/")
+    home = _os.path.expanduser("~")
+    forms = [re.escape(root)]
+    if root.startswith(home + "/"):
+        forms.append(re.escape("~" + root[len(home):]))
+    here = "(?:" + "|".join(forms) + ")(?![\\w.-])"         # not ~/odysseus-data
+    text = content or ""
+    if tool in ("write_file", "edit_file"):
+        target = ""
+        try:
+            d = json.loads(text)
+            if isinstance(d, dict):
+                target = str(d.get("path") or d.get("file_path") or d.get("file") or "")
+        except Exception:
+            target = text.strip().splitlines()[0] if text.strip() else ""
+        target = _os.path.abspath(_os.path.expanduser(target.strip().strip("`'\"")))
+        if target == root or target.startswith(root + "/"):
+            return f"{tool} into the live Odysseus install ({target})"
+        return ""
+    if tool != "bash":
+        return ""
+    verbs = r"(?:commit|push|pull|checkout|switch|reset|restore|merge|rebase|stash|apply|am|cherry-pick|clean|rm)"
+    if re.search(r"git\s+-C\s+['\"]?" + here + r"['\"]?\s+" + verbs + r"\b", text):
+        return "a git change in the live Odysseus install"
+    if re.search(r"\bcd\s+['\"]?" + here + r"(?:/[^\s;&|]*)?['\"]?\s*(?:&&|;)[^\n]*?\bgit\s+" + verbs + r"\b", text):
+        return "a git change in the live Odysseus install"
+    # Redirects and tee into it, sed -i on it, rm/touch in it.
+    if re.search(r"(?:>>?|\btee\s+(?:-a\s+)?)\s*['\"]?" + here, text):
+        return "a write into the live Odysseus install"
+    if re.search(r"\bsed\s+-i\S*\s+(?:'[^']*'|\"[^\"]*\"|\S+)\s+['\"]?" + here, text):
+        return "a write into the live Odysseus install"
+    if re.search(r"\b(?:rm|touch)\b[^;&|\n]*\s['\"]?" + here, text):
+        return "a write into the live Odysseus install"
+    # cp / mv / install / rsync: only the destination (the last argument) matters,
+    # so copying something OUT of the install is still just reading it.
+    for seg in re.split(r"[;&|\n]+", text):
+        words = seg.strip().split()
+        if len(words) >= 3 and words[0] in ("cp", "mv", "install", "rsync"):
+            dest = _os.path.abspath(_os.path.expanduser(words[-1].strip("'\"")))
+            if dest == root or dest.startswith(root + "/"):
+                return "a write into the live Odysseus install"
+    return ""
+
+
 _CODE_CLI_RE = re.compile(r"(^|[;&|(`\s/'\"])(claude|opencode)(\s|$|['\"])")
 
 
@@ -474,6 +527,16 @@ async def execute_tool_block(
 
     tool = block.tool_type
     content = block.content
+
+    # Never change the running Odysseus install from the agent's own tools.
+    why = _live_install_change(tool, content)
+    if why:
+        return (f"{tool}: refused", {
+            "error": (f"Not done: {why}. /home/jaron/odysseus is the live, running install. To build "
+                      "a feature for Odysseus, work in its copy under ~/odysseus-data/workspaces/"
+                      "odysseus (clone it there if missing), branch from origin/dev, and open a PR "
+                      "against dev; the user merges it."),
+            "exit_code": 1})
 
     # A coding agent switched off for this chat (src/chat_prefs.py): no
     # running its CLI (claude / opencode) through bash to get around it.

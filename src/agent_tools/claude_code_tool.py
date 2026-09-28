@@ -578,7 +578,11 @@ class ClaudeCodeTool:
                 "a project. For a project on this server, name its own folder. For a project on "
                 "another machine (the laptop, the PC), use a scratch workspace such as "
                 f"{Path(WORKSPACES_DIR) / '<project name>'} (created for you) and reach the "
-                "machine over ssh from there."), "exit_code": 1}
+                "machine over ssh from there. To change Odysseus ITSELF (a new feature), work in "
+                f"its own copy, {Path(WORKSPACES_DIR) / 'odysseus'}: clone it there if missing "
+                "(git clone <origin of /home/jaron/odysseus>), branch from origin/dev, commit, push, "
+                "and open a PR against dev with gh; the user merges it. Never edit the live "
+                "install."), "exit_code": 1}
         workspaces = Path(WORKSPACES_DIR).resolve()
         if not cwd_path.exists() and workspaces in cwd_path.parents:
             cwd_path.mkdir(parents=True, exist_ok=True)
