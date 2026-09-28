@@ -1218,11 +1218,45 @@ document.addEventListener('click', function(e) {
         }
       });
     };
-    fetch(`/api/claude_code/${verb}/${encodeURIComponent(planId)}`, {
-      method: 'POST', credentials: 'same-origin',
-    }).then(async res => {
+    // Retried through a server restart: seen live as "Approve plan · runs on
+    // Claude Code · opus (502)", the proxy's answer while the server was
+    // coming back. Approving twice is safe: the server hands back the same
+    // run id rather than starting a second run.
+    const RETRY_FOR_MS = 90000;
+    const t0 = Date.now();
+    const attempt = async () => {
+      let res;
+      try {
+        res = await fetch(`/api/claude_code/${verb}/${encodeURIComponent(planId)}`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+      } catch (_) {
+        res = null;                                      // offline mid-restart
+      }
+      if (!res || [502, 503, 504].includes(res.status)) {
+        if (Date.now() - t0 < RETRY_FOR_MS) {
+          a.textContent = 'Server restarting, retrying…';
+          setTimeout(attempt, 3000);
+          return;
+        }
+        delete a.dataset.busy;
+        a.textContent = `${label} (server unreachable, try again)`;
+        return;
+      }
       if (res.ok) {
-        settle(verb === 'approve' ? '[Plan approved]' : '[Plan denied]');
+        const d = await res.json().catch(() => ({}));
+        if (verb !== 'approve') { settle('[Plan denied]'); return; }
+        settle(d.run_id
+          ? `[Plan approved · run ${d.run_id}${d.resuming || d.running ? ' · running' : ''}]`
+          : '[Plan approved]');
+        // The server has started the run in the plan's chat. If that chat is
+        // on screen, attach so it is seen running, rather than nothing
+        // happening and the user asking again.
+        const cm = window.chatModule;
+        if (d.resuming && d.chat_session_id && cm && typeof cm.resumeStream === 'function'
+            && (!cm.currentSessionId || cm.currentSessionId() === d.chat_session_id)) {
+          cm.resumeStream(d.chat_session_id);
+        }
         return;
       }
       const detail = await res.json().catch(() => ({}));
@@ -1237,7 +1271,8 @@ document.addEventListener('click', function(e) {
       }
       delete a.dataset.busy;
       a.textContent = `${label} (${msg})`;
-    }).catch(() => { delete a.dataset.busy; a.textContent = label; });
+    };
+    attempt();
     return;
   }
   if (kind === 'screencontrol') {

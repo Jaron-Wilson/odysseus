@@ -46,6 +46,8 @@ def test_coding_tasks_default_to_local_opencode(tmp_path, monkeypatch):
         return None, "skipped"
     monkeypatch.setattr(doc_pdf, "render_markdown_pdf", no_pdf)
     jobs._JOBS.clear()
+    monkeypatch.setattr(jobs, "RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setattr(jobs, "JOBS_FILE", str(tmp_path / "jobs.json"))
     argv = tmp_path / "argv.txt"
     bindir = tmp_path / "bin"; bindir.mkdir()
     fake = bindir / "opencode"

@@ -59,9 +59,10 @@ def _prune(data: Dict[str, dict]) -> Dict[str, dict]:
 
 
 def record_plan(session_id: str, *, cwd: str, plan: str, owner: Optional[str] = None,
-                model: str = "", engine: str = "") -> None:
+                model: str = "", engine: str = "", chat_session_id: str = "") -> None:
     """Register a freshly produced plan as awaiting the user's answer. The
-    model is kept so the approved run uses the one the user was shown."""
+    model is kept so the approved run uses the one the user was shown, and the
+    chat so approving can start the run there straight away."""
     data = _prune(_load())
     data[session_id] = {
         "status": "pending",
@@ -70,6 +71,7 @@ def record_plan(session_id: str, *, cwd: str, plan: str, owner: Optional[str] = 
         "owner": owner or "",
         "model": model or "",
         "engine": engine or "",
+        "chat_session_id": chat_session_id or "",
         "created": time.time(),
     }
     _save(data)
@@ -91,6 +93,23 @@ def set_status(session_id: str, status: str, *, owner: Optional[str] = None) -> 
         entry["answered_by"] = owner
     _save(data)
     return True
+
+
+def assign_run_id(session_id: str) -> str:
+    """The id the approved run will have, fixed at the moment of approval.
+
+    Handed back to the page that clicked Approve, so the chat shows which run
+    is carrying the plan out, and used as that run's job id: a second execute
+    for the same approval finds it running instead of starting another."""
+    import uuid
+    data = _prune(_load())
+    entry = data.get(session_id)
+    if not entry:
+        return ""
+    if not entry.get("run_id"):
+        entry["run_id"] = uuid.uuid4().hex[:8]
+        _save(data)
+    return entry["run_id"]
 
 
 def restore_approval(session_id: str) -> bool:

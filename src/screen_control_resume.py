@@ -119,6 +119,15 @@ def start_resume(session_id: str, server_name: str, *, agent_loop=None) -> bool:
     Synchronous on purpose: when this returns True the run is registered, so
     the browser that just clicked Approve can attach to it straight away.
     """
+    return start_turn(session_id, RESUME_PROMPT.format(server=server_name or "that machine"),
+                      note_source="screen_control_approved",
+                      reply_source="screen_control_resumed", agent_loop=agent_loop)
+
+
+def start_turn(session_id: str, prompt: str, *, note_source: str, reply_source: str,
+               agent_loop=None) -> bool:
+    """Post `prompt` in the chat and start the agent on it as a detached run.
+    Also used when a Claude Code plan is approved (claude_code_routes)."""
     session_id = (session_id or "").strip()
     if not session_id:
         # Approvals from the panel, or from before this was plumbed through,
@@ -135,25 +144,25 @@ def start_resume(session_id: str, server_name: str, *, agent_loop=None) -> bool:
         try:
             sess = sm.get_session(session_id)
         except KeyError:
-            logger.info("Screen control approved but chat %s is gone", session_id)
+            logger.info("Approved, but chat %s is gone", session_id)
             return False
         if not sess:
             return False
         if agent_runs.is_active(session_id):
             # The user's own live turn has it; the grant is in place, so that
-            # turn's next screen action simply goes through.
+            # turn's next action simply goes through.
             logger.info("Not resuming %s: a turn is already running", session_id)
             return False
 
-        prompt = RESUME_PROMPT.format(server=server_name or "that machine")
         # Recorded in the chat like any message, so the transcript shows why
         # the agent started again, and a reload shows the same thing.
         sm.add_message(session_id, ChatMessage(
-            "user", prompt, metadata={"source": "screen_control_approved"}))
+            "user", prompt, metadata={"source": note_source}))
         context = sess.get_context_messages()
         if not context or context[-1].get("content") != prompt:
             context.append({"role": "user", "content": prompt})
-        agent_runs.start(session_id, _resume_stream(sess, sm, context, agent_loop))
+        agent_runs.start(session_id, _resume_stream(sess, sm, context, agent_loop,
+                                                    source=reply_source))
         return True
     except Exception as e:
         logger.warning("Could not resume %s after approval: %s", session_id, e)
