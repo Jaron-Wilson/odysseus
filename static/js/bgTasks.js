@@ -114,22 +114,32 @@ export async function watchInChat(jobId, chatId) {
 }
 
 // ── the chip above the composer ─────────────────────────────────────────
+let _chipJobs = [];
+let _chipSid = null;
 function _renderChip(jobs) {
   const chip = document.getElementById('bg-chip');
   if (!chip) return;
-  const sid = _currentSid();
+  _chipJobs = jobs;
+  const sid = _chipSid = _currentSid();
   const running = jobs.filter((j) => j.status === 'running' && j.background);
   const here = running.filter((j) => j.chat_session_id === sid);
   if (!running.length) { chip.hidden = true; chip.innerHTML = ''; return; }
   chip.hidden = false;
   const first = here[0] || running[0];
+  // Always say which chat a run belongs to. Seen live: "1 background task
+  // running in this chat" read as this chat while the run was another's.
+  const where = here.length
+    ? 'in this chat'
+    : (first.chat_name ? `in \u201c${_esc(first.chat_name)}\u201d` : 'in another chat');
+  const count = here.length || running.length;
   chip.innerHTML = `<span class="bg-dot running"></span>
-    <span>${here.length ? `${here.length} background task${here.length > 1 ? 's' : ''} running in this chat`
-                        : `${running.length} background task${running.length > 1 ? 's' : ''} running`}</span>
+    <span>${count} background task${count > 1 ? 's' : ''} running ${where}</span>
     <span class="bg-chip-what">${_esc(first.prompt || first.action)}</span>
-    <button type="button" data-chip-watch="${_esc(first.id)}" data-chip-chat="${_esc(first.chat_session_id || '')}">Watch here</button>
+    <button type="button" data-chip-watch="${_esc(first.id)}" data-chip-chat="${_esc(first.chat_session_id || '')}">${here.length ? 'Watch here' : 'Go to chat'}</button>
     <button type="button" data-chip-all>All tasks</button>`;
 }
+// Redrawn as soon as the chat changes, not at the next poll.
+setInterval(() => { if (_currentSid() !== _chipSid) _renderChip(_chipJobs); }, 500);
 
 document.addEventListener('click', (ev) => {
   const w = ev.target.closest('[data-chip-watch],[data-chip-all],[data-watch]');

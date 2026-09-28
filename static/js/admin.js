@@ -458,6 +458,7 @@ async function loadEndpoints() {
               ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
+              <button class="admin-btn-sm" data-adm-rename-ep="${ep.id}" data-adm-ep-name="${esc(ep.name)}" title="Give this server a nickname: it is how its models are labeled in the model list and the chat">Rename</button>
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
@@ -499,6 +500,24 @@ async function loadEndpoints() {
       });
       return out;
     };
+    // A nickname for the server ("Friend's Ollama"), so two servers with the
+    // same models can be told apart in the model list and each chat.
+    queryAll('[data-adm-rename-ep]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const name = prompt('Nickname for this server (shown in the model list and chats):',
+                            btn.dataset.admEpName || '');
+        if (name === null || !name.trim() || name.trim() === btn.dataset.admEpName) return;
+        const r = await fetch(`/api/model-endpoints/${btn.dataset.admRenameEp}`, {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }),
+        });
+        if (!r.ok) { uiModule.showToast('Could not rename it'); return; }
+        uiModule.showToast('Renamed');
+        loadEndpoints();
+        if (window.modelsModule && window.modelsModule.refreshModels) window.modelsModule.refreshModels(true);
+      });
+    });
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
     });

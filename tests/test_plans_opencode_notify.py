@@ -79,7 +79,8 @@ def env(tmp_path, monkeypatch):
 
 def _plan(chat, **extra):
     return asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(
-        {"action": "plan", "prompt": "plan it", "cwd": os.getcwd(), **extra}), {"session_id": chat}))
+        {"action": "plan", "prompt": "plan it", "cwd": __import__("tempfile").mkdtemp(), **extra}),
+        {"session_id": chat}))
 
 
 def test_a_plan_asked_for_on_claude_runs_on_opencode(env):

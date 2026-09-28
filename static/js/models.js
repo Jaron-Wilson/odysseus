@@ -42,16 +42,27 @@ function _loadFavorites() {
 function _saveFavorites(list) {
   Storage.setJSON(FAVORITES_KEY, list);
 }
-function _isFavorite(mid) {
-  return _loadFavorites().includes(mid);
+// Favorites are per server: the same model name can be on two servers (two
+// Ollamas), and starring one should not star the other. Stored as
+// "<endpoint id>|<model>"; a plain "<model>" from before still counts.
+function _favKey(mid, endpointId) {
+  return endpointId ? `${endpointId}|${mid}` : mid;
 }
-function _toggleFavorite(mid) {
+function _isFavorite(mid, endpointId) {
   const favs = _loadFavorites();
-  const idx = favs.indexOf(mid);
-  if (idx >= 0) favs.splice(idx, 1);
-  else favs.push(mid);
+  return favs.includes(_favKey(mid, endpointId)) || favs.includes(mid);
+}
+function _favIndex(favs, mid, endpointId) {
+  const i = favs.indexOf(_favKey(mid, endpointId));
+  return i >= 0 ? i : favs.indexOf(mid);
+}
+function _toggleFavorite(mid, endpointId) {
+  const was = _isFavorite(mid, endpointId);
+  const key = _favKey(mid, endpointId);
+  const favs = _loadFavorites().filter((f) => f !== key && f !== mid);
+  if (!was) favs.push(key);
   _saveFavorites(favs);
-  return idx < 0; // returns true if now favorited
+  return !was; // returns true if now favorited
 }
 
 // ── Usage tracking ──
@@ -103,16 +114,16 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
   const _favColor = modelColor(mid);
   const _logo = providerLogo(mid);
   if (_logo) {
-    fav.className = 'model-fav-btn provider-logo' + (_isFavorite(mid) ? ' active' : '');
+    fav.className = 'model-fav-btn provider-logo' + (_isFavorite(mid, endpointId) ? ' active' : '');
     fav.innerHTML = _logo;
     fav.style.opacity = '0.4';
   } else {
-    fav.className = 'model-fav-btn' + (_isFavorite(mid) ? ' active' : '');
+    fav.className = 'model-fav-btn' + (_isFavorite(mid, endpointId) ? ' active' : '');
   }
   fav.title = 'Toggle favorite';
   fav.addEventListener('click', (e) => {
     e.stopPropagation();
-    const nowFav = _toggleFavorite(mid);
+    const nowFav = _toggleFavorite(mid, endpointId);
     fav.classList.toggle('active', nowFav);
     uiModule.showToast(nowFav ? 'Favorited' : 'Unfavorited');
     refreshModels();
@@ -252,8 +263,8 @@ export async function refreshModels(force = false) {
       for (const cat of ['local', 'api']) {
         for (const [epName, epModels] of Object.entries(groups[cat])) {
           for (const m of epModels) {
-            if (favs.includes(m.mid)) {
-              favModels.push(m);
+            if (_isFavorite(m.mid, m.endpointId)) {
+              favModels.push(Object.assign({}, m, { epName }));
             }
           }
         }
@@ -269,7 +280,7 @@ export async function refreshModels(force = false) {
         const usage = _loadUsage();
         favModels.sort((a, b) => ((usage[b.mid] || {}).count || 0) - ((usage[a.mid] || {}).count || 0));
       } else {
-        favModels.sort((a, b) => favs.indexOf(a.mid) - favs.indexOf(b.mid));
+        favModels.sort((a, b) => _favIndex(favs, a.mid, a.endpointId) - _favIndex(favs, b.mid, b.endpointId));
       }
 
       if (favModels.length > 0) {
@@ -299,8 +310,17 @@ export async function refreshModels(force = false) {
           const favContainer = document.createElement('div');
           favContainer.className = 'models-group-content';
           favContainer.id = 'models-group-' + (groupIdx++);
-          favModels.forEach(({ mid, url, displayName, endpointId, offline, modelType }) => {
-            favContainer.appendChild(_buildModelRow(mid, url, displayName, endpointId, offline, modelType));
+          // The same model name on two servers: say which server each one is.
+          const seen = {};
+          for (const cat of ['local', 'api']) {
+            for (const epModels of Object.values(groups[cat])) {
+              for (const m of epModels) seen[m.mid] = (seen[m.mid] || 0) + 1;
+            }
+          }
+          favModels.forEach(({ mid, url, displayName, endpointId, offline, modelType, epName }) => {
+            const shown = seen[mid] > 1 && epName
+              ? `${displayName.split('/').pop()} \u00b7 ${epName.replace(/\//g, '\u2215')}` : displayName;
+            favContainer.appendChild(_buildModelRow(mid, url, shown, endpointId, offline, modelType));
           });
           box.appendChild(favContainer);
         }
