@@ -64,6 +64,7 @@ class Job:
         self.finished: Optional[float] = None
         self.status = "running"            # running | done | failed | stopped | timed_out
         self.detached = False              # sent to the background
+        self.attached = False              # brought back: a chat turn is following it again
         self.reattached = False            # picked up again after a server restart
         self.detach_event = asyncio.Event()
         self.lines: Deque[str] = collections.deque(maxlen=MAX_LINES)
@@ -238,6 +239,9 @@ def running_for(cli_session_id: str = "", plan_id: str = "", job_id: str = "") -
 
 def detach(job_id: str) -> bool:
     job = _JOBS.get(job_id)
+    if job and job.status == "running" and job.detached and job.attached:
+        job.attached = False               # brought back, now sent away again
+        return True
     if not job or job.status != "running" or job.detached:
         return False
     job.detached = True
