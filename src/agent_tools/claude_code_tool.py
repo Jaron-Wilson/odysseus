@@ -387,6 +387,19 @@ class ClaudeCodeTool:
             args = {"prompt": (content or "").strip()}
 
         action = (args.get("action") or "plan").strip().lower()
+        # Switched off for this chat by the user (src/chat_prefs.py). Checked
+        # here too, not only by leaving the tool out of the list, because
+        # queued sends and approval resumes reach tools by other paths.
+        try:
+            from src import chat_prefs
+            if not chat_prefs.claude_code_allowed((ctx or {}).get("session_id") or ""):
+                return {"error": ("Claude Code is switched off for this chat by the user. Do not "
+                                  "try again or work around it (no claude/opencode through bash "
+                                  "either): do the work with your own tools, or tell the user "
+                                  "they can switch it back on with the Claude Code button."),
+                        "disabled": True, "exit_code": 1}
+        except Exception:
+            pass
         if action not in ("plan", "execute", "ask", "list", "status", "agents"):
             return {"error": "action must be 'plan', 'execute', 'ask', 'list', 'status' or 'agents'",
                     "exit_code": 1}

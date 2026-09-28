@@ -37065,3 +37065,6 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 }
 .mb-voltarget:hover { opacity: 1; border-color: var(--accent, #c96); }
 .mp-volrow .mp-vol, .mp-volrow .mp-vol input { min-width: 0; }
+/* Claude Code switched off for this chat (chatClaudeToggle.js). */
+.claude-toggle-btn.off { color: var(--accent-error, #d9644f); opacity: 1; }
+.claude-toggle-btn[hidden] { display: none; }

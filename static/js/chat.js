@@ -26,6 +26,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
 import notifyDone from './notifyDone.js';
 import './chatNotes.js';
+import './chatClaudeToggle.js';
 import './musicBar.js';
 import './openRequests.js';
 import './pdfViewer.js';

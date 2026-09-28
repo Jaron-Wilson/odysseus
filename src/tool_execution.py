@@ -437,6 +437,9 @@ async def _document_tool_dispatch(
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+_CODE_CLI_RE = re.compile(r"(^|[;&|(`\s/'\"])(claude|opencode)(\s|$|['\"])")
+
+
 async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
@@ -471,6 +474,20 @@ async def execute_tool_block(
 
     tool = block.tool_type
     content = block.content
+
+    # Claude Code switched off for this chat (src/chat_prefs.py): no running
+    # the claude or opencode CLI through bash to get around it either.
+    if tool == "bash" and session_id and _CODE_CLI_RE.search(content or ""):
+        try:
+            from src import chat_prefs
+            if not chat_prefs.claude_code_allowed(session_id):
+                return ("bash: refused", {
+                    "error": ("Not run: Claude Code is switched off for this chat by the user, and "
+                              "that includes running claude or opencode through bash. Do the work "
+                              "with your own tools, or tell the user they can switch it back on."),
+                    "exit_code": 1})
+        except Exception:
+            pass
 
     # Misformatted tool call detection: model put JSON inside ```python``` (or
     # similar) without naming the tool. Common with MiniMax-style outputs.
