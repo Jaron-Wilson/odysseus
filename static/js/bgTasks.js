@@ -141,10 +141,15 @@ function _renderChip(jobs) {
   // live: two runs in one chat and the chip showed one.
   const here = running.filter((j) => j.chat_session_id === sid && (j.background || j.attached));
   const elsewhere = running.filter((j) => j.background && j.chat_session_id !== sid);
-  if (!here.length && !elsewhere.length) { chip.hidden = true; chip.innerHTML = ''; return; }
+  const waiting = _pending.length
+    ? `<div class="bg-chip-head bg-chip-approvals"><span class="bg-dot waiting"></span>${_pending.length} plan${_pending.length > 1 ? 's' : ''} waiting for your approval
+        <button type="button" data-chip-all>Review</button></div>` : '';
+  if (!here.length && !elsewhere.length) {
+    chip.hidden = !waiting; chip.innerHTML = waiting; return;
+  }
   chip.hidden = false;
   if (here.length) {
-    chip.innerHTML = `<div class="bg-chip-head">${here.length} coding-agent run${here.length > 1 ? 's' : ''} in this chat
+    chip.innerHTML = waiting + `<div class="bg-chip-head">${here.length} coding-agent run${here.length > 1 ? 's' : ''} in this chat
       ${elsewhere.length ? `<span class="bg-chip-more">+${elsewhere.length} in other chats</span>` : ''}
       <button type="button" data-chip-all>All tasks</button></div>
       ${here.map((j) => _chipRow(j, true)).join('')}`;
@@ -154,7 +159,7 @@ function _renderChip(jobs) {
   // running in this chat" read as this chat while the run was another's.
   const first = elsewhere[0];
   const where = first.chat_name ? `in \u201c${_esc(first.chat_name)}\u201d` : 'in another chat';
-  chip.innerHTML = `<div class="bg-chip-head">${elsewhere.length} background task${elsewhere.length > 1 ? 's' : ''} running ${elsewhere.length > 1 ? 'in other chats' : where}
+  chip.innerHTML = waiting + `<div class="bg-chip-head">${elsewhere.length} background task${elsewhere.length > 1 ? 's' : ''} running ${elsewhere.length > 1 ? 'in other chats' : where}
     <button type="button" data-chip-all>All tasks</button></div>
     ${_chipRow(first, false)}`;
 }
@@ -215,6 +220,67 @@ document.addEventListener('click', (ev) => {
   watchInChat(id, chat);
 });
 
+// ── plans waiting for Approve / Deny ─────────────────────────────────────
+// Asked for: "I don't see those requests, they are not showing up, can we add
+// a tab that shows all pending tasks?" A plan's links lived only in its chat
+// reply; a reply without them left the plan waiting with no way to answer.
+let _pending = [];
+let _pendingKey = null;
+
+async function _fetchPending() {
+  try { _pending = (await _call('/api/claude_code/pending')).plans || []; } catch (_) { /* keep the last list */ }
+  return _pending;
+}
+
+function _ago(ts) { return ts ? `${_dur(Date.now() / 1000 - ts)} ago` : ''; }
+
+function _approvalRow(p) {
+  const dir = String(p.cwd || '').split('/').filter(Boolean).pop() || p.cwd || '';
+  return `<div class="bg-job bg-approval" data-plan="${_esc(p.id)}">
+      <div class="bg-job-head"><span class="bg-dot waiting"></span>
+        <span class="bg-job-title">${_esc(p.chat_name || 'Plan')} \u00b7 <code>${_esc(dir)}</code></span>
+        <span class="bg-job-meta">waiting \u00b7 ${_esc(_ago(p.created))}</span></div>
+      <div class="bg-job-sub">${_esc(p.runs_on)} \u00b7 plan ${_esc(String(p.id).slice(0, 16))}</div>
+      <details class="bg-plan-text" data-plan-text="${_esc(p.id)}"><summary>Read the plan</summary>
+        <div class="bg-plan-body">${_esc(p.preview || '')}\u2026</div></details>
+      <div class="bg-job-actions">
+        <a href="#claudecode-approve-${_esc(p.id)}" class="bg-approve">Approve plan \u00b7 runs on ${_esc(p.runs_on)}</a>
+        <a href="#claudecode-deny-${_esc(p.id)}" class="bg-deny">Deny</a>
+        ${p.has_pdf ? `<a href="/api/claude_code/plan/${encodeURIComponent(p.id)}/pdf" target="_blank" rel="noopener">PDF</a>` : ''}
+        ${p.chat_session_id ? `<a href="#${_esc(p.chat_session_id)}" data-chat="${_esc(p.chat_session_id)}">Open chat</a>` : ''}
+      </div>
+    </div>`;
+}
+
+// Redrawn only when the set of plans changes: a redraw every 2 s would drop
+// an Approve half-way through (its run-limits picker clicks the link again).
+function _renderApprovals() {
+  const box = _panel && _panel.querySelector('.bg-approvals');
+  if (!box) return;
+  const key = _pending.map((p) => p.id).join(',');
+  if (key === _pendingKey) return;
+  _pendingKey = key;
+  box.innerHTML = _pending.length
+    ? `<div class="bg-section bg-section-approvals">Waiting for your approval (${_pending.length})</div>${_pending.map(_approvalRow).join('')}`
+    : '';
+}
+
+// The full plan, fetched when "Read the plan" is opened.
+document.addEventListener('toggle', async (ev) => {
+  const d = ev.target;
+  if (!d.matches || !d.matches('details[data-plan-text]') || !d.open || d.dataset.loaded) return;
+  d.dataset.loaded = '1';
+  try {
+    const p = await _call(`/api/claude_code/plan/${encodeURIComponent(d.dataset.planText)}`);
+    const body = d.querySelector('.bg-plan-body');
+    if (!body) return;
+    try {
+      const md = await import('./markdown.js');
+      body.innerHTML = (md.processWithThinking || md.default.processWithThinking)(p.plan || '');
+    } catch (_) { body.textContent = p.plan || ''; }
+  } catch (e) { delete d.dataset.loaded; }
+}, true);
+
 // ── sidebar count ────────────────────────────────────────────────────────
 let _running = 0;
 export async function refreshCount() {
@@ -223,10 +289,16 @@ export async function refreshCount() {
   try {
     const d = await _call(API);
     _running = (d.jobs || []).filter((j) => j.status === 'running' && j.background).length;
+    await _fetchPending();
     _renderChip(d.jobs || []);
+    if (_panel) _renderApprovals();
   } catch (_) { return; }
-  badge.hidden = !_running;
-  badge.textContent = String(_running);
+  const total = _running + _pending.length;
+  badge.hidden = !total;
+  badge.textContent = String(total);
+  badge.title = [_running ? `${_running} running in the background` : '',
+                 _pending.length ? `${_pending.length} waiting for your approval` : ''].filter(Boolean).join(', ');
+  badge.classList.toggle('bg-count-approvals', _pending.length > 0);
 }
 
 // ── panel ────────────────────────────────────────────────────────────────
@@ -279,7 +351,7 @@ async function _render() {
   const wantCli = _cli === null || _cliTick % 5 === 0;
   let d;
   try { d = await _call(API + (wantCli ? '?cli=1' : '')); } catch (e) {
-    _panel.querySelector('.bg-body').innerHTML = `<div class="bg-empty">Could not load: ${_esc(e.message)}</div>`;
+    _panel.querySelector('.bg-rest').innerHTML = `<div class="bg-empty">Could not load: ${_esc(e.message)}</div>`;
     return;
   }
   if (!_panel) return;
@@ -288,7 +360,8 @@ async function _render() {
     try { _agents = (await _call('/api/claude_code/agents')).agents || []; } catch (_) { _agents = _agents || []; }
   }
   const jobs = d.jobs || [];
-  const body = _panel.querySelector('.bg-body');
+  _renderApprovals();
+  const body = _panel.querySelector('.bg-rest');
   const logScroll = {};
   body.querySelectorAll('.bg-job-log').forEach((el) => {
     logScroll[el.dataset.log] = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
@@ -338,7 +411,7 @@ export function openPanel() {
         <span>Background tasks</span>
         <button type="button" class="bg-close" aria-label="Close">×</button>
       </div>
-      <div class="bg-body"><div class="bg-empty">Loading…</div></div>
+      <div class="bg-body"><div class="bg-approvals"></div><div class="bg-rest"><div class="bg-empty">Loading…</div></div></div>
     </div>`;
   document.body.appendChild(_panel);
   _panel.addEventListener('click', async (ev) => {

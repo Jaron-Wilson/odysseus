@@ -36842,6 +36842,17 @@ body.theme-frosted .modal {
 .bg-dot.running { background: #e0b341; animation: bg-pulse 1.4s ease-in-out infinite; }
 .bg-dot.ok { background: #5fb36b; }
 .bg-dot.bad { background: #d9644f; }
+.bg-dot.waiting { background: #6fa3e0; }
+/* Plans waiting for Approve / Deny (bgTasks.js). */
+.bg-section-approvals { color: #6fa3e0; }
+.bg-approval { border-left: 3px solid #6fa3e0; }
+.bg-plan-text { margin: 4px 0; font-size: 12.5px; }
+.bg-plan-text > summary { cursor: pointer; opacity: .8; }
+.bg-plan-body { max-height: 320px; overflow: auto; padding: 6px 8px; margin-top: 4px; border-radius: 8px;
+  white-space: pre-wrap; background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.bg-plan-body :is(p, ul, ol, pre) { white-space: normal; margin: .3em 0; }
+.bg-job-actions .bg-approve { font-weight: 600; }
+#bg-tasks-count.bg-count-approvals { background: #6fa3e0; }
 @keyframes bg-pulse { 50% { opacity: .35; } }
 .bg-job-log {
   margin: 8px 0 0; padding: 8px; max-height: 45vh; overflow: auto; white-space: pre-wrap;
