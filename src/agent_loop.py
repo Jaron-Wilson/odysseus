@@ -365,7 +365,7 @@ Then, only after the user approves the plan it returns:
 ```claude_code
 {"action": "execute", "session_id": "<id from the plan result>", "cwd": "/abs/path/to/project", "prompt": "Approved. <any changes the user asked for>"}
 ```
-Hand a CODING task to the Claude Code CLI on this host: it reads the project, edits files, runs commands and can fan work out to its own subagents, with its console streaming back live. Use it for work too large or intricate for single tool calls here — a multi-file refactor, a bug hunt across a codebase, a build that has to be run and iterated on — or when the user asks for it by name.
+Hand a CODING task to a coding agent on this host (the tool is named claude_code, but it runs OpenCode by default; Claude Code only with engine "claude"). When you mention it to the user, name the engine that runs it: "OpenCode" unless the engine is claude, never "Claude Code" for an OpenCode run. It reads the project, edits files, runs commands and can fan work out to its own subagents, with its console streaming back live. Use it for work too large or intricate for single tool calls here — a multi-file refactor, a bug hunt across a codebase, a build that has to be run and iterated on — or when the user asks for it by name.
 It runs on OpenCode with this host's LOCAL models by default (`vllm3090/qwen3.8-27b`, free). Add `"engine": "claude"` for Claude Code on the user's Claude plan only when they ask for Claude by name or have said yes to it for this task. PLANS always run on OpenCode unless the user's own message names Claude: the server moves a plan asked for on "claude" to OpenCode otherwise, and the approved run keeps the plan's engine. The plan-and-approve gate is identical either way.
 Other actions: `{"action":"ask", "prompt":"...", "cwd":"..."}` converses with a READ-ONLY agent that explores the codebase and answers — no approval needed because it cannot change anything, so use it for "what does this do", "where is X handled", "is this safe". Pass the returned `session_id` back on the next ask to keep the thread. `{"action":"list"}` shows the Claude Code sessions running on this host.
 Each chat keeps its own Claude Code agent per folder: a later ask/plan in the same chat carries it on automatically (pass `"new_agent": true` for a fresh one). `{"action":"agents"}` lists every chat's agents; to carry on another chat's agent, add `"from_chat": "<chat id or name>"` to an ask/plan. Do that when the user names another chat or pastes its id, or when `agents` shows a chat already working in the same project.
@@ -3337,6 +3337,8 @@ async def stream_agent_loop(
             # Forward a file-write diff for inline before/after rendering
             if "diff" in result:
                 tool_output_data["diff"] = result["diff"]
+            if result.get("engine_label"):
+                tool_output_data["label"] = result["engine_label"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
 
             # Native document tools open in the editor + carry the REAL doc id.
@@ -3423,6 +3425,10 @@ async def stream_agent_loop(
                 "output": output_text,
                 "exit_code": result.get("exit_code"),
             }
+            if result.get("engine_label"):
+                # claude_code runs name the engine that ran (OpenCode or
+                # Claude Code) instead of showing the tool's own name.
+                tool_event["label"] = result["engine_label"]
             if result.get("image_url"):
                 for ik in ("image_url", "image_prompt", "image_model", "image_size", "image_quality"):
                     if result.get(ik):

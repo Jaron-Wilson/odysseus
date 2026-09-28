@@ -103,6 +103,13 @@ def _summarize_opencode(event: dict) -> Optional[str]:
     return None
 
 
+def engine_label(engine: str) -> str:
+    """What the user sees for a run: the engine that actually ran it. The
+    tool is named claude_code for history's sake, but most runs are OpenCode,
+    and a card saying "Claude" for those misleads."""
+    return "Claude Code" if (engine or "") == "claude" else "OpenCode"
+
+
 def _clip(text, n: int) -> str:
     text = str(text).replace("\r", "")
     return text if len(text) <= n else text[:n - 1] + "…"
@@ -393,10 +400,10 @@ class ClaudeCodeTool:
         try:
             from src import chat_prefs
             if not chat_prefs.claude_code_allowed((ctx or {}).get("session_id") or ""):
-                return {"error": ("Claude Code is switched off for this chat by the user. Do not "
+                return {"error": ("Coding agents (OpenCode and Claude Code) are both switched off for this chat by the user. Do not "
                                   "try again or work around it (no claude/opencode through bash "
                                   "either): do the work with your own tools, or tell the user "
-                                  "they can switch it back on with the Claude Code button."),
+                                  "they can switch them back on with the coding-agent button."),
                         "disabled": True, "exit_code": 1}
         except Exception:
             pass
@@ -446,6 +453,32 @@ class ClaudeCodeTool:
                 resume_id = ""                       # a Claude session cannot continue on OpenCode
             engine_note = ("Planned on OpenCode (the local model): plans use it unless the user "
                            "asks for Claude by name. Say so when showing the plan.")
+        # One engine switched off for this chat (src/chat_prefs.py). A fresh
+        # plan or ask moves to the other engine if that one is allowed; an
+        # approved plan cannot change engine, so its run is refused.
+        chat_for_prefs = (ctx or {}).get("session_id") or ""
+        try:
+            from src import chat_prefs
+            engine_ok = chat_prefs.engine_allowed(chat_for_prefs, engine)
+            other = "opencode" if engine == "claude" else "claude"
+            other_ok = chat_prefs.engine_allowed(chat_for_prefs, other)
+        except Exception:
+            engine_ok, other, other_ok = True, "", False
+        if not engine_ok:
+            if action in ("plan", "ask") and other_ok:
+                engine_note = (f"{engine_label(engine)} is switched off for this chat, so this runs on "
+                               f"{engine_label(other)}. Say so.")
+                engine = other
+                args.pop("model", None)                 # a model name for one engine means nothing to the other
+                if resume_id and resume_id.startswith("ses_") != (engine == "opencode"):
+                    resume_id = ""                      # the old session belongs to the other engine
+            else:
+                return {"error": (f"{engine_label(engine)} is switched off for this chat by the user"
+                                  + (", and this approved plan was written for it, so it cannot run on "
+                                     f"{engine_label(other)}." if action == "execute" and other_ok else ".")
+                                  + " Do not work around it. Tell the user; they can change it with the "
+                                    "coding-agent button in the chat bar."),
+                        "disabled": True, "exit_code": 1}
 
         # One agent per chat (src/claude_code_agents.py): an ask or plan in a
         # chat carries on that chat's agent for the folder, so it keeps what it
@@ -722,7 +755,7 @@ class ClaudeCodeTool:
         def _progress() -> dict:
             return {"elapsed_s": round(time.time() - started, 1), "tail": _tail_text(),
                     "job_id": job.id, "can_background": not job.detached,
-                    "model": model_label}
+                    "model": model_label, "engine_label": engine_label(engine)}
 
         if progress_cb:
             # Emit once immediately; the periodic loop only starts after a delay
@@ -996,6 +1029,7 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
     body = final_text or console
     result = {
         "action": action,
+        "engine_label": engine_label(spec.get("engine", job.engine)),
         "output": body[:MAX_RESULT_CHARS],
         "console": console[-12000:],
         "session_id": session_id,
@@ -1226,7 +1260,8 @@ async def _post_background_result(job, result: Dict) -> None:
     if not sid:
         return
     ok = result.get("exit_code") == 0
-    head = (f"**{'Claude Code' if job.reattached else 'Background Claude Code'} job `{job.id}` "
+    name = engine_label(job.engine)
+    head = (f"**{name if job.reattached else 'Background ' + name} job `{job.id}` "
             f"{'finished' if ok else 'stopped' if job.status == 'stopped' else 'failed'}** "
             f"({job.action}, {job.model}, {round((job.finished or time.time()) - job.started)}s, "
             f"in `{job.cwd}`"
@@ -1248,7 +1283,7 @@ async def _post_background_result(job, result: Dict) -> None:
                 "source": "claude_code_background",
                 "model": job.model,
                 "tool_events": [{
-                    "round": 1, "tool": "claude_code",
+                    "round": 1, "tool": "claude_code", "label": engine_label(job.engine),
                     "command": f"background job {job.id}: {job.prompt}",
                     "output": (result.get("console") or "")[-12000:],
                     "exit_code": result.get("exit_code"),

@@ -2567,7 +2567,9 @@ import './bgTasks.js';
                   chatBox.appendChild(threadWrap);
                 }
                 threadWrap.classList.add('streaming');
-                const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
+                const toolLabel = json.tool.toLowerCase() === 'claude_code'
+                  ? chatRenderer.toolDisplayName(json)
+                  : (_toolLabels[json.tool.toLowerCase()] || json.tool);
                 const toolIcon = _toolIcons[json.tool.toLowerCase()] || '\u25B6';
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
@@ -2619,6 +2621,11 @@ import './bgTasks.js';
                 // user doesn't stare at a blind "Running…" spinner.
                 if (_isBg) continue;
                 if (!currentToolBubble) continue;
+                // A coding-agent run says which engine it is on as soon as it starts.
+                if (json.engine_label) {
+                  const t = currentToolBubble.querySelector('.agent-thread-tool');
+                  if (t && t.textContent !== json.engine_label) t.textContent = json.engine_label;
+                }
                 // The per-second ticker (started in tool_start) owns the
                 // elapsed display; here we just surface the live output tail.
                 const tailStr = (json.tail || '').trim();
@@ -2666,6 +2673,10 @@ import './bgTasks.js';
                   try { currentToolBubble.after(window.chatNotes.suggestionPrompt(json.suggestion)); } catch (_) {}
                 }
                 // --- Update the current thread node ---
+                if (currentToolBubble && json.label) {
+                  const t = currentToolBubble.querySelector('.agent-thread-tool');
+                  if (t) t.textContent = json.label;
+                }
                 if (currentToolBubble) {
                   // Stop wave animation + the per-second cooking ticker
                   if (currentToolBubble._waveInterval) {

@@ -2283,7 +2283,7 @@ export function addMessage(role, content, modelName, metadata) {
             node.className = 'agent-thread-node' + (ok ? '' : ' error');
             // Hide the raw JSON command when a diff says it better (same as live).
             const evCmdHtml = (ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
-            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
+            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(toolDisplayName(ev))}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
             // A Needs to know suggestion: offer Add / No thanks again here, so
@@ -2647,7 +2647,26 @@ export function addMessage(role, content, modelName, metadata) {
   }
 }
 
+// The name shown on a tool card. claude_code runs name the engine that ran
+// them (most are OpenCode): the server sends it as `label`, and older saved
+// runs show it in the console's first line ("$ opencode ..." / "$ claude ...").
+export function toolDisplayName(ev) {
+  if (!ev) return '';
+  if (ev.label) return ev.label;
+  if ((ev.tool || '') !== 'claude_code') return ev.tool || '';
+  const out = String(ev.output || ev.tail || '');
+  if (/^\$ opencode\b/m.test(out)) return 'OpenCode';
+  if (/^\$ claude\b/m.test(out)) return 'Claude Code';
+  try {
+    const a = JSON.parse(ev.command || '{}');
+    if (a.engine === 'claude') return 'Claude Code';
+    if (a.engine === 'opencode') return 'OpenCode';
+  } catch (_) { /* not JSON */ }
+  return 'Coding agent';
+}
+
 const chatRenderer = {
+  toolDisplayName,
   shortModel,
   sameModelName,
   modelRouteLabel,

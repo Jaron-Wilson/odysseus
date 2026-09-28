@@ -35,7 +35,7 @@ _JOB_ID_RE = re.compile(r"^[0-9a-f]{8}$")
 # Posted in the chat when a plan is approved, starting the agent on it. The
 # approval already exists server-side; this only saves the user typing "go".
 _EXECUTE_PROMPT = (
-    "[Plan approved · run {run_id}]\n\n"
+    "[Plan approved · run {run_id} · {engine}]\n\n"
     "The user approved the plan. Carry it out now: call claude_code with exactly\n"
     "{args}\n"
     "and nothing else first (the engine and model the plan was shown with are used "
@@ -69,7 +69,8 @@ def approve_plan(session_id: str, user: str) -> dict:
     # can attach and show it running.
     from src.screen_control_resume import start_turn
     resuming = start_turn(chat_id, _EXECUTE_PROMPT.format(
-        run_id=run_id, args=json.dumps({
+        run_id=run_id, engine="Claude Code" if entry.get("engine") == "claude" else "OpenCode",
+        args=json.dumps({
             "action": "execute", "session_id": session_id, "cwd": entry.get("cwd") or "",
             "prompt": "Carry out the approved plan."})),
         note_source="claude_code_plan_approved", reply_source="claude_code_plan_run")

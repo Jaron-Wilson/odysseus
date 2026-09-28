@@ -37082,3 +37082,7 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
   background: color-mix(in srgb, var(--accent-error, #d9644f) 18%, transparent);
   color: var(--accent-error, #d9644f);
 }
+/* One coding agent off in this chat (chatClaudeToggle.js). */
+.claude-toggle-btn.partial { color: var(--accent, #c96); opacity: 1; }
+.claude-toggle-btn { width: auto; gap: 4px; }
+.claude-toggle-tag { font-size: 10px; white-space: nowrap; }

@@ -475,19 +475,22 @@ async def execute_tool_block(
     tool = block.tool_type
     content = block.content
 
-    # Claude Code switched off for this chat (src/chat_prefs.py): no running
-    # the claude or opencode CLI through bash to get around it either.
-    if tool == "bash" and session_id and _CODE_CLI_RE.search(content or ""):
-        try:
-            from src import chat_prefs
-            if not chat_prefs.claude_code_allowed(session_id):
-                return ("bash: refused", {
-                    "error": ("Not run: Claude Code is switched off for this chat by the user, and "
-                              "that includes running claude or opencode through bash. Do the work "
-                              "with your own tools, or tell the user they can switch it back on."),
-                    "exit_code": 1})
-        except Exception:
-            pass
+    # A coding agent switched off for this chat (src/chat_prefs.py): no
+    # running its CLI (claude / opencode) through bash to get around it.
+    if tool == "bash" and session_id:
+        for m in _CODE_CLI_RE.finditer(content or ""):
+            try:
+                from src import chat_prefs
+                name = m.group(2)
+                if not chat_prefs.engine_allowed(session_id, "claude" if name == "claude" else "opencode"):
+                    label = "Claude Code" if name == "claude" else "OpenCode"
+                    return ("bash: refused", {
+                        "error": (f"Not run: {label} is switched off for this chat by the user, and that "
+                                  f"includes running {name} through bash. Do the work another way, or "
+                                  "tell the user they can switch it back on."),
+                        "exit_code": 1})
+            except Exception:
+                pass
 
     # Misformatted tool call detection: model put JSON inside ```python``` (or
     # similar) without naming the tool. Common with MiniMax-style outputs.
