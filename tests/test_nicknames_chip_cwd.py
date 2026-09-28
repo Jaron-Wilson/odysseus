@@ -72,5 +72,5 @@ def test_rename_and_label_are_wired():
     admin = read("static", "js", "admin.js")
     assert "data-adm-rename-ep=" in admin and "JSON.stringify({ name: name.trim() })" in admin
     picker = read("static", "js", "modelPicker.js")
-    assert "if (epName && copies > 1) displayName += ` \\u00b7 ${epName}`;" in picker
+    assert "if (epName && (!isDefaultName || copies > 1)) displayName += ` \\u00b7 ${epName}`;" in picker
     assert "label.appendChild(document.createTextNode(displayName));" in picker   # a nickname is text
