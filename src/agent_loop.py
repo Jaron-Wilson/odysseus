@@ -2066,6 +2066,13 @@ async def stream_agent_loop(
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
+    # Claude Code switched off for this chat (src/chat_prefs.py).
+    try:
+        from src import chat_prefs
+        if session_id and not chat_prefs.claude_code_allowed(session_id):
+            disabled_tools.add("claude_code")
+    except Exception:
+        pass
     if tool_policy:
         disabled_tools.update(tool_policy.all_disabled_names())
         if tool_policy.disable_mcp:

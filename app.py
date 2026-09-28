@@ -643,6 +643,8 @@ from routes.pdf_view_routes import setup_pdf_view_routes
 app.include_router(setup_pdf_view_routes())
 from routes.overlay_routes import setup_overlay_routes
 app.include_router(setup_overlay_routes())
+from routes.chat_prefs_routes import setup_chat_prefs_routes
+app.include_router(setup_chat_prefs_routes())
 from routes.screen_control_routes import setup_screen_control_routes
 app.include_router(setup_screen_control_routes())
 
