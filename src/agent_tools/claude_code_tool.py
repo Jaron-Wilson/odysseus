@@ -426,6 +426,14 @@ class ClaudeCodeTool:
             return {"error": "prompt is required", "exit_code": 1}
 
         resume_id = (args.get("session_id") or "").strip()
+        # A list of shell commands is a chore, not coding work: seen live, a
+        # branch rename (six git commands) went through an OpenCode plan and
+        # approval. Refused so the agent runs them itself with bash.
+        if action in ("plan", "ask") and not resume_id and _is_command_list(prompt):
+            return {"error": ("Not started: this is a list of shell commands, not coding work. "
+                              "Run them yourself with bash (ssh to the machine if needed), one "
+                              "command per step, and report what each did."),
+                    "chore": True, "exit_code": 1}
         if action == "execute" and not resume_id:
             return {
                 "error": (
@@ -1238,6 +1246,9 @@ def reattach_runs() -> int:
     for rec in claude_code_jobs.load_records():
         if claude_code_jobs.get(rec["id"]):
             continue
+        sp = rec.get("server_pid")
+        if sp and sp != os.getpid() and claude_code_jobs.pid_alive(sp):
+            continue                       # another server process still follows it
         if time.time() - float(rec.get("started") or 0) > claude_code_jobs.MAX_REATTACH_AGE_S:
             continue
         if not os.path.isdir(os.path.join(claude_code_jobs.RUNS_DIR, rec["id"])):
@@ -1249,6 +1260,35 @@ def reattach_runs() -> int:
                     job.id, job.pid, (job.chat_session_id or "-")[:8])
     claude_code_jobs.save()
     return n
+
+
+_CMD_LINE_RE = re.compile(r"^\s*(?:[-*>\d.)]+\s*)?`?\$?\s*(git|gh|ssh|scp|cd|ls|mv|cp|rm|mkdir|npx|npm|wrangler|curl|docker|systemctl)\b")
+_CODE_WORK_RE = re.compile(r"\b(implement|refactor|rewrite|write (?:the |a |new )?(?:code|function|test|component|module|script)|"
+                           r"fix (?:the |a )?bug|add (?:a |the )?(?:feature|endpoint|route|page|test|function)|debug|"
+                           r"build (?:a |the )?(?:feature|page|component|api)|design)\b", re.I)
+
+
+def _is_command_list(prompt: str) -> bool:
+    """Mostly shell commands (3 or more) and no coding work asked for."""
+    lines = [ln for ln in (prompt or "").splitlines() if ln.strip()]
+    cmds = sum(1 for ln in lines if _CMD_LINE_RE.match(ln))
+    return cmds >= 3 and not _CODE_WORK_RE.search(prompt or "")
+
+
+REATTACH_SWEEP_S = 20
+
+
+async def reattach_forever() -> None:
+    """Keep picking up runs no live server follows. Seen live: during a
+    restart the old process started a run after the new one had already done
+    its startup reattach, then exited; the run finished with nobody to post
+    its result."""
+    while True:
+        await asyncio.sleep(REATTACH_SWEEP_S)
+        try:
+            reattach_runs()
+        except Exception as e:
+            logger.warning("Claude Code reattach sweep failed: %s", e)
 
 
 def _os_process_for(session_id: str) -> Optional[int]:

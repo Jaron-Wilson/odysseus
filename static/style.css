@@ -37086,3 +37086,7 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .claude-toggle-btn.partial { color: var(--accent, #c96); opacity: 1; }
 .claude-toggle-btn { width: auto; gap: 4px; }
 .claude-toggle-tag { font-size: 10px; white-space: nowrap; }
+/* Newer merges waiting to be deployed (buildBadge.js). */
+.build-badge.deployable { opacity: 1; cursor: pointer; color: var(--accent, #c96);
+  border: 1px solid color-mix(in srgb, var(--accent, #c96) 45%, transparent); }
+.build-badge.deployable:hover { background: color-mix(in srgb, var(--accent, #c96) 14%, transparent); }

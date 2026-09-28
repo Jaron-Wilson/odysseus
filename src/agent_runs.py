@@ -151,6 +151,19 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         _schedule_evict(session_id)
 
 
+async def stop_all(timeout: float = 10.0) -> int:
+    """Stop every running turn so each saves what it has written so far (the
+    wrapped generator's CancelledError handler does that). Used just before a
+    deploy restarts the server: a turn cut off by the process exiting was lost
+    without a trace (seen live, 2026-09-28)."""
+    tasks = [r.task for r in _RUNS.values() if r.task and not r.task.done() and r.status == "running"]
+    for t in tasks:
+        t.cancel()
+    if tasks:
+        await asyncio.wait(tasks, timeout=timeout)
+    return len(tasks)
+
+
 def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
     """Start a detached run draining `agen` for a session. If a run is already in
     flight for this session (e.g. a rapid double-send), it's cancelled first."""
