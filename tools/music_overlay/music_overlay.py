@@ -9,7 +9,10 @@ over games in borderless fullscreen (Factorio's default).
 It talks to Windows directly for the music:
 - the current media session (title, artist, the album art the player itself
   publishes, play/pause/skip on that player) through winsdk, and
-- the system volume and mute through pycaw, as desktop_mcp_server.py does.
+- the system volume and mute, and the playing app's own level in the
+  Windows mixer, through pycaw, as desktop_mcp_server.py does. The +/-
+  buttons drive one or the other (right-click to choose); the mouse wheel
+  moves the app, Shift+wheel the computer.
 
 And to Odysseus for messages: what the AI said while you were elsewhere (a
 reply ready, a question) shows here over the game, with a box to answer.
@@ -26,6 +29,7 @@ Needs: python -m pip install --user winsdk pillow pycaw comtypes
 
 import asyncio
 import ctypes
+import re
 import urllib.request
 import io
 import json
@@ -120,7 +124,8 @@ class Media:
             except Exception as e:                     # art is a nicety
                 log(f"art read failed: {e}")
         return {"title": props.title or "", "artist": props.artist or "",
-                "playing": int(status) == 4, "art": art}
+                "playing": int(status) == 4, "art": art,
+                "source": s.source_app_user_model_id or ""}
 
     def info(self):
         return self.run(self._info())
@@ -152,6 +157,41 @@ def volume_endpoint():
     return cast(iface, POINTER(IAudioEndpointVolume))
 
 
+def _norm(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def app_sessions(source):
+    """(label, [ISimpleAudioVolume]) for the app behind the media session
+    `source` (its AppUserModelId: "Chrome", "Spotify.exe", ...)."""
+    from pycaw.pycaw import AudioUtilities
+    want = _norm(source)
+    if "308046b0af4a39cb" in want:                   # Firefox's id
+        want = "firefox"
+    found, active = {}, {}
+    for s in AudioUtilities.GetAllSessions():
+        proc, vol = getattr(s, "Process", None), getattr(s, "SimpleAudioVolume", None)
+        if proc is None or vol is None:
+            continue
+        try:
+            name = proc.name()
+        except Exception:
+            continue
+        stem = _norm(name.rsplit(".", 1)[0])
+        if want and stem and (stem in want or want in stem):
+            found.setdefault(name, []).append(vol)
+        if getattr(s, "State", 0) == 1:
+            active.setdefault(name, []).append(vol)
+    pick = found or (active if len(active) == 1 else {})
+    if not pick:
+        return None, []
+    name, vols = next(iter(pick.items()))
+    stem = name.rsplit(".", 1)[0]
+    label = {"chrome": "Chrome", "msedge": "Edge", "firefox": "Firefox",
+             "spotify": "Spotify"}.get(stem.lower(), stem)
+    return label, vols
+
+
 # ── the window ────────────────────────────────────────────────────────────
 class Overlay:
     ICON_FONT = ("Segoe Fluent Icons", 12)
@@ -165,6 +205,7 @@ class Overlay:
         self.q: "queue.Queue" = queue.Queue()
         self.last_key = None
         self.art_img = None
+        self.source = ""                               # the playing app's media id
         root = self.root = tk.Tk()
         root.title("Odysseus music")
         root.overrideredirect(True)                    # no title bar, no X
@@ -224,7 +265,7 @@ class Overlay:
             self.buttons[name] = b
             xs += 29
         self.badge = tk.Label(r, bg=BG, fg=ACCENT, font=("Segoe UI", 8), text="")
-        self.badge.place(x=W - 46, y=2, width=40, height=14)
+        self.badge.place(x=W - 106, y=2, width=100, height=14)
         for w in (r, self.art, self.title, self.artist):
             w.bind("<ButtonPress-1>", self._drag_start)
             w.bind("<B1-Motion>", self._drag)
@@ -232,6 +273,7 @@ class Overlay:
             w.bind("<Button-3>", self._menu)
         for b in self.buttons.values():
             b.bind("<Button-3>", self._menu)
+        r.bind_all("<MouseWheel>", self._wheel)
 
     # dragging
     def _drag_start(self, e):
@@ -251,6 +293,12 @@ class Overlay:
             m.add_command(label=f"Opacity {pct}%", command=lambda p=pct: self._alpha(p / 100))
         top = tk.BooleanVar(value=bool(self.root.attributes("-topmost")))
         m.add_checkbutton(label="Always on top", variable=top, command=lambda: self._topmost(top.get()))
+        label, _ = self._app()
+        target = tk.StringVar(value=self.settings.get("vol_target", "pc"))
+        m.add_radiobutton(label="Volume buttons: computer", value="pc", variable=target,
+                          command=lambda: self._set("vol_target", "pc"))
+        m.add_radiobutton(label=f"Volume buttons: {label or 'playing app'} only", value="app",
+                          variable=target, command=lambda: self._set("vol_target", "app"))
         cwo = tk.BooleanVar(value=bool(self.settings.get("close_with_odysseus", True)))
         m.add_checkbutton(label="Close with Odysseus", variable=cwo,
                           command=lambda: self._set("close_with_odysseus", cwo.get()))
@@ -284,6 +332,8 @@ class Overlay:
                 self.media.do(name)
             elif name == "play":
                 self.media.do("play_pause")
+            elif name in ("vol_up", "vol_down") and self.settings.get("vol_target") == "app":
+                self._step_app(10 if name == "vol_up" else -10)
             elif name in ("vol_up", "vol_down"):
                 v = volume_endpoint()
                 cur = round(v.GetMasterVolumeLevelScalar() * 100)
@@ -291,7 +341,7 @@ class Overlay:
                 v.SetMasterVolumeLevelScalar(new / 100.0, None)
                 if new > 0 and v.GetMute():
                     v.SetMute(0, None)
-                self._flash(f"{new}%")
+                self._flash(f"PC {new}%")
             elif name == "vol":
                 v = volume_endpoint()
                 muted = not bool(v.GetMute())
@@ -302,6 +352,47 @@ class Overlay:
             log(f"{name} failed: {e}")
             self._flash("error")
         self.last_key = None                          # refresh right away
+
+    def _app(self):
+        try:
+            return app_sessions(self.source)
+        except Exception as e:
+            log(f"app volume: {e}")
+            return None, []
+
+    def _step_app(self, delta):
+        label, vols = self._app()
+        if not vols:
+            self._flash("no app")
+            return
+        cur = round(vols[0].GetMasterVolume() * 100)
+        new = max(0, min(100, cur + delta))
+        for v in vols:
+            v.SetMasterVolume(new / 100.0, None)
+            if new > 0 and v.GetMute():
+                v.SetMute(0, None)
+        self._flash(f"{label} {new}%")
+
+    def _step_pc(self, delta):
+        v = volume_endpoint()
+        new = max(0, min(100, round(v.GetMasterVolumeLevelScalar() * 100) + delta))
+        v.SetMasterVolumeLevelScalar(new / 100.0, None)
+        if new > 0 and v.GetMute():
+            v.SetMute(0, None)
+        self._flash(f"PC {new}%")
+
+    def _wheel(self, e):
+        # Over the player row only, not the message box below it.
+        if str(e.widget).startswith(str(self.msg)):
+            return
+        step = 5 if e.delta > 0 else -5
+        try:
+            if e.state & 0x0001:                     # Shift: the whole computer
+                self._step_pc(step)
+            else:
+                self._step_app(step)
+        except Exception as ex:
+            log(f"wheel failed: {ex}")
 
     # polling (a thread; the window is updated on the Tk thread)
     def _poll(self):
@@ -445,6 +536,7 @@ class Overlay:
             self.artist.configure(text="")
             self.buttons["play"].configure(text=self.GLYPH["play"])
             return
+        self.source = info.get("source", "")
         self.title.configure(text=info["title"] or "Unknown")
         self.artist.configure(text=info["artist"])
         self.buttons["play"].configure(text=self.GLYPH["pause" if info["playing"] else "play"])

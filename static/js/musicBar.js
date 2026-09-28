@@ -4,7 +4,8 @@
 // YouTube Music cannot be embedded in another site, so this is a remote for
 // the player on one of your machines, through the desktop MCP (routes/
 // media_routes.py): Windows' media session for title and artist, media keys
-// for play/pause/skip, the system volume. Album art and lyrics are looked up
+// for play/pause/skip, and two volumes: the computer's (system) and the
+// playing app's own level in the Windows mixer. Album art and lyrics are looked up
 // by name (/api/media/art, /api/media/lyrics).
 //
 // Mini: a small semi-transparent bar above the composer with the art, the
@@ -13,6 +14,7 @@
 
 const KEY_OPEN = 'odysseus.musicBar.open';
 const KEY_DEVICE = 'odysseus.musicBar.device';
+const KEY_VOLTARGET = 'odysseus.musicBar.volTarget';   // 'pc' or 'app': what the bar's +/- drive
 const POLL_MS = 4000;
 
 const ICONS = {
@@ -82,6 +84,16 @@ function _muted() {
   const v = _state && _state.get_volume;
   return !!(v && v.muted);
 }
+// The playing app's mixer level (YouTube Music in Chrome is Chrome's entry).
+function _app() {
+  const a = _state && _state.get_app_volume;
+  return a && a.ok && typeof a.volume === 'number' ? a : null;
+}
+function _appVol() { const a = _app(); return a ? a.volume : null; }
+function _appLabel() { const a = _app(); return a ? (a.label || a.app || 'App') : 'App'; }
+function _volTarget() { return localStorage.getItem(KEY_VOLTARGET) === 'app' && _app() ? 'app' : 'pc'; }
+function _targetVol() { return _volTarget() === 'app' ? _appVol() : _vol(); }
+function _targetName() { return _volTarget() === 'app' ? _appLabel() : 'PC'; }
 function _artUrl(np) {
   if (!np.title) return '';
   return `/api/media/art?title=${encodeURIComponent(np.title)}&artist=${encodeURIComponent(np.artist || '')}`;
@@ -127,10 +139,11 @@ function _renderBarInto(bar) {
       <button type="button" class="mb-btn" data-mb="previous" title="Previous">${ICONS.prev}</button>
       <button type="button" class="mb-btn mb-main" data-mb="play_pause" title="${playing ? 'Pause' : 'Play'}">${playing ? ICONS.pause : ICONS.play}</button>
       <button type="button" class="mb-btn" data-mb="next" title="Next">${ICONS.next}</button>
-      <button type="button" class="mb-btn" data-mb="voldown" title="Volume down">${ICONS.down}</button>
-      <button type="button" class="mb-btn" data-mb="volup" title="Volume up">${ICONS.up}</button>
-      <button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute' : 'Mute'}">${_muted() ? ICONS.muted : ICONS.mute}</button>
-      <span class="mb-vol-badge"${Date.now() - _volShownAt < 2500 && _vol() !== null ? '' : ' hidden'}>${_vol() ?? ''}%</span>
+      ${_app() ? `<button type="button" class="mb-voltarget" data-mb="voltarget" title="Volume buttons change: ${_volTarget() === 'app' ? _esc(_appLabel()) + ' only. Click for the whole computer' : 'the whole computer. Click for ' + _esc(_appLabel()) + ' only'}">${_esc(_targetName())}</button>` : ''}
+      <button type="button" class="mb-btn" data-mb="voldown" title="${_esc(_targetName())} volume down">${ICONS.down}</button>
+      <button type="button" class="mb-btn" data-mb="volup" title="${_esc(_targetName())} volume up">${ICONS.up}</button>
+      <button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute computer' : 'Mute computer'}">${_muted() ? ICONS.muted : ICONS.mute}</button>
+      <span class="mb-vol-badge"${Date.now() - _volShownAt < 2500 && _targetVol() !== null ? '' : ' hidden'}>${_esc(_targetName())} ${_targetVol() ?? ''}%</span>
       ${bar.ownerDocument === document
         ? `<button type="button" class="mb-btn" data-mb="popout" title="Pop out: the frameless player on your PC, on top of apps and games">${ICONS.popout}</button>
            <button type="button" class="mb-btn" data-mb="expand" title="Expand">${ICONS.expand}</button>`
@@ -165,8 +178,10 @@ async function _renderPanel() {
       <button type="button" class="mb-btn mb-main" data-mb="play_pause" title="Play / pause">${np.playing ? ICONS.pause : ICONS.play}</button>
       <button type="button" class="mb-btn" data-mb="next" title="Next">${ICONS.next}</button>
     </div>
-    <div class="mp-volrow"><button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute' : 'Mute'}">${_muted() ? ICONS.muted : ICONS.mute}</button>
-    <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${vol ?? 50}" data-mb-vol ${vol === null ? 'disabled' : ''}>${ICONS.up}<span>${vol ?? '–'}</span></label></div>
+    <div class="mp-volrow"><span class="mp-vollabel">Computer</span><button type="button" class="mb-btn${_muted() ? ' mb-on' : ''}" data-mb="mute" title="${_muted() ? 'Unmute computer' : 'Mute computer'}">${_muted() ? ICONS.muted : ICONS.mute}</button>
+    <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${vol ?? 50}" data-mb-vol aria-label="Computer volume" ${vol === null ? 'disabled' : ''}>${ICONS.up}<span>${vol ?? '–'}</span></label></div>
+    ${_app() ? `<div class="mp-volrow"><span class="mp-vollabel" title="${_esc(_app().app || '')} in the Windows volume mixer">${_esc(_appLabel())}</span><span class="mp-volgap"></span>
+    <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${_appVol()}" data-mb-appvol aria-label="${_esc(_appLabel())} volume">${ICONS.up}<span>${_appVol()}</span></label></div>` : ''}
     <div class="mp-section">Lyrics</div>
     <div class="mp-lyrics" id="mp-lyrics">${np.title ? 'Looking up lyrics…' : 'Play something to see its lyrics.'}</div>
     <div class="mp-section">Controlling</div>
@@ -210,14 +225,14 @@ async function _tick() {
   // While popped out (say over a game) this page is hidden, but the window is not.
   if ((!open && !_panelOpen && !pipOpen) || (document.visibilityState !== 'visible' && !pipOpen) || _busy) return;
   try {
-    const prevKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}`;
+    const prevKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}|${_appVol()}`;
     _state = await _fetchState();
     // Browsing from a phone: with one machine to control, use it.
     if (_state && !_state.ok && !_device() && (_state.available || []).length === 1) {
       localStorage.setItem(KEY_DEVICE, _state.available[0].server_id);
       _state = await _fetchState();
     }
-    const nowKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}`;
+    const nowKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}|${_appVol()}`;
     if (nowKey !== prevKey) { _renderBar(); if (_panelOpen) _renderPanel(); }
     else if (!document.querySelector('#music-bar .mb-controls, #music-bar .mb-status')) _renderBar();
   } catch (_) { /* keep the last state */ }
@@ -233,12 +248,19 @@ async function _act(what) {
   if (what === 'collapse') { _panelOpen = false; _renderPanel(); return; }
   _busy = true;
   try {
-    if (what === 'volup' || what === 'voldown') {
-      const v = _vol();
+    if (what === 'voltarget') {
+      localStorage.setItem(KEY_VOLTARGET, _volTarget() === 'app' ? 'pc' : 'app');
+      _volShownAt = Date.now();
+      _renderBar();
+      setTimeout(_renderBar, 2600);
+    } else if (what === 'volup' || what === 'voldown') {
+      const app = _volTarget() === 'app';
+      const v = _targetVol();
       if (v !== null) {
         const nv = Math.max(0, Math.min(100, v + (what === 'volup' ? 10 : -10)));
-        await _control('volume', nv);
-        if (_state && _state.get_volume) _state.get_volume.volume = nv;   // show it now
+        await _control(app ? 'app_volume' : 'volume', nv);
+        const slot = app ? _app() : _state && _state.get_volume;
+        if (slot) slot.volume = nv;                                        // show it now
       } else {
         // Level unknown: the Windows volume keys still work (and show their own display).
         await _control(what === 'volup' ? 'volume_up' : 'volume_down');
@@ -319,6 +341,12 @@ document.addEventListener('change', (ev) => {
     _busy = true;
     _control('volume', Number(ev.target.value)).catch((e) => window.showToast && window.showToast(e.message))
       .finally(() => { _busy = false; setTimeout(_tick, 300); });
+  } else if (ev.target.matches('[data-mb-appvol]')) {
+    _busy = true;
+    const nv = Number(ev.target.value);
+    _control('app_volume', nv).then(() => { const a = _app(); if (a) a.volume = nv; })
+      .catch((e) => window.showToast && window.showToast(e.message))
+      .finally(() => { _busy = false; setTimeout(_tick, 300); });
   } else if (ev.target.matches('[data-mb-device]')) {
     if (ev.target.value) localStorage.setItem(KEY_DEVICE, ev.target.value);
     else localStorage.removeItem(KEY_DEVICE);
@@ -327,7 +355,7 @@ document.addEventListener('change', (ev) => {
   }
 });
 document.addEventListener('input', (ev) => {
-  if (ev.target.matches('[data-mb-vol]')) {
+  if (ev.target.matches('[data-mb-vol], [data-mb-appvol]')) {
     const s = ev.target.parentElement.querySelector('span');
     if (s) s.textContent = ev.target.value;
   }

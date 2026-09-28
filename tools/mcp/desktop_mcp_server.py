@@ -543,6 +543,8 @@ def minecraft_last_crash(lines: int = 60) -> Dict[str, Any]:
 # Media
 # --------------------------------------------------------------------------
 
+_last_media_source = ""
+
 _MEDIA_KEYS = {
     "play_pause": 0xB3,
     "next": 0xB0,
@@ -624,10 +626,16 @@ try {
     r = _run(["powershell", "-NoProfile", "-Command", ps], timeout=45)
     raw = (r.get("stdout") or "").strip()
     try:
-        return json.loads(raw)
+        out = json.loads(raw)
     except Exception:
         return {"ok": False, "error": "could not read the media session", "raw": raw[:500],
                 "stderr": (r.get("stderr") or "")[:300]}
+    global _last_media_source
+    if isinstance(out, dict) and out.get("source"):
+        # Remembered so get_app_volume() knows which app is playing without
+        # a second (slow) PowerShell round trip.
+        _last_media_source = str(out["source"])
+    return out
 
 
 
@@ -1046,6 +1054,108 @@ def set_mute(muted: bool = True) -> Dict[str, Any]:
         vol.SetMute(1 if muted else 0, None)
         return {"ok": True, "muted": bool(vol.GetMute()),
                 "volume": round(vol.GetMasterVolumeLevelScalar() * 100)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# Per-app volume: the level in the Windows volume mixer, not the app's own
+# slider. For YouTube Music in Chrome that is Chrome's mixer entry.
+_FIREFOX_AUMID = "308046b0af4a39cb"
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _app_sessions(app: str = ""):
+    """(label, [ISimpleAudioVolume]) for the app playing, or for `app`.
+
+    `app` may be a process name ("chrome.exe") or a media session id
+    ("Chrome", "com.github.th-ch.youtube-music"). Empty means whatever
+    now_playing last reported, then the one app that is making sound.
+    """
+    try:
+        from pycaw.pycaw import AudioUtilities
+    except ImportError as e:
+        raise RuntimeError(
+            f"App volume needs pycaw ({e}). Install it with `python -m pip install pycaw comtypes`.")
+    sessions = []
+    for s in AudioUtilities.GetAllSessions():
+        proc = getattr(s, "Process", None)
+        vol = getattr(s, "SimpleAudioVolume", None)
+        if proc is None or vol is None:
+            continue                               # "System Sounds"
+        try:
+            name = proc.name()
+        except Exception:
+            continue
+        sessions.append((name, vol, getattr(s, "State", 0)))
+
+    want = _norm(app or _last_media_source)
+    if want:
+        if _FIREFOX_AUMID in want:
+            want = "firefox"
+        hits = [x for x in sessions
+                if (stem := _norm(x[0].rsplit(".", 1)[0])) and (stem in want or want in stem)]
+        if hits:
+            return hits[0][0], [v for _, v, _ in hits]
+        if app:
+            raise RuntimeError(f"no app named {app!r} is playing audio")
+    active = {}
+    for name, vol, state in sessions:
+        if state == 1:                             # AudioSessionStateActive
+            active.setdefault(name, []).append(vol)
+    if len(active) == 1:
+        name, vols = next(iter(active.items()))
+        return name, vols
+    raise RuntimeError("could not tell which app is playing; pass app, e.g. chrome.exe")
+
+
+def _app_label(proc_name: str) -> str:
+    stem = proc_name.rsplit(".", 1)[0]
+    return {"chrome": "Chrome", "msedge": "Edge", "firefox": "Firefox",
+            "spotify": "Spotify"}.get(stem.lower(), stem)
+
+
+@mcp.tool()
+def get_app_volume(app: str = "") -> Dict[str, Any]:
+    """The volume of one app in the Windows mixer, 0-100 (separate from the
+    system volume). Defaults to the app that is playing media."""
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    try:
+        name, vols = _app_sessions(app)
+        v = vols[0]
+        return {"ok": True, "app": name, "label": _app_label(name),
+                "volume": round(v.GetMasterVolume() * 100), "muted": bool(v.GetMute())}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@mcp.tool()
+def set_app_volume(percent: int, app: str = "") -> Dict[str, Any]:
+    """Set one app's volume in the Windows mixer, 0-100, leaving the system
+    volume alone. Defaults to the app that is playing media (YouTube Music in
+    Chrome is Chrome's entry). Use set_volume for the whole computer."""
+    blocked = _input_guard()
+    if blocked:
+        return blocked
+    try:
+        pct = int(percent)
+    except (TypeError, ValueError):
+        raise RuntimeError("percent must be a whole number from 0 to 100")
+    if not 0 <= pct <= 100:
+        return {"ok": False, "error": f"percent must be 0-100, got {pct}"}
+    try:
+        name, vols = _app_sessions(app)
+        before = round(vols[0].GetMasterVolume() * 100)
+        for v in vols:                             # an app can own several sessions
+            v.SetMasterVolume(pct / 100.0, None)
+            if pct > 0 and v.GetMute():
+                v.SetMute(0, None)
+        return {"ok": True, "app": name, "label": _app_label(name),
+                "volume": round(vols[0].GetMasterVolume() * 100), "was": before}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
