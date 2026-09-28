@@ -105,6 +105,8 @@ function _targetVol() { return _volTarget() === 'app' ? _appVol() : _vol(); }
 function _targetName() { return _volTarget() === 'app' ? _appLabel() : 'PC'; }
 function _artUrl(np) {
   if (!np.title) return '';
+  // The phone sends its player's own art (Modes now_playing).
+  if (np.art_jpeg_b64) return `data:image/jpeg;base64,${np.art_jpeg_b64}`;
   return `/api/media/art?title=${encodeURIComponent(np.title)}&artist=${encodeURIComponent(np.artist || '')}`;
 }
 
@@ -191,6 +193,9 @@ async function _renderPanel() {
     <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${vol ?? 50}" data-mb-vol aria-label="Computer volume" ${vol === null ? 'disabled' : ''}>${ICONS.up}<span>${vol ?? '–'}</span></label></div>
     ${_app() ? `<div class="mp-volrow"><span class="mp-vollabel" title="${_esc(_app().app || '')} in the Windows volume mixer">${_esc(_appLabel())}</span><span class="mp-volgap"></span>
     <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${_appVol()}" data-mb-appvol aria-label="${_esc(_appLabel())} volume">${ICONS.up}<span>${_appVol()}</span></label></div>` : ''}
+    ${np.title && devs.filter((d) => d.server_id !== current).length ? `<div class="mp-section">Play on</div>
+    <div class="mp-handoff">${devs.filter((d) => d.server_id !== current).map((d) =>
+      `<button type="button" class="mb-handoff" data-mb-handoff="${_esc(d.server_id)}" title="Pause it here and play it on ${_esc(d.name || d.server_id)}">${d.kind === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} ${_esc(d.name || d.server_id)}</button>`).join('')}</div>` : ''}
     <div class="mp-section">Lyrics</div>
     <div class="mp-lyrics" id="mp-lyrics">${np.title ? 'Looking up lyrics…' : 'Play something to see its lyrics.'}</div>
     <div class="mp-section">Controlling</div>
@@ -344,6 +349,38 @@ async function _popOut() {
   _renderBar();
   _tick();
 }
+
+// Hand the song over to another device: pause it here, play it there. Asked
+// for: "start it on my PC or my phone and listen on a different device: my
+// headphones are connected to the PC, not the phone".
+document.addEventListener('click', async (ev) => {
+  const h = ev.target.closest('[data-mb-handoff]');
+  if (!h) return;
+  ev.preventDefault();
+  if (h.dataset.busy) return;
+  h.dataset.busy = '1';
+  const to = h.dataset.mbHandoff;
+  const from = _device() || (_state && _state.device && _state.device.server_id) || '';
+  const label = h.textContent;
+  h.textContent = 'Moving it\u2026';
+  try {
+    const r = await fetch('/api/media/handoff', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    localStorage.setItem(KEY_DEVICE, to);          // the bar follows the music
+    _autoDevice = '';
+    if (window.showToast) window.showToast(`${d.title} is playing on ${d.to}`);
+    setTimeout(_tick, 2500);
+  } catch (e) {
+    if (window.showToast) window.showToast(`Could not move it: ${e.message}`);
+  } finally {
+    delete h.dataset.busy;
+    h.textContent = label;
+  }
+});
 
 document.addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-mb]');

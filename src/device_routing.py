@@ -74,6 +74,34 @@ def device_map(mcp_mgr) -> Dict[str, dict]:
     return out
 
 
+PHONE_MEDIA = ("now_playing", "media_control", "get_volume", "set_volume", "set_mute")
+_phone_addr_cache: Dict[str, tuple] = {}
+
+
+def phone_devices() -> List[dict]:
+    """Registered phones whose Modes listener handles music (0.1.60+), as
+    media devices with server_id "device:<name>". Asked for: the music bar
+    working on the phone, for what plays on the phone."""
+    import time
+    try:
+        from src import devices as _devices
+        items = _devices.list_devices()
+    except Exception:
+        return []
+    out = []
+    for d in items:
+        if not d.get("endpoint") or "now_playing" not in (d.get("commands") or []):
+            continue
+        host = _host_of(d["endpoint"])
+        hit = _phone_addr_cache.get(host)
+        if not hit or time.time() - hit[0] > 300:
+            hit = (time.time(), _resolve(host))
+            _phone_addr_cache[host] = hit
+        out.append({"server_id": f"device:{d['name']}", "name": d["name"], "kind": "phone",
+                    "host": host, "addresses": list(hit[1]), "tools": list(PHONE_MEDIA)})
+    return out
+
+
 def for_client(mcp_mgr, client_ip: str) -> Optional[dict]:
     """The device the request came from, or None if it is not one we drive.
 
@@ -88,6 +116,9 @@ def for_client(mcp_mgr, client_ip: str) -> Optional[dict]:
     hit = devices.get(client_ip)
     if hit:
         return dict(hit, client_ip=client_ip)
+    for phone in phone_devices():
+        if client_ip in phone["addresses"]:
+            return dict(phone, client_ip=client_ip)
     return None
 
 
@@ -97,4 +128,4 @@ def all_devices(mcp_mgr) -> List[dict]:
     for addr, info in device_map(mcp_mgr).items():
         seen.setdefault(info["server_id"], dict(info, addresses=[]))
         seen[info["server_id"]]["addresses"].append(addr)
-    return list(seen.values())
+    return list(seen.values()) + phone_devices()

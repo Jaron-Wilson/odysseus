@@ -39,7 +39,26 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             raise HTTPException(401, "Sign in first.")
         return user
 
+    # Phones answer through their Modes listener (server_id "device:<name>"),
+    # machines through their desktop MCP server.
+    _PHONE_TOOLS = {"now_playing", "media_control", "get_volume", "set_volume", "set_mute", "open_url"}
+
     async def _call(server_id: str, tool: str, args: Optional[Dict] = None) -> Dict[str, Any]:
+        if server_id.startswith("device:"):
+            from src import devices as _devices
+            dev = _devices.get(server_id[len("device:"):])
+            if not dev:
+                return {"ok": False, "error": "no such phone"}
+            if tool not in _PHONE_TOOLS:
+                return {"ok": False, "error": f"{tool} is not available on a phone"}
+            if tool == "media_control" and (args or {}).get("action") in ("volume_up", "volume_down"):
+                vol = (await _devices.send_command(dev, "get_volume", {})).get("result") or {}
+                step = 10 if args["action"] == "volume_up" else -10
+                tool, args = "set_volume", {"percent": max(0, min(100, int(vol.get("volume") or 0) + step))}
+            r = await _devices.send_command(dev, tool, args or {})
+            if not r.get("ok"):
+                return {"ok": False, "error": r.get("error") or "the phone did not answer"}
+            return r.get("result") or {}
         if not mcp_manager:
             return {"ok": False, "error": "MCP manager unavailable"}
         return await mcp_manager.call_tool(f"mcp__{server_id}__{tool}", args or {})
@@ -92,7 +111,10 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                 "available": device_routing.all_devices(mcp_manager),
             }
 
-        tools = set((dev or {}).get("tools") or [])
+        # The tools of the machine being asked, not of the one browsing (a PC
+        # browser can control the phone, which has no audio-device tools).
+        target = next((d for d in device_routing.all_devices(mcp_manager) if d.get("server_id") == sid), None)
+        tools = set((target or dev or {}).get("tools") or [])
         wanted = [t for t in ("now_playing", "get_volume", "get_app_volume", "list_audio_devices")
                   if not tools or t in tools]
         # Fetched together: rendering a panel from three sequential calls is
@@ -101,7 +123,10 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             *[_call(sid, t) for t in wanted], return_exceptions=True)
 
         out: Dict[str, Any] = {"ok": True, "client_ip": ip,
-                               "device": dev or {"server_id": sid}}
+                               "device": dev or target or {"server_id": sid},
+                               # For the machine picker and "Play on" (handoff).
+                               "available": [{k: d.get(k) for k in ("server_id", "name", "kind")}
+                                             for d in device_routing.all_devices(mcp_manager)]}
         for name, res in zip(wanted, results):
             if isinstance(res, Exception):
                 out[name] = {"ok": False, "error": str(res)}
@@ -158,6 +183,39 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                 400, "action must be play_pause, play, pause, next, previous, stop, "
                      "volume_up, volume_down, volume, app_volume, mute or output")
         return {"requested": action, "result": _payload(res)}
+
+    @router.post("/handoff")
+    async def handoff(request: Request):
+        """Play what is playing on one device on another instead: pause it
+        there, find the song on YouTube Music, open it on the other. Asked
+        for: "start it on my PC or my phone and listen on a different device:
+        my headphones are connected to the PC, not the phone"."""
+        _require_user(request)
+        from src import device_routing
+        body = await request.json() if request.headers.get("content-type", "").startswith(
+            "application/json") else {}
+        src_id = str(body.get("from") or "").strip()
+        dst_id = str(body.get("to") or "").strip()
+        known = {d.get("server_id"): d for d in device_routing.all_devices(mcp_manager)}
+        if src_id not in known or dst_id not in known or src_id == dst_id:
+            raise HTTPException(400, "Pick two different connected devices")
+        np = _payload(await _call(src_id, "now_playing"))
+        title, artist = (np.get("title") or "").strip(), (np.get("artist") or "").strip()
+        if not title:
+            raise HTTPException(409, f"Nothing is playing on {known[src_id].get('name')}")
+        vid = await asyncio.to_thread(_youtube_id, title, artist)
+        if not vid:
+            raise HTTPException(404, f"Could not find {title!r} on YouTube Music")
+        url = f"https://music.youtube.com/watch?v={vid}"
+        # Pause first, so the two never play at once.
+        if np.get("playing"):
+            await _call(src_id, "media_control", {"action": "pause" if src_id.startswith("device:") else "play_pause"})
+        opened = _payload(await _call(dst_id, "open_url" if dst_id.startswith("device:") else "open_media_url",
+                                      {"url": url}))
+        if opened.get("ok") is False:
+            raise HTTPException(502, f"Could not open it on {known[dst_id].get('name')}: {opened.get('error')}")
+        return {"ok": True, "title": title, "artist": artist, "url": url,
+                "from": known[src_id].get("name"), "to": known[dst_id].get("name")}
 
     @router.post("/overlay")
     async def overlay(request: Request):
@@ -223,6 +281,31 @@ _NOISE_RE = _re.compile(
     r"\s*[\(\[](?:official|lyric|lyrics|audio|video|visualizer|hd|4k|remaster(?:ed)?|"
     r"live|explicit|clean|music video|mv)[^\)\]]*[\)\]]", _re.I)
 _LYRICS_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+_YT_CACHE: Dict[str, str] = {}
+
+
+def _youtube_id(title: str, artist: str) -> Optional[str]:
+    """The first YouTube result for a song, from YouTube's own search page."""
+    import re
+    import urllib.parse
+    import httpx
+    t, a = _clean(title, artist)
+    q = f"{t} {a}".strip()
+    if q in _YT_CACHE:
+        return _YT_CACHE[q]
+    try:
+        r = httpx.get("https://www.youtube.com/results", params={"search_query": q + " audio"},
+                      headers={"Accept-Language": "en", "User-Agent": "Mozilla/5.0"}, timeout=12,
+                      follow_redirects=True)
+        m = re.search(r'"videoId":"([A-Za-z0-9_-]{11})"', r.text)
+    except Exception:
+        return None
+    if not m:
+        return None
+    _YT_CACHE[q] = m.group(1)
+    return m.group(1)
 
 
 def _clean(title: str, artist: str):

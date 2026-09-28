@@ -1328,6 +1328,21 @@ async def _media_route(request):
 
 
 
+
+_MEDIA_URL_RE = re.compile(r"^https://(?:www\.|m\.)?(?:music\.youtube\.com|youtube\.com|youtu\.be)/\S+$")
+
+
+@mcp.tool()
+def open_media_url(url: str) -> Dict[str, Any]:
+    """Open a YouTube / YouTube Music link on this machine so it plays here
+    (music handed over from another device). Only those links: this is not a
+    general "open any URL" tool."""
+    url = (url or "").strip()
+    if not _MEDIA_URL_RE.match(url):
+        return {"ok": False, "error": "only https YouTube or YouTube Music links"}
+    os.startfile(url)  # noqa: S606 - validated above
+    return {"ok": True, "opened": url}
+
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)
     # Default to the tailnet address, never all interfaces. These tools launch
