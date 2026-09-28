@@ -263,7 +263,8 @@ _DOMAIN_RULES = {
     "background": """\
 ## Background first
 - Do work out of sight by default. To look something up, check a page, compare prices or read docs, use the built-in browser (`mcp__builtin_browser__*`, headless on this server and invisible to the user) or `web_search`/`web_fetch`, and report what you found in the chat.
-- Act on the user's own screen (open_url/open_app on their phone, launch_app, or click/type/screenshot on their computer) only when they ask to see it there ("open it on my phone", "show me", "pull it up on my PC").
+- Act on the user's own screen (open_url/open_app on their phone, launch_app, or click/type/screenshot on their computer) only when they ask to see it there ("open it on my phone", "show me", "pull it up on my PC"). Never open a page to read it yourself (an API, a status or health URL): that is web_fetch, or curl in bash.
+- Reading several files, especially over ssh: one command with several cat/sed/grep, not one call per file.
 - Never do it on your own initiative, including when a lookup fails because a page needs a login or is private. Say what is blocked and ask whether to use their device ("that repo is private; want me to check it in your Chrome on the PC?"). Their answer is the permission.
 - If you are unsure, do it in the background and then offer to open it on their device.
 - Using their browser (once they have said yes): unless they already said, ask with ask_user "A new Chrome window, or the one you already have open?". Open it by the exact name from list_apps ("Google Chrome"; never just "chrome", which also matches Chrome Remote Desktop).
@@ -1949,6 +1950,35 @@ def _detect_runaway_call(call_freq, threshold=15):
 _SCREEN_ACTS = frozenset({"click", "double_click", "right_click", "move_mouse", "drag", "scroll",
                           "type_text", "press_keys", "launch_app", "focus_app"})
 MAX_SCREEN_ACTIONS_PER_TURN = 10
+# bash calls in a row within one turn. Seen live: a local model read a
+# project one `ssh … cat <file>` at a time, 22 calls in a turn, while the
+# user waited. At the first number it is told to batch; at the second it
+# has to stop and report before running more.
+BASH_STREAK_NUDGE = 6
+BASH_STREAK_STOP = 12
+# Opening a page on someone's screen is for when they asked to see it. Seen
+# live: asked why a YouTube link failed, the agent opened the API's health
+# URL in a browser on the laptop (a screen-control request for a machine the
+# user was not at) instead of reading it with curl.
+_SHOW_WORDS = re.compile(
+    r"\b(open|show|pull (it |that |this )?up|bring (it |that )?up|play|watch|put (it |that )?on|"
+    r"launch|display|see it|look at it|on (my|the) (phone|pc|computer|laptop|screen|tv))\b", re.I)
+
+
+def _last_real_user_text(messages) -> str:
+    """The user's own latest words, skipping the notes Odysseus posts for
+    approvals ("[Screen control approved …]", "[Plan approved …]")."""
+    for m in reversed(messages or []):
+        if m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if isinstance(c, list):
+            c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+        c = str(c or "")
+        if c.startswith(("[Screen control approved", "[Plan approved")):
+            continue
+        return c
+    return ""
 
 
 def _attach_screenshot(messages: List[Dict], img: Dict, model: str, endpoint_url: str,
@@ -2490,6 +2520,8 @@ async def stream_agent_loop(
 
     _attached_shots: list = []   # screenshot parts attached this turn (see _attach_screenshot)
     _shot_streak = 0             # screenshots in a row with no other tool between
+    _bash_streak = 0             # bash calls in a row with no other tool between
+    _user_wants_to_see = bool(_SHOW_WORDS.search(_last_real_user_text(messages)))
     _screen_acts = 0             # clicks/keys/typing on the user's screen this turn
     for round_num in range(1, max_rounds + 1):
         round_response = ""
@@ -3054,7 +3086,29 @@ async def stream_agent_loop(
             _is_act = block.tool_type.startswith("mcp__") and block.tool_type.rsplit("__", 1)[-1] in _SCREEN_ACTS
             if _is_act:
                 _screen_acts += 1
-            if _is_act and _screen_acts > MAX_SCREEN_ACTIONS_PER_TURN:
+            _bash_streak = _bash_streak + 1 if block.tool_type == "bash" else 0
+            _is_open_url = block.tool_type.startswith("mcp__") and block.tool_type.endswith("__open_url")
+            if _is_open_url and not _user_wants_to_see:
+                desc = f"{block.tool_type}: refused"
+                result = {
+                    "error": ("Not opened: the user did not ask to see a page on their screen. To read "
+                              "a URL (an API, a status page, docs), use web_fetch, or curl with bash. "
+                              "Only open pages on a screen when the user asks to see them there."),
+                    "exit_code": 1,
+                }
+                logger.info("[agent] refused %s: the user did not ask to see it", block.tool_type)
+                yield f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "round": round_num})}\n\n'
+            elif block.tool_type == "bash" and _bash_streak > BASH_STREAK_STOP:
+                desc = f"{block.tool_type}: refused"
+                result = {
+                    "error": (f"Not run: that would be more than {BASH_STREAK_STOP} bash calls in a row. "
+                              "Stop now and tell the user what you found and what you would check "
+                              "next; they can tell you to carry on."),
+                    "exit_code": 1,
+                }
+                logger.info("[agent] refused bash call %d in a row", _bash_streak)
+                yield f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "round": round_num})}\n\n'
+            elif _is_act and _screen_acts > MAX_SCREEN_ACTIONS_PER_TURN:
                 desc = f"{block.tool_type}: refused"
                 result = {
                     "error": (f"Not done: that would be more than {MAX_SCREEN_ACTIONS_PER_TURN} actions on the "
@@ -3378,6 +3432,10 @@ async def stream_agent_loop(
                 _effectful_used = True
 
             formatted = format_tool_result(desc, result)
+            if block.tool_type == "bash" and _bash_streak == BASH_STREAK_NUDGE:
+                formatted += (f"\n\n[Note: that is {BASH_STREAK_NUDGE} bash calls in a row. Put the rest of "
+                              "what you need into ONE command (several cat/grep/sed in a single ssh), "
+                              "or answer with what you have.]")
             tool_results.append(formatted)
             tool_result_texts.append(formatted)
 

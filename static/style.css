@@ -37065,3 +37065,9 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 }
 .mb-voltarget:hover { opacity: 1; border-color: var(--accent, #c96); }
 .mp-volrow .mp-vol, .mp-volrow .mp-vol input { min-width: 0; }
+/* Screen control asked for a machine other than the one the user is on. */
+.sc-modal-warn {
+  margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; font-weight: 600;
+  background: color-mix(in srgb, var(--accent-error, #d9644f) 18%, transparent);
+  color: var(--accent-error, #d9644f);
+}
