@@ -71,6 +71,10 @@ class Job:
         self.result: Optional[Dict] = None
         self.notify: Optional[Dict] = None
         self.spec: Dict = {}               # what the tool needs to finish the run later
+        # What the agent says it is doing (it appends to status.jsonl in the
+        # run directory): {"state", "detail", "at"}, and the last few of them.
+        self.agent_status: Optional[Dict] = None
+        self.timeline: List[Dict] = []
 
     @property
     def run_dir(self) -> str:
@@ -95,8 +99,10 @@ class Job:
             "background": self.detached,
             "reattached": self.reattached,
             "chat_name": _chat_name(self.chat_session_id),
+            "agent_status": self.agent_status,
         }
         if lines:
+            out["timeline"] = self.timeline[-20:]
             out["banner"] = self.banner
             out["lines"] = list(self.lines)[-lines:]
             if self.result is not None:
@@ -113,6 +119,7 @@ class Job:
             "pid": self.pid, "started": self.started, "detached": self.detached,
             "banner": self.banner, "notify": self.notify, "spec": self.spec,
             "server_pid": os.getpid(),
+            "agent_status": self.agent_status, "timeline": self.timeline[-20:],
         }
 
 
@@ -196,6 +203,8 @@ def adopt(rec: Dict) -> Job:
     job.banner = rec.get("banner", "")
     job.notify = rec.get("notify")
     job.spec = rec.get("spec") or {}
+    job.agent_status = rec.get("agent_status")
+    job.timeline = list(rec.get("timeline") or [])
     _JOBS[job.id] = job
     return job
 

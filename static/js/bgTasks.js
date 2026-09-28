@@ -134,7 +134,7 @@ function _renderChip(jobs) {
   const count = here.length || running.length;
   chip.innerHTML = `<span class="bg-dot running"></span>
     <span>${count} background task${count > 1 ? 's' : ''} running ${where}</span>
-    <span class="bg-chip-what">${_esc(first.prompt || first.action)}</span>
+    <span class="bg-chip-what">${first.agent_status && first.agent_status.detail ? _statusHtml(first.agent_status) : _esc(first.prompt || first.action)}</span>
     <button type="button" data-chip-watch="${_esc(first.id)}" data-chip-chat="${_esc(first.chat_session_id || '')}">${here.length ? 'Watch here' : 'Go to chat'}</button>
     <button type="button" data-chip-all>All tasks</button>`;
 }
@@ -179,6 +179,13 @@ function _close() {
   if (_panel) { _panel.remove(); _panel = null; }
 }
 
+// The agent's own status line ("working · Deploying the API worker").
+const _STATE_LABEL = { working: 'working', needs_input: 'needs you', done: 'done', failed: 'failed' };
+function _statusHtml(st) {
+  if (!st || !st.detail) return '';
+  return `<span class="agent-status agent-status-${_esc(st.state)}">\u25CF ${_esc(_STATE_LABEL[st.state] || st.state)} \u00b7 ${_esc(st.detail)}</span>`;
+}
+
 function _jobRow(j) {
   const cls = j.status === 'running' ? 'running' : (j.status === 'done' ? 'ok' : 'bad');
   const where = j.background ? 'background' : 'in chat';
@@ -189,6 +196,7 @@ function _jobRow(j) {
         <span class="bg-job-title">${_esc(j.prompt || j.action)}</span>
         <span class="bg-job-meta">${_esc(j.status)} · ${_esc(where)} · ${_dur(j.elapsed_s)}</span>
       </div>
+      ${j.agent_status ? `<div class="bg-job-status">${_statusHtml(j.agent_status)}</div>` : ''}
       <div class="bg-job-sub">${j.engine === 'opencode' ? 'OpenCode' : 'Claude Code'} ${_esc(j.action)} · <b>${_esc(j.model)}</b> · <code>${_esc(j.cwd)}</code> · job ${_esc(j.id)}</div>
       ${j.id === _open ? `<pre class="bg-job-log" data-log="${_esc(j.id)}">Loading…</pre>` : ''}
       <div class="bg-job-actions">

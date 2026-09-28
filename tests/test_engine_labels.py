@@ -74,7 +74,7 @@ def test_everything_else_is_wired():
     assert 'tool_output_data["label"] = result["engine_label"]' in loop
     assert 'never "Claude Code" for an OpenCode run' in loop
     tool = read("src", "agent_tools", "claude_code_tool.py")
-    assert '"engine_label": engine_label(engine)}' in tool
+    assert '"engine_label": engine_label(engine),' in tool
     chat = read("static", "js", "chat.js")
     assert "chatRenderer.toolDisplayName(json)" in chat and "json.engine_label" in chat
     assert "[Plan approved · run {run_id} · {engine}]" in read("routes", "claude_code_routes.py")

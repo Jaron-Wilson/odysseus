@@ -37090,3 +37090,12 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .build-badge.deployable { opacity: 1; cursor: pointer; color: var(--accent, #c96);
   border: 1px solid color-mix(in srgb, var(--accent, #c96) 45%, transparent); }
 .build-badge.deployable:hover { background: color-mix(in srgb, var(--accent, #c96) 14%, transparent); }
+
+/* A coding agent's own status line (claude_code_tool STATUS_INSTRUCTIONS). */
+.agent-status { display: block; font-size: 12px; margin: 2px 0 4px 22px; opacity: .85; }
+.bg-chip .agent-status, .bg-job-status .agent-status { display: inline; margin: 0; }
+.agent-status-working { color: var(--accent, #c96); }
+.agent-status-needs_input { color: var(--accent-error, #d9644f); font-weight: 600; }
+.agent-status-done { color: var(--accent-success, #6fae6f); }
+.agent-status-failed { color: var(--accent-error, #d9644f); }
+.bg-job-status { margin: 2px 0 2px 16px; }

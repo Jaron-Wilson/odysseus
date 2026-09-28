@@ -2627,6 +2627,19 @@ import './bgTasks.js';
                   const t = currentToolBubble.querySelector('.agent-thread-tool');
                   if (t && t.textContent !== json.engine_label) t.textContent = json.engine_label;
                 }
+                // What the coding agent says it is doing, under the card's title.
+                if (json.agent_status && json.agent_status.detail) {
+                  const st = json.agent_status;
+                  let line = currentToolBubble.querySelector('.agent-status');
+                  if (!line) {
+                    line = document.createElement('div');
+                    const head = currentToolBubble.querySelector('.agent-thread-header');
+                    if (head) head.after(line); else currentToolBubble.prepend(line);
+                  }
+                  const label = { working: 'working', needs_input: 'needs you', done: 'done', failed: 'failed' }[st.state] || st.state;
+                  line.className = `agent-status agent-status-${st.state}`;
+                  line.textContent = `\u25CF ${label} \u00b7 ${st.detail}`;
+                }
                 // The per-second ticker (started in tool_start) owns the
                 // elapsed display; here we just surface the live output tail.
                 const tailStr = (json.tail || '').trim();

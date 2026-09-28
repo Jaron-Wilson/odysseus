@@ -614,6 +614,8 @@ class ClaudeCodeTool:
         # (verified — it refuses to edit and says so) and `build` writes, so the
         # approval gate above applies to it unchanged. Its prompt rides as a
         # positional argument; exec involves no shell, so nothing needs quoting.
+        if action == "execute":
+            prompt = prompt.rstrip() + STATUS_INSTRUCTIONS
         prompt_via_stdin = True
         if engine == "opencode":
             # OpenCode mints its own ses_… id, which the event stream reports.
@@ -729,6 +731,7 @@ class ClaudeCodeTool:
         # around to collect. Claude takes the prompt on stdin (no argv length
         # cap, nothing to escape); OpenCode takes it positionally.
         os.makedirs(job.run_dir, exist_ok=True)
+        env["ODYSSEUS_STATUS_FILE"] = os.path.join(job.run_dir, "status.jsonl")
         prompt_path = os.path.join(job.run_dir, "prompt.txt")
         if prompt_via_stdin:
             with open(prompt_path, "w", encoding="utf-8") as f:
@@ -785,7 +788,8 @@ class ClaudeCodeTool:
         def _progress() -> dict:
             return {"elapsed_s": round(time.time() - started, 1), "tail": _tail_text(),
                     "job_id": job.id, "can_background": not job.detached,
-                    "model": model_label, "engine_label": engine_label(engine)}
+                    "model": model_label, "engine_label": engine_label(engine),
+                    "agent_status": job.agent_status}
 
         if progress_cb:
             # Emit once immediately; the periodic loop only starts after a delay
@@ -966,11 +970,14 @@ class _FileTail:
 
 async def _follow(job, stream: "_Stream", add, exited, tail: "_FileTail") -> None:
     """Feed the run's output to `stream` until `exited()` is true."""
+    status_tail = _FileTail(os.path.join(job.run_dir, "status.jsonl"))
     while True:
         done = exited()                    # checked first, so the last read gets everything
         for raw in tail.lines(final=done):
             for ln in stream.feed(raw):
                 add(ln)
+        for raw in status_tail.lines(final=done):
+            _take_status(job, raw)
         if stream.session_id and job.cli_session_id != stream.session_id:
             job.cli_session_id = stream.session_id
             job.spec["session_id"] = stream.session_id
@@ -978,6 +985,66 @@ async def _follow(job, stream: "_Stream", add, exited, tail: "_FileTail") -> Non
         if done:
             return
         await asyncio.sleep(FOLLOW_POLL_S)
+
+
+STATUS_INSTRUCTIONS = """
+
+--- Status for the user ---
+Keep the user posted while you work, the way a progress line does. At the start and after each
+step, append ONE line of JSON to the file named in $ODYSSEUS_STATUS_FILE, for example:
+  echo '{"state":"working","detail":"Deploying the API worker"}' >> "$ODYSSEUS_STATUS_FILE"
+state is "working", "needs_input" (you are blocked on the user: say exactly what you need), or
+"done" (with a one-line result). Keep detail under 12 words. This is for the user's screen only:
+it does not replace your final report."""
+STATUS_STATES = ("working", "needs_input", "done", "failed")
+
+
+def _take_status(job, raw: str) -> None:
+    """One line the agent appended to status.jsonl."""
+    raw = (raw or "").strip()
+    if not raw:
+        return
+    try:
+        d = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        d = {"state": "working", "detail": raw}
+    if not isinstance(d, dict):
+        return
+    state = str(d.get("state") or "working").strip().lower().replace(" ", "_")
+    if state not in STATUS_STATES:
+        state = "working"
+    detail = _clip(str(d.get("detail") or d.get("text") or "").strip(), 160)
+    st = {"state": state, "detail": detail, "at": time.time()}
+    prev = job.agent_status
+    job.agent_status = st
+    job.timeline.append(st)
+    del job.timeline[:-50]
+    claude_code_jobs.save()
+    # Blocked on the user: tell them where they will see it (push, Modes,
+    # the desktop overlay), once per distinct request.
+    if state == "needs_input" and not (prev and prev.get("state") == "needs_input"
+                                       and prev.get("detail") == detail):
+        try:
+            t = asyncio.get_running_loop().create_task(_notify_needs_input(job, detail))
+            _BG_TASKS.add(t)
+            t.add_done_callback(_BG_TASKS.discard)
+        except RuntimeError:
+            pass
+
+
+async def _notify_needs_input(job, detail: str) -> None:
+    if not job.chat_session_id:
+        return
+    try:
+        from src import chat_queue
+        notify = chat_queue.get(job.chat_session_id).get("notify") or {}
+        title = chat_queue._session_title(job.chat_session_id)
+        await chat_queue.send_notification(
+            job.chat_session_id, notify,
+            f"{engine_label(job.engine)} needs you" + (f": {title}" if title else ""),
+            detail or "It is waiting on you.", kind="question")
+    except Exception as e:
+        logger.warning("Could not send the needs-input notification for %s: %s", job.id, e)
 
 
 def _exit_code(job) -> int:
