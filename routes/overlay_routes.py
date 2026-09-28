@@ -35,6 +35,23 @@ def _pending_plans(owner: str) -> list:
     return out
 
 
+# "Open" in the overlay brings up the Odysseus tab already showing Odysseus
+# on that machine, instead of opening a new one. The overlay asks here; the
+# open pages on the same machine (same address) poll, switch to the chat, put
+# a marker in their tab title and say so; the overlay then finds that tab
+# through Windows' UI Automation and selects it. No page answering means
+# none is open, and the overlay opens a new tab after all.
+_OPEN_REQUESTS: Dict[str, Dict[str, Any]] = {}      # owner -> the latest request
+OPEN_REQUEST_TTL_S = 10.0
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
 def setup_overlay_routes() -> APIRouter:
     router = APIRouter(tags=["overlay"])
 
@@ -66,6 +83,55 @@ def setup_overlay_routes() -> APIRouter:
         if not entry or (owner and entry.get("owner") and entry["owner"] != owner):
             raise HTTPException(404, "No such plan (it may have expired)")
         return approve_plan(plan_id, owner) if verb == "approve" else deny_plan(plan_id, owner)
+
+    @router.post("/api/overlay/open")
+    async def open_chat(request: Request) -> Dict[str, Any]:
+        """The overlay wants `session_id` on screen: ask this machine's pages."""
+        import secrets
+        owner = _owner(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        sid = str(body.get("session_id") or "").strip()
+        if not sid:
+            raise HTTPException(400, "session_id is required")
+        nonce = secrets.token_hex(3)
+        _OPEN_REQUESTS[owner] = {"nonce": nonce, "session_id": sid, "ip": _client_ip(request),
+                                 "ts": time.time(), "acks": []}
+        return {"nonce": nonce, "marker": f"[{nonce}]"}
+
+    @router.get("/api/overlay/open/{nonce}")
+    async def open_status(request: Request, nonce: str) -> Dict[str, Any]:
+        owner = _owner(request)
+        req = _OPEN_REQUESTS.get(owner)
+        if not req or req["nonce"] != nonce:
+            raise HTTPException(404, "No such request")
+        return {"acks": req["acks"]}
+
+    @router.get("/api/overlay/page/open-request")
+    async def page_open_request(request: Request) -> Dict[str, Any]:
+        """Polled by the Odysseus page: is the overlay on this machine asking
+        for a chat to be brought up?"""
+        owner = _owner(request)
+        req = _OPEN_REQUESTS.get(owner)
+        if (not req or time.time() - req["ts"] > OPEN_REQUEST_TTL_S
+                or req["ip"] != _client_ip(request)):
+            return {}
+        return {"nonce": req["nonce"], "session_id": req["session_id"]}
+
+    @router.post("/api/overlay/page/open-request/{nonce}/ack")
+    async def page_open_ack(request: Request, nonce: str) -> Dict[str, Any]:
+        owner = _owner(request)
+        req = _OPEN_REQUESTS.get(owner)
+        if not req or req["nonce"] != nonce:
+            raise HTTPException(404, "No such request")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        req["acks"].append({"visible": bool(body.get("visible")), "ts": time.time()})
+        return {"ok": True}
 
     @router.post("/api/overlay/reply")
     async def reply(request: Request) -> Dict[str, Any]:

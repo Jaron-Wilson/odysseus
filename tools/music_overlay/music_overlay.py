@@ -192,6 +192,52 @@ def app_sessions(source):
     return label, vols
 
 
+# ── bringing up an existing browser tab (UI Automation) ───────────────────
+def _bring_front(hwnd):
+    user32 = ctypes.windll.user32
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)                   # SW_RESTORE
+    # Windows only lets the foreground process move focus; a tap of Alt
+    # (the documented workaround) lifts that for this call.
+    user32.keybd_event(0x12, 0, 0, 0)
+    user32.SetForegroundWindow(hwnd)
+    user32.keybd_event(0x12, 0, 2, 0)
+
+
+def focus_marked_tab(marker):
+    """Select the Chrome/Edge tab whose title contains `marker` (set by the
+    Odysseus page when asked) and bring its window forward. True if found."""
+    import comtypes.client
+    comtypes.client.GetModule("UIAutomationCore.dll")
+    from comtypes.gen import UIAutomationClient as U
+    uia = comtypes.client.CreateObject(U.CUIAutomation, interface=U.IUIAutomation)
+    windows = uia.GetRootElement().FindAll(
+        U.TreeScope_Children, uia.CreatePropertyCondition(U.UIA_ClassNamePropertyId, "Chrome_WidgetWin_1"))
+    # The active tab's title is the window's title: no tab search needed.
+    for i in range(windows.Length):
+        w = windows.GetElement(i)
+        if marker in (w.CurrentName or ""):
+            _bring_front(w.CurrentNativeWindowHandle)
+            return True
+    tab_item = uia.CreatePropertyCondition(U.UIA_ControlTypePropertyId, U.UIA_TabItemControlTypeId)
+    for i in range(windows.Length):
+        w = windows.GetElement(i)
+        tabs = w.FindAll(U.TreeScope_Descendants, tab_item)
+        for j in range(tabs.Length):
+            t = tabs.GetElement(j)
+            if marker not in (t.CurrentName or ""):
+                continue
+            _bring_front(w.CurrentNativeWindowHandle)
+            try:
+                t.GetCurrentPattern(U.UIA_SelectionItemPatternId).QueryInterface(
+                    U.IUIAutomationSelectionItemPattern).Select()
+            except Exception:
+                t.GetCurrentPattern(U.UIA_LegacyIAccessiblePatternId).QueryInterface(
+                    U.IUIAutomationLegacyIAccessiblePattern).DoDefaultAction()
+            return True
+    return False
+
+
 # ── the window ────────────────────────────────────────────────────────────
 class Overlay:
     ICON_FONT = ("Segoe Fluent Icons", 12)
@@ -215,7 +261,13 @@ class Overlay:
         sw = root.winfo_screenwidth()
         x = self.settings.get("x", sw - W - 24)
         y = self.settings.get("y", 64)
-        root.geometry(f"{W}x{H}+{int(x)}+{int(y)}")
+        # Where the player sits. Only a drag changes it: messages open above
+        # it by growing the window upward, and the window is always placed
+        # from this anchor, never from a read-back position. Seen live: with
+        # display scaling the read-back was off, and the player crept a
+        # little with every ask, question and completion.
+        self.ax, self.ay = int(x), int(y)
+        root.geometry(f"{W}x{H}+{self.ax}+{self.ay}")
         if not self._font_ok("Segoe Fluent Icons"):
             self.ICON_FONT = ("Segoe MDL2 Assets", 12)
         self._build()
@@ -283,14 +335,16 @@ class Overlay:
 
     # dragging
     def _drag_start(self, e):
-        self._dx, self._dy = e.x_root - self.root.winfo_x(), e.y_root - self.root.winfo_y()
+        # Relative to the window's top-left, which is known from the anchor.
+        self._dx, self._dy = e.x_root - self.ax, e.y_root - (self.ay - self._msg_offset())
 
     def _drag(self, e):
-        self.root.geometry(f"+{e.x_root - self._dx}+{e.y_root - self._dy}")
+        self.ax, self.ay = e.x_root - self._dx, e.y_root - self._dy + self._msg_offset()
+        self.root.geometry(f"+{self.ax}+{self.ay - self._msg_offset()}")
 
     def _drag_end(self, e):
         # Saved as the player's own position, whether or not a message is open.
-        self.settings.update(x=self.root.winfo_x(), y=self.root.winfo_y() + self._msg_offset())
+        self.settings.update(x=self.ax, y=self.ay)
         save_settings(self.settings)
 
     # right-click menu
@@ -485,8 +539,7 @@ class Overlay:
         send.bind("<Button-1>", lambda e: self._send(self.entry.get()))
         opn = tk.Label(f, bg="#34343c", fg=FG, text="Open", cursor="hand2", font=("Segoe UI", 9))
         opn.place(x=W - 60, y=100, width=50, height=24)
-        opn.bind("<Button-1>", lambda e: self.current and webbrowser.open(
-            self.url + "#" + self.current["session_id"]))
+        opn.bind("<Button-1>", lambda e: self.current and self._open_chat(self.current["session_id"]))
         self.msg_status = tk.Label(f, bg=BG, fg=DIM, anchor="w", font=("Segoe UI", 8))
         self.msg_status.place(x=10, y=127, width=W - 20, height=16)
 
@@ -512,9 +565,8 @@ class Overlay:
         if not self.msg_open:
             # Open above the player (asked for: "above the music, not below
             # it"), unless the player sits at the very top of the screen.
-            x, y = self.root.winfo_x(), self.root.winfo_y()
-            self.msg_above = y >= MSG_H
-            self.root.geometry(f"{W}x{H + MSG_H}+{x}+{y - MSG_H if self.msg_above else y}")
+            self.msg_above = self.ay >= MSG_H
+            self.root.geometry(f"{W}x{H + MSG_H}+{self.ax}+{self.ay - MSG_H if self.msg_above else self.ay}")
             self.msg_open = True
         if self.msg_above:
             self.msg.place(x=0, y=0, width=W, height=MSG_H)
@@ -542,11 +594,10 @@ class Overlay:
         self.current = None
         if not self.msg_open:
             return
-        x, y = self.root.winfo_x(), self.root.winfo_y() + self._msg_offset()
         self.msg.place_forget()
         self.player.place(x=0, y=0, width=W, height=H)
         self.msg_open = False
-        self.root.geometry(f"{W}x{H}+{x}+{y}")
+        self.root.geometry(f"{W}x{H}+{self.ax}+{self.ay}")
 
     # ── plans waiting on an answer ───────────────────────────────────────
     def _sync_plans(self, plans):
@@ -584,6 +635,38 @@ class Overlay:
             except Exception as e:
                 log(f"plan {verb} failed: {e}")
                 self.q.put({"_status": f"Could not {verb}: {e}"[:80]})
+        threading.Thread(target=go, daemon=True).start()
+
+    def _open_chat(self, sid):
+        """Bring up the Odysseus tab already open on this machine, switched
+        to the chat; open a new tab only when there is none."""
+        if not sid:
+            return
+        self.msg_status.configure(text="Opening\u2026")
+
+        def go():
+            try:
+                d = self._api("POST", "api/overlay/open", {"session_id": sid})
+                acks = []
+                for _ in range(16):                  # the pages poll every 1.5 s
+                    time.sleep(0.25)
+                    acks = self._api("GET", f"api/overlay/open/{d['nonce']}").get("acks") or []
+                    if acks:
+                        break
+                if acks:
+                    for _ in range(12):              # the marked title can take a moment
+                        if focus_marked_tab(d["marker"]):
+                            log("open: brought up the existing tab")
+                            self.q.put({"_status": "Opened \u2713"})
+                            return
+                        time.sleep(0.25)
+                    log("open: a tab answered but could not be found; opening a new one")
+                else:
+                    log("open: no Odysseus tab on this machine; opening a new one")
+            except Exception as e:
+                log(f"open failed: {e}")
+            webbrowser.open(self.url + "#" + sid)
+            self.q.put({"_status": "Opened in a new tab"})
         threading.Thread(target=go, daemon=True).start()
 
     def _send(self, text):
