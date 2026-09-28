@@ -1204,6 +1204,130 @@ def list_audio_devices() -> Dict[str, Any]:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+# --------------------------------------------------------------------------
+# Media, played in the Odysseus chat straight from this machine
+#
+# Asked for: "I don't want to copy anything, I want to host a video from any
+# device: if it's on my device host it on mine, if not then host it from where
+# it's from". share_media() hands out an unguessable link for ONE file; the
+# bytes are streamed from here on request (with Range, so the player can
+# seek) through Odysseus, which is behind the user's login. Nothing is copied.
+# --------------------------------------------------------------------------
+import secrets as _secrets
+from urllib.parse import quote as _quote
+
+_MEDIA_EXT = {".mp4", ".m4v", ".mov", ".webm", ".ogv", ".mp3", ".m4a", ".aac", ".wav",
+              ".flac", ".ogg", ".oga", ".opus"}
+_MEDIA_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+                ".webm": "video/webm", ".ogv": "video/ogg", ".mp3": "audio/mpeg",
+                ".m4a": "audio/mp4", ".aac": "audio/aac", ".wav": "audio/wav",
+                ".flac": "audio/flac", ".ogg": "audio/ogg", ".oga": "audio/ogg",
+                ".opus": "audio/ogg"}
+_SHARED: Dict[str, Dict[str, Any]] = {}      # token -> {"path", "ts"}
+_SHARE_TTL_S = 7 * 24 * 3600
+
+
+def _media_roots() -> List[str]:
+    home = os.path.expanduser("~")
+    return [os.path.join(home, d) for d in ("Videos", "Music", "Desktop", "Downloads", "Movies")]
+
+
+@mcp.tool()
+def find_media(match: str = "", folder: str = "", limit: int = 25) -> Dict[str, Any]:
+    """Video and audio files on this machine, newest first. `match` filters by
+    name (case-insensitive words); `folder` searches one folder (default: the
+    user's Videos, Music, Desktop and Downloads)."""
+    words = [w for w in (match or "").lower().split() if w]
+    roots = [os.path.expanduser(folder)] if folder else _media_roots()
+    found = []
+    for root in roots:
+        for dirpath, _dirs, files in os.walk(root):
+            for f in files:
+                if os.path.splitext(f)[1].lower() not in _MEDIA_EXT:
+                    continue
+                if words and not all(w in f.lower() for w in words):
+                    continue
+                p = os.path.join(dirpath, f)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                found.append((st.st_mtime, p, st.st_size))
+    found.sort(reverse=True)
+    return {"ok": True, "count": len(found), "files": [
+        {"path": p, "mb": round(size / 1048576, 1), "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(m))}
+        for m, p, size in found[:max(1, min(int(limit or 25), 200))]]}
+
+
+@mcp.tool()
+def share_media(path: str) -> Dict[str, Any]:
+    """Share ONE video or audio file on this machine so it plays in the chat,
+    streamed from here (never copied). Put the returned `link` in the reply on
+    its own line and the chat shows a player for it."""
+    p = os.path.abspath(os.path.expanduser((path or "").strip().strip('"')))
+    if not os.path.isfile(p):
+        return {"ok": False, "error": f"no such file: {p}"}
+    ext = os.path.splitext(p)[1].lower()
+    if ext not in _MEDIA_EXT:
+        return {"ok": False, "error": f"not a video or audio file the browser can play ({ext or 'no extension'})"}
+    now = time.time()
+    for t in [t for t, r in _SHARED.items() if now - r["ts"] > _SHARE_TTL_S]:
+        _SHARED.pop(t, None)
+    token = next((t for t, r in _SHARED.items() if r["path"] == p), None) or _secrets.token_urlsafe(18)
+    _SHARED[token] = {"path": p, "ts": now}
+    name = os.path.basename(p)
+    return {"ok": True, "name": name, "mb": round(os.path.getsize(p) / 1048576, 1),
+            "link": f"/api/device-media/{token}/{_quote(name)}",
+            "note": "Streamed from this machine through Odysseus; the file stays where it is."}
+
+
+def _media_response(request):
+    """The shared file, honouring Range (206) so the player can seek."""
+    from starlette.responses import Response, StreamingResponse
+    rec = _SHARED.get(request.path_params.get("token", ""))
+    if not rec or not os.path.isfile(rec["path"]):
+        return Response("not shared", status_code=404)
+    path = rec["path"]
+    size = os.path.getsize(path)
+    ctype = _MEDIA_TYPES.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
+    start, end, status = 0, size - 1, 200
+    rng = request.headers.get("range", "")
+    m = re.match(r"bytes=(\d*)-(\d*)$", rng.strip())
+    if m and (m.group(1) or m.group(2)):
+        if m.group(1):
+            start = int(m.group(1))
+            end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+        else:                                     # a suffix: the last N bytes
+            start = max(0, size - int(m.group(2)))
+        if start >= size or start > end:
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+        status = 206
+    headers = {"Accept-Ranges": "bytes", "Content-Length": str(end - start + 1),
+               "Content-Type": ctype, "Cache-Control": "private, max-age=3600"}
+    if status == 206:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    if request.method == "HEAD":
+        return Response(status_code=status, headers=headers)
+
+    def chunks():
+        with open(path, "rb") as f:
+            f.seek(start)
+            left = end - start + 1
+            while left > 0:
+                data = f.read(min(1 << 20, left))
+                if not data:
+                    break
+                left -= len(data)
+                yield data
+    return StreamingResponse(chunks(), status_code=status, headers=headers)
+
+
+@mcp.custom_route("/media/{token}", methods=["GET", "HEAD"])
+async def _media_route(request):
+    return _media_response(request)
+
+
+
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)
     # Default to the tailnet address, never all interfaces. These tools launch
