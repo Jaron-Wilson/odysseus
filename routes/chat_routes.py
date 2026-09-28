@@ -628,6 +628,15 @@ def setup_chat_routes(
             agent_mode=(chat_mode == "agent"),
             allow_tool_preprocessing=allow_tool_preprocessing,
         )
+        # "Use as reference": earlier messages (pruned or not) or side threads
+        # the user attached, read for this turn only (src/chat_threads.py).
+        if form_data.get("references"):
+            try:
+                from src import chat_threads
+                chat_threads.apply_references(sess, ctx.messages, form_data.get("references"),
+                                              session_manager=session_manager)
+            except Exception as e:
+                logger.warning(f"Could not attach references: {e}")
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
 

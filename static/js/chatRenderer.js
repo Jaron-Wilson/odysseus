@@ -1609,6 +1609,8 @@ export function createMsgFooter(msgElement) {
       e.stopPropagation();
       if (window.chatModule?.deleteMessage) window.chatModule.deleteMessage(msgElement);
     }},
+    // Prune, Use as reference, Side thread (chatThreads.js)
+    ...(window.chatThreads ? window.chatThreads.actions(msgElement) : []),
   ];
 
   // Filter out unavailable actions (e.g. TTS when not enabled)
@@ -1808,6 +1810,8 @@ export function createUserMsgFooter(msgElement) {
       e.stopPropagation();
       if (window.chatModule?.resendUserMessage) window.chatModule.resendUserMessage(msgElement);
     }},
+    // Prune, Use as reference, Side thread (chatThreads.js)
+    ...(window.chatThreads ? window.chatThreads.actions(msgElement) : []),
   ];
 
   const recent = _getUserRecentActions();
@@ -2241,6 +2245,7 @@ export function addMessage(role, content, modelName, metadata) {
           wrap.appendChild(body);
           wrap.dataset.raw = txt;
           if (metadata?._db_id) wrap.dataset.dbId = metadata._db_id;
+          if (metadata?.excluded) wrap.classList.add('msg-excluded');   // pruned (chatThreads.js)
           box.appendChild(wrap);
           lastWrap = wrap;
           if (!firstMsgAi) firstMsgAi = wrap;
@@ -2430,6 +2435,7 @@ export function addMessage(role, content, modelName, metadata) {
 
     wrap.dataset.raw = text;
     if (metadata?._db_id) wrap.dataset.dbId = metadata._db_id;
+    if (metadata?.excluded) wrap.classList.add('msg-excluded');   // pruned (chatThreads.js)
     // Prepend sources box if saved in metadata
     var sourcesPrefix = '';
     var findingsSuffix = '';
@@ -2502,6 +2508,22 @@ export function addMessage(role, content, modelName, metadata) {
         b.innerHTML = `<span class="auto-prompt-tag">${_what} \u00b7 ${uiModule.esc(_auto[3])} ${_auto[1] === 'Plan approved' ? 'run' : 'job'} ${uiModule.esc(_auto[2])}</span>`
           + `<details class="auto-prompt-details"><summary>What the agent was told</summary>${_full}</details>`;
         wrap.classList.add('msg-auto-prompt');
+      }
+      // A side thread merged into this chat (routes/thread_routes.py).
+      const _merged = metadata?.source === 'thread_merge'
+        && String(textRaw || '').match(/^\[Side thread merged \u00b7 ([^\]\n]+)\]/);
+      if (_merged) {
+        const _full = b.innerHTML;
+        b.innerHTML = `<span class="auto-prompt-tag">\u{1F9F5} Merged side thread \u00b7 ${uiModule.esc(_merged[1].replace(/^\u{1F9F5}\s*/u, ''))}</span>`
+          + `<details class="auto-prompt-details"><summary>The thread</summary>${_full}</details>`;
+        wrap.classList.add('msg-auto-prompt');
+      }
+      // What this message sent along with it (Use as reference).
+      if (Array.isArray(metadata?.references) && metadata.references.length) {
+        const refs = document.createElement('div');
+        refs.className = 'msg-references';
+        refs.textContent = '\u{1F4CE} Referenced: ' + metadata.references.map((r) => r.label).join(' \u00b7 ');
+        b.appendChild(refs);
       }
     }
 

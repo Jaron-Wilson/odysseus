@@ -423,14 +423,30 @@ def _update_session_history(session, split_point: int, summary: str,
     if not session or not hasattr(session, "history"):
         return
 
-    effective_split = system_msg_count + split_point
-    if effective_split >= len(session.history):
+    # `split_point` counts conversation messages the model was sent. History
+    # also holds messages it is not sent (pruned, slash chatter), so find the
+    # cut by counting the same way, and keep those messages rather than
+    # summarising them away: a pruned message stays visible in the chat.
+    from core.models import in_context
+    history = session.history
+    lead = 0
+    while lead < len(history) and history[lead].role == "system":
+        lead += 1
+    seen = 0
+    effective_split = lead
+    while effective_split < len(history) and seen < split_point:
+        m = history[effective_split]
+        if m.role != "system" and in_context(m):
+            seen += 1
+        effective_split += 1
+    if seen < split_point or effective_split >= len(history):
         return
+    kept_out = [m for m in history[lead:effective_split] if not in_context(m)]
 
     # Keep the recent messages, prepend summary AND the leading system
     # messages so the system prompt survives compaction.
-    system_prefix = list(session.history[:system_msg_count])
-    recent_history = session.history[effective_split:]
+    system_prefix = list(history[:lead]) + kept_out
+    recent_history = history[effective_split:]
     summary_msg = ChatMessage(
         role="system",
         content=f"[Conversation summary]\n{summary}",
