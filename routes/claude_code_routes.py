@@ -240,15 +240,23 @@ def setup_claude_code_routes() -> APIRouter:
         started = start_turn(chat_id, prompt, note_source="claude_code_brought_back",
                              reply_source="claude_code_brought_back_run")
         queued = False
+        reason = ""
         if not started:
-            from src import chat_queue
+            from src import agent_runs, chat_queue
+            # Queued behind the reply that has the chat, once: seen live, two
+            # clicks a second apart queued the prompt twice.
+            reason = ("A reply is already running in that chat; this run comes back as soon as it ends."
+                      if agent_runs.is_active(chat_id) else "The chat could not start a turn right now; it is queued.")
             try:
-                chat_queue.add(chat_id, prompt)
+                chat_queue.add(chat_id, prompt, key=f"bring-back:{job.id}",
+                               label=f"Bring back {engine_label(job.engine)} job {job.id}")
                 queued = True
             except Exception as e:
                 raise HTTPException(409, f"Could not bring it back: {e}")
-        logger.info("[claude_code] job %s brought back into chat %s", job.id, chat_id[:8])
-        return {"ok": True, "resuming": started, "queued": queued, "chat_session_id": chat_id}
+        logger.info("[claude_code] job %s brought back into chat %s%s", job.id, chat_id[:8],
+                    " (queued)" if queued else "")
+        return {"ok": True, "resuming": started, "queued": queued, "reason": reason,
+                "chat_session_id": chat_id}
 
     @router.post("/api/claude_code/jobs/{job_id}/stop")
     async def stop_job(request: Request, job_id: str):

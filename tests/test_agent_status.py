@@ -99,7 +99,7 @@ def test_only_build_runs_are_asked_to_report():
     assert 'if action == "execute":\n            prompt = prompt.rstrip() + STATUS_INSTRUCTIONS' in src
     js = open(os.path.join(HERE, "static", "js", "chat.js"), encoding="utf-8").read()
     assert "json.agent_status && json.agent_status.detail" in js
-    assert "_statusHtml(first.agent_status)" in open(os.path.join(HERE, "static", "js", "bgTasks.js")).read()
+    assert "_statusHtml(j.agent_status)" in open(os.path.join(HERE, "static", "js", "bgTasks.js")).read()
 
 
 def test_garbage_lines_do_not_break_it(tmp_path, monkeypatch):
