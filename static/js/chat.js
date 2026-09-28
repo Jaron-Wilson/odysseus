@@ -3779,22 +3779,25 @@ import './bgTasks.js';
   export async function resumeStream(sessionId) {
     if (!sessionId) return false;
     if (hasActiveStream(sessionId)) return false;
+    // Claimed BEFORE the fetch: two callers close together (a refresh starts
+    // several) used to both pass the check above while the first was still
+    // waiting on the network, and each added its own reply section. Seen
+    // live: "it adds another <model> section under the chat". A dedicated set
+    // (not _backgroundStreams) so checkBackgroundStream doesn't mistake this
+    // for a same-tab POST stream and spawn its own spinner+poll on re-entry.
+    _resumingStreams.add(sessionId);
 
     let res;
     try {
       res = await fetch(`${API_BASE}/api/chat/resume/${sessionId}`);
     } catch (e) {
+      _resumingStreams.delete(sessionId);
       return false;
     }
-    if (!res.ok || !res.body) return false;
+    if (!res.ok || !res.body) { _resumingStreams.delete(sessionId); return false; }
 
     const box = document.getElementById('chat-history');
-    if (!box) return false;
-
-    // Block duplicate re-attach attempts while this reader is live. A dedicated
-    // set (not _backgroundStreams) so checkBackgroundStream doesn't mistake this
-    // for a same-tab POST stream and spawn its own spinner+poll on re-entry.
-    _resumingStreams.add(sessionId);
+    if (!box) { _resumingStreams.delete(sessionId); return false; }
 
     const holder = document.createElement('div');
     holder.className = 'msg msg-ai';
@@ -3808,10 +3811,18 @@ import './bgTasks.js';
     const contentDiv = holder.querySelector('.stream-content');
     box.appendChild(holder);
 
-    const spinner = spinnerModule.create('Generating response...', 'right');
+    // Nothing has arrived yet: say so, as the live send does ("waiting for
+    // first token"), and switch once the replay or the model produces output.
+    const spinner = spinnerModule.create('Waiting for the first token\u2026', 'right');
     holder.querySelector('.body').appendChild(spinner.createElement());
     spinner.start();
     uiModule.scrollHistory();
+    let _spinnerLive = false;
+    const _markLive = () => {
+      if (_spinnerLive) return;
+      _spinnerLive = true;
+      try { spinner.updateMessage('Generating response\u2026'); } catch (_) {}
+    };
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -3938,6 +3949,7 @@ import './bgTasks.js';
           }
           let json;
           try { json = JSON.parse(payload); } catch (_) { continue; }
+          if (json.delta || json.type === 'tool_start' || json.type === 'agent_step') _markLive();
           if (json.delta) {
             roundText += json.delta;
             liveRoundText[liveRound] = (liveRoundText[liveRound] || '') + json.delta;

@@ -2205,7 +2205,22 @@ function _updateRailNotifs() {
  * If the server is still streaming for this session, show a spinner
  * and poll until done, then reload the session.
  */
+// One check per chat at a time: a refresh calls this from several places at
+// once, and each used to be able to add its own placeholder reply.
+const _checkingStream = new Set();
+const _pollingStream = new Set();     // a placeholder reply is up and polling
+
 async function _checkServerStream(sessionId) {
+  if (_checkingStream.has(sessionId) || _pollingStream.has(sessionId)) return;
+  _checkingStream.add(sessionId);
+  try {
+    await _checkServerStreamOnce(sessionId);
+  } finally {
+    _checkingStream.delete(sessionId);
+  }
+}
+
+async function _checkServerStreamOnce(sessionId) {
   try {
     // Skip if research is running — it has its own progress UI
     if (_researchingSessions.has(sessionId)) return;
@@ -2248,9 +2263,10 @@ async function _checkServerStream(sessionId) {
     // may not be set yet when _checkServerStream first runs. Retry resumeStream
     // on the first poll tick where it becomes available.
     let _resumeRetried = false;
+    _pollingStream.add(sessionId);
     const pollId = setInterval(async () => {
       if (getCurrentSessionId() !== sessionId) {
-        clearInterval(pollId);
+        clearInterval(pollId); _pollingStream.delete(sessionId);
         spinner.destroy();
         if (holder.parentNode) holder.remove();
         return;
@@ -2259,7 +2275,7 @@ async function _checkServerStream(sessionId) {
         _resumeRetried = true;
         const attached = await window.chatModule.resumeStream(sessionId);
         if (attached) {
-          clearInterval(pollId);
+          clearInterval(pollId); _pollingStream.delete(sessionId);
           spinner.destroy();
           if (holder.parentNode) holder.remove();
           return;
@@ -2268,14 +2284,14 @@ async function _checkServerStream(sessionId) {
       try {
         const r = await fetch(`${API_BASE}/api/chat/stream_status/${sessionId}`);
         if (!r.ok || (await r.json()).status !== 'streaming') {
-          clearInterval(pollId);
+          clearInterval(pollId); _pollingStream.delete(sessionId);
           spinner.destroy();
           if (holder.parentNode) holder.remove();
           // Reload session to show the completed response + docs
           selectSession(sessionId);
         }
       } catch (_) {
-        clearInterval(pollId);
+        clearInterval(pollId); _pollingStream.delete(sessionId);
         spinner.destroy();
         if (holder.parentNode) holder.remove();
         selectSession(sessionId);
