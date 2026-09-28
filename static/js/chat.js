@@ -3840,6 +3840,7 @@ import './bgTasks.js';
     };
 
     const reader = res.body.getReader();
+    let _resThinkOpen = false;          // inside a <think> opened for reasoning deltas
     const decoder = new TextDecoder();
     let buffer = '';
     let roundText = '';
@@ -3966,8 +3967,19 @@ import './bgTasks.js';
           try { json = JSON.parse(payload); } catch (_) { continue; }
           if (json.delta || json.type === 'tool_start' || json.type === 'agent_step') _markLive();
           if (json.delta) {
-            roundText += json.delta;
-            liveRoundText[liveRound] = (liveRoundText[liveRound] || '') + json.delta;
+            // Reasoning deltas (vLLM / DeepSeek reasoning_content) carry no
+            // tags, only thinking:true. Wrap them the way the live stream
+            // does, or after a refresh the model's thinking showed as an
+            // ordinary reply ("the <thinking> gets out and acts as a normal
+            // call").
+            let _d = json.delta;
+            if (json.thinking) {
+              if (!_resThinkOpen) { _d = '<think>' + _d; _resThinkOpen = true; }
+            } else if (_resThinkOpen) {
+              _d = '</think>' + _d; _resThinkOpen = false;
+            }
+            roundText += _d;
+            liveRoundText[liveRound] = (liveRoundText[liveRound] || '') + _d;
             if (liveTools.length || liveRunning) { queueLiveTools(); continue; }
             if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
             renderDelta();
@@ -3976,6 +3988,11 @@ import './bgTasks.js';
             markQueuedDelivered(json.items);
           } else if (json.type === 'agent_step') {
             rich = true;
+            if (_resThinkOpen) {                 // a round ended mid-thought: close it there
+              roundText += '</think>';
+              liveRoundText[liveRound] = (liveRoundText[liveRound] || '') + '</think>';
+              _resThinkOpen = false;
+            }
             liveRound = Number(json.round) || liveRound + 1;
             if (liveRoundText[liveRound] === undefined) liveRoundText[liveRound] = '';
           } else if (json.type === 'tool_start') {
