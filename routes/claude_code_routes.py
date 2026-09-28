@@ -131,6 +131,30 @@ def setup_claude_code_routes() -> APIRouter:
             "plan": entry.get("plan"),
         }
 
+    @router.get("/api/claude_code/pending")
+    async def pending_plans(request: Request):
+        """Every plan waiting for this person's Approve or Deny, newest first,
+        for the Background panel. Asked for: "I don't see those requests,
+        can we add a tab that shows all pending tasks?" - a plan's links only
+        ever lived in its chat reply, and a reply that lost them left the
+        plan waiting with no way to answer it."""
+        user = _require_user(request)
+        from src.chat_queue import _session_title
+        from src.doc_pdf import PDF_DIR
+        out = []
+        for p in approvals.pending_for(user or ""):
+            chat = p.get("chat_session_id") or ""
+            engine = "OpenCode" if p.get("engine") == "opencode" else "Claude Code"
+            out.append({
+                "id": p["session_id"], "chat_session_id": chat,
+                "chat_name": _session_title(chat) if chat else "",
+                "cwd": p.get("cwd", ""), "created": p.get("created", 0),
+                "runs_on": f"{engine} \u00b7 {p.get('model') or 'local default'}",
+                "preview": p.get("plan", ""),
+                "has_pdf": os.path.isfile(os.path.join(PDF_DIR, f"plan-{p['session_id']}.pdf")),
+            })
+        return {"plans": out}
+
     @router.get("/api/claude_code/plan/{session_id}/pdf")
     async def get_plan_pdf(request: Request, session_id: str):
         """Download the plan rendered in the house style."""
