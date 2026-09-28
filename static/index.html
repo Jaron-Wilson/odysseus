@@ -1297,7 +1297,8 @@
     }
 
     function update() {
-      reposition();
+      // Position only when the input bar moves (ResizeObserver / resize below);
+      // measuring it here too cost a full layout on every check.
       const scrollable = container.scrollHeight > container.clientHeight + 10;
       const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 300;
       if (scrollable && !atBottom) {
@@ -1319,27 +1320,54 @@
       _scrollingToBottom = false;
     }
 
-    container.addEventListener('scroll', update, {passive:true});
+    // Measuring the page (getBoundingClientRect, scrollHeight) forces a
+    // layout of the whole chat. Done on every DOM change, a long chat stuttered
+    // while a reply streamed: seen with ~230 items, 25+ long tasks in 30 s,
+    // from tokens, the tool card's wave (10/s) and its elapsed ticker. Now at
+    // most once a frame when scrolling, and once per 200 ms for changes.
+    let _updFrame = 0;
+    let _updTimer = 0;
+    function scheduleUpdate() {
+      if (_updFrame) return;
+      _updFrame = requestAnimationFrame(() => { _updFrame = 0; update(); });
+    }
+    function scheduleUpdateSoon() {
+      if (_updTimer) return;
+      _updTimer = setTimeout(() => { _updTimer = 0; scheduleUpdate(); }, 200);
+    }
+    container.addEventListener('scroll', scheduleUpdate, {passive:true});
     container.addEventListener('wheel', () => { if (_scrollingToBottom) cancelAutoScroll(); }, {passive:true});
     container.addEventListener('touchstart', () => { if (_scrollingToBottom) cancelAutoScroll(); }, {passive:true});
 
     bottomBtn.addEventListener('click', () => {
       cancelAutoScroll();
-      const target = container.scrollHeight - container.clientHeight;
       _scrollingToBottom = true;
+      // The bottom is re-measured every frame: messages drawn for the first
+      // time on the way down (content-visibility) change the page's height.
+      const bottom = () => container.scrollHeight - container.clientHeight;
       function step() {
         if (!_scrollingToBottom) return;
-        const diff = target - container.scrollTop;
-        if (diff <= 8) { container.scrollTop = target; _scrollingToBottom = false; return; }
-        container.scrollTop += diff * 0.2;
+        const diff = bottom() - container.scrollTop;
+        if (diff <= 8) { container.scrollTop = bottom(); _scrollingToBottom = false; scheduleUpdate(); return; }
+        container.scrollTop += Math.max(diff * 0.2, 40);
         _scrollRaf = requestAnimationFrame(step);
       }
       step();
-      _scrollTimeout = setTimeout(() => { if (_scrollingToBottom) { container.scrollTop = target; _scrollingToBottom = false; } }, 1500);
+      _scrollTimeout = setTimeout(() => {
+        if (!_scrollingToBottom) return;
+        container.scrollTop = bottom();
+        requestAnimationFrame(() => { container.scrollTop = bottom(); _scrollingToBottom = false; scheduleUpdate(); });
+      }, 1500);
     });
-    new ResizeObserver(reposition).observe(chatBar);
-    new MutationObserver(update).observe(container, {childList:true, subtree:true});
-    window.addEventListener('resize', reposition);
+    let _posFrame = 0;
+    function scheduleReposition() {
+      if (_posFrame) return;
+      _posFrame = requestAnimationFrame(() => { _posFrame = 0; reposition(); });
+    }
+    new ResizeObserver(scheduleReposition).observe(chatBar);
+    new MutationObserver(scheduleUpdateSoon).observe(container, {childList:true, subtree:true});
+    window.addEventListener('resize', scheduleReposition);
+    reposition();
     update();
   })();
   </script>
