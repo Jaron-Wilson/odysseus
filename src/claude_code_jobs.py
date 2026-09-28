@@ -97,7 +97,10 @@ class Job:
             "finished": self.finished,
             "elapsed_s": round((self.finished or time.time()) - self.started, 1),
             "status": self.status,
-            "background": self.detached,
+            # Brought back and followed in its chat again: not background. The
+            # chip kept offering "Bring back" for a run already back.
+            "background": self.detached and not self.attached,
+            "attached": bool(self.attached),
             "reattached": self.reattached,
             "chat_name": _chat_name(self.chat_session_id),
             "agent_status": self.agent_status,

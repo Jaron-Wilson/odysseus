@@ -123,7 +123,8 @@ def test_the_route_starts_or_queues_the_turn(env, monkeypatch):
     started, queued = [], []
     busy = {"v": False}
     monkeypatch.setattr(scr, "start_turn", lambda sid, prompt, **kw: (started.append(prompt) or True) if not busy["v"] else False)
-    monkeypatch.setattr(chat_queue, "add", lambda sid, text: queued.append(text))
+    monkeypatch.setattr(chat_queue, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(chat_queue, "QUEUE_FILE", str(tmp_path / "chat_queue.json"))
     j = jobs.register(chat_session_id="chat-1", owner="", action="execute", cwd="/w", model="m",
                       engine="opencode", prompt="p")
     j.detached = True
@@ -134,6 +135,46 @@ def test_the_route_starts_or_queues_the_turn(env, monkeypatch):
     assert r["resuming"] and r["chat_session_id"] == "chat-1"
     assert f'"job_id": "{j.id}"' in started[0] and "· OpenCode]" in started[0]
     busy["v"] = True
-    assert c.post(f"/api/claude_code/jobs/{j.id}/foreground").json()["queued"] and queued
+    from src import agent_runs
+    monkeypatch.setattr(agent_runs, "is_active", lambda sid: sid == "chat-1")
+    r = c.post(f"/api/claude_code/jobs/{j.id}/foreground").json()
+    assert r["queued"] and "already running in that chat" in r["reason"]
+    # Clicked again (nothing seemed to happen): still one queued prompt.
+    assert c.post(f"/api/claude_code/jobs/{j.id}/foreground").json()["queued"]
+    items = chat_queue.get("chat-1")["items"]
+    assert len(items) == 1 and items[0]["label"] == f"Bring back OpenCode job {j.id}"
+    assert '"action": "attach"' in items[0]["text"]
     jobs.finish(j, "done")
     assert c.post(f"/api/claude_code/jobs/{j.id}/foreground").status_code == 409
+
+
+def test_a_run_followed_in_its_chat_is_not_background(env):
+    # Seen live: brought back, the chip still said "running · background"
+    # and offered "Bring back to chat" again, so nothing seemed to happen.
+    j = jobs.register(chat_session_id="chat-1", owner="", action="execute", cwd="/w", model="m",
+                      engine="opencode", prompt="p")
+    j.detached = True
+    assert j.public()["background"] and not j.public()["attached"]
+    j.attached = True
+    assert not j.public()["background"] and j.public()["attached"]
+
+
+def test_the_chip_lists_every_run_in_the_chat():
+    # Seen live: "it had 2 background tasks per 1 chat and it only showed one".
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    js = open(os.path.join(here, "static", "js", "bgTasks.js"), encoding="utf-8").read()
+    assert "${here.map((j) => _chipRow(j, true)).join('')}" in js
+    assert "j.chat_session_id === sid && (j.background || j.attached)" in js
+    assert "window.chatModule.watchQueue(chat)" in js
+
+
+def test_queue_items_keep_a_label_and_are_not_added_twice(tmp_path, monkeypatch):
+    from src import chat_queue
+    monkeypatch.setattr(chat_queue, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(chat_queue, "QUEUE_FILE", str(tmp_path / "q.json"))
+    chat_queue.add("c", "a long server-written prompt", label="Bring back job 1", key="k1")
+    chat_queue.add("c", "a long server-written prompt", label="Bring back job 1", key="k1")
+    chat_queue.add("c", "typed by the user")
+    items = chat_queue.get("c")["items"]
+    assert [i.get("label") for i in items] == ["Bring back job 1", None]
+    assert chat_queue.claim("c")["text"] == "a long server-written prompt"

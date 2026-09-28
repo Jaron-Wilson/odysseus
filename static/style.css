@@ -36919,11 +36919,22 @@ body.theme-frosted .modal {
 /* Background tasks chip above the composer, and a job watched in the chat (bgTasks.js). */
 .bg-chip {
   max-width: var(--chat-max); width: 100%; margin: 0 auto 6px; box-sizing: border-box;
-  display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12.5px;
+  display: flex; flex-direction: column; gap: 4px; padding: 6px 10px; font-size: 12.5px;
   border-radius: 12px; border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
   background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 .bg-chip[hidden] { display: none; }
+/* One row per run in the chat, each with its own buttons. */
+.bg-chip-head { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.bg-chip-head [data-chip-all] { margin-left: auto; }
+.bg-chip-more { opacity: .6; font-weight: normal; }
+.bg-chip-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bg-chip-engine { flex: none; opacity: .8; white-space: nowrap; }
+@media (max-width: 600px) {
+  .bg-chip-row { flex-wrap: wrap; }
+  .bg-chip-row .bg-chip-what { flex-basis: 100%; order: 1; }
+  .bg-chip-row button { order: 2; }
+}
 .bg-chip-what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .65; }
 .bg-chip button, .bg-watch-head button {
   font-size: 12px; padding: 2px 10px; border-radius: 8px; cursor: pointer; color: inherit; background: none;

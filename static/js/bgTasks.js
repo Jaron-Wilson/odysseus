@@ -116,28 +116,44 @@ export async function watchInChat(jobId, chatId) {
 // ── the chip above the composer ─────────────────────────────────────────
 let _chipJobs = [];
 let _chipSid = null;
+function _chipRow(j, here) {
+  const followed = j.attached && !j.background;
+  const what = j.agent_status && j.agent_status.detail ? _statusHtml(j.agent_status) : _esc(j.prompt || j.action);
+  return `<div class="bg-chip-row" data-job="${_esc(j.id)}">
+    <span class="bg-dot running"></span>
+    <span class="bg-chip-engine">${j.engine === 'opencode' ? 'OpenCode' : 'Claude Code'} ${_esc(j.action)} \u00b7 ${followed ? 'following in chat' : 'background'} \u00b7 ${_dur(j.elapsed_s)}</span>
+    <span class="bg-chip-what">${what}</span>
+    ${followed ? '' : `<button type="button" data-chip-watch="${_esc(j.id)}" data-chip-chat="${_esc(j.chat_session_id || '')}">${here ? 'Watch here' : 'Go to chat'}</button>`}
+    ${!followed && j.chat_session_id ? `<button type="button" data-bring-back="${_esc(j.id)}" data-chat="${_esc(j.chat_session_id)}" title="Follow it in its chat again and carry on the conversation from its result">Bring back to chat</button>` : ''}
+  </div>`;
+}
+
 function _renderChip(jobs) {
   const chip = document.getElementById('bg-chip');
   if (!chip) return;
   _chipJobs = jobs;
   const sid = _chipSid = _currentSid();
-  const running = jobs.filter((j) => j.status === 'running' && j.background);
-  const here = running.filter((j) => j.chat_session_id === sid);
-  if (!running.length) { chip.hidden = true; chip.innerHTML = ''; return; }
+  const running = jobs.filter((j) => j.status === 'running');
+  // This chat: every run it has, background or followed in the chat. Seen
+  // live: two runs in one chat and the chip showed one.
+  const here = running.filter((j) => j.chat_session_id === sid && (j.background || j.attached));
+  const elsewhere = running.filter((j) => j.background && j.chat_session_id !== sid);
+  if (!here.length && !elsewhere.length) { chip.hidden = true; chip.innerHTML = ''; return; }
   chip.hidden = false;
-  const first = here[0] || running[0];
+  if (here.length) {
+    chip.innerHTML = `<div class="bg-chip-head">${here.length} coding-agent run${here.length > 1 ? 's' : ''} in this chat
+      ${elsewhere.length ? `<span class="bg-chip-more">+${elsewhere.length} in other chats</span>` : ''}
+      <button type="button" data-chip-all>All tasks</button></div>
+      ${here.map((j) => _chipRow(j, true)).join('')}`;
+    return;
+  }
   // Always say which chat a run belongs to. Seen live: "1 background task
   // running in this chat" read as this chat while the run was another's.
-  const where = here.length
-    ? 'in this chat'
-    : (first.chat_name ? `in \u201c${_esc(first.chat_name)}\u201d` : 'in another chat');
-  const count = here.length || running.length;
-  chip.innerHTML = `<span class="bg-dot running"></span>
-    <span>${count} background task${count > 1 ? 's' : ''} running ${where}</span>
-    <span class="bg-chip-what">${first.agent_status && first.agent_status.detail ? _statusHtml(first.agent_status) : _esc(first.prompt || first.action)}</span>
-    <button type="button" data-chip-watch="${_esc(first.id)}" data-chip-chat="${_esc(first.chat_session_id || '')}">${here.length ? 'Watch here' : 'Go to chat'}</button>
-    ${first.chat_session_id ? `<button type="button" data-bring-back="${_esc(first.id)}" data-chat="${_esc(first.chat_session_id)}" title="Follow it in its chat again and carry on the conversation from its result">Bring back to chat</button>` : ''}
-    <button type="button" data-chip-all>All tasks</button>`;
+  const first = elsewhere[0];
+  const where = first.chat_name ? `in \u201c${_esc(first.chat_name)}\u201d` : 'in another chat';
+  chip.innerHTML = `<div class="bg-chip-head">${elsewhere.length} background task${elsewhere.length > 1 ? 's' : ''} running ${elsewhere.length > 1 ? 'in other chats' : where}
+    <button type="button" data-chip-all>All tasks</button></div>
+    ${_chipRow(first, false)}`;
 }
 // Redrawn as soon as the chat changes, not at the next poll.
 setInterval(() => { if (_currentSid() !== _chipSid) _renderChip(_chipJobs); }, 500);
@@ -164,9 +180,13 @@ document.addEventListener('click', async (ev) => {
     } else if (d.resuming && window.chatModule && window.chatModule.resumeStream) {
       window.chatModule.resumeStream(chat);
     }
+    if (d.queued && window.chatModule && window.chatModule.watchQueue) window.chatModule.watchQueue(chat);
     if (window.showToast) {
-      window.showToast(d.queued ? 'It comes back as soon as the current reply finishes' : 'Back in the chat');
+      window.showToast(d.queued ? (d.reason || 'It comes back as soon as the current reply finishes')
+        : (d.already ? 'It is already being followed in the chat' : 'Back in the chat: its output streams in the card below'));
     }
+    refreshCount();                                             // the chip says "following in chat"
+    setTimeout(refreshCount, 2500);
   } catch (e) {
     if (window.showToast) window.showToast(`Could not bring it back: ${e.message}`);
   } finally {

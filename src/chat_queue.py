@@ -91,7 +91,8 @@ def _entry(data: Dict, session_id: str) -> Dict:
 def _public(entry: Optional[Dict]) -> Dict:
     entry = entry or {}
     return {
-        "items": [{"id": i["id"], "text": i["text"]} for i in entry.get("items") or []],
+        "items": [dict({"id": i["id"], "text": i["text"]}, **({"label": i["label"]} if i.get("label") else {}))
+                  for i in entry.get("items") or []],
         "notify": entry.get("notify"),
     }
 
@@ -102,17 +103,28 @@ def get(session_id: str) -> Dict:
 
 
 def add(session_id: str, text: str, *, client_device: Optional[Dict] = None,
-        notify: Optional[Dict] = None, base: str = "") -> Dict:
+        notify: Optional[Dict] = None, base: str = "", label: str = "",
+        key: str = "") -> Dict:
+    """Queue a message. `label` is what the queue shows instead of the text
+    (a server-written prompt is long); an item with the same `key` already
+    queued is not added again (a bring-back clicked twice was sent twice)."""
     text = (text or "").strip()[:MAX_TEXT]
     if not session_id or not text:
         raise ValueError("a chat and some text are needed")
     with _lock:
         data = _load()
         e = _entry(data, session_id)
+        if key and any(i.get("key") == key for i in e["items"]):
+            return _public(e)
         if len(e["items"]) >= MAX_ITEMS:
             raise ValueError(f"the queue holds at most {MAX_ITEMS} messages")
-        e["items"].append({"id": uuid.uuid4().hex[:12], "text": text,
-                           "client_device": client_device, "added": time.time()})
+        item = {"id": uuid.uuid4().hex[:12], "text": text,
+                "client_device": client_device, "added": time.time()}
+        if label:
+            item["label"] = label[:200]
+        if key:
+            item["key"] = key
+        e["items"].append(item)
         if notify is not None:
             e["notify"] = _with_base(clean_notify(notify), base)
         _save(data)

@@ -62,6 +62,7 @@ import './bgTasks.js';
   const _queues = new Map();               // sessionId -> [{id, text}, ...]
   let _restoreDraft = null;                // what the user was typing when a queued send went out
   let _sendNowText = null;                 // Ctrl+Enter: sent as soon as the interrupted reply ends
+  let _interruptNext = false;              // ...and marked so the server does not queue it
   const _queueWatch = new Set();           // chats whose queue the server may be sending
 
   function _escQ(s) {
@@ -106,7 +107,7 @@ import './bgTasks.js';
       </div>
       ${q.map((it) => `
         <div class="chat-queue-item">
-          <span class="chat-queue-text" title="${_escQ(it.text)}">${_escQ(it.text)}</span>
+          <span class="chat-queue-text" title="${_escQ(it.label || it.text)}">${_escQ(it.label || it.text)}</span>
           ${it.id ? `<button type="button" class="chat-queue-x" data-queue-remove="${_escQ(it.id)}" title="Remove" aria-label="Remove">×</button>` : ''}
         </div>`).join('')}
       <div class="chat-queue-note">↑ to edit · Ctrl+Enter to send now · Stop sends these next · kept if you leave the page</div>`;
@@ -127,6 +128,14 @@ import './bgTasks.js';
       resumeStream(sid);
     }
     if (!data.running && !(data.items || []).length) _queueWatch.delete(sid);
+  }
+
+  // Something outside this module queued a message for a chat (a bring-back
+  // behind a running reply): show it, and follow the chat until it is sent.
+  export function watchQueue(sid) {
+    if (!sid) return;
+    _queueWatch.add(sid);
+    refreshQueue(sid);
   }
 
   export function queueMessage(text) {
@@ -221,6 +230,7 @@ import './bgTasks.js';
     try { await _queueCall(sid, '', 'DELETE'); } catch (_) { /* best effort */ }
     if (ta) { ta.value = ''; if (uiModule.autoResize) uiModule.autoResize(ta); }
     _sendNowText = texts.join('\n\n');
+    _interruptNext = true;
     _stopReply();
     return true;
   }
@@ -265,6 +275,11 @@ import './bgTasks.js';
       e.preventDefault();
       e.stopImmediatePropagation();
       sendQueuedNow();
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      // A reply this page is not streaming (after a refresh, or started by an
+      // approval): Ctrl+Enter still means stop it and send this now. The
+      // normal send goes ahead, marked so the server does not queue it.
+      _interruptNext = true;
     } else if (e.key === 'ArrowUp' && hasQueue && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
       const ta = e.target;
       const firstBreak = ta.value.indexOf('\n');
@@ -1291,6 +1306,9 @@ import './bgTasks.js';
       const fd = new FormData();
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);
+      // Ctrl+Enter: stop the reply and send this now. Anything else sent while
+      // a reply runs is queued by the server behind it.
+      if (_interruptNext) { fd.append('interrupt', '1'); _interruptNext = false; }
       // The bell: push a "done" notification from the server (notifyDone.js).
       fd.append('notify', notifyDone.payload());
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
@@ -1885,6 +1903,20 @@ import './bgTasks.js';
             }
             try {
               const json = JSON.parse(data);
+              // The server queued it behind a reply already running in this
+              // chat (this page did not know one was: a refresh, or a run an
+              // approval or a bring-back started). It moves to the queue.
+              if (json.type === 'queued') {
+                const _hist = document.getElementById('chat-history');
+                const _users = _hist ? _hist.querySelectorAll('.msg.msg-user') : [];
+                if (_users.length) _users[_users.length - 1].remove();
+                _setQueue(streamSessionId, (json.queue && json.queue.items) || []);
+                _queueWatch.add(streamSessionId);
+                renderQueue();
+                if (window.showToast) window.showToast('Queued: it goes out when the current reply finishes. Ctrl+Enter sends it now.');
+                if (currentAbort) { currentAbort._reason = 'queued'; currentAbort.abort(); }
+                break;
+              }
               // Handle SSE error events (e.g. HTTP 404 from provider)
               if (_nextIsError || json.status >= 400) {
                 _nextIsError = false;
@@ -3296,6 +3328,11 @@ import './bgTasks.js';
 
         if (currentAbort && currentAbort.signal.aborted) {
           const abortReason = currentAbort._reason || '';
+          if (abortReason === 'queued') {         // moved to the queue: nothing to show here
+            if (holder && holder.parentNode) holder.remove();
+            currentAbort = null;
+            return;
+          }
           // Timeout-triggered aborts should remain visible instead of disappearing.
           if (timedOut || abortReason === 'timeout') {
             const timeoutMsg = _isAgent
@@ -5633,6 +5670,7 @@ import './bgTasks.js';
     detachCurrentStream,
     checkBackgroundStream,
     resumeStream,
+    watchQueue,
     // For modules that cannot import sessions.js (chatRenderer's approval
     // modal): which chat is on screen, so a resumed run is only attached to
     // the chat it belongs to.

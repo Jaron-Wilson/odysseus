@@ -532,6 +532,24 @@ def setup_chat_routes(
             # Verify ownership AFTER coerce (which may resolve a default session)
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
+            # A reply is already running in this chat: queue the message behind
+            # it rather than cutting it off. Asked for: "when I press enter it
+            # should queue the message not stop; Ctrl+Enter to force stop and
+            # put in the message". The page queues on its own while it knows a
+            # reply is streaming; this covers the times it does not (after a
+            # refresh, a run started by an approval or a bring-back, a second
+            # tab or the phone). Ctrl+Enter sends interrupt=1.
+            if (not compare_mode and message and agent_runs.is_active(session)
+                    and str(form_data.get("interrupt") or "").lower() not in ("1", "true")):
+                try:
+                    _q = chat_queue.add(session, str(message))
+                except ValueError as e:
+                    raise HTTPException(409, str(e))
+
+                async def _queued_reply():
+                    yield f"data: {json.dumps({'type': 'queued', 'queue': _q})}\n\n"
+                    yield "data: [DONE]\n\n"
+                return StreamingResponse(_queued_reply(), media_type="text/event-stream")
             sess = session_manager.get_session(session)
             owner = get_current_user(request)
             if _clear_orphaned_session_endpoint(sess, owner=owner):
