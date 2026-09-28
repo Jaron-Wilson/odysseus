@@ -22,6 +22,19 @@ def _owner(request: Request) -> str:
     return effective_user(request) or ""
 
 
+def _pending_plans(owner: str) -> list:
+    from src import claude_code_approvals as approvals
+    from src.chat_queue import _session_title
+    out = []
+    for p in approvals.pending_for(owner)[:5]:
+        engine = "OpenCode" if p.get("engine") == "opencode" else "Claude Code"
+        out.append({"id": p["session_id"], "session_id": p["chat_session_id"],
+                    "chat": _session_title(p["chat_session_id"]) if p["chat_session_id"] else "",
+                    "runs_on": f"{engine} · {p.get('model') or 'local default'}",
+                    "plan": p["plan"], "created": p["created"]})
+    return out
+
+
 def setup_overlay_routes() -> APIRouter:
     router = APIRouter(tags=["overlay"])
 
@@ -35,7 +48,24 @@ def setup_overlay_routes() -> APIRouter:
         seen = (getattr(request.app.state, "browser_seen", {}) or {}).get(
             request.client.host if request.client else "")
         return {"now": now, "events": overlay_inbox.since(owner, since),
-                "page_seen_ago": round(now - seen, 1) if seen else None}
+                "page_seen_ago": round(now - seen, 1) if seen else None,
+                # Plans waiting on an answer: the overlay shows the newest
+                # above the player while any is pending, and hides again after.
+                "plans": _pending_plans(owner)}
+
+    @router.post("/api/overlay/plan/{plan_id}/{verb}")
+    async def answer_plan(request: Request, plan_id: str, verb: str) -> Dict[str, Any]:
+        """Approve or deny a pending plan from the overlay, as the chat's
+        links do (and with the same effect: approving starts the run)."""
+        from src import claude_code_approvals as approvals
+        from routes.claude_code_routes import _SESSION_ID_RE, approve_plan, deny_plan
+        owner = _owner(request)
+        if verb not in ("approve", "deny") or not _SESSION_ID_RE.fullmatch(plan_id):
+            raise HTTPException(400, "Unknown plan or answer")
+        entry = approvals.get(plan_id)
+        if not entry or (owner and entry.get("owner") and entry["owner"] != owner):
+            raise HTTPException(404, "No such plan (it may have expired)")
+        return approve_plan(plan_id, owner) if verb == "approve" else deny_plan(plan_id, owner)
 
     @router.post("/api/overlay/reply")
     async def reply(request: Request) -> Dict[str, Any]:

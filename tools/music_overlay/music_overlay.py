@@ -225,6 +225,9 @@ class Overlay:
         self.url = (self.settings.get("url") or ODYSSEUS_URL).rstrip("/") + "/"
         self.token = self.settings.get("token") or ""
         self.current = None                            # the message on show
+        self.msg_open = False
+        self.msg_above = True
+        self.dismissed_plan = None
         if self.token:
             threading.Thread(target=self._poll_inbox, daemon=True).start()
         root.after(200, self._drain)
@@ -246,7 +249,10 @@ class Overlay:
             pass
 
     def _build(self):
-        r = self.root
+        # The player row lives in its own frame, so a message can open above
+        # it (the window grows upward) without moving the music.
+        r = self.player = tk.Frame(self.root, bg=BG)
+        r.place(x=0, y=0, width=W, height=H)
         self.art = tk.Label(r, bg=BG, fg=DIM, text=self.GLYPH["note"], font=("Segoe Fluent Icons", 18),
                             width=3)
         self.art.place(x=6, y=6, width=52, height=52)
@@ -266,7 +272,7 @@ class Overlay:
             xs += 29
         self.badge = tk.Label(r, bg=BG, fg=ACCENT, font=("Segoe UI", 8), text="")
         self.badge.place(x=W - 106, y=2, width=100, height=14)
-        for w in (r, self.art, self.title, self.artist):
+        for w in (self.root, r, self.art, self.title, self.artist):
             w.bind("<ButtonPress-1>", self._drag_start)
             w.bind("<B1-Motion>", self._drag)
             w.bind("<ButtonRelease-1>", self._drag_end)
@@ -283,7 +289,8 @@ class Overlay:
         self.root.geometry(f"+{e.x_root - self._dx}+{e.y_root - self._dy}")
 
     def _drag_end(self, e):
-        self.settings.update(x=self.root.winfo_x(), y=self.root.winfo_y())
+        # Saved as the player's own position, whether or not a message is open.
+        self.settings.update(x=self.root.winfo_x(), y=self.root.winfo_y() + self._msg_offset())
         save_settings(self.settings)
 
     # right-click menu
@@ -411,7 +418,9 @@ class Overlay:
                 if isinstance(item, dict) and item.get("_quit"):
                     self.root.destroy()
                     return
-                if isinstance(item, dict) and item.get("_message"):
+                if isinstance(item, dict) and "_plans" in item:
+                    self._sync_plans(item["_plans"])
+                elif isinstance(item, dict) and item.get("_message"):
                     self._show_message(item)
                 elif isinstance(item, dict) and item.get("_status"):
                     self.msg_status.configure(text=item["_status"])
@@ -441,12 +450,14 @@ class Overlay:
                         and seen > CLOSE_AFTER_S):
                     log(f"no Odysseus page open here for {seen:.0f}s: closing")
                     self.q.put({"_quit": True})
+                self.q.put({"_plans": d.get("plans") or []})
                 if since is None:
                     since = d.get("now", time.time())   # only what arrives from now on
                 else:
                     for ev in d.get("events", []):
                         since = max(since, ev.get("ts", since))
-                        self.q.put(dict(ev, _message=True))
+                        if ev.get("kind") != "plan":    # plans come from "plans" above
+                            self.q.put(dict(ev, _message=True))
             except Exception as e:
                 log(f"inbox poll failed: {e}")
             time.sleep(INBOX_S)
@@ -458,7 +469,7 @@ class Overlay:
         self.msg_head.place(x=10, y=2, width=W - 60, height=18)
         close = tk.Label(f, bg=BG, fg=DIM, text="\u00d7", font=("Segoe UI", 12), cursor="hand2")
         close.place(x=W - 28, y=0, width=22, height=20)
-        close.bind("<Button-1>", lambda e: self._hide_message())
+        close.bind("<Button-1>", lambda e: self._hide_message(dismissed=True))
         self.msg_body = tk.Label(f, bg=BG, fg=FG, anchor="nw", justify="left", wraplength=W - 20,
                                  font=("Segoe UI", 9))
         self.msg_body.place(x=10, y=20, width=W - 20, height=52)
@@ -481,7 +492,7 @@ class Overlay:
 
     def _show_message(self, ev):
         self.current = ev
-        self.msg_head.configure(text=(("Question" if ev.get("kind") == "question" else "Odysseus")
+        self.msg_head.configure(text=(({"question": "Question", "plan": "Plan waiting"}.get(ev.get("kind"), "Odysseus"))
                                       + (f" \u00b7 {ev['chat']}" if ev.get("chat") else "")))
         self.msg_body.configure(text=ev.get("body") or ev.get("heading") or "")
         for w in self.msg_opts.winfo_children():
@@ -490,12 +501,27 @@ class Overlay:
             b = tk.Label(self.msg_opts, bg="#34343c", fg=FG, text=label[:28], cursor="hand2",
                          font=("Segoe UI", 8), padx=6)
             b.pack(side="left", padx=(0, 6))
-            b.bind("<Button-1>", lambda e, t=label: self._send(t))
-        self.msg_status.configure(text="Type a reply and press Enter" if ev.get("kind") == "question"
-                                  else "Reply, or Open the chat")
+            if ev.get("kind") == "plan":
+                b.bind("<Button-1>", lambda e, v=label.lower(): self._answer_plan(v))
+            else:
+                b.bind("<Button-1>", lambda e, t=label: self._send(t))
+        self.msg_status.configure(text={"question": "Type a reply and press Enter",
+                                        "plan": "Approve, Deny, or type the changes you want"}.get(
+                                            ev.get("kind"), "Reply, or Open the chat"))
         self.entry.delete(0, "end")
-        self.root.geometry(f"{W}x{H + MSG_H}")
-        self.msg.place(x=0, y=H, width=W, height=MSG_H)
+        if not self.msg_open:
+            # Open above the player (asked for: "above the music, not below
+            # it"), unless the player sits at the very top of the screen.
+            x, y = self.root.winfo_x(), self.root.winfo_y()
+            self.msg_above = y >= MSG_H
+            self.root.geometry(f"{W}x{H + MSG_H}+{x}+{y - MSG_H if self.msg_above else y}")
+            self.msg_open = True
+        if self.msg_above:
+            self.msg.place(x=0, y=0, width=W, height=MSG_H)
+            self.player.place(x=0, y=MSG_H, width=W, height=H)
+        else:
+            self.player.place(x=0, y=0, width=W, height=H)
+            self.msg.place(x=0, y=H, width=W, height=MSG_H)
         # Back on top, over a game that took focus, and a gentle chime.
         self.root.attributes("-topmost", False)
         self.root.attributes("-topmost", True)
@@ -507,10 +533,58 @@ class Overlay:
             pass
         log(f"message: {ev.get('kind')} {ev.get('heading')}")
 
-    def _hide_message(self):
+    def _msg_offset(self):
+        return MSG_H if self.msg_open and self.msg_above else 0
+
+    def _hide_message(self, dismissed=False):
+        if dismissed and self.current and self.current.get("kind") == "plan":
+            self.dismissed_plan = self.current.get("plan_id")    # do not bring it back
         self.current = None
+        if not self.msg_open:
+            return
+        x, y = self.root.winfo_x(), self.root.winfo_y() + self._msg_offset()
         self.msg.place_forget()
-        self.root.geometry(f"{W}x{H}")
+        self.player.place(x=0, y=0, width=W, height=H)
+        self.msg_open = False
+        self.root.geometry(f"{W}x{H}+{x}+{y}")
+
+    # ── plans waiting on an answer ───────────────────────────────────────
+    def _sync_plans(self, plans):
+        """Show the newest pending plan while there is one; hide it after."""
+        cur = self.current
+        if plans:
+            p = plans[0]
+            if p["id"] == self.dismissed_plan:
+                return
+            if cur is None or (cur.get("kind") == "plan" and cur.get("plan_id") != p["id"]):
+                first = " ".join(ln.strip("#*- ").strip() for ln in (p.get("plan") or "").splitlines()
+                                 if ln.strip())[:220]
+                self._show_message({"kind": "plan", "plan_id": p["id"], "session_id": p["session_id"],
+                                    "chat": p.get("chat", ""), "heading": "Plan waiting",
+                                    "body": f"Runs on {p.get('runs_on', '')}. {first}",
+                                    "options": ["Approve", "Deny"]})
+        elif cur and cur.get("kind") == "plan":
+            self._hide_message()
+
+    def _answer_plan(self, verb):
+        ev = self.current
+        if not ev:
+            return
+        self.msg_status.configure(text="Approving\u2026" if verb == "approve" else "Denying\u2026")
+
+        def go():
+            try:
+                d = self._api("POST", f"api/overlay/plan/{ev['plan_id']}/{verb}")
+                if verb == "approve":
+                    msg = (f"Approved \u2713 run {d.get('run_id', '')} starting in the chat"
+                           if d.get("resuming") else f"Approved \u2713 run {d.get('run_id', '')}")
+                else:
+                    msg = "Denied \u2713"
+                self.q.put({"_status": msg, "collapse": True})
+            except Exception as e:
+                log(f"plan {verb} failed: {e}")
+                self.q.put({"_status": f"Could not {verb}: {e}"[:80]})
+        threading.Thread(target=go, daemon=True).start()
 
     def _send(self, text):
         text = (text or "").strip()
