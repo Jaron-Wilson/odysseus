@@ -38,6 +38,7 @@ load_dotenv(encoding="utf-8-sig")
 import asyncio
 import logging
 import secrets
+import time
 from datetime import datetime
 from typing import Dict
 
@@ -377,6 +378,13 @@ if AUTH_ENABLED:
                         _asyncio.create_task(_touch_last_used(matched_id))
                         # Keep bearer-token callers out of normal cookie/user
                         # routes. API-aware routes can read api_token_owner.
+                        # A token scoped only "overlay" (the desktop music
+                        # overlay) may use the overlay's own routes and
+                        # nothing else: other routes attribute API tokens to
+                        # their owner, so it could otherwise list their chats.
+                        if set(matched_scopes) == {"overlay"} and not path.startswith("/api/overlay/"):
+                            return JSONResponse(status_code=403,
+                                                content={"error": "This token only works for the overlay"})
                         request.state.current_user = "api"
                         request.state.api_token = True
                         request.state.api_token_id = matched_id
@@ -395,6 +403,10 @@ if AUTH_ENABLED:
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
                 return RedirectResponse(url="/login", status_code=302)
 
+            # When a browser page on each machine last talked to us, so the
+            # desktop overlay can close itself once Odysseus is closed there.
+            if path.startswith("/api/") and request.client:
+                app.state.__dict__.setdefault("browser_seen", {})[request.client.host] = time.time()
             # Attach current username to request state for downstream routes
             request.state.current_user = auth_manager.get_username_for_token(token)
             request.state.api_token = False

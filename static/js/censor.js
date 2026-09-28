@@ -30,7 +30,7 @@ const PATTERNS = [
   // Credentials in tabular/label-value format (Password    xyzABC123)
   { re: /(?:password|passwd|secret|api[_\-]?key|access[_\-]?token|auth[_\-]?token|private[_\-]?key|client[_\-]?secret)\s{2,}[^\s<]{4,}/gi, label: 'credential' },
   // Value after a line starting with password-like label
-  { re: /(?:^|\n)\s*(?:password|passwd|secret|api[_\-]?key|token|private[_\-]?key)[\t ]*\n\s*([^\s<]{4,})/gim, label: 'credential' },
+  { re: /(?:^|\n)\s*\b(?:password|passwd|secret|api[_\-]?key|token|private[_\-]?key)\b[\t ]*\n\s*([^\s<]{4,})/gim, label: 'credential' },
   // SSH / PEM private keys (inline)
   { re: /-----BEGIN\s[\w\s]*PRIVATE KEY-----[\s\S]*?-----END\s[\w\s]*PRIVATE KEY-----/g, label: 'private-key' },
   // Long hex strings (32+ chars) that look like hashes/tokens
@@ -124,6 +124,16 @@ function _scheduleProcess(el) {
     _processElement(el);
     _pending.delete(el);
   }, 60000);
+}
+
+// A value that looks like a secret, not an ordinary word: it has a digit or
+// a symbol, or it is long. Seen live: prose like "the approval token gate"
+// blurred "gate", and then every "gate" in the message.
+function _looksSecret(v) {
+  v = String(v || '').replace(/["'.,;)]+$/, '');
+  if (v.length < 6) return false;
+  if (/\d/.test(v) || /[^A-Za-z]/.test(v)) return true;
+  return v.length >= 20;
 }
 
 // Labels that indicate the NEXT value should be censored
@@ -274,10 +284,13 @@ function _contextCensor(el) {
   // Strategy 2: Full-text scan for label-value patterns across lines
   // Get the full text, find patterns like "Password\n  value" or "Password: value"
   const fullText = el.textContent || '';
-  const labelValueRe = /(?:password|passwd|secret|api[_\-]?key|access[_\-]?token|private[_\-]?key|client[_\-]?secret|token|auth[_\-]?token)\s*[:\s]\s*(\S{4,})/gi;
+  // Whole-word labels, and a real separator (":" or "=" or a line break):
+  // "token gate" in a sentence is prose, not a label and its value.
+  const labelValueRe = /\b(?:password|passwd|secret|api[_\-]?key|access[_\-]?token|private[_\-]?key|client[_\-]?secret|token|auth[_\-]?token)\b(?:[ \t]*[:=]\s*|[ \t]*\n\s*)(\S{4,})/gi;
   let m;
   while ((m = labelValueRe.exec(fullText)) !== null) {
     const value = m[1];
+    if (!_looksSecret(value)) continue;
     // Find and censor this value string in text nodes
     _censorValueInElement(el, value);
   }

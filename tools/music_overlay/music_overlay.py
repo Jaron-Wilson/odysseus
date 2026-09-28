@@ -50,6 +50,9 @@ ODYSSEUS_URL = os.environ.get("ODYSSEUS_URL", "https://jaron-dev-server.tail90b6
 LOCK_PORT = 47831                                      # single instance
 POLL_S = 1.5
 INBOX_S = 3.0
+# "Close with Odysseus": gone once no Odysseus page on this machine has
+# talked to the server for this long (the server reports it with the inbox).
+CLOSE_AFTER_S = 150
 W, H = 400, 64
 MSG_H = 150
 BG, FG, DIM, ACCENT = "#1b1b20", "#f2f2f2", "#9a9aa3", "#e0b341"
@@ -248,10 +251,17 @@ class Overlay:
             m.add_command(label=f"Opacity {pct}%", command=lambda p=pct: self._alpha(p / 100))
         top = tk.BooleanVar(value=bool(self.root.attributes("-topmost")))
         m.add_checkbutton(label="Always on top", variable=top, command=lambda: self._topmost(top.get()))
+        cwo = tk.BooleanVar(value=bool(self.settings.get("close_with_odysseus", True)))
+        m.add_checkbutton(label="Close with Odysseus", variable=cwo,
+                          command=lambda: self._set("close_with_odysseus", cwo.get()))
         m.add_separator()
         m.add_command(label="Open Odysseus", command=lambda: webbrowser.open(ODYSSEUS_URL))
         m.add_command(label="Close", command=self.root.destroy)
         m.tk_popup(e.x_root, e.y_root)
+
+    def _set(self, key, value):
+        self.settings[key] = value
+        save_settings(self.settings)
 
     def _alpha(self, a):
         self.root.attributes("-alpha", a)
@@ -307,6 +317,9 @@ class Overlay:
         try:
             while True:
                 item = self.q.get_nowait()
+                if isinstance(item, dict) and item.get("_quit"):
+                    self.root.destroy()
+                    return
                 if isinstance(item, dict) and item.get("_message"):
                     self._show_message(item)
                 elif isinstance(item, dict) and item.get("_status"):
@@ -332,6 +345,11 @@ class Overlay:
         while True:
             try:
                 d = self._api("GET", f"api/overlay/inbox?since={since or 0}")
+                seen = d.get("page_seen_ago")
+                if (self.settings.get("close_with_odysseus", True) and seen is not None
+                        and seen > CLOSE_AFTER_S):
+                    log(f"no Odysseus page open here for {seen:.0f}s: closing")
+                    self.q.put({"_quit": True})
                 if since is None:
                     since = d.get("now", time.time())   # only what arrives from now on
                 else:
