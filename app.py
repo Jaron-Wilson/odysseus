@@ -647,6 +647,10 @@ from routes.chat_prefs_routes import setup_chat_prefs_routes
 app.include_router(setup_chat_prefs_routes())
 
 
+from routes.deploy_routes import setup_deploy_routes
+app.include_router(setup_deploy_routes())
+
+
 @app.get("/api/version")
 async def api_version():
     """The code this server process started with (src/build_info.py)."""
@@ -997,6 +1001,8 @@ async def _startup_event():
         _n = reattach_runs()
         if _n:
             logger.info("Reattached %d Claude Code run(s) from before the restart", _n)
+        from src.agent_tools.claude_code_tool import reattach_forever
+        _startup_tasks.append(asyncio.create_task(reattach_forever()))
     except Exception as _e:
         logger.warning("Could not reattach Claude Code runs: %s", _e)
     # MCP servers can be slow or blocked by local tooling. Connect them after

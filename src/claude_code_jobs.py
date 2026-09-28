@@ -112,6 +112,7 @@ class Job:
             "cli_session_id": self.cli_session_id, "plan_id": self.plan_id,
             "pid": self.pid, "started": self.started, "detached": self.detached,
             "banner": self.banner, "notify": self.notify, "spec": self.spec,
+            "server_pid": os.getpid(),
         }
 
 
@@ -145,6 +146,13 @@ def save() -> None:
     record only costs the reattach after a restart, not the run itself."""
     try:
         recs = [j.record() for j in _JOBS.values() if j.status == "running" and j.pid]
+        # Keep what another server process still follows (an old one finishing
+        # its shutdown during a restart), so neither erases the other's runs.
+        mine = {r["id"] for r in recs} | set(_JOBS)
+        for r in load_records():
+            sp = r.get("server_pid")
+            if r["id"] not in mine and sp and sp != os.getpid() and pid_alive(sp):
+                recs.append(r)
         os.makedirs(os.path.dirname(JOBS_FILE) or ".", exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(JOBS_FILE) or ".",
                                    prefix=".cc_jobs_", suffix=".json")
