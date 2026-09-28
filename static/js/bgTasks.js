@@ -246,7 +246,7 @@ function _approvalRow(p) {
       <div class="bg-job-actions">
         <a href="#claudecode-approve-${_esc(p.id)}" class="bg-approve">Approve plan \u00b7 runs on ${_esc(p.runs_on)}</a>
         <a href="#claudecode-deny-${_esc(p.id)}" class="bg-deny">Deny</a>
-        ${p.has_pdf ? `<a href="/api/claude_code/plan/${encodeURIComponent(p.id)}/pdf" target="_blank" rel="noopener">PDF</a>` : ''}
+        <button type="button" data-open-pdf="${_esc(p.id)}" title="Open the plan as a PDF in a new tab">Open PDF</button>
         ${p.chat_session_id ? `<a href="#${_esc(p.chat_session_id)}" data-chat="${_esc(p.chat_session_id)}">Open chat</a>` : ''}
       </div>
     </div>`;
@@ -264,6 +264,17 @@ function _renderApprovals() {
     ? `<div class="bg-section bg-section-approvals">Waiting for your approval (${_pending.length})</div>${_pending.map(_approvalRow).join('')}`
     : '';
 }
+
+// "Open PDF": the plan in the browser's PDF viewer, in a new tab. A link to
+// /api/... would be turned into a download by the chat's link handler. Asked
+// for: "in background tasks let me press open pdf also".
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-open-pdf]');
+  if (!b) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  window.open(`/api/claude_code/plan/${encodeURIComponent(b.dataset.openPdf)}/pdf`, '_blank', 'noopener');
+}, true);
 
 // The full plan, fetched when "Read the plan" is opened.
 document.addEventListener('toggle', async (ev) => {
@@ -336,6 +347,7 @@ function _jobRow(j) {
       ${j.id === _open ? `<pre class="bg-job-log" data-log="${_esc(j.id)}">Loading…</pre>` : ''}
       <div class="bg-job-actions">
         <button type="button" data-toggle="${_esc(j.id)}">${j.id === _open ? 'Hide output' : 'Show output'}</button>
+        ${j.action === 'plan' && j.status === 'done' && j.cli_session_id ? `<button type="button" data-open-pdf="${_esc(j.cli_session_id)}" title="Open the plan as a PDF in a new tab">Open PDF</button>` : ''}
         ${j.status === 'running' && !j.background ? `<button type="button" data-bg="${_esc(j.id)}">Send to background</button>` : ''}
         ${j.status === 'running' && j.background && j.chat_session_id ? `<button type="button" data-bring-back="${_esc(j.id)}" data-chat="${_esc(j.chat_session_id)}">Bring back to chat</button>` : ''}
         ${j.status === 'running' && j.background ? `<button type="button" data-watch="${_esc(j.id)}" data-watch-chat="${_esc(j.chat_session_id || '')}">Watch in chat</button>` : ''}
