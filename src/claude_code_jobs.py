@@ -94,6 +94,7 @@ class Job:
             "status": self.status,
             "background": self.detached,
             "reattached": self.reattached,
+            "chat_name": _chat_name(self.chat_session_id),
         }
         if lines:
             out["banner"] = self.banner
@@ -112,6 +113,17 @@ class Job:
             "pid": self.pid, "started": self.started, "detached": self.detached,
             "banner": self.banner, "notify": self.notify, "spec": self.spec,
         }
+
+
+def _chat_name(session_id: str) -> str:
+    """The chat's title, so a run is shown with the chat it belongs to."""
+    if not session_id:
+        return ""
+    try:
+        from src.chat_queue import _session_title
+        return _session_title(session_id) or ""
+    except Exception:
+        return ""
 
 
 _JOBS: Dict[str, Job] = {}

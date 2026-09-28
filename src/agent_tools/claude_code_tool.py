@@ -39,6 +39,8 @@ from src.constants import DATA_DIR
 logger = logging.getLogger(__name__)
 
 PROMPT_DIR = os.path.join(DATA_DIR, "claude_code_prompts")
+# Scratch folders for runs whose project lives on another machine.
+WORKSPACES_DIR = os.path.join(DATA_DIR, "workspaces")
 PROGRESS_INTERVAL_S = 1.5
 STREAM_LINE_LIMIT = 64 * 1024 * 1024
 # Enough of the console to follow along. The whole transcript is kept on the
@@ -564,6 +566,22 @@ class ClaudeCodeTool:
                 "exit_code": 1,
             }
         cwd_path = Path(cwd).expanduser().resolve()
+        # Never the running Odysseus install itself. Seen live: a build-mode
+        # run for a project on the laptop was started in /home/jaron/odysseus
+        # (the agent reached the laptop over ssh), with write access to the
+        # server's own code. A project on another machine gets a scratch
+        # workspace here instead, created on first use.
+        odysseus_root = Path(__file__).resolve().parents[2]
+        if cwd_path == odysseus_root or odysseus_root in cwd_path.parents:
+            return {"error": (
+                f"refusing cwd {cwd_path}: that is the running Odysseus install on this server, not "
+                "a project. For a project on this server, name its own folder. For a project on "
+                "another machine (the laptop, the PC), use a scratch workspace such as "
+                f"{Path(WORKSPACES_DIR) / '<project name>'} (created for you) and reach the "
+                "machine over ssh from there."), "exit_code": 1}
+        workspaces = Path(WORKSPACES_DIR).resolve()
+        if not cwd_path.exists() and workspaces in cwd_path.parents:
+            cwd_path.mkdir(parents=True, exist_ok=True)
         if not cwd_path.is_dir():
             return {"error": f"cwd is not a directory: {cwd_path}", "exit_code": 1}
 

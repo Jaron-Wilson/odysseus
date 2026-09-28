@@ -710,13 +710,30 @@ export function updateModelPicker() {
     }
   }
 
-  const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  let displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  // Which server it is on, by its nickname (Settings > Models > Rename): the
+  // same model name can be on two servers (two Ollamas). Shown when the name
+  // is ambiguous, and always on hover.
+  const epUrl = ((s && s.endpoint_url) || (_pendingChat && _pendingChat.url) || '').replace(/\/+$/, '');
+  let epName = '';
+  let copies = 0;
+  if (modelId && window.modelsModule && window.modelsModule.getCachedItems) {
+    for (const item of window.modelsModule.getCachedItems() || []) {
+      const models = (item.models || []).concat(item.models_extra || []);
+      if (!models.includes(modelId)) continue;
+      copies += 1;
+      if ((item.url || '').replace(/\/+$/, '') === epUrl) epName = item.endpoint_name || '';
+    }
+  }
+  if (epName && copies > 1) displayName += ` \u00b7 ${epName}`;
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
-  label.title = modelId || '';
+  label.title = modelId ? (epName ? `${modelId} on ${epName}` : modelId) : '';
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
-    label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;
+    // The logo is our own markup; the name (with a user's nickname) is text.
+    label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ';
+    label.appendChild(document.createTextNode(displayName));
   } else {
     label.textContent = displayName;
   }
