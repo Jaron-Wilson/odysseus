@@ -267,6 +267,73 @@ def setup_history_routes(session_manager) -> APIRouter:
             logger.error(f"Edit message error {session_id}: {e}")
             raise HTTPException(500, str(e))
 
+    @router.post("/api/session/{session_id}/prune")
+    async def prune_messages(request: Request, session_id: str):
+        """Leave messages out of what the model reads, or put them back,
+        without deleting them: they stay in the chat, marked. Body:
+        {"msg_ids": [...]} or {"above_msg_id": id} (everything before that
+        message), plus "excluded": true/false (default true). Asked for: "I
+        should be able to prune the messages ... I can scroll up and still
+        see it"."""
+        _verify_session_owner(request, session_id)
+        body = await request.json()
+        excluded = bool(body.get("excluded", True))
+        try:
+            session = session_manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+
+        def _meta(m):
+            return m.metadata if isinstance(m, ChatMessage) else m.get("metadata")
+
+        targets = []
+        above = str(body.get("above_msg_id") or "")
+        if above:
+            for m in session.history:
+                meta = _meta(m) if isinstance(_meta(m), dict) else {}
+                if meta.get("_db_id") == above:
+                    break
+                role = m.role if isinstance(m, ChatMessage) else m.get("role")
+                if role != "system" and meta.get("_db_id"):
+                    targets.append(m)
+            else:
+                raise HTTPException(404, "Message not found")
+        else:
+            ids = {str(i) for i in (body.get("msg_ids") or []) if i}
+            if not ids:
+                raise HTTPException(400, "msg_ids or above_msg_id is required")
+            targets = [m for m in session.history
+                       if isinstance(_meta(m), dict) and _meta(m).get("_db_id") in ids]
+
+        changed = []
+        db = SessionLocal()
+        try:
+            for m in targets:
+                meta = _meta(m)
+                if bool(meta.get("excluded")) == excluded:
+                    continue
+                if excluded:
+                    meta["excluded"] = True
+                else:
+                    meta.pop("excluded", None)
+                row = db.query(DbChatMessage).filter(
+                    DbChatMessage.id == meta["_db_id"], DbChatMessage.session_id == session_id).first()
+                if row:
+                    stored = {}
+                    if row.meta_data:
+                        try: stored = json.loads(row.meta_data)
+                        except (json.JSONDecodeError, ValueError): pass
+                    if excluded:
+                        stored["excluded"] = True
+                    else:
+                        stored.pop("excluded", None)
+                    row.meta_data = json.dumps(stored)
+                changed.append(meta["_db_id"])
+            db.commit()
+        finally:
+            db.close()
+        return {"status": "ok", "excluded": excluded, "changed": changed}
+
     @router.post("/api/session/{session_id}/mark-stopped")
     async def mark_stopped(request: Request, session_id: str):
         """Mark the last assistant message as stopped by user."""

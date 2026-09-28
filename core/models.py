@@ -50,6 +50,19 @@ class ChatMessage:
         return getattr(self, key, default)
 
 
+def in_context(msg: "ChatMessage") -> bool:
+    """Whether a history message is sent to the model.
+
+    Slash-command / setup replies (``metadata.source == "slash"``) are UI
+    chatter. Pruned messages (``metadata.excluded``) were left out by the
+    user: still shown in the chat, no longer read by the model. Asked for:
+    "I should be able to prune the messages ... I can scroll up and still
+    see it". Compaction counts with this too (context_compactor).
+    """
+    meta = msg.metadata or {}
+    return meta.get("source") != "slash" and not meta.get("excluded")
+
+
 @dataclass
 class Session:
     """A chat session — pure data container.
@@ -74,6 +87,10 @@ class Session:
     owner: Optional[str] = None
     is_important: bool = False
     message_count: int = 0
+    # Side threads (src/chat_threads.py): the chat this one branches from,
+    # and the message it was started at.
+    parent_session_id: Optional[str] = None
+    thread_anchor_id: Optional[str] = None
 
     def __post_init__(self):
         if self.headers is None:
@@ -116,11 +133,7 @@ class Session:
         the model. Display/history-load paths use the raw ``history`` and are
         unaffected.
         """
-        return [
-            msg.to_dict()
-            for msg in self.history
-            if (msg.metadata or {}).get("source") != "slash"
-        ]
+        return [msg.to_dict() for msg in self.history if in_context(msg)]
 
     def get(self, key: str, default=None):
         """Dict-like access for compatibility."""

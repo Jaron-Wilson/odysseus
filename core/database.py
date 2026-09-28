@@ -129,6 +129,10 @@ class Session(TimestampMixin, Base):
     total_output_tokens = Column(Integer, default=0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
+    # A side thread: a child chat inside its parent (src/chat_threads.py),
+    # started from the parent's message thread_anchor_id.
+    parent_session_id = Column(String, nullable=True, index=True)
+    thread_anchor_id = Column(String, nullable=True)
 
     # Relationship to chat messages
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
@@ -157,6 +161,8 @@ class Session(TimestampMixin, Base):
             'total_input_tokens': self.total_input_tokens or 0,
             'total_output_tokens': self.total_output_tokens or 0,
             'crew_member_id': self.crew_member_id,
+            'parent_session_id': self.parent_session_id,
+            'thread_anchor_id': self.thread_anchor_id,
         }
 
 class ChatMessage(Base):
@@ -1072,6 +1078,30 @@ def _migrate_add_mode_column():
         except Exception:
             pass
 
+def _migrate_add_thread_columns():
+    """Add parent_session_id / thread_anchor_id (side threads) to sessions."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+        for col in ("parent_session_id", "thread_anchor_id"):
+            if col not in columns:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+                logging.getLogger(__name__).info(f"Migrated: added '{col}' column to sessions")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_sessions_parent_session_id ON sessions (parent_session_id)")
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Migration check for thread columns failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 def _migrate_add_folder_column():
     """Add folder column to sessions table if it doesn't exist."""
     import sqlite3
@@ -1746,6 +1776,7 @@ def init_db():
     _migrate_add_folder_column()
     _migrate_add_token_columns()
     _migrate_add_mode_column()
+    _migrate_add_thread_columns()
     _migrate_add_multiuser_owner_columns()
     _migrate_add_api_token_scopes_column()
     _migrate_backfill_document_owner_from_session()

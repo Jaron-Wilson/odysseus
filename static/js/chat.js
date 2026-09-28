@@ -34,6 +34,7 @@ import './openRequests.js';
 import './chatLiveSync.js';
 import './pdfViewer.js';
 import './bgTasks.js';
+import './chatThreads.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -1319,6 +1320,9 @@ import './bgTasks.js';
       if (_interruptNext) { fd.append('interrupt', '1'); _interruptNext = false; }
       // The bell: push a "done" notification from the server (notifyDone.js).
       fd.append('notify', notifyDone.payload());
+      // "Use as reference": earlier messages or side threads, for this turn only.
+      const _refsField = window.chatThreads ? window.chatThreads.takeReferences(streamSessionId) : '';
+      if (_refsField) fd.append('references', _refsField);
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
       // Auto-save & send active doc ID so the backend sees latest content
       if (documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {

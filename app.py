@@ -662,6 +662,8 @@ app.include_router(setup_screen_control_routes())
 # History
 from routes.history_routes import setup_history_routes
 app.include_router(setup_history_routes(session_manager))
+from routes.thread_routes import setup_thread_routes
+app.include_router(setup_thread_routes(session_manager))
 
 # Search
 from routes.search_routes import setup_search_routes

@@ -323,7 +323,10 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                      "has_documents": s.id in doc_session_ids,
                      "has_images": s.id in img_session_ids,
                      "mode": mode_map.get(s.id),
-                     "message_count": msg_count_map.get(s.id, 0)}
+                     "message_count": msg_count_map.get(s.id, 0),
+                     # Side threads: hidden from the list, shown in their parent.
+                     "parent_session_id": getattr(s, "parent_session_id", None),
+                     "thread_anchor_id": getattr(s, "thread_anchor_id", None)}
                     for s in user_sessions.values()
                     if not s.archived
                     and (s.name or "").strip() not in ("Nobody", "Incognito")

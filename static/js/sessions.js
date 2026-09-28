@@ -756,7 +756,7 @@ function _renderSessionListImpl() {
 
   // Get saved order from localStorage
   const savedOrder = Storage.get('session-order');
-  let orderedSessions = sessions.filter(s => !s.archived && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
+  let orderedSessions = sessions.filter(s => !s.archived && !s.parent_session_id && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
 
   if (savedOrder) {
     try {
@@ -2867,7 +2867,7 @@ function _renderLibChats(grid) {
     grid.innerHTML = '<div class="doclib-empty">No sessions loaded</div>';
     return;
   }
-  let filtered = sessions.filter(s => !s.archived);
+  let filtered = sessions.filter(s => !s.archived && !s.parent_session_id);   // side threads live in their chat
   if (_lib.search) {
     const q = _lib.search;
     filtered = filtered.filter(s => (s.name || '').toLowerCase().includes(q) || (s.model || '').toLowerCase().includes(q));
