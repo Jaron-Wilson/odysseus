@@ -44,3 +44,36 @@ def test_the_panel_offers_the_same_links_as_the_chat():
     # Redrawn only when the list changes, or an Approve in progress is lost.
     assert "if (key === _pendingKey) return;" in js
     assert "_pending.length ? `${_pending.length} waiting for your approval` : ''" in js
+
+
+def test_open_pdf_renders_the_plan_when_no_pdf_was_made(tmp_path, monkeypatch):
+    # Asked for: "in background tasks let me press open pdf also".
+    import routes.claude_code_routes as ccr
+    import src.doc_pdf as doc_pdf
+    monkeypatch.setattr(approvals, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(approvals, "APPROVALS_FILE", str(tmp_path / "a.json"))
+    monkeypatch.setattr(ccr, "_auth_disabled", lambda: True)
+    monkeypatch.setattr(ccr, "get_current_user", lambda r: "")
+    monkeypatch.setattr(doc_pdf, "PDF_DIR", str(tmp_path))
+    made = []
+
+    async def fake_render(md, name, *, running_title=""):
+        path = tmp_path / f"{name}.pdf"
+        path.write_bytes(b"%PDF-1.4 fake")
+        made.append((md, running_title))
+        return str(path), None
+    monkeypatch.setattr(doc_pdf, "render_markdown_pdf", fake_render)
+    approvals.record_plan("ses_pdf", cwd="/w/erik-preview", plan="# Erik preview", owner="",
+                          model="m", engine="opencode", chat_session_id="c")
+    app = FastAPI()
+    app.include_router(ccr.setup_claude_code_routes())
+    c = TestClient(app)
+    r = c.get("/api/claude_code/plan/ses_pdf/pdf")
+    assert r.status_code == 200 and r.content.startswith(b"%PDF")
+    assert r.headers["content-type"] == "application/pdf" and r.headers["content-disposition"].startswith("inline")
+    assert made == [("# Erik preview", "Plan · erik-preview · jaronwilson.dev")]
+    c.get("/api/claude_code/plan/ses_pdf/pdf")
+    assert len(made) == 1                                   # rendered once, then served
+    js = open(os.path.join(HERE, "static", "js", "bgTasks.js"), encoding="utf-8").read()
+    assert 'data-open-pdf="${_esc(p.id)}"' in js and 'data-open-pdf="${_esc(j.cli_session_id)}"' in js
+    assert "window.open(`/api/claude_code/plan/${encodeURIComponent(b.dataset.openPdf)}/pdf`, '_blank', 'noopener');" in js

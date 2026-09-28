@@ -160,15 +160,26 @@ def setup_claude_code_routes() -> APIRouter:
         """Download the plan rendered in the house style."""
         _require_user(request)
         _validate(session_id)
-        if not approvals.get(session_id):
+        entry = approvals.get(session_id)
+        if not entry:
             raise HTTPException(404, "No such plan (it may have expired)")
         from fastapi.responses import FileResponse
         from src.doc_pdf import PDF_DIR
         path = os.path.join(PDF_DIR, f"plan-{session_id}.pdf")
         if not os.path.isfile(path):
-            raise HTTPException(404, "No PDF was rendered for this plan")
+            # Rendered now if it was not when the plan finished, so "Open PDF"
+            # in the Background panel always has something to open.
+            from pathlib import Path
+            from src.doc_pdf import render_markdown_pdf
+            made, err = await render_markdown_pdf(
+                entry.get("plan") or "", f"plan-{session_id}",
+                running_title=f"Plan \u00b7 {Path(entry.get('cwd') or 'plan').name} \u00b7 jaronwilson.dev")
+            if not made or not os.path.isfile(made):
+                raise HTTPException(502, f"Could not render the plan as a PDF: {err or 'unknown error'}")
+            path = made
+        # inline: opens in the browser's PDF viewer rather than downloading.
         return FileResponse(path, media_type="application/pdf",
-                            filename=f"plan-{session_id[:8]}.pdf")
+                            filename=f"plan-{session_id[:8]}.pdf", content_disposition_type="inline")
 
     @router.post("/api/claude_code/approve/{session_id}")
     async def approve(request: Request, session_id: str):
