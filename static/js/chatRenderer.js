@@ -1279,6 +1279,10 @@ document.addEventListener('click', function(e) {
       // "Plan is already approved/used/denied" is the plan's state, not a
       // failure: seen live as "Approve plan — failed: Plan is already
       // approved", twice over after a second click.
+      if (res.status === 409 && /earlier plan/i.test(msg)) {
+        settle('[Replaced by a newer plan: use its buttons]');
+        return;
+      }
       const already = /already (approved|used|denied)/i.exec(msg);
       if (res.status === 409 && already) {
         settle(already[1].toLowerCase() === 'denied' ? '[Plan denied]' : '[Plan approved]');
@@ -1613,6 +1617,12 @@ export function createMsgFooter(msgElement) {
     }},
     // Prune, Use as reference, Side thread (chatThreads.js)
     ...(window.chatThreads ? window.chatThreads.actions(msgElement) : []),
+    // Tidy is in the context ring's popup too, but not every reply has one.
+    { id: 'tidy', icon: '\u2728', title: 'Tidy this chat (notes, then prune)', cls: 'msg-action-btn',
+      available: () => !!window.chatTidy, handler(e) {
+        e.stopPropagation();
+        window.chatTidy.run();
+      }},
   ];
 
   // Filter out unavailable actions (e.g. TTS when not enabled)
@@ -1814,6 +1824,12 @@ export function createUserMsgFooter(msgElement) {
     }},
     // Prune, Use as reference, Side thread (chatThreads.js)
     ...(window.chatThreads ? window.chatThreads.actions(msgElement) : []),
+    // Tidy is in the context ring's popup too, but not every reply has one.
+    { id: 'tidy', icon: '\u2728', title: 'Tidy this chat (notes, then prune)', cls: 'msg-action-btn',
+      available: () => !!window.chatTidy, handler(e) {
+        e.stopPropagation();
+        window.chatTidy.run();
+      }},
   ];
 
   const recent = _getUserRecentActions();

@@ -62,12 +62,19 @@ def _prune(data: Dict[str, dict]) -> Dict[str, dict]:
 
 
 def record_plan(session_id: str, *, cwd: str, plan: str, owner: Optional[str] = None,
-                model: str = "", engine: str = "", chat_session_id: str = "") -> None:
+                model: str = "", engine: str = "", chat_session_id: str = "") -> str:
     """Register a freshly produced plan as awaiting the user's answer. The
     model is kept so the approved run uses the one the user was shown, and the
-    chat so approving can start the run there straight away."""
+    chat so approving can start the run there straight away.
+
+    Returns the plan's version. A chat carries on one coder session, so a new
+    plan reuses the session id of the last one; its links carry the version
+    so an older plan's Approve or Deny cannot answer this one (seen
+    2026-09-29: "i denied a chat and now its saying its approved")."""
     data = _prune(_load())
+    version = str(int(time.time() * 1000))
     data[session_id] = {
+        "version": version,
         "status": "pending",
         "cwd": cwd,
         "plan": (plan or "")[:20000],
@@ -78,6 +85,22 @@ def record_plan(session_id: str, *, cwd: str, plan: str, owner: Optional[str] = 
         "created": time.time(),
     }
     _save(data)
+    return version
+
+
+def split_ref(ref: str) -> tuple:
+    """A plan link's id: "<session id>~<version>", or just the session id
+    (links written before versions)."""
+    sid, _, version = (ref or "").partition("~")
+    return sid, version
+
+
+def stale(session_id: str, version: str) -> bool:
+    """Whether a link's version is for an earlier plan than the one on record."""
+    if not version:
+        return False
+    entry = get(session_id) or {}
+    return bool(entry.get("version")) and entry["version"] != version
 
 
 def set_status(session_id: str, status: str, *, owner: Optional[str] = None) -> bool:
