@@ -1401,12 +1401,38 @@ def _norm_name(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
+def _name_matches(want: str, name: str) -> bool:
+    """The phone's own name, not just a word in it: "pixel-8a" is "Pixel 8a"
+    or "Jaron's Pixel 8a", never "Jaron's Pixel Buds Pro". Seen live: a loose
+    match on "pixel" hit the Pixel Buds and removed their pairing."""
+    got = _norm_name(name)
+    return bool(want) and len(want) >= 4 and (got == want or got.endswith(want))
+
+
+_AEP = ["System.Devices.Aep.DeviceAddress", "System.Devices.Aep.IsPaired"]
+
+
+async def _is_phone(info) -> bool:
+    """Whether a Bluetooth device's class says phone (not headphones or a
+    speaker), from its address. Unknown counts as not a phone."""
+    try:
+        from winsdk.windows.devices.bluetooth import BluetoothDevice, BluetoothMajorClass
+        addr = (info.properties.lookup("System.Devices.Aep.DeviceAddress") or "").replace(":", "")
+        if not addr:
+            return False
+        dev = await BluetoothDevice.from_bluetooth_address_async(int(addr, 16))
+        return dev is not None and dev.class_of_device.major_class == BluetoothMajorClass.PHONE
+    except Exception:
+        return False
+
+
 async def _paired_named(want: str):
-    """A paired Bluetooth device whose name contains `want` (normalized)."""
+    """A paired Bluetooth device that is this phone (strict name match)."""
     from winsdk.windows.devices.bluetooth import BluetoothDevice
-    from winsdk.windows.devices.enumeration import DeviceInformation
-    for d in await DeviceInformation.find_all_async(BluetoothDevice.get_device_selector_from_pairing_state(True), []):
-        if want and want in _norm_name(d.name):
+    from winsdk.windows.devices.enumeration import DeviceInformation, DeviceInformationKind
+    for d in await DeviceInformation.find_all_async(BluetoothDevice.get_device_selector_from_pairing_state(True),
+                                                    _AEP, DeviceInformationKind.ASSOCIATION_ENDPOINT):
+        if _name_matches(want, d.name):
             return d
     return None
 
@@ -1451,7 +1477,7 @@ async def bluetooth_audio_receive(device: str = "", on: bool = True) -> Dict[str
     except Exception as e:
         return {"ok": False, "error": f"Bluetooth audio is not available here: {e}"}
     want = _norm_name(device)
-    match = [d for d in devs if want and want in _norm_name(d.name)] or (devs if not want and len(devs) == 1 else [])
+    match = [d for d in devs if _name_matches(want, d.name)] or (devs if not want and len(devs) == 1 else [])
     if not match:
         names = ", ".join(d.name for d in devs) or "none"
         stale = await _paired_named(want)
@@ -1502,10 +1528,10 @@ async def bluetooth_pair(device: str, seconds: int = 20) -> Dict[str, Any]:
     from winsdk.windows.devices.bluetooth import BluetoothDevice
     from winsdk.windows.devices.enumeration import DeviceInformation, DevicePairingKinds
     removed = ""
-    if not any(want in _norm_name(d.name) for d in await _audio_sources()):
+    if not any(_name_matches(want, d.name) for d in await _audio_sources()):
         stale = await _paired_named(want)
-        if stale is not None:
-            # Paired, but not as an audio source: start over.
+        if stale is not None and await _is_phone(stale):
+            # Paired, but not as an audio source: start over. Only ever a phone.
             try:
                 await stale.pairing.unpair_async()
                 removed = stale.name
@@ -1516,10 +1542,14 @@ async def bluetooth_pair(device: str, seconds: int = 20) -> Dict[str, Any]:
 
     def added(_w, info):
         seen.append(info.name)
-        if info.name and want in _norm_name(info.name) and not found:
+        if info.name and _name_matches(want, info.name) and not found:
             found["info"] = info
+    # Association endpoints: where nearby, not yet paired devices appear. The
+    # default kind (device interfaces) never lists them, so the scan saw nothing.
+    from winsdk.windows.devices.enumeration import DeviceInformationKind
     watcher = DeviceInformation.create_watcher(
-        BluetoothDevice.get_device_selector_from_pairing_state(False), ["System.ItemNameDisplay"])
+        BluetoothDevice.get_device_selector_from_pairing_state(False), _AEP,
+        DeviceInformationKind.ASSOCIATION_ENDPOINT)
     watcher.add_added(added)
     watcher.start()
     deadline = time.time() + max(5, min(60, int(seconds or 20)))

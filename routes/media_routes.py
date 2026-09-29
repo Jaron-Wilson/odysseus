@@ -290,10 +290,23 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             return {"ok": True, "opened": "bluetooth settings", "to": dst.get("name")}
         if "bluetooth_pair" not in tools:
             raise HTTPException(409, f"{dst.get('name')} needs the updated desktop MCP for this")
-        src = known.get(str(body.get("from") or ""))
+        src_id = str(body.get("from") or "")
+        src = known.get(src_id)
         if not src:
             raise HTTPException(400, "Pick the phone to pair")
+        opened = False
+        if src_id.startswith("device:"):
+            # Make the phone visible first: Modes opens "Pair new device". Asked
+            # for: pairing without going to the phone's settings by hand.
+            from src import devices as _devices
+            dev = _devices.get(src_id[len("device:"):])
+            if dev and "bt_pairing" in (dev.get("commands") or []):
+                r = await _devices.send_command(dev, "bt_pairing", {})
+                opened = bool((r or {}).get("ok"))
+                if opened:
+                    await asyncio.sleep(2)                # the screen starts advertising
         res = _payload(await _call(dst_id, "bluetooth_pair", {"device": src.get("name") or "", "seconds": 25}))
+        res = dict(res, phone_screen_opened=opened)
         if res.get("ok") is False:
             raise HTTPException(409, res.get("error") or "It did not pair")
         return dict(res, ok=True, to=dst.get("name"))
