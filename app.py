@@ -633,6 +633,8 @@ from routes.device_routes import setup_device_routes
 app.include_router(setup_device_routes())
 from routes.enroll_routes import setup_enroll_routes
 app.include_router(setup_enroll_routes())
+from routes.special_chat_routes import setup_special_chat_routes
+app.include_router(setup_special_chat_routes(session_manager))
 
 # claude_code plan approvals — the only path that can authorise an execute run.
 from routes.claude_code_routes import setup_claude_code_routes
