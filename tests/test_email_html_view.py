@@ -74,4 +74,5 @@ def test_mcp_errors_name_the_cause():
     assert "TaskGroup" not in msg and "nothing answered on its port" in msg
     eg = ExceptionGroup("g", [ExceptionGroup("h", [httpx.ConnectError("[Errno 111] Connection refused")])])
     assert "no MCP server is listening" in _format_mcp_connection_error("x", "", [], eg)
-    assert _format_mcp_connection_error("x", "", [], RuntimeError("boom")) == "RuntimeError: boom"
+    assert _format_mcp_connection_error("x", "", [], RuntimeError("boom")) == "boom"      # plain: as it is
+    assert _format_mcp_connection_error("x", "", [], ExceptionGroup("g", [OSError("no route")])) == "OSError: no route"

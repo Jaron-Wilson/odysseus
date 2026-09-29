@@ -28,6 +28,7 @@ def _root_error(error: BaseException) -> BaseException:
 
 
 def _describe_error(error: BaseException) -> str:
+    grouped = isinstance(error, _EXC_GROUP)
     error = _root_error(error)
     text = str(error).strip() or type(error).__name__
     kind = type(error).__name__
@@ -36,7 +37,9 @@ def _describe_error(error: BaseException) -> str:
                 "running (or crashes when it starts); check its log there.")
     if kind == "ConnectError" and ("refused" in text.lower() or "errno 111" in text.lower()):
         return f"{text}: the computer is up but no MCP server is listening on that port."
-    return text if kind in text else f"{kind}: {text}"
+    # A plain error reads as it is; one pulled out of a task group gets its
+    # type, as its text alone is often empty or vague.
+    return text if not grouped or kind in text else f"{kind}: {text}"
 
 
 def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
