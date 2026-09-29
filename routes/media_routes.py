@@ -345,6 +345,9 @@ def setup_media_routes(mcp_manager) -> APIRouter:
         res = _payload(await _call(dst_id, "bluetooth_pair", {"device": src.get("name") or "", "seconds": 25}))
         res = dict(res, phone_screen_opened=opened)
         if res.get("ok") is False:
+            # Logged: the page shows the reason, but the server log only had
+            # "409 Conflict", which left a failed pairing unexplained.
+            logger.warning("[media] pair %s with %s failed: %s", src.get("name"), dst.get("name"), res.get("error"))
             raise HTTPException(409, res.get("error") or "It did not pair")
         return dict(res, ok=True, to=dst.get("name"))
 
@@ -378,6 +381,7 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             name = src.get("name") or src_id[len("device:"):]
         res = _payload(await _call(dst_id, "bluetooth_audio_receive", {"device": name, "on": on}))
         if res.get("ok") is False:
+            logger.warning("[media] hear %s on %s failed: %s", name or "(stop)", dst.get("name"), res.get("error"))
             raise HTTPException(409, res.get("error") or "It did not connect")
         return dict(res, ok=True, to=dst.get("name") or dst_id, **({"from": name} if name else {}))
 

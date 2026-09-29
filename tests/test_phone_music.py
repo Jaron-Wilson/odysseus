@@ -370,3 +370,11 @@ def test_the_stream_pieces():
     ok = ns2["_tailnet_stream_url"]
     assert ok("http://100.102.86.125:8931/live/x.wav") and ok("http://desktop-jaron.tail90b62a.ts.net:8931/live/x.wav")
     assert not ok("http://example.com/x.wav") and not ok("http://192.168.1.5/x.wav") and not ok("file:///etc/passwd")
+
+
+def test_a_failed_pairing_logs_why():
+    # Seen live: the site's Pair failed twice with only "409 Conflict" in the
+    # server log, so the reason was lost.
+    src = open(os.path.join(HERE, "routes", "media_routes.py"), encoding="utf-8").read()
+    assert 'logger.warning("[media] pair %s with %s failed: %s"' in src
+    assert 'logger.warning("[media] hear %s on %s failed: %s"' in src
