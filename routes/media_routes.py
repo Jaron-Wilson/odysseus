@@ -140,7 +140,10 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                                "available": [dict({k: d.get(k) for k in ("server_id", "name", "kind")},
                                                   # "Hear it on" only where it can work
                                                   can_receive="bluetooth_audio_receive" in (d.get("tools") or []),
-                                                  can_pair="bluetooth_pair" in (d.get("tools") or []))
+                                                  can_pair="bluetooth_pair" in (d.get("tools") or []),
+                                                  # streaming a computer's sound to another over the tailnet
+                                                  can_stream_out="audio_stream_start" in (d.get("tools") or []),
+                                                  can_play_stream="play_stream" in (d.get("tools") or []))
                                              for d in device_routing.all_devices(mcp_manager)]}
         for name, res in zip(wanted, results):
             if isinstance(res, Exception):
@@ -267,6 +270,40 @@ def setup_media_routes(mcp_manager) -> APIRouter:
         _LISTEN_NOW["id"] = "handoff-" + uuid.uuid4().hex[:8]        # a browser player elsewhere stops
         return {"ok": True, "title": title, "artist": artist, "url": url,
                 "from": known[src_id].get("name"), "to": known[dst_id].get("name")}
+
+    @router.post("/stream")
+    async def stream(request: Request):
+        """Stream one computer's sound to another over the tailnet: the source
+        keeps playing, the other plays what it hears. Body {from, to, on}.
+        Asked for: "stream from my PC over to my laptop but my laptop's not
+        nearby, but it's on the tailnet"."""
+        _require_user(request)
+        from src import device_routing
+        body = await request.json() if request.headers.get("content-type", "").startswith(
+            "application/json") else {}
+        known = {d.get("server_id"): d for d in device_routing.all_devices(mcp_manager)}
+        src_id, dst_id = str(body.get("from") or ""), str(body.get("to") or "")
+        src, dst = known.get(src_id), known.get(dst_id)
+        if not src or not dst or src_id == dst_id:
+            raise HTTPException(400, "Pick two different computers")
+        if "audio_stream_start" not in set(src.get("tools") or []):
+            raise HTTPException(409, f"{src.get('name')} cannot stream its sound yet (update its desktop MCP)")
+        if "play_stream" not in set(dst.get("tools") or []):
+            raise HTTPException(409, f"{dst.get('name')} cannot play a stream yet (update its desktop MCP)")
+        if not body.get("on", True):
+            _payload(await _call(dst_id, "stop_stream", {}))
+            _payload(await _call(src_id, "audio_stream_stop", {}))
+            return {"ok": True, "stopped": True}
+        started = _payload(await _call(src_id, "audio_stream_start", {}))
+        if started.get("ok") is False or not started.get("url"):
+            logger.warning("[media] stream from %s failed: %s", src.get("name"), started.get("error"))
+            raise HTTPException(409, started.get("error") or f"{src.get('name')} could not start streaming")
+        played = _payload(await _call(dst_id, "play_stream", {"url": started["url"]}))
+        if played.get("ok") is False:
+            await _call(src_id, "audio_stream_stop", {})
+            logger.warning("[media] %s could not play the stream: %s", dst.get("name"), played.get("error"))
+            raise HTTPException(409, played.get("error") or f"{dst.get('name')} could not play it")
+        return {"ok": True, "from": src.get("name"), "to": dst.get("name")}
 
     @router.post("/pair")
     async def pair(request: Request):
