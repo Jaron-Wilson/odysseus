@@ -342,7 +342,8 @@ def test_the_tools_check_names_what_each_computer_lacks(monkeypatch):
     rows = {m["server_id"]: m for m in asyncio.run(enroll_routes.machine_tools(mgr))}
     assert set(rows) == {"win", "lap"}                                   # the Resolve server is not a desktop MCP
     assert rows["win"]["up_to_date"] and rows["win"]["missing"] == []
-    assert rows["lap"]["missing"] == ["Music overlay (Pop out)", "Play another computer's sound"]
+    assert rows["lap"]["missing"] == ["Music overlay (Pop out)", "Play another computer's sound",
+                                      "Play its videos in the chat"]
     assert rows["lap"]["outdated"] == ["linux_desktop_mcp_server.py"]   # no tools_version: too old to say
     mgr.versions["win"]["music_overlay.py"] = "old"
     rows = {m["server_id"]: m for m in asyncio.run(enroll_routes.machine_tools(mgr))}
