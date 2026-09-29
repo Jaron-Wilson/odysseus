@@ -37175,6 +37175,11 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .mb-handoff { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 12px; cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent); background: transparent; color: inherit; }
 .mb-handoff:hover { border-color: var(--accent, #c96); }
+.mp-source { font-weight: normal; opacity: .65; text-transform: none; letter-spacing: 0; }
+.mp-hear { margin-top: -2px; }
+.mp-hint { flex-basis: 100%; font-size: 11px; opacity: .55; }
+.mp-receiving { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12.5px; padding: 6px 8px;
+  border-radius: 10px; background: color-mix(in srgb, #6fa3e0 12%, transparent); }
 /* "Playing on <phone>" when nothing plays on this machine: its own line. */
 .music-bar:has(.mb-elsewhere) { flex-wrap: wrap; }
 .mb-elsewhere { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0;
