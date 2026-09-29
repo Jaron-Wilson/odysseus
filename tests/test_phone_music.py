@@ -178,6 +178,39 @@ def test_the_browser_player_and_device_names():
     assert "frame-src 'self' https://www.youtube-nocookie.com" in css
 
 
+def test_state_names_the_device_being_controlled(env):
+    c, sent, mcp, st = env
+    r = c.get("/api/media/state?server_id=device:pixel-8a", headers={"x-forwarded-for": "100.102.86.125"}).json()
+    assert r["device"]["server_id"] == "device:pixel-8a" and r["device"]["kind"] == "phone"
+    assert r["here"]["server_id"] == "19d772b0"                        # the PC this browser is on
+
+
+def test_hear_the_phone_on_a_computer(env, monkeypatch):
+    # Asked for: "if I have earbuds connected to the PC it should play through
+    # there, but the music engine is my phone".
+    c, sent, mcp, st = env
+    pc = device_routing.device_map(None)["100.102.86.125"]
+    body = {"from": "device:pixel-8a", "to": "19d772b0", "on": True}
+    r = c.post("/api/media/receive", json=body)
+    assert r.status_code == 409 and "updated desktop MCP" in r.json()["detail"]    # old MCP: no tool
+    pc["tools"] = pc["tools"] + ["bluetooth_audio_receive"]
+    r = c.post("/api/media/receive", json=body).json()
+    assert r["ok"] and r["to"] == "windows-desktop" and r["from"] == "pixel-8a"
+    assert ("mcp__19d772b0__bluetooth_audio_receive", {"device": "pixel-8a", "on": True}) in mcp
+    assert not any(cmd == "media_control" for cmd, _ in sent)                     # the phone keeps playing
+    c.post("/api/media/receive", json={"to": "19d772b0", "on": False})
+    assert ("mcp__19d772b0__bluetooth_audio_receive", {"device": "", "on": False}) in mcp
+    assert c.post("/api/media/receive", json={"from": "device:pixel-8a", "to": "device:pixel-8a"}).status_code == 400
+
+
+def test_the_desktop_side_matches_the_phone_by_name_and_opens_the_app():
+    src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
+    assert "AudioPlaybackConnection.try_create_from_id(d.id)" in src and "await conn.open_async()" in src
+    assert "--app-launch-url-for-shortcuts-menu-item=" in src and '"YouTube Music*.lnk"' in src
+    ns = {}
+    exec(src[src.index("def _norm_name"):src.index("async def _audio_sources")], {"re": __import__("re")}, ns)
+    assert ns["_norm_name"]("pixel-8a") in ns["_norm_name"]("Pixel 8a")
+
 def test_pop_out_opens_on_this_computer_even_when_the_bar_drives_the_phone(env, monkeypatch):
     # Seen live: with the bar controlling the phone, every Pop out asked the
     # phone for the Windows overlay task, got 502 and fell back to Chrome's

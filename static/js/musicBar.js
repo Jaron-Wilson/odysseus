@@ -22,6 +22,7 @@ const KEY_OPEN = 'odysseus.musicBar.open';
 const KEY_DEVICE = 'odysseus.musicBar.pick';
 try { localStorage.removeItem('odysseus.musicBar.device'); } catch (_) { /* private mode */ }
 let _autoDevice = '';
+let _receiving = null;       // {from, to, toId}: a phone playing through a computer (Bluetooth)
 let _autoAt = 0;          // re-made every 30s, so a machine that reconnects wins again
 const KEY_VOLTARGET = 'odysseus.musicBar.volTarget';   // 'pc' or 'app': what the bar's +/- drive
 const POLL_MS = 4000;
@@ -210,9 +211,15 @@ async function _renderPanel() {
     <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${vol ?? 50}" data-mb-vol aria-label="${_esc(_devName())} volume" ${vol === null ? 'disabled' : ''}>${ICONS.up}<span>${vol ?? '–'}</span></label></div>
     ${_app() ? `<div class="mp-volrow"><span class="mp-vollabel" title="${_esc(_app().app || '')} in the Windows volume mixer">${_esc(_appLabel())}</span><span class="mp-volgap"></span>
     <label class="mp-vol">${ICONS.down}<input type="range" min="0" max="100" step="1" value="${_appVol()}" data-mb-appvol aria-label="${_esc(_appLabel())} volume">${ICONS.up}<span>${_appVol()}</span></label></div>` : ''}
-    ${np.title ? `<div class="mp-section">Play on</div>
+    ${np.title ? `<div class="mp-section">Play on <span class="mp-source">\u00b7 now on ${(_state.device && _state.device.kind) === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} ${_esc(_devName())}</span></div>
+    ${_receiving ? `<div class="mp-receiving">\u{1F3A7} ${_esc(_receiving.from)} is playing through ${_esc(_receiving.to)}
+      <button type="button" class="mb-handoff" data-mb-receive-stop="${_esc(_receiving.toId)}">Stop</button></div>` : ''}
     <div class="mp-handoff"><button type="button" class="mb-handoff" data-mb-listen="${_esc(current)}" title="Pause it on ${_esc(_devName())} and play it in this browser">\u{1F310} This browser</button>${devs.filter((d) => d.server_id !== current).map((d) =>
-      `<button type="button" class="mb-handoff" data-mb-handoff="${_esc(d.server_id)}" title="Pause it here and play it on ${_esc(d.name || d.server_id)}">${d.kind === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} ${_esc(d.name || d.server_id)}</button>`).join('')}</div>` : ''}
+      `<button type="button" class="mb-handoff" data-mb-handoff="${_esc(d.server_id)}" title="Pause it here and play it on ${_esc(d.name || d.server_id)}">${d.kind === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} ${_esc(d.name || d.server_id)}</button>`).join('')}</div>
+    ${String(current).startsWith('device:') && devs.some((d) => d.kind !== 'phone' && d.server_id !== current) ? `
+    <div class="mp-handoff mp-hear">${devs.filter((d) => d.kind !== 'phone' && d.server_id !== current).map((d) =>
+      `<button type="button" class="mb-handoff" data-mb-receive="${_esc(d.server_id)}" title="The phone keeps playing; the sound comes out of ${_esc(d.name || d.server_id)} (its speakers or headphones), over Bluetooth">\u{1F3A7} Hear it on ${_esc(d.name || d.server_id)}</button>`).join('')}
+      <div class="mp-hint">Keeps the phone as the player. Pair the phone with that computer over Bluetooth once.</div></div>` : ''}` : ''}
     <div class="mp-section">Lyrics</div>
     <div class="mp-lyrics" id="mp-lyrics">${np.title ? 'Looking up lyrics…' : 'Play something to see its lyrics.'}</div>
     <div class="mp-section">Controlling</div>
@@ -396,6 +403,35 @@ document.addEventListener('click', async (ev) => {
   } finally {
     delete h.dataset.busy;
     h.textContent = label;
+  }
+});
+
+// ── Hear the phone on a computer (Bluetooth; the phone stays the player) ─
+document.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-mb-receive],[data-mb-receive-stop]');
+  if (!b) return;
+  ev.preventDefault();
+  if (b.dataset.busy) return;
+  b.dataset.busy = '1';
+  const on = !!b.dataset.mbReceive;
+  const to = b.dataset.mbReceive || b.dataset.mbReceiveStop;
+  const label = b.textContent;
+  b.textContent = on ? 'Connecting\u2026' : 'Stopping\u2026';
+  try {
+    const r = await fetch('/api/media/receive', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: _device() || (_state && _state.device && _state.device.server_id) || '', to, on }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    _receiving = on ? { from: d.receiving || d.from || 'The phone', to: d.to, toId: to } : null;
+    if (window.showToast) window.showToast(on ? `${_receiving.from} is playing through ${d.to}` : `Stopped: the phone plays on its own again`);
+  } catch (e) {
+    if (window.showToast) window.showToast(`${on ? 'Could not connect' : 'Could not stop'}: ${e.message}`);
+  } finally {
+    delete b.dataset.busy;
+    b.textContent = label;
+    if (_panelOpen) _renderPanel();
   }
 });
 

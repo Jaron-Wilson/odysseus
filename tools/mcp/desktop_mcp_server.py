@@ -1340,8 +1340,136 @@ def open_media_url(url: str) -> Dict[str, Any]:
     url = (url or "").strip()
     if not _MEDIA_URL_RE.match(url):
         return {"ok": False, "error": "only https YouTube or YouTube Music links"}
+    # The YouTube Music app, when installed (Chrome installs it as an app with
+    # a Start menu shortcut): the song opens there rather than in a browser
+    # tab. Asked for: "it could open the app if I have it".
+    app = _youtube_music_app() if "music.youtube.com" in url else None
+    if app:
+        try:
+            import subprocess
+            subprocess.Popen([app[0], *app[1], f"--app-launch-url-for-shortcuts-menu-item={url}"],
+                             close_fds=True)
+            return {"ok": True, "opened": url, "in": "YouTube Music app"}
+        except Exception:
+            pass
     os.startfile(url)  # noqa: S606 - validated above
-    return {"ok": True, "opened": url}
+    return {"ok": True, "opened": url, "in": "browser"}
+
+
+def _youtube_music_app():
+    """(program, [arguments]) of the installed YouTube Music app's shortcut,
+    or None. Read from the shortcut so the Chrome profile and app id are the
+    ones this machine actually has."""
+    import glob
+    import shlex
+    root = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs")
+    links = glob.glob(os.path.join(root, "**", "YouTube Music*.lnk"), recursive=True)
+    if not links:
+        return None
+    try:
+        import win32com.client  # pywin32
+        sc = win32com.client.Dispatch("WScript.Shell").CreateShortcut(links[0])
+        target, args = sc.TargetPath, sc.Arguments
+    except Exception:
+        try:
+            import subprocess
+            ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('" + links[0].replace("'", "''")
+                  + "'); $s.TargetPath; $s.Arguments")
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True,
+                                 text=True, timeout=10).stdout.splitlines()
+            target, args = (out + ["", ""])[0].strip(), (out + ["", ""])[1].strip()
+        except Exception:
+            return None
+    if not target or not os.path.exists(target):
+        return None
+    return target, shlex.split(args, posix=False)
+
+
+# ── This PC as a Bluetooth speaker for a phone ───────────────────────────
+# Asked for: "if I'm routing from phone it should be able to make the
+# computer be a listener: if I have earbuds connected to the PC it should play
+# through there, but the music engine is my phone". A phone will not let
+# another app capture a music app's sound, so it is not streamed over the
+# network: Windows receives it over Bluetooth instead (the same interface as
+# the "Bluetooth Audio Receiver" app), and plays it on this PC's output. The
+# phone must be paired with this PC once.
+_RECEIVE: Dict[str, Any] = {"conn": None, "name": "", "id": ""}
+
+
+def _norm_name(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+async def _audio_sources():
+    from winsdk.windows.media.audio import AudioPlaybackConnection
+    from winsdk.windows.devices.enumeration import DeviceInformation
+    return list(await DeviceInformation.find_all_async(AudioPlaybackConnection.get_device_selector(), []))
+
+
+@mcp.tool()
+async def bluetooth_audio_sources() -> Dict[str, Any]:
+    """Paired phones (or other devices) that can play their sound through
+    this PC's speakers or headphones over Bluetooth, and which one is doing
+    so now."""
+    try:
+        devs = await _audio_sources()
+    except Exception as e:
+        return {"ok": False, "error": f"Bluetooth audio is not available here: {e}"}
+    return {"ok": True, "sources": [{"name": d.name, "id": d.id} for d in devs],
+            "receiving": _RECEIVE["name"] or None}
+
+
+@mcp.tool()
+async def bluetooth_audio_receive(device: str = "", on: bool = True) -> Dict[str, Any]:
+    """Play a paired phone's sound through this PC: the phone keeps playing
+    its own music app and the sound comes out here (the headphones on this
+    PC, say). `device` is part of its Bluetooth name ("Pixel"); on=false
+    stops, and the phone goes back to its own speaker."""
+    old = _RECEIVE.get("conn")
+    if not on:
+        if old is not None:
+            try:
+                old.close()
+            except Exception:
+                pass
+        name = _RECEIVE["name"]
+        _RECEIVE.update(conn=None, name="", id="")
+        return {"ok": True, "receiving": None, "stopped": name or None}
+    try:
+        devs = await _audio_sources()
+    except Exception as e:
+        return {"ok": False, "error": f"Bluetooth audio is not available here: {e}"}
+    want = _norm_name(device)
+    match = [d for d in devs if want and want in _norm_name(d.name)] or (devs if not want and len(devs) == 1 else [])
+    if not match:
+        names = ", ".join(d.name for d in devs) or "none"
+        return {"ok": False, "error": (f"No paired device matching {device!r} can play through this PC "
+                                       f"(ones that can: {names}). Pair the phone with this PC in "
+                                       "Bluetooth settings first."), "sources": [d.name for d in devs]}
+    d = match[0]
+    if old is not None and _RECEIVE["id"] == d.id:
+        return {"ok": True, "receiving": d.name, "already": True}
+    from winsdk.windows.media.audio import AudioPlaybackConnection
+    conn = AudioPlaybackConnection.try_create_from_id(d.id)
+    if conn is None:
+        return {"ok": False, "error": f"Windows would not open an audio connection to {d.name}"}
+    await conn.start_async()
+    res = await conn.open_async()
+    if int(res.status) != 0:                   # 0 = Success; 1 timed out; 2 denied; 3 unknown
+        try:
+            conn.close()
+        except Exception:
+            pass
+        why = {1: "the phone did not answer (is Bluetooth on and the phone nearby?)",
+               2: "Windows refused it", 3: "an unknown Bluetooth failure"}.get(int(res.status), str(res.status))
+        return {"ok": False, "error": f"Could not play {d.name} through this PC: {why}"}
+    if old is not None:
+        try:
+            old.close()
+        except Exception:
+            pass
+    _RECEIVE.update(conn=conn, name=d.name, id=d.id)
+    return {"ok": True, "receiving": d.name}
 
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)

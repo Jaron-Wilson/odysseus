@@ -123,7 +123,12 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             *[_call(sid, t) for t in wanted], return_exceptions=True)
 
         out: Dict[str, Any] = {"ok": True, "client_ip": ip,
-                               "device": dev or target or {"server_id": sid},
+                               # The device being controlled: a pick wins over the
+                               # machine this browser is on. It was the browser's
+                               # machine, so the bar said "windows-desktop" while
+                               # it drove the phone.
+                               "device": target or dev or {"server_id": sid},
+                               "here": dev,
                                # For the machine picker and "Play on" (handoff).
                                "available": [{k: d.get(k) for k in ("server_id", "name", "kind")}
                                              for d in device_routing.all_devices(mcp_manager)]}
@@ -250,6 +255,39 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             raise HTTPException(502, f"Could not open it on {known[dst_id].get('name')}: {opened.get('error')}")
         return {"ok": True, "title": title, "artist": artist, "url": url,
                 "from": known[src_id].get("name"), "to": known[dst_id].get("name")}
+
+    @router.post("/receive")
+    async def receive(request: Request):
+        """Hear a phone's music on a computer: the phone keeps playing (it is
+        the music engine) and the computer plays its sound over Bluetooth,
+        through whatever is connected to it. Body {from: "device:<phone>",
+        to: <computer server_id>, on: true|false}. Asked for: "if I have
+        earbuds connected to the PC it should play through there, but the
+        music engine is my phone"."""
+        _require_user(request)
+        from src import device_routing
+        body = await request.json() if request.headers.get("content-type", "").startswith(
+            "application/json") else {}
+        src_id = str(body.get("from") or "").strip()
+        dst_id = str(body.get("to") or "").strip()
+        on = bool(body.get("on", True))
+        known = {d.get("server_id"): d for d in device_routing.all_devices(mcp_manager)}
+        dst = known.get(dst_id)
+        if not dst or dst_id.startswith("device:"):
+            raise HTTPException(400, "Pick a computer to hear it on")
+        if "bluetooth_audio_receive" not in set(dst.get("tools") or []):
+            raise HTTPException(409, f"{dst.get('name') or dst_id} needs the updated desktop MCP "
+                                     "(tools/mcp/desktop_mcp_server.py) for this")
+        name = ""
+        if on:
+            src = known.get(src_id)
+            if not src or not src_id.startswith("device:"):
+                raise HTTPException(400, "Pick the phone that is playing")
+            name = src.get("name") or src_id[len("device:"):]
+        res = _payload(await _call(dst_id, "bluetooth_audio_receive", {"device": name, "on": on}))
+        if res.get("ok") is False:
+            raise HTTPException(409, res.get("error") or "It did not connect")
+        return dict(res, ok=True, to=dst.get("name") or dst_id, **({"from": name} if name else {}))
 
     @router.post("/listen")
     async def listen_here(request: Request):
