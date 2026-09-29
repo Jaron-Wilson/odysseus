@@ -15,6 +15,7 @@ checks the code first and answers 404 for a bad one, the same as for a path
 that does not exist.
 """
 
+import asyncio
 import html
 import ipaddress
 import json
@@ -34,9 +35,25 @@ logger = logging.getLogger(__name__)
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MCP_DIR = os.path.join(_HERE, "tools", "mcp")
 _ENROLL_DIR = os.path.join(_HERE, "tools", "enroll")
-# The only files an install script may fetch.
+# The only files an install script may fetch, and where each lives.
 SERVER_FILES = {"linux_desktop_mcp_server.py", "mcp_transport_security.py",
-                "desktop_mcp_server.py", "resolve_mcp_server.py"}
+                "desktop_mcp_server.py", "resolve_mcp_server.py", "music_overlay.py"}
+_FILE_DIRS = {"music_overlay.py": os.path.join(_HERE, "tools", "music_overlay")}
+
+# What a fully set-up computer's desktop MCP offers, by OS, as features the
+# user knows by name. A linked computer missing any is offered Install/Update.
+# Asked for: "lets say I get my device linked, ask to install all MCPs
+# available ... cause I know my laptop does not have music on it".
+FEATURES = {
+    "windows": {"Music overlay (Pop out)": "start_music_overlay",
+                "Hear the phone here (Bluetooth)": "bluetooth_audio_receive",
+                "Pair the phone from the site": "bluetooth_pair",
+                "Stream this computer's sound": "audio_stream_start",
+                "Play another computer's sound": "play_stream"},
+    "linux": {"Music overlay (Pop out)": "start_music_overlay",
+              "Play another computer's sound": "play_stream"},
+}
+MCP_FILE = {"windows": "desktop_mcp_server.py", "linux": "linux_desktop_mcp_server.py"}
 SERVER_KINDS = {"desktop": "desktop", "resolve": "resolve"}
 _TAILNET = ipaddress.ip_network("100.64.0.0/10")
 
@@ -130,7 +147,7 @@ def setup_enroll_routes(get_mcp_manager=None) -> APIRouter:
         if kind in ("phone", "check") and not device:
             raise HTTPException(400, "device is required for a phone or check code")
         try:
-            rec = enrollment.create(kind, device=device)
+            rec = enrollment.create(kind, device=device, owner=_owner(request))
         except ValueError as e:
             raise HTTPException(400, str(e))
         base = base_url(request)
@@ -156,6 +173,37 @@ def setup_enroll_routes(get_mcp_manager=None) -> APIRouter:
             raise HTTPException(404, "no such code")
         return {k: rec.get(k) for k in ("kind", "device", "expires", "used", "result")}
 
+    # ── Keeping linked computers' tools complete and current ──────────
+    # Asked for: "when I get my device linked, ask to install all MCPs
+    # available on that server or PC that my PC has ... my laptop does not
+    # have music on it, so that popup would be nice to have".
+
+    @router.get("/api/devices/tools")
+    async def tools_status(request: Request):
+        """For each linked computer: which features its desktop MCP lacks and
+        whether its files are the same as this server's."""
+        require_admin(request)
+        return {"machines": [{k: v for k, v in m.items() if k != "_peer"} for m in await machine_tools(_mgr())]}
+
+    @router.post("/api/devices/tools/{server_id}/update")
+    async def update_tools(server_id: str, request: Request):
+        """Install or update everything on a linked computer: Odysseus runs its
+        install command there over the SSH access the first install set up,
+        with a fresh one-time code."""
+        require_admin(request)
+        rows = {m["server_id"]: m for m in await machine_tools(_mgr())}
+        m = rows.get(server_id)
+        if not m:
+            raise HTTPException(404, "No such computer")
+        if not m.get("online"):
+            raise HTTPException(409, f"{m['name']} is offline")
+        rec = enrollment.create("computer", owner=_owner(request))
+        r = await run_installer(m, base_url(request), rec["code"])
+        logger.info("[enroll] update of %s: %s", m["name"], "ok" if r.get("ok") else r.get("error"))
+        if not r.get("ok"):
+            raise HTTPException(502, r.get("error") or "the install did not finish")
+        return r
+
     # ── Computer: script, files, register ──────────────────────────────
 
     @router.get("/enroll/{code}/install.sh")
@@ -174,18 +222,27 @@ def setup_enroll_routes(get_mcp_manager=None) -> APIRouter:
         _code_or_404(code, "computer")
         if name not in SERVER_FILES:
             raise HTTPException(404, "Not found")
-        with open(os.path.join(_MCP_DIR, name), encoding="utf-8") as f:
+        with open(os.path.join(_FILE_DIRS.get(name, _MCP_DIR), name), encoding="utf-8") as f:
             return PlainTextResponse(f.read(), media_type="text/x-python")
 
     @router.post("/enroll/{code}/register")
     async def register(code: str, request: Request):
         _code_or_404(code, "computer")
         body = await _json(request)
+        rec = _code_or_404(code, "computer")
         result = await register_machine(body, _mgr())
         if not enrollment.use(code, result):
             raise HTTPException(404, "Not found")
         logger.info("[enroll] added %s: %s", result.get("machine"), result.get("servers"))
-        return result
+        # The music overlay's token (its messages and the phone's song need
+        # one): made here so nobody has to paste one. Not stored with the code.
+        try:
+            token = mint_overlay_token(rec.get("owner") or "", result.get("machine") or "computer")
+            _invalidate_token_cache(request)
+            return dict(result, overlay_token=token)
+        except Exception as e:
+            logger.warning("[enroll] no overlay token for %s: %s", result.get("machine"), e)
+            return result
 
     # ── Phone: pairing page ────────────────────────────────────────────
 
@@ -298,6 +355,113 @@ def setup_enroll_routes(get_mcp_manager=None) -> APIRouter:
 # ── Logic, kept outside the router so it can be tested directly ────────────
 
 _DNS_RE = re.compile(r"^[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)*\.ts\.net$")
+
+
+def _sha_file(path: str) -> str:
+    import hashlib
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
+    except OSError:
+        return ""
+
+
+async def machine_tools(mgr) -> list:
+    """Linked computers' desktop MCPs, what they are missing and whether their
+    files are current."""
+    import json as _json
+    from routes.device_routes import _configured_servers
+    peers = await asyncio.to_thread(machines.peers)
+    out = []
+    for srv in _configured_servers():
+        if not srv.get("enabled") or not srv.get("url"):
+            continue
+        peer = machines.find_peer(peers, machines.url_host(srv["url"]))
+        os_name = (peer or {}).get("os") or ""
+        if os_name not in FEATURES or not str(srv.get("name", "")).endswith("-desktop"):
+            continue
+        tools = {t.get("name") for t in (getattr(mgr, "_tools", {}) or {}).get(srv["id"], [])}
+        connected = (mgr.get_server_status(srv["id"]).get("status") == "connected") if mgr else False
+        missing = [label for label, tool in FEATURES[os_name].items() if tool not in tools] if connected else []
+        outdated = []
+        if connected and "tools_version" in tools:
+            try:
+                res = await asyncio.wait_for(mgr.call_tool(f"mcp__{srv['id']}__tools_version", {}), 10)
+                files = (_json.loads(res.get("stdout") or "{}") or {}).get("files") or {}
+            except Exception:
+                files = {}
+            for name in (MCP_FILE[os_name], "music_overlay.py"):
+                here = _sha_file(os.path.join(_FILE_DIRS.get(name, _MCP_DIR), name))
+                if here and files.get(name) != here:
+                    outdated.append(name)
+        elif connected:
+            outdated.append(MCP_FILE[os_name])                 # too old to say: update it
+        out.append({"server_id": srv["id"], "name": srv["name"], "host": (peer or {}).get("host"),
+                    "os": os_name, "online": bool((peer or {}).get("online")), "connected": connected,
+                    "missing": missing, "outdated": outdated,
+                    "up_to_date": connected and not missing and not outdated,
+                    "_peer": peer})
+    return out
+
+
+async def run_installer(m: dict, base: str, code: str) -> dict:
+    """Run this computer's install command there, over SSH."""
+    import getpass
+    peer = m.get("_peer") or {}
+    host = peer.get("dns") or (peer.get("ips") or [peer.get("host")])[0]
+    user = machines.load_prefs().get(peer.get("host") or "", {}).get("ssh_user") or getpass.getuser()
+    if m["os"] == "windows":
+        remote = ["powershell", "-NoProfile", "-Command",
+                  f"iwr -useb {base}/enroll/{code}/install.ps1 | iex"]
+    else:
+        remote = ["bash", "-lc", f"curl -fsSL {base}/enroll/{code}/install.sh | bash"]
+    last = ""
+    for key in machines._ssh_keys():
+        r = await machines._run(machines._ssh_argv(user, host, key, remote, m["os"]), timeout=900)
+        if r["rc"] == 0:
+            return {"ok": True, "machine": m["name"], "output": (r.get("out") or "")[-3000:]}
+        last = (r.get("err") or r.get("out") or "")
+        if "Permission denied" not in last:
+            break
+    return {"ok": False, "error": last[-800:] or "SSH failed", "machine": m["name"]}
+
+
+def _owner(request: Request) -> str:
+    try:
+        from src.auth_helpers import effective_user
+        return effective_user(request) or ""
+    except Exception:
+        return ""
+
+
+def _invalidate_token_cache(request: Request) -> None:
+    inv = getattr(request.app.state, "invalidate_token_cache", None)
+    if inv:
+        try:
+            inv()
+        except Exception:
+            pass
+
+
+def mint_overlay_token(owner: str, machine: str) -> str:
+    """An API token that can only use the overlay's routes, one per machine:
+    re-running the install replaces that machine's previous one."""
+    import secrets
+    import bcrypt
+    from core.database import ApiToken, SessionLocal
+    name = f"overlay \u00b7 {machine}"[:60]
+    raw = "ody_" + secrets.token_urlsafe(32)
+    db = SessionLocal()
+    try:
+        for old in db.query(ApiToken).filter(ApiToken.name == name).all():
+            old.is_active = False
+        db.add(ApiToken(id=str(uuid.uuid4())[:8], owner=owner or None, name=name,
+                        token_hash=bcrypt.hashpw(raw.encode(), bcrypt.gensalt()).decode(),
+                        token_prefix=raw[:8], scopes="overlay", is_active=True))
+        db.commit()
+    finally:
+        db.close()
+    return raw
 
 
 def _validated(body: dict) -> dict:

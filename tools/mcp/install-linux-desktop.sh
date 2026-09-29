@@ -45,6 +45,16 @@ PY
 echo "==> installing the user unit"
 mkdir -p "$HOME/.config/systemd/user"
 cp "$SRC_DIR/$UNIT" "$HOME/.config/systemd/user/"
+# This machine's own tailnet address and name (the unit in the repo carries
+# the laptop's). The server only listens there, never on the LAN.
+TS_IP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
+TS_DNS="$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null || true)"
+if [ -n "$TS_IP" ]; then
+    sed -i "s|^Environment=LINUX_DESKTOP_MCP_HOST=.*|Environment=LINUX_DESKTOP_MCP_HOST=$TS_IP|" "$HOME/.config/systemd/user/$UNIT"
+fi
+if [ -n "$TS_DNS" ]; then
+    sed -i "s|^Environment=LINUX_DESKTOP_MCP_ALLOWED_HOSTS=.*|Environment=LINUX_DESKTOP_MCP_ALLOWED_HOSTS=$TS_DNS|" "$HOME/.config/systemd/user/$UNIT"
+fi
 
 # The music overlay (Pop out in the music bar): the same frameless player as
 # on Windows. Started on demand by Odysseus, so it is installed, not enabled.

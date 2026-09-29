@@ -59,7 +59,9 @@ function Fetch($name) { Invoke-WebRequest "$Base/enroll/$Code/file/$name" -OutFi
 Say 'installing the desktop MCP server'
 Fetch 'desktop_mcp_server.py'
 # Below 1.13: newer mcp checks the Host header and refuses the tailnet name.
-& $py -m pip install --quiet --disable-pip-version-check 'mcp>=1.10,<1.13' uvicorn pyautogui pillow pycaw comtypes
+# winsdk: media sessions and Bluetooth (Hear it on); pyaudiowpatch: streaming
+# this PC's sound to another computer.
+& $py -m pip install --quiet --disable-pip-version-check 'mcp>=1.10,<1.13' uvicorn pyautogui pillow pycaw comtypes winsdk pyaudiowpatch
 if ($LASTEXITCODE -ne 0) { Die 'pip install failed (see above).' }
 
 Set-Content -Encoding ASCII (Join-Path $Dest 'run-hidden.vbs') @'
@@ -89,6 +91,18 @@ $servers = @()
 Install-Server 'OdysseusDesktopMCP' 'run-desktop-mcp.cmd' 'desktop_mcp_server.py' @(
     "set DESKTOP_MCP_HOST=$ip", 'set DESKTOP_MCP_PORT=8931', 'set DESKTOP_MCP_ALLOW_INPUT=1') 'desktop-out.log'
 $servers += @{ kind = 'desktop'; port = 8931 }
+
+# The music overlay (Pop out in the music bar): a task with no trigger, started
+# on demand by Odysseus, on the desktop.
+Say 'installing the music overlay'
+Fetch 'music_overlay.py'
+$pyw = Join-Path (Split-Path $py) 'pythonw.exe'
+if (-not (Test-Path $pyw)) { $pyw = $py }
+Set-Content -Encoding ASCII (Join-Path $Dest 'run-music-overlay.cmd') "@echo off`r`n`"$pyw`" `"$Dest\music_overlay.py`"`r`n"
+$oa = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$Dest\run-hidden.vbs`" `"$Dest\run-music-overlay.cmd`""
+$op = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+$ovs = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName 'MusicOverlay' -Action $oa -Principal $op -Settings $ovs -Force | Out-Null
 
 $resolveExe = 'C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe'
 if (Test-Path $resolveExe) {
@@ -135,6 +149,20 @@ $body = @{ dns = $dns; ip = $ip; os = 'windows'; user = $env:USERNAME; gpu = "$g
         ConvertTo-Json -Depth 4
 try {
     $r = Invoke-RestMethod -Method Post -Uri "$Base/enroll/$Code/register" -ContentType 'application/json' -Body $body
+    # The overlay's token (messages, the phone's song), where the overlay reads it.
+    if ($r.overlay_token) {
+        $od = Join-Path $env:APPDATA 'odysseus-music-overlay'
+        New-Item -ItemType Directory -Force -Path $od | Out-Null
+        $sp = Join-Path $od 'settings.json'
+        # Windows PowerShell 5.1: no -AsHashtable; keep the overlay's other settings.
+        $cur = [pscustomobject]@{}
+        if (Test-Path $sp) { try { $cur = Get-Content $sp -Raw | ConvertFrom-Json } catch { $cur = [pscustomobject]@{} } }
+        $cur | Add-Member -NotePropertyName token -NotePropertyValue $r.overlay_token -Force
+        $cur | Add-Member -NotePropertyName url -NotePropertyValue ($Base.TrimEnd('/') + '/') -Force
+        $cur | ConvertTo-Json | Set-Content -Encoding UTF8 $sp
+        Say "saved the music overlay's token"
+    }
+    $r.PSObject.Properties.Remove('overlay_token')
     Say ("done: " + ($r | ConvertTo-Json -Compress))
     Write-Host 'Open Settings > Devices in Odysseus to see this PC.'
 } catch {

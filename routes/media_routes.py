@@ -447,6 +447,13 @@ def setup_media_routes(mcp_manager) -> APIRouter:
         if not target:
             raise HTTPException(400, "The overlay opens on a computer: use Pop out from the "
                                      "browser on your PC")
+        if "start_music_overlay" in set(target.get("tools") or []):
+            # Its desktop MCP starts it in the logged-in session: no SSH needed.
+            r = _payload(await _call(target["server_id"], "start_music_overlay", {}))
+            if r.get("ok") is False:
+                logger.warning("[overlay] %s could not start it: %s", target.get("name"), r.get("error"))
+                raise HTTPException(502, f"Could not open the overlay: {r.get('error')}")
+            return {"ok": True, "machine": target.get("name") or target.get("server_id")}
         all_peers = await asyncio.to_thread(machines.peers)
         peer = machines.find_peer(all_peers, target.get("host", ""))
         if not peer:

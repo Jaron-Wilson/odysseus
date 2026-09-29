@@ -661,6 +661,17 @@ def open_media_url(url: str) -> Dict[str, Any]:
     subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {"ok": True, "opened": url}
 
+@mcp.tool()
+def start_music_overlay() -> Dict[str, Any]:
+    """Open the frameless music overlay on this desktop (Pop out in the
+    Odysseus music bar). Started here, as this user, so Odysseus needs no SSH
+    access to the machine for it."""
+    r = _run(["systemctl", "--user", "start", "odysseus-music-overlay.service"])
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("error") or r.get("stderr")
+                or "the overlay is not installed here (run the Odysseus setup command)"}
+
+
 # ── Playing another machine's live sound (the PC's audio_stream_start) ──
 # Asked for: streaming from the PC to this laptop over the tailnet when they
 # are not near each other. Only a stream from the tailnet is played.
@@ -714,6 +725,21 @@ def stop_stream() -> Dict[str, Any]:
             proc.kill()
     _STREAM.update(proc=None, url="")
     return {"ok": True}
+
+
+@mcp.tool()
+def tools_version() -> Dict[str, Any]:
+    """Fingerprints (sha256) of this machine's Odysseus files, so Odysseus
+    can tell when they are out of date and offer an update."""
+    import hashlib
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = {}
+    for name in (os.path.basename(__file__), "music_overlay.py", "mcp_transport_security.py"):
+        path = os.path.join(here, name)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                out[name] = hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
+    return {"ok": True, "files": out}
 
 
 if __name__ == "__main__":
