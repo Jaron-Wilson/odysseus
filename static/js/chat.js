@@ -228,9 +228,13 @@ import './chatThreads.js';
     if (!sid || !isStreaming) return false;
     const ta = document.getElementById('message');
     const typed = ta ? (ta.value || '').trim() : '';
-    const texts = (_queues.get(sid) || []).map((it) => it.text);
+    // What is queued now, from the server: the agent may already have read
+    // some at its last step, and a stale copy here would send them twice.
+    let queued = _queues.get(sid) || [];
+    try { queued = (await _queueCall(sid, '', 'GET')).items || []; } catch (_) { /* use what we have */ }
+    const texts = queued.map((it) => it.text);
     if (typed) texts.push(typed);
-    if (!texts.length) return false;
+    if (!texts.length) { _setQueue(sid, null); renderQueue(); return false; }
     _queues.delete(sid);
     renderQueue();
     try { await _queueCall(sid, '', 'DELETE'); } catch (_) { /* best effort */ }
@@ -987,7 +991,8 @@ import './chatThreads.js';
     }
 
     // Materialize pending session (deferred from model click) on first message
-    if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
+    // Only when no chat is open: a chat on screen always gets its own message.
+    if (!sessionModule.getCurrentSessionId() && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
       const ok = await sessionModule.materializePendingSession();
       if (!ok || !sessionModule.getCurrentSessionId()) { _releaseSendFlag(); return; }
     }
