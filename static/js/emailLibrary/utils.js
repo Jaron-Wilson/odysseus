@@ -227,3 +227,92 @@ export function _sanitizeHtml(html) {
   }
   return out;
 }
+
+// ── HTML emails shown as they were designed ──
+// Newsletters, receipts and sign-up mails are laid out with tables, pictures,
+// colors and <style>; the theme-matching sanitizer above strips the colors and
+// styles, so they came out as bare text ("in the emails i dont see any
+// rendering", 2026-09-29). Those are shown as the original instead, in a
+// sandboxed frame with no scripts (no allow-scripts), its pictures through
+// Odysseus (/api/email/image: public addresses only), links opening in a new
+// tab. Plain emails that only use div/p/br keep the chat-bubble view.
+
+const _DESIGNED_HTML = /<(?:table|img|style|center|font)\b|\bbgcolor\s*=|style\s*=\s*["'][^"']*(?:background|color\s*:|font-size|width\s*:)/i;
+
+export function _isDesignedHtml(html) {
+  return !!html && _DESIGNED_HTML.test(String(html));
+}
+
+const _SAFE_DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp);base64,/i;
+
+function _proxiedImage(url) {
+  const u = String(url || '').trim();
+  if (_SAFE_DATA_IMAGE.test(u)) return u;
+  if (/^https?:\/\//i.test(u)) return `/api/email/image?u=${encodeURIComponent(u)}`;
+  if (u.startsWith('//')) return `/api/email/image?u=${encodeURIComponent('https:' + u)}`;
+  return '';                                     // cid:, relative, anything else
+}
+
+function _proxyCssUrls(css) {
+  return String(css || '')
+    .replace(/@import[^;]*;?/gi, '')
+    .replace(/expression\s*\(/gi, 'x(')
+    .replace(/url\(\s*(['"]?)([^'")]*)\1\s*\)/gi, (_, _q, u) => {
+      const p = _proxiedImage(u);
+      return p ? `url("${p}")` : 'none';
+    });
+}
+
+// The whole document for the frame: the email's own styles kept, everything
+// that could run, load a page, or submit removed.
+export function _emailFrameDoc(html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  doc.querySelectorAll(
+    'script, iframe, object, embed, form, base, meta, link, noscript, frame, frameset, applet, portal, svg, math'
+  ).forEach(el => el.remove());
+  const styles = [...doc.querySelectorAll('style')].map(s => _proxyCssUrls(s.textContent));
+  doc.querySelectorAll('style').forEach(s => s.remove());
+  const URL_ATTRS = ['href', 'xlink:href', 'action', 'formaction', 'poster', 'data'];
+  doc.querySelectorAll('*').forEach(el => {
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on') || name === 'srcdoc' || name === 'srcset') { el.removeAttribute(attr.name); continue; }
+      if (URL_ATTRS.includes(name) && _isDangerousUrl(attr.value)) { el.removeAttribute(attr.name); continue; }
+      if (name === 'src' || name === 'background') {
+        const p = _proxiedImage(attr.value);
+        if (p) el.setAttribute(attr.name, p); else el.removeAttribute(attr.name);
+        continue;
+      }
+      if (name === 'style') el.setAttribute('style', _proxyCssUrls(attr.value));
+    }
+    if (el.tagName === 'A') {
+      el.setAttribute('target', '_blank');
+      el.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+  const base = 'html,body{margin:0;padding:0;background:#fff;color:#222;}'
+    + 'body{padding:12px;font:14px/1.45 Arial,Helvetica,sans-serif;overflow-wrap:anywhere;}'
+    + 'img{max-width:100%;}table{max-width:100%;}';
+  return '<!doctype html><html><head><meta charset="utf-8"><base target="_blank">'
+    + `<style>${base}</style>${styles.map(s => `<style>${s}</style>`).join('')}</head>`
+    + `<body>${doc.body ? doc.body.innerHTML : ''}</body></html>`;
+}
+
+// For a srcdoc="" value: decoded once by the parser, so & must go too.
+export function _srcdocAttr(html) {
+  return String(html).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+// The frame is as tall as its email. Scripts are off inside it, so this page
+// measures it (allow-same-origin lets it read the height, nothing more).
+export function _fitEmailFrame(frame) {
+  let d;
+  try { d = frame.contentDocument; } catch (_) { return; }
+  if (!d || !d.documentElement) return;
+  const fit = () => {
+    try { frame.style.height = `${Math.max(60, d.documentElement.scrollHeight)}px`; } catch (_) { /* gone */ }
+  };
+  fit();
+  d.querySelectorAll('img').forEach(i => { if (!i.complete) i.addEventListener('load', fit); });
+  [300, 1000, 2500].forEach(t => setTimeout(fit, t));
+}

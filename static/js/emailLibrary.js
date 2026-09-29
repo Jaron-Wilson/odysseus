@@ -14,7 +14,7 @@ import * as inboundMail from './inboundMail.js';
 import {
   _esc, _escLinkify, _extractName, _parseTurnMeta,
   _formatBubbleDate, _formatRecipients, _senderColor, _initials,
-  _sanitizeHtml,
+  _sanitizeHtml, _isDesignedHtml, _emailFrameDoc, _srcdocAttr, _fitEmailFrame,
   _TALON_WROTE, _TALON_FROM, _TALON_SENT, _TALON_SUBJ, _TALON_TO,
   _TALON_ORIG_RE, _SIG_BLOAT_MIN_CHARS,
 } from './emailLibrary/utils.js';
@@ -732,7 +732,8 @@ export function isOpen() { return state._libOpen; }
 
 export function openEmailLibrary(opts = {}) {
   // Opens on the accounts' mail; Inbound is asked again (its unread count).
-  _inbound.on = false;
+  _inbound.on = !!opts.inbound;
+  _inbound.openKey = opts.inboundKey || null;
   _inbound.available = null;
   // Force-clean any stale state from previous attempts
   const existing = document.getElementById('email-lib-modal');
@@ -1813,7 +1814,7 @@ async function _loadScheduled(grid, sp) {
 // inboundMail.js) as its own entry after the accounts. Asked for 2026-09-29:
 // "i see all default, then my gmail, but the inbounds are not there". An HTML
 // email is shown as HTML, sanitized like every other email.
-const _inbound = { available: null, unread: 0, on: false };
+const _inbound = { available: null, unread: 0, on: false, openKey: null };
 
 async function _checkInbound() {
   try {
@@ -1878,6 +1879,7 @@ async function _loadInbound(grid, seq) {
       _openInbound(card, m);
     });
     grid.appendChild(card);
+    if (_inbound.openKey === m.key) { _inbound.openKey = null; _openInbound(card, m); }
   }
 }
 
@@ -2684,7 +2686,41 @@ function _setBubblesDisabled(v) {
   try { localStorage.setItem(_BUBBLES_DISABLED_KEY, v ? '1' : '0'); } catch {}
 }
 
+// A designed HTML email (tables, pictures, colors) is shown as its original,
+// in a sandboxed frame (emailLibrary/utils.js _emailFrameDoc), with the text
+// view a click away.
 function _renderEmailBody(data) {
+  const html = data && data.body_html;
+  if (!html || !_isDesignedHtml(html)) return _renderEmailBodyText(data);
+  let text = '';
+  try { text = _renderEmailBodyText(data); } catch (_) { text = _escLinkify(data.body || '').replace(/\n/g, '<br>'); }
+  return `<div class="email-html-view">
+    <div class="email-html-bar"><button type="button" class="email-view-btn" data-email-view="text" title="Show this email as text in the theme's colors">Show as text</button></div>
+    <iframe class="email-html-frame" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" title="The email as it was designed" srcdoc="${_srcdocAttr(_emailFrameDoc(html))}"></iframe>
+    <div class="email-html-text" hidden>${text}</div>
+  </div>`;
+}
+
+// Frames size themselves when they load; the button swaps original and text.
+document.addEventListener('load', (e) => {
+  const f = e.target;
+  if (f && f.classList && f.classList.contains('email-html-frame')) _fitEmailFrame(f);
+}, true);
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-email-view]');
+  if (!b) return;
+  e.stopPropagation();
+  const view = b.closest('.email-html-view');
+  if (!view) return;
+  const toText = b.dataset.emailView === 'text';
+  view.querySelector('.email-html-frame').hidden = toText;
+  view.querySelector('.email-html-text').hidden = !toText;
+  b.dataset.emailView = toText ? 'original' : 'text';
+  b.textContent = toText ? 'Show original' : 'Show as text';
+  if (!toText) _fitEmailFrame(view.querySelector('.email-html-frame'));
+}, true);
+
+function _renderEmailBodyText(data) {
   const plain = (typeof data?.body === 'string' && data.body.length) ? data.body : '';
   const folder = String(data?.folder || '').toLowerCase();
   const isSentFolder = folder.includes('sent');

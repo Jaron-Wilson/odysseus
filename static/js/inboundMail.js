@@ -159,7 +159,16 @@ export async function ask(key) {
   return r;
 }
 
+// The sidebar's Inbound button and a notification open the Email window on
+// Inbound (where an HTML email is shown as designed); this panel is the
+// fallback if that window cannot load.
 export function open(key) {
+  import('./emailLibrary.js')
+    .then((m) => m.openEmailLibrary({ inbound: true, inboundKey: key || null }))
+    .catch(() => openPanel(key));
+}
+
+export function openPanel(key) {
   shell();
   if (key) showOne(key); else showList();
 }
