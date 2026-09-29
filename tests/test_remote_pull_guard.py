@@ -59,3 +59,14 @@ def test_the_prompt_says_to_ask_not_copy():
     assert "Windows and Linux alike, has share_media" in src           # "the Windows PC can't stream": wrong
     enroll = open(os.path.join(ROOT, "routes", "enroll_routes.py"), encoding="utf-8").read()
     assert enroll.count('"Play its videos in the chat": "share_media"') == 2   # Devices offers the update
+
+
+def test_devices_only_asks_for_tools_each_server_has():
+    # "windows-desktop: can add Play another computer's sound. Install", right
+    # after a fresh install: the Windows server has no play_stream.
+    import re
+    from routes.enroll_routes import FEATURES, MCP_FILE
+    for os_name, feats in FEATURES.items():
+        src = open(os.path.join(ROOT, "tools", "mcp", MCP_FILE[os_name]), encoding="utf-8").read()
+        for label, tool in feats.items():
+            assert re.search(rf"def {tool}\(", src), f"{os_name}: {label} ({tool}) is not in {MCP_FILE[os_name]}"
