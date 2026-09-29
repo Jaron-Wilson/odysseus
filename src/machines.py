@@ -365,6 +365,9 @@ async def start_services(peer: Dict, user: str) -> Dict:
 # out of the Odysseus* services pattern above so the health loop never
 # starts them on its own.
 USER_TASKS = {"MusicOverlay"}
+# The same tasks on Linux: systemd --user units, started on the logged-in
+# desktop's session (install-linux-desktop.sh installs them).
+LINUX_USER_UNITS = {"MusicOverlay": "odysseus-music-overlay.service"}
 
 
 async def run_user_task(peer: Dict, user: str, task: str) -> Dict:
@@ -372,13 +375,19 @@ async def run_user_task(peer: Dict, user: str, task: str) -> Dict:
     The task runs on the logged-in desktop (see start_command)."""
     if task not in USER_TASKS:
         return {"ok": False, "error": f"{task!r} is not a task Odysseus may start"}
-    if peer.get("os") != "windows":
-        return {"ok": False, "error": "only Windows machines have this task"}
-    host = peer["dns"] or (peer["ips"][0] if peer["ips"] else peer["host"])
-    remote = ["powershell", "-NoProfile", "-Command", f"Start-ScheduledTask -TaskName '{task}'"]
+    os_name = peer.get("os")
+    if os_name == "linux" and task in LINUX_USER_UNITS:
+        # Asked for: "on my linux device opened the website tried popup but it
+        # didn't work".
+        remote = ["systemctl", "--user", "start", LINUX_USER_UNITS[task]]
+    elif os_name == "windows":
+        remote = ["powershell", "-NoProfile", "-Command", f"Start-ScheduledTask -TaskName '{task}'"]
+    else:
+        return {"ok": False, "error": "only Windows and Linux machines have this task"}
+    host = peer.get("dns") or (peer["ips"][0] if peer.get("ips") else peer["host"])
     last = ""
     for key in _ssh_keys():
-        r = await _run(_ssh_argv(user, host, key, remote, "windows"), timeout=30)
+        r = await _run(_ssh_argv(user, host, key, remote, os_name), timeout=30)
         if r["rc"] == 0:
             return {"ok": True}
         last = r["err"] or r["out"]

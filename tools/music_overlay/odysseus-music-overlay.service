@@ -1,0 +1,12 @@
+# The frameless music overlay (music_overlay.py) on a Linux desktop.
+# Not enabled at login: Odysseus starts it when Pop out is pressed
+# (src/machines.py LINUX_USER_UNITS), like the MusicOverlay task on Windows.
+[Unit]
+Description=Odysseus music overlay (frameless always-on-top player)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.odysseus-mcp/venv/bin/python %h/.odysseus-mcp/music_overlay.py
+Restart=no
