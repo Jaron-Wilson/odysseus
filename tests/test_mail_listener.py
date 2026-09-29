@@ -183,3 +183,13 @@ def test_settings_card_is_on_the_page():
         html = f.read()
     assert 'id="mail-listener-card"' in html
     assert '<script type="module" src="/static/js/mailListenerSettings.js"></script>' in html
+
+
+def test_rules_read_back_off_the_page_still_render():
+    # "Add a rule" re-reads the rules from the page, where Allowed senders is
+    # the box's text; drawing them called .join on it and failed:
+    # "(r.from_allow || []).join is not a function" (2026-09-29).
+    with open(os.path.join(ROOT, "static", "js", "mailListenerSettings.js"), encoding="utf-8") as f:
+        js = f.read()
+    assert "(r.from_allow || []).join" not in js
+    assert "Array.isArray(v) ? v.join(', ') : String(v || '')" in js
