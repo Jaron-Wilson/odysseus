@@ -61,7 +61,8 @@ Fetch 'desktop_mcp_server.py'
 # Below 1.13: newer mcp checks the Host header and refuses the tailnet name.
 # winsdk: media sessions and Bluetooth (Hear it on); pyaudiowpatch: streaming
 # this PC's sound to another computer.
-& $py -m pip install --quiet --disable-pip-version-check 'mcp>=1.10,<1.13' uvicorn pyautogui pillow pycaw comtypes winsdk pyaudiowpatch
+Say 'installing its Python packages (pip)'
+& $py -m pip install --quiet --disable-pip-version-check --no-input --prefer-binary --timeout 60 'mcp>=1.10,<1.13' uvicorn pyautogui pillow pycaw comtypes winsdk pyaudiowpatch
 if ($LASTEXITCODE -ne 0) { Die 'pip install failed (see above).' }
 
 Set-Content -Encoding ASCII (Join-Path $Dest 'run-hidden.vbs') @'
@@ -88,6 +89,7 @@ function Install-Server($task, $cmdName, $script, $envLines, $logName) {
 }
 
 $servers = @()
+Say 'starting the desktop MCP server'
 Install-Server 'OdysseusDesktopMCP' 'run-desktop-mcp.cmd' 'desktop_mcp_server.py' @(
     "set DESKTOP_MCP_HOST=$ip", 'set DESKTOP_MCP_PORT=8931', 'set DESKTOP_MCP_ALLOW_INPUT=1') 'desktop-out.log'
 $servers += @{ kind = 'desktop'; port = 8931 }
