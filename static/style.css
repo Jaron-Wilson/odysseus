@@ -37390,3 +37390,19 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .cb-note[hidden] { display: none; }
 .cb-watch { margin-left: 8px; font-size: 11px; padding: 0 7px; border-radius: 7px; cursor: pointer; color: inherit; background: none;
   border: 1px solid color-mix(in srgb, var(--accent, var(--fg)) 45%, transparent); }
+
+/* Music progress (musicBar.js): a thin line along the mini bar's bottom
+   edge with the time beside the artist, and a track with elapsed and time
+   left in the panel. */
+.music-bar { position: relative; }
+.mb-prog { position: absolute; left: 12px; right: 12px; bottom: 2px; height: 2px; border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 12%, transparent); overflow: hidden; pointer-events: none; }
+.mb-prog[hidden], .mp-prog[hidden], .mb-time[hidden] { display: none; }
+.mb-prog-fill { display: block; height: 100%; width: 0; border-radius: inherit;
+  background: var(--accent, var(--accent-primary, #c96)); transition: width .5s linear; }
+.mb-time { opacity: .55; font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.music-bar-pip .mb-prog { left: 8px; right: 8px; bottom: 3px; }
+.mp-prog { margin: 10px 0 2px; }
+.mp-prog-track { height: 4px; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.mp-prog-times { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; opacity: .6;
+  font-variant-numeric: tabular-nums; }

@@ -123,6 +123,76 @@ function _artUrl(np) {
   return `/api/media/art?title=${encodeURIComponent(np.title)}&artist=${encodeURIComponent(np.artist || '')}`;
 }
 
+// ── progress ─────────────────────────────────────────────────────────────
+// Asked for: "a line to have music duration/duration left". The server
+// sends position and duration in seconds, and position_at: when that
+// position was true (the machine's clock; routes/media_routes.py). Between
+// the 4 s polls the line keeps moving by itself.
+const PROGRESS_MS = 500;
+let _anchor = null;          // {key, raw, at}: a position with no position_at, and when it was first seen
+let _progTimer = null;
+
+function _fmtTime(sec) {
+  const t = Math.max(0, Math.floor(sec));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), ss = String(t % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
+// {pos, dur} in seconds, or null when the player does not say (a stream).
+function _progress() {
+  if (_listen) {
+    if (!(_listen.dur > 0) || typeof _listen.pos !== 'number') return null;
+    const p = _listen.pos + (_listen.playing ? (Date.now() - _listen.posAt) / 1000 : 0);
+    return { pos: Math.min(p, _listen.dur), dur: _listen.dur };
+  }
+  const np = _np();
+  if (!(np.duration > 0) || typeof np.position !== 'number') return null;
+  let at;
+  if (typeof np.position_at === 'number' && _state && typeof _state.server_now === 'number') {
+    // Placed on this browser's clock: the server's clock and ours differ.
+    at = np.position_at * 1000 + ((_state._recvAt || Date.now()) - _state.server_now * 1000);
+  } else {
+    // The phone says where it is, not when: count on from when this value
+    // was first seen, and start again when it changes.
+    const key = `${np.title}|${np.artist}`;
+    if (!_anchor || _anchor.key !== key || _anchor.raw !== np.position) {
+      _anchor = { key, raw: np.position, at: (_state && _state._recvAt) || Date.now() };
+    }
+    at = _anchor.at;
+  }
+  const p = np.position + (np.playing ? Math.max(0, Date.now() - at) / 1000 : 0);
+  return { pos: Math.min(p, np.duration), dur: np.duration };
+}
+
+const PROGRESS_BAR_HTML = '<span class="mb-prog" hidden><span class="mb-prog-fill"></span></span>';
+const PROGRESS_PANEL_HTML = `<div class="mp-prog" hidden>
+      <div class="mp-prog-track"><div class="mb-prog-fill"></div></div>
+      <div class="mp-prog-times"><span class="mp-elapsed"></span><span class="mp-left"></span></div></div>`;
+
+// Moves the line and the times without redrawing the bar (buttons would
+// flicker under the pointer every half second).
+function _paintProgress() {
+  const pr = _progress();
+  const docs = [document];
+  if (_pip && !_pip.closed) docs.push(_pip.document);
+  for (const doc of docs) {
+    doc.querySelectorAll('.mb-prog, .mp-prog').forEach((el) => { el.hidden = !pr; });
+    doc.querySelectorAll('.mb-time').forEach((el) => {
+      el.textContent = pr ? `${_fmtTime(pr.pos)} / ${_fmtTime(pr.dur)}` : '';
+      el.hidden = !pr;
+    });
+    if (!pr) continue;
+    const pct = `${Math.max(0, Math.min(100, (pr.pos / pr.dur) * 100)).toFixed(2)}%`;
+    doc.querySelectorAll('.mb-prog-fill').forEach((el) => { el.style.width = pct; });
+    doc.querySelectorAll('.mp-elapsed').forEach((el) => { el.textContent = _fmtTime(pr.pos); });
+    doc.querySelectorAll('.mp-left').forEach((el) => { el.textContent = `-${_fmtTime(pr.dur - pr.pos)}`; });
+  }
+}
+
+function _startProgress() {
+  if (!_progTimer) _progTimer = setInterval(_paintProgress, PROGRESS_MS);
+}
+
 // ── mini bar ─────────────────────────────────────────────────────────────
 function _barTargets() {
   const out = [];
@@ -158,6 +228,7 @@ function _renderBarInto(bar) {
     <span class="mb-text">
       <span class="mb-title">${has ? _esc(np.title) : 'Nothing playing'}</span>
       <span class="mb-artist">${has ? _esc(np.artist || '') : 'Start YouTube Music on your PC'}</span>
+      <span class="mb-time" hidden></span>
     </span>
     <span class="mb-controls">
       <button type="button" class="mb-btn" data-mb="previous" title="Previous">${ICONS.prev}</button>
@@ -173,8 +244,10 @@ function _renderBarInto(bar) {
            <button type="button" class="mb-btn" data-mb="expand" title="Expand">${ICONS.expand}</button>`
         : ''}
     </span>
-    ${!playing && (_state.elsewhere || []).length ? _elsewhereHtml(_state.elsewhere[0]) : ''}`;
+    ${!playing && (_state.elsewhere || []).length ? _elsewhereHtml(_state.elsewhere[0]) : ''}
+    ${has ? PROGRESS_BAR_HTML : ''}`;
   _wireArt(bar);
+  _paintProgress();
 }
 
 // Nothing playing here, but something is on another device: say so, and
@@ -208,6 +281,7 @@ async function _renderPanel() {
     <div class="mp-art">${art ? `<img src="${_esc(art)}" alt="">` : ''}<span class="mp-art-fallback">${ICONS.note}</span></div>
     <div class="mp-title">${np.title ? _esc(np.title) : 'Nothing playing'}</div>
     <div class="mp-artist">${_esc([np.artist, np.album].filter(Boolean).join(' · '))}</div>
+    ${np.title ? PROGRESS_PANEL_HTML : ''}
     <div class="mp-controls">
       <button type="button" class="mb-btn" data-mb="previous" title="Previous">${ICONS.prev}</button>
       <button type="button" class="mb-btn mb-main" data-mb="play_pause" title="Play / pause">${np.playing ? ICONS.pause : ICONS.play}</button>
@@ -249,6 +323,7 @@ async function _renderPanel() {
     </select>
     <div class="mp-note">Queue and playlists need the YouTube Music desktop app's API, which Windows' media controls do not expose.</div>`;
   _wireArt(panel);
+  _paintProgress();
   const key = `${np.title}|${np.artist}`;
   const box = panel.querySelector('#mp-lyrics');
   if (np.title && box) {
@@ -286,12 +361,14 @@ async function _tick() {
     if (_autoDevice && Date.now() - _autoAt > 30000) _autoDevice = '';
     const prevKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}|${_appVol()}`;
     _state = await _fetchState();
+    _state._recvAt = Date.now();
     _checkListenStillOurs();
     // Browsing from a phone: with one machine to control, use it.
     if (_state && !_state.ok && !_device() && (_state.available || []).length === 1) {
       _autoDevice = _state.available[0].server_id;
       _autoAt = Date.now();
       _state = await _fetchState();
+      _state._recvAt = Date.now();
     }
     const nowKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}|${_appVol()}`;
     if (nowKey !== prevKey) { _renderBar(); if (_panelOpen) _renderPanel(); }
@@ -301,6 +378,7 @@ async function _tick() {
 
 function _startPolling() {
   if (!_timer) _timer = setInterval(_tick, POLL_MS);
+  _startProgress();
   _tick();
 }
 
@@ -395,7 +473,8 @@ async function _popOut() {
   });
   // Timers in the popped-out window keep running while this tab is hidden.
   const t = pip.setInterval(_tick, POLL_MS);
-  pip.addEventListener('pagehide', () => { pip.clearInterval(t); _pip = null; _renderBar(); });
+  const tp = pip.setInterval(_paintProgress, PROGRESS_MS);
+  pip.addEventListener('pagehide', () => { pip.clearInterval(t); pip.clearInterval(tp); _pip = null; _renderBar(); });
   _pip = pip;
   _renderBar();
   _tick();
@@ -606,6 +685,11 @@ window.addEventListener('message', (ev) => {
   if (state === 1 || state === 2) {                // 1 playing, 2 paused
     if (_listen.playing !== (state === 1)) { _listen.playing = state === 1; _renderBar(); }
   }
+  // The player reports where it is while it plays (it was asked to, with
+  // "listening"): the progress line for a song in this browser.
+  const info = m && m.event === 'infoDelivery' && m.info;
+  if (info && typeof info.currentTime === 'number') { _listen.pos = info.currentTime; _listen.posAt = Date.now(); }
+  if (info && info.duration > 0) _listen.dur = info.duration;
   if (m && m.event === 'onError') {
     _listen.iframe.hidden = true;
     const fb = _listen.el.querySelector('.mb-listen-fallback');

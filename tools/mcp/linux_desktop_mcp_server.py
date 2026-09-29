@@ -257,9 +257,28 @@ def _unwrap(raw: str) -> str:
     return s.strip()
 
 
+# MPRIS gives times in microseconds, as a GVariant: gdbus prints the
+# Position property as "(<int64 83000000>,)" and the track length inside the
+# Metadata dict as "'mpris:length': <int64 225000000>" (some players say
+# uint64, or leave the type out).
+_GV_INT = r"<(?:u?int(?:32|64)\s+)?(-?\d+)>"
+
+
+def _position_s(raw: str) -> Optional[float]:
+    m = re.search(_GV_INT, raw or "")
+    return round(int(m.group(1)) / 1e6, 2) if m and int(m.group(1)) >= 0 else None
+
+
+def _length_s(meta_raw: str) -> Optional[float]:
+    m = re.search(r"'mpris:length':\s*" + _GV_INT, meta_raw or "")
+    return round(int(m.group(1)) / 1e6, 2) if m and int(m.group(1)) > 0 else None
+
+
 @mcp.tool()
 def now_playing() -> Dict[str, Any]:
-    """What is playing, via MPRIS. Covers any compliant player."""
+    """What is playing, via MPRIS. Covers any compliant player. Each player
+    has position and duration in seconds (None where the player does not
+    say), and position_at: when the position was read, for a progress bar."""
     blocked = _require_session()
     if blocked:
         return blocked
@@ -276,6 +295,10 @@ def now_playing() -> Dict[str, Any]:
         meta = _gdbus(["call", "--session", "-d", p, "-o", "/org/mpris/MediaPlayer2",
                        "-m", "org.freedesktop.DBus.Properties.Get",
                        "org.mpris.MediaPlayer2.Player", "Metadata"])
+        position = _gdbus(["call", "--session", "-d", p, "-o", "/org/mpris/MediaPlayer2",
+                           "-m", "org.freedesktop.DBus.Properties.Get",
+                           "org.mpris.MediaPlayer2.Player", "Position"])
+        read_at = time.time()
         raw = meta.get("stdout", "")
         title = re.search(r"'xesam:title':\s*<'([^']*)'>", raw)
         artist = re.search(r"'xesam:artist':\s*<\['([^']*)'", raw)
@@ -284,7 +307,13 @@ def now_playing() -> Dict[str, Any]:
             "status": _unwrap(status.get("stdout", "")).strip("<>'"),
             "title": title.group(1) if title else None,
             "artist": artist.group(1) if artist else None,
+            # MPRIS computes Position when asked, so it is current as of now.
+            "position": _position_s(position.get("stdout", "")) if position.get("ok", True) else None,
+            "duration": _length_s(raw),
+            "position_at": round(read_at, 3),
         })
+    # The one being heard first: a Playing player, then a Paused one.
+    out.sort(key=lambda pl: {"Playing": 0, "Paused": 1}.get(pl["status"], 2))
     return {"playing": any(p["status"] == "Playing" for p in out), "players": out}
 
 

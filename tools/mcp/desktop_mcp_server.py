@@ -616,12 +616,29 @@ try {
   $propType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties,Windows.Media,ContentType=WindowsRuntime]
   $p = Await ($s.TryGetMediaPropertiesAsync()) ($propType)
   $info = $s.GetPlaybackInfo()
+  # For the progress bar. The timeline's Position is as of LastUpdatedTime
+  # (the app says where it is when it starts, pauses or seeks, not every
+  # second), so that time goes along and the bar counts on from it. A live
+  # stream has no end time: no duration, no bar.
+  $pos = $null; $dur = $null; $at = $null
+  try {
+    $t = $s.GetTimelineProperties()
+    $len = $t.EndTime.TotalSeconds - $t.StartTime.TotalSeconds
+    if ($len -gt 0) {
+      $dur = [math]::Round($len, 2)
+      $pos = [math]::Round($t.Position.TotalSeconds - $t.StartTime.TotalSeconds, 2)
+      $at  = $t.LastUpdatedTime.ToUnixTimeMilliseconds() / 1000.0
+    }
+  } catch {}
   @{ playing = ($info.PlaybackStatus -eq 'Playing')
      status  = "$($info.PlaybackStatus)"
      title   = $p.Title
      artist  = $p.Artist
      album   = $p.AlbumTitle
-     source  = $s.SourceAppUserModelId } | ConvertTo-Json -Compress
+     source  = $s.SourceAppUserModelId
+     position = $pos
+     duration = $dur
+     position_at = $at } | ConvertTo-Json -Compress
 } catch { @{ error = "$_" } | ConvertTo-Json -Compress }
 """
     r = _run(["powershell", "-NoProfile", "-Command", ps], timeout=45)
