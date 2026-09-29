@@ -49,9 +49,11 @@ FEATURES = {
                 "Hear the phone here (Bluetooth)": "bluetooth_audio_receive",
                 "Pair the phone from the site": "bluetooth_pair",
                 "Stream this computer's sound": "audio_stream_start",
-                "Play another computer's sound": "play_stream"},
+                "Play another computer's sound": "play_stream",
+                "Play its videos in the chat": "share_media"},
     "linux": {"Music overlay (Pop out)": "start_music_overlay",
-              "Play another computer's sound": "play_stream"},
+              "Play another computer's sound": "play_stream",
+              "Play its videos in the chat": "share_media"},
 }
 MCP_FILE = {"windows": "desktop_mcp_server.py", "linux": "linux_desktop_mcp_server.py"}
 SERVER_KINDS = {"desktop": "desktop", "resolve": "resolve"}
