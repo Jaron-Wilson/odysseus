@@ -44,6 +44,12 @@ function ago(ts) {
   return `${Math.round(s / 3600)} h ago`;
 }
 
+// Saved rules have a list; rules read back off the page (Add a rule, Remove)
+// still have the box's text. Both are shown the same way.
+function allowText(v) {
+  return Array.isArray(v) ? v.join(', ') : String(v || '');
+}
+
 function ruleRow(r, i) {
   return `<div class="ml-rule" data-i="${i}" style="padding:8px 10px;margin:6px 0;border-radius:8px;background:color-mix(in srgb, var(--fg) 4%, transparent)">
     <div class="settings-row" style="gap:8px;flex-wrap:wrap">
@@ -58,7 +64,7 @@ function ruleRow(r, i) {
     <div class="ml-task-fields" style="${r.action === 'task' ? '' : 'display:none'}">
       <textarea class="settings-select ml-instructions" rows="3" style="width:100%;margin-top:6px;font-family:inherit;resize:vertical"
         placeholder="What the agent does with each email, e.g. Pull the submitted pages with tools/submissions.py and fix them in the CleverNode repo; run the tests; tell me what changed.">${esc(r.instructions)}</textarea>
-      <input class="settings-select ml-allow" type="text" value="${esc((r.from_allow || []).join(', '))}" placeholder="Allowed senders (empty for anyone): gateway@clevernode.org, clevernode.org" style="width:100%;margin-top:6px" />
+      <input class="settings-select ml-allow" type="text" value="${esc(allowText(r.from_allow))}" placeholder="Allowed senders (empty for anyone): gateway@clevernode.org, clevernode.org" style="width:100%;margin-top:6px" />
     </div>
     ${r.chat_id ? `<input type="hidden" class="ml-chat" value="${esc(r.chat_id)}">` : ''}
   </div>`;
@@ -99,7 +105,8 @@ function render(cfg) {
       <span style="white-space:nowrap">${esc(new Date(e.received * 1000).toLocaleString())}</span>
       <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.from)}: ${esc(e.subject || '(no subject)')}</span>
       <span>${esc(e.action)}</span>
-      ${e.chat_id ? `<a href="#${esc(e.chat_id)}" data-chat="${esc(e.chat_id)}" class="ml-open">Open</a>` : ''}
+      ${e.chat_id ? `<a href="#${esc(e.chat_id)}" data-chat="${esc(e.chat_id)}" class="ml-open">Open chat</a>`
+        : `<a href="#" data-mail-key="${esc(e.key)}" class="ml-open">Open</a>`}
     </div>`).join('') : 'Nothing received yet.';
 }
 
@@ -151,7 +158,8 @@ async function onClick(ev) {
     } else if (t.classList.contains('ml-open')) {
       const m = await import('./settings.js');
       m.close();
-      window.sessionModule?.selectSession(t.dataset.chat);
+      if (t.dataset.mailKey) window.inboundMail?.open(t.dataset.mailKey);
+      else window.sessionModule?.selectSession(t.dataset.chat);
     }
   } catch (e) {
     say(e.message, true);

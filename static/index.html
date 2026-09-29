@@ -804,6 +804,8 @@
       <div class="section" id="email-section">
         <div class="section-header-flex">
           <span class="section-title" id="email-section-title" style="cursor:pointer;" title="Open email inbox"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg><span>Email</span></span>
+          <!-- Inbound mail from the Cloudflare mail Worker (inboundMail.js) -->
+          <button type="button" class="section-header-btn email-inbound-btn" id="email-inbound-btn" title="Inbound mail: submissions@ and other addresses routed to Odysseus" hidden>Inbound<span id="email-inbound-count" class="bg-tasks-count" hidden></span></button>
           <button type="button" class="section-header-btn list-item-plus-btn" id="email-compose-btn" title="Compose email">
             <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             <span class="list-item-plus-label">new</span>
@@ -2587,6 +2589,7 @@
 <script type="module" src="/static/js/devicesSettings.js"></script>
 <script type="module" src="/static/js/devicesPanel.js"></script>
 <script type="module" src="/static/js/mailListenerSettings.js"></script>
+<script type="module" src="/static/js/inboundMail.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
 <script type="module" src="/static/js/sessions.js"></script>
