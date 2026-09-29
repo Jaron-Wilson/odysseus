@@ -1679,3 +1679,33 @@ async def _post_background_result(job, result: Dict) -> None:
             await chat_queue.send_done_notification(sid, job.notify, failed=not ok)
         except Exception:
             pass
+    _wake_chat(job, sid, "finished" if ok else "stopped" if job.status == "stopped" else "failed")
+
+
+BG_DONE_PROMPT = (
+    "[Background job {verb} \u00b7 job {job_id} \u00b7 {engine}]\n\n"
+    "The {engine} job `{job_id}` that was running in the background has {verb}; its result is "
+    "posted just above. Tell the user in a few lines what it did (or why it stopped) and whether "
+    "anything needs them. If they had already asked in this chat for a next step once it was "
+    "done, carry that on now. Otherwise do not start new work."
+)
+
+
+def _wake_chat(job, sid: str, verb: str) -> None:
+    """Start a short turn in the chat so its model reads the result and tells
+    the user, the way a person would ping back. Asked for: "once an agent is
+    done it does not ping the chat, I have to reiterate or ask if it's done
+    when in background tasks I can see it finished". Queued once behind a
+    reply that is already running there."""
+    prompt = BG_DONE_PROMPT.format(verb=verb, job_id=job.id, engine=engine_label(job.engine))
+    try:
+        from src.screen_control_resume import start_turn
+        if start_turn(sid, prompt, note_source="claude_code_background_done",
+                      reply_source="claude_code_background_report"):
+            return
+        from src import chat_queue
+        chat_queue.add(sid, prompt, key=f"bg-done:{job.id}",
+                       label=f"Report {engine_label(job.engine)} job {job.id} ({verb})")
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("Could not tell chat %s that job %s %s", sid[:8], job.id, verb)
