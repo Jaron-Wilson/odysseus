@@ -390,6 +390,7 @@ async function showApps(id, match = '') {
         <div style="display:flex;align-items:center;gap:8px">
           <span style="flex:1">${esc(a.name)}${a.curated ? ' ' + chip('built-in') : ''}${a.running ? ' ' + chip('running') : ''}</span>
           <button class="settings-btn" style="padding:2px 8px;font-size:11px" data-pc-open="${esc(id)}" data-app="${esc(a.launch)}" type="button">Open</button>
+          <button class="settings-btn" style="padding:2px 8px;font-size:11px" data-pc-mcp="${esc(id)}" data-app-name="${esc(a.name)}" type="button" title="Have a coding agent build an MCP server so Odysseus can control ${esc(a.name)}: opens a new chat for it">Make an MCP</button>
         </div>`).join('') + '</div>';
   } catch (e) {
     list.textContent = `Could not list apps: ${e.message}`;
@@ -406,6 +407,21 @@ function onComputersInput(ev) {
 }
 
 async function onComputersClick(ev) {
+  const mk = ev.target.closest('[data-pc-mcp]');
+  if (mk) {
+    ev.preventDefault();
+    mk.disabled = true;
+    mk.textContent = 'Opening a chat\u2026';
+    try {
+      const m = await import('./specialChats.js');
+      await (m.makeMcp || m.default.makeMcp)(mk.dataset.pcMcp, mk.dataset.appName);
+    } catch (e) {
+      mk.textContent = 'Make an MCP';
+      mk.disabled = false;
+      if (window.showToast) window.showToast(`Could not start it: ${e.message}`);
+    }
+    return;
+  }
   const t = ev.target.closest('[data-pc-apps],[data-pc-open]');
   if (!t) return;
   ev.preventDefault();
