@@ -25,3 +25,16 @@ def test_files_are_swapped_in_whole():
     assert '-OutFile $tmp' in fetch and 'Move-Item -Force $tmp $final' in fetch
     # The lock comes before the first download.
     assert PS1.index("Global\\OdysseusInstall") < PS1.index("Fetch 'desktop_mcp_server.py'")
+
+
+def test_a_timed_out_ssh_is_killed(tmp_path):
+    # Eight installer ssh sessions outlived their timeout by hours and kept
+    # the PC's server file open.
+    import asyncio
+    import time
+    from src import machines
+    marker = tmp_path / "still-running"
+    r = asyncio.run(machines._run(["bash", "-c", f"sleep 3; touch {marker}"], timeout=0.5))
+    assert r["rc"] == -1 and "timed out" in r["err"]
+    time.sleep(3.5)
+    assert not marker.exists()

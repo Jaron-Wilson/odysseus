@@ -337,7 +337,21 @@ async def _run(argv: List[str], timeout: float) -> Dict:
         return {"rc": proc.returncode, "out": out.decode(errors="replace").strip(),
                 "err": err.decode(errors="replace").strip()}
     except asyncio.TimeoutError:
+        # Kill it: a timed-out ssh left running kept its session (and the
+        # remote PowerShell, holding the MCP server's file) open for 13 hours
+        # (2026-09-29).
+        try:
+            proc.kill()
+            await proc.wait()
+        except (ProcessLookupError, UnboundLocalError):
+            pass
         return {"rc": -1, "out": "", "err": f"timed out after {timeout:.0f}s"}
+    except asyncio.CancelledError:
+        try:
+            proc.kill()
+        except (ProcessLookupError, UnboundLocalError):
+            pass
+        raise
     except FileNotFoundError as e:
         return {"rc": -1, "out": "", "err": str(e)}
 
