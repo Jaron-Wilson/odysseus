@@ -195,3 +195,15 @@ def test_the_page_wires_it_in():
     assert "!s.archived && !s.parent_session_id && s.folder !== 'Assistant'" in sessions
     routes = read("routes", "chat_routes.py")
     assert "chat_threads.apply_references(sess, ctx.messages, form_data.get(\"references\")" in routes
+
+
+def test_session_head_reports_the_newest_shown_message(env, monkeypatch):
+    sm, s, c = env
+    from src import agent_runs
+    ids = _ids(s)
+    s.add_message(ChatMessage("system", "[Conversation summary] x", metadata={"compacted": True, "hidden": True}))
+    monkeypatch.setattr(agent_runs, "is_active", lambda sid: False)
+    d = c.get(f"/api/session/{s.id}/head").json()
+    assert d["last"]["id"] == ids[-1] and d["last"]["role"] == "user" and d["running"] is False
+    monkeypatch.setattr(agent_runs, "is_active", lambda sid: sid == s.id)
+    assert c.get(f"/api/session/{s.id}/head").json()["running"] is True

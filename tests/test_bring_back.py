@@ -43,6 +43,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(jobs, "JOBS_FILE", str(tmp_path / "jobs.json"))
     monkeypatch.setattr(cct, "DEFAULT_ENGINE", "claude")
     monkeypatch.setattr(cct, "PROGRESS_INTERVAL_S", 0.2)
+    from src import chat_queue as _cq                  # a finished job queues its "done" turn here
+    monkeypatch.setattr(_cq, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(_cq, "QUEUE_FILE", str(tmp_path / "chat_queue.json"))
     jobs._JOBS.clear()
     posted = []
 
@@ -244,3 +247,59 @@ def test_a_brought_back_plan_still_offers_approve_and_deny(env, monkeypatch):
     pending = [a for a in approvals._load().values() if a.get("status") == "pending"] \
         if isinstance(approvals._load(), dict) else []
     assert pending                                                   # recorded, so Approve works
+
+
+def test_a_finished_background_job_wakes_its_chat(env, monkeypatch):
+    # Asked for: "once an agent is done it does not ping the chat, I have to
+    # reiterate or ask if it's done".
+    make, tmp_path, posted = env
+    make(delay=1)
+    import src.screen_control_resume as scr
+    from src import chat_queue
+    turns = []
+    busy = {"v": False}
+    monkeypatch.setattr(scr, "start_turn", lambda sid, prompt, **kw: (not busy["v"]) and (turns.append((sid, prompt, kw)) or True))
+
+    async def run():
+        job = await _start_and_background(tmp_path)
+        await asyncio.wait_for(job.task, timeout=10)
+        return job
+    job = asyncio.run(run())
+    assert posted == [job.id]                                   # the result, as before
+    sid, prompt, kw = turns[-1]
+    assert sid == "chat-1" and prompt.startswith(f"[Background job finished \u00b7 job {job.id} \u00b7 ")
+    assert kw["note_source"] == "claude_code_background_done"
+
+    # A reply already running there: queued once, not twice.
+    busy["v"] = True
+    cct._wake_chat(job, "chat-1", "finished")
+    cct._wake_chat(job, "chat-1", "finished")
+    items = chat_queue.get("chat-1")["items"]
+    assert len(items) == 1 and items[0]["label"].startswith("Report ")
+
+
+def test_a_brought_back_job_does_not_wake_the_chat(env, monkeypatch):
+    make, tmp_path, posted = env
+    make(delay=1)
+    import src.screen_control_resume as scr
+    turns = []
+    monkeypatch.setattr(scr, "start_turn", lambda *a, **k: turns.append(a) or True)
+
+    async def run():
+        job = await _start_and_background(tmp_path)
+        await cct.ClaudeCodeTool().execute(json.dumps({"action": "attach", "job_id": job.id}),
+                                           {"session_id": "chat-1"})
+        await asyncio.wait_for(job.task, timeout=10)
+    asyncio.run(run())
+    assert posted == [] and turns == []                         # the turn following it reports
+
+
+def test_the_page_follows_the_chat():
+    js = _src("static", "js", "chatFollow.js")
+    assert "/api/session/${encodeURIComponent(sid)}/head" in js
+    assert "if (cm.resumeStream) cm.resumeStream(sid);" in js
+    assert "_loadedFor = last.id;" in js                         # one reload per new message
+    assert "if (ta && draft && !ta.value)" in js                 # what was being typed survives
+    assert "import './chatFollow.js';" in _src("static", "js", "chat.js")
+    renderer = _src("static", "js", "chatRenderer.js")
+    assert "Background job (?:finished|failed|stopped)" in renderer

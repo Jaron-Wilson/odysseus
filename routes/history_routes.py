@@ -267,6 +267,29 @@ def setup_history_routes(session_manager) -> APIRouter:
             logger.error(f"Edit message error {session_id}: {e}")
             raise HTTPException(500, str(e))
 
+    @router.get("/api/session/{session_id}/head")
+    async def session_head(request: Request, session_id: str):
+        """The newest shown message of a chat and whether a turn is running,
+        polled by an open page so a result posted while it was not streaming
+        (a background job finishing, an approved plan's run) shows up without
+        a reload. Asked for: "once an agent is done it does not ping the
+        chat"."""
+        _verify_session_owner(request, session_id)
+        try:
+            session = session_manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+        last = None
+        for m in reversed(session.history):
+            meta = (m.metadata if isinstance(m, ChatMessage) else m.get("metadata")) or {}
+            role = m.role if isinstance(m, ChatMessage) else m.get("role")
+            if role == "system" or meta.get("hidden") or not meta.get("_db_id"):
+                continue
+            last = {"id": meta["_db_id"], "role": role, "source": meta.get("source") or ""}
+            break
+        from src import agent_runs
+        return {"last": last, "count": len(session.history), "running": agent_runs.is_active(session_id)}
+
     @router.post("/api/session/{session_id}/prune")
     async def prune_messages(request: Request, session_id: str):
         """Leave messages out of what the model reads, or put them back,

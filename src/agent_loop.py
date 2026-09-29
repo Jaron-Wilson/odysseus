@@ -1329,7 +1329,8 @@ def _build_system_prompt(
                 # a bring-back recalled an ADS-B setup skill and the model
                 # spent its reply calling it a prompt injection.
                 _button_prompt = str(last_user or "").lstrip().startswith(
-                    ("[Brought back from the background \u00b7", "[Plan approved \u00b7"))
+                    ("[Brought back from the background \u00b7", "[Plan approved \u00b7",
+                     "[Background job "))
                 relevant_skills = sm.get_relevant_skills(
                     last_user,
                     skills=sm.load(owner=owner),
