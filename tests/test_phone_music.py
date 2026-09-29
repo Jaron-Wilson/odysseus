@@ -236,3 +236,50 @@ def test_pop_out_opens_on_this_computer_even_when_the_bar_drives_the_phone(env, 
     assert r.status_code == 400 and "computer" in r.json()["detail"]
     r = c.post("/api/media/overlay", json={"server_id": "19d772b0"}, headers={"x-forwarded-for": "100.96.131.64"})
     assert r.status_code == 200 and started[-1] == ("desktop-jaron", "MusicOverlay")
+
+
+def test_one_device_plays_at_a_time(env):
+    # Reported: "I can press open here on the website, then I have it running
+    # on both my devices".
+    c, sent, mcp, st = env
+    first = c.post("/api/media/listen", json={"from": "device:pixel-8a"}).json()["listen_id"]
+    state = c.get("/api/media/state?server_id=device:pixel-8a", headers={"x-forwarded-for": "100.102.86.125"}).json()
+    assert state["listen_id"] == first
+    st["playing"] = True
+    second = c.post("/api/media/listen", json={"from": "device:pixel-8a"}).json()["listen_id"]
+    assert second != first                                             # the first browser's player stops
+    c.post("/api/media/handoff", json={"from": "device:pixel-8a", "to": "19d772b0"})
+    state = c.get("/api/media/state?server_id=device:pixel-8a", headers={"x-forwarded-for": "100.102.86.125"}).json()
+    assert state["listen_id"] not in (first, second)                   # a handoff stops browser players too
+    js = open(os.path.join(HERE, "static", "js", "musicBar.js"), encoding="utf-8").read()
+    assert "if (_state.listen_id && _listen.id && _state.listen_id !== _listen.id)" in js
+    assert "} else if (_listen && ['play_pause', 'next', 'previous'].includes(what)) {" in js
+    assert "_listenCommand(_listen.playing ? 'pauseVideo' : 'playVideo')" in js
+
+
+def test_hear_it_only_where_it_works_and_pairing_from_here(env):
+    c, sent, mcp, st = env
+    pc = device_routing.device_map(None)["100.102.86.125"]
+    avail = {d["server_id"]: d for d in c.get("/api/media/state", headers={"x-forwarded-for": "100.102.86.125"}).json()["available"]}
+    assert avail["19d772b0"]["can_receive"] is False and avail["19d772b0"]["can_pair"] is False
+    assert c.post("/api/media/pair", json={"from": "device:pixel-8a", "to": "19d772b0"}).status_code == 409
+    pc["tools"] = pc["tools"] + ["bluetooth_audio_receive", "bluetooth_pair", "open_bluetooth_settings"]
+    avail = {d["server_id"]: d for d in c.get("/api/media/state", headers={"x-forwarded-for": "100.102.86.125"}).json()["available"]}
+    assert avail["19d772b0"]["can_receive"] and avail["19d772b0"]["can_pair"]
+    r = c.post("/api/media/pair", json={"from": "device:pixel-8a", "to": "19d772b0"}).json()
+    assert r["ok"] and ("mcp__19d772b0__bluetooth_pair", {"device": "pixel-8a", "seconds": 25}) in mcp
+    r = c.post("/api/media/pair", json={"to": "19d772b0", "manual": True}).json()
+    assert r["opened"] == "bluetooth settings" and ("mcp__19d772b0__open_bluetooth_settings", {}) in mcp
+    js = open(os.path.join(HERE, "static", "js", "musicBar.js"), encoding="utf-8").read()
+    assert "d.kind !== 'phone' && d.can_receive && d.server_id !== current" in js
+    assert "if (on && /pair/i.test(e.message))" in js and "data-mb-pair-manual" in js
+    mcp_src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
+    assert "async def bluetooth_pair(device: str, seconds: int = 20)" in mcp_src and "args.accept()" in mcp_src
+
+
+def test_a_stale_pairing_is_named_and_redone():
+    # Seen live: the Pixel was paired with the PC, but only its plain Bluetooth
+    # record existed (no audio side), so Hear it could never connect.
+    src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
+    assert "is paired with this PC but not as an audio source" in src and '"stale_pairing": stale.name' in src
+    assert "await stale.pairing.unpair_async()" in src and '"removed_old_pairing": removed' in src

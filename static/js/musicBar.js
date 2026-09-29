@@ -22,7 +22,8 @@ const KEY_OPEN = 'odysseus.musicBar.open';
 const KEY_DEVICE = 'odysseus.musicBar.pick';
 try { localStorage.removeItem('odysseus.musicBar.device'); } catch (_) { /* private mode */ }
 let _autoDevice = '';
-let _receiving = null;       // {from, to, toId}: a phone playing through a computer (Bluetooth)
+let _receiving = null;
+let _pairFor = null;         // {id, name}: the computer to pair the phone with, after 'not paired'       // {from, to, toId}: a phone playing through a computer (Bluetooth)
 let _autoAt = 0;          // re-made every 30s, so a machine that reconnects wins again
 const KEY_VOLTARGET = 'odysseus.musicBar.volTarget';   // 'pc' or 'app': what the bar's +/- drive
 const POLL_MS = 4000;
@@ -85,7 +86,11 @@ function _wireArt(root) {
   root.querySelectorAll('img').forEach((img) => img.addEventListener('error', () => img.remove(), { once: true }));
 }
 
-function _np() { return (_state && _state.now_playing) || {}; }
+function _np() {
+  // A song playing in this browser (Listen here): the bar shows and drives it.
+  if (_listen) return { title: _listen.title, artist: _listen.artist || '', playing: !!_listen.playing };
+  return (_state && _state.now_playing) || {};
+}
 function _vol() {
   const v = _state && _state.get_volume;
   return v && typeof v.volume === 'number' ? v.volume : null;
@@ -216,8 +221,14 @@ async function _renderPanel() {
       <button type="button" class="mb-handoff" data-mb-receive-stop="${_esc(_receiving.toId)}">Stop</button></div>` : ''}
     <div class="mp-handoff"><button type="button" class="mb-handoff" data-mb-listen="${_esc(current)}" title="Pause it on ${_esc(_devName())} and play it in this browser">\u{1F310} This browser</button>${devs.filter((d) => d.server_id !== current).map((d) =>
       `<button type="button" class="mb-handoff" data-mb-handoff="${_esc(d.server_id)}" title="Pause it here and play it on ${_esc(d.name || d.server_id)}">${d.kind === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} ${_esc(d.name || d.server_id)}</button>`).join('')}</div>
-    ${String(current).startsWith('device:') && devs.some((d) => d.kind !== 'phone' && d.server_id !== current) ? `
-    <div class="mp-handoff mp-hear">${devs.filter((d) => d.kind !== 'phone' && d.server_id !== current).map((d) =>
+    ${_pairFor ? `<div class="mp-pair"><b>Pair ${_esc(_devName())} with ${_esc(_pairFor.name)}</b> (once):
+      <ol><li>On the phone: Settings \u203A Connected devices \u203A Pair new device. Keep that screen open.</li>
+      <li>Press Pair, then tap Pair on the phone when it asks.</li></ol>
+      <button type="button" class="mb-handoff" data-mb-pair="${_esc(_pairFor.id)}">Pair</button>
+      <button type="button" class="mb-handoff" data-mb-pair-manual="${_esc(_pairFor.id)}">Open Bluetooth settings on ${_esc(_pairFor.name)}</button>
+      <button type="button" class="mb-handoff" data-mb-pair-cancel>Not now</button></div>` : ''}
+    ${String(current).startsWith('device:') && devs.some((d) => d.kind !== 'phone' && d.can_receive && d.server_id !== current) ? `
+    <div class="mp-handoff mp-hear">${devs.filter((d) => d.kind !== 'phone' && d.can_receive && d.server_id !== current).map((d) =>
       `<button type="button" class="mb-handoff" data-mb-receive="${_esc(d.server_id)}" title="The phone keeps playing; the sound comes out of ${_esc(d.name || d.server_id)} (its speakers or headphones), over Bluetooth">\u{1F3A7} Hear it on ${_esc(d.name || d.server_id)}</button>`).join('')}
       <div class="mp-hint">Keeps the phone as the player. Pair the phone with that computer over Bluetooth once.</div></div>` : ''}` : ''}
     <div class="mp-section">Lyrics</div>
@@ -266,6 +277,7 @@ async function _tick() {
     if (_autoDevice && Date.now() - _autoAt > 30000) _autoDevice = '';
     const prevKey = `${_np().title}|${_np().playing}|${_vol()}|${_muted()}|${_appVol()}`;
     _state = await _fetchState();
+    _checkListenStillOurs();
     // Browsing from a phone: with one machine to control, use it.
     if (_state && !_state.ok && !_device() && (_state.available || []).length === 1) {
       _autoDevice = _state.available[0].server_id;
@@ -316,6 +328,12 @@ async function _act(what) {
       if (_panelOpen) _renderPanel();
     } else if (what === 'popout') {
       await _popOut();
+    } else if (_listen && ['play_pause', 'next', 'previous'].includes(what)) {
+      // The browser player has it: the phone is not woken behind its back.
+      // Seen live: after Listen here, the bar's play button started the phone
+      // again, and the song played on both.
+      if (what === 'play_pause') _listenCommand(_listen.playing ? 'pauseVideo' : 'playVideo');
+      else if (window.showToast) window.showToast(`This browser plays this one song. Close its player to go back to ${_listen.fromName || 'the phone'}.`);
     } else {
       await _control(what);
     }
@@ -427,7 +445,47 @@ document.addEventListener('click', async (ev) => {
     _receiving = on ? { from: d.receiving || d.from || 'The phone', to: d.to, toId: to } : null;
     if (window.showToast) window.showToast(on ? `${_receiving.from} is playing through ${d.to}` : `Stopped: the phone plays on its own again`);
   } catch (e) {
-    if (window.showToast) window.showToast(`${on ? 'Could not connect' : 'Could not stop'}: ${e.message}`);
+    if (on && /pair/i.test(e.message)) {
+      const d = ((_state && _state.available) || []).find((x) => x.server_id === to) || {};
+      _pairFor = { id: to, name: d.name || to };           // not paired yet: pair from here
+    } else if (window.showToast) {
+      window.showToast(`${on ? 'Could not connect' : 'Could not stop'}: ${e.message}`);
+    }
+  } finally {
+    delete b.dataset.busy;
+    b.textContent = label;
+    if (_panelOpen) _renderPanel();
+  }
+});
+
+document.addEventListener('click', async (ev) => {
+  if (ev.target.closest('[data-mb-pair-cancel]')) { ev.preventDefault(); _pairFor = null; if (_panelOpen) _renderPanel(); return; }
+  const b = ev.target.closest('[data-mb-pair],[data-mb-pair-manual]');
+  if (!b) return;
+  ev.preventDefault();
+  if (b.dataset.busy) return;
+  b.dataset.busy = '1';
+  const manual = !!b.dataset.mbPairManual;
+  const to = b.dataset.mbPair || b.dataset.mbPairManual;
+  const label = b.textContent;
+  b.textContent = manual ? 'Opening\u2026' : 'Looking for the phone\u2026 tap Pair on it when asked';
+  try {
+    const r = await fetch('/api/media/pair', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: _device() || (_state && _state.device && _state.device.server_id) || '', to, manual }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    if (manual) {
+      if (window.showToast) window.showToast(`Bluetooth settings are open on ${d.to}: add the phone there, then press Hear it again`);
+    } else {
+      _pairFor = null;
+      if (window.showToast) window.showToast(`Paired with ${d.to}. Connecting\u2026`);
+      const hear = document.querySelector(`[data-mb-receive="${CSS.escape(to)}"]`);
+      if (hear) setTimeout(() => hear.click(), 800);         // straight on to Hear it
+    }
+  } catch (e) {
+    if (window.showToast) window.showToast(`Could not pair: ${e.message}`);
   } finally {
     delete b.dataset.busy;
     b.textContent = label;
@@ -445,7 +503,32 @@ const YT_ORIGIN = 'https://www.youtube-nocookie.com';
 let _listen = null;          // {el, iframe, title, url}
 
 function _closeListen() {
-  if (_listen) { _listen.el.remove(); _listen = null; }
+  if (_listen) { _listen.el.remove(); _listen = null; _renderBar(); }
+}
+
+function _listenCommand(func) {
+  if (!_listen) return;
+  try {
+    _listen.iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args: [] }), YT_ORIGIN);
+  } catch (_) { /* player gone */ }
+}
+
+// One device at a time: a newer Listen here or handoff elsewhere, or the
+// source playing again, stops this browser's player.
+function _checkListenStillOurs() {
+  if (!_listen || !_state) return;
+  if (_state.listen_id && _listen.id && _state.listen_id !== _listen.id) {
+    _closeListen();
+    if (window.showToast) window.showToast('Playing on another device now: stopped here');
+    return;
+  }
+  const np = _state.now_playing || {};
+  if (_listen.fromId && _state.device && _state.device.server_id === _listen.fromId
+      && np.playing && Date.now() - _listen.at > 8000) {
+    const name = _listen.fromName || 'The phone';
+    _closeListen();
+    if (window.showToast) window.showToast(`${name} is playing again: stopped here`);
+  }
 }
 
 function _openListen(d) {
@@ -471,13 +554,20 @@ function _openListen(d) {
   iframe.addEventListener('load', () => {
     try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 'mb-listen' }), YT_ORIGIN); } catch (_) {}
   });
-  _listen = { el, iframe, title: d.title, url: d.url };
+  _listen = { el, iframe, title: d.title, artist: d.artist || '', url: d.url, id: d.listen_id || '',
+              fromId: d.from || '', fromName: d.from_name || '', playing: true, at: Date.now() };
+  _renderBar();
 }
 
 window.addEventListener('message', (ev) => {
   if (!_listen || ev.origin !== YT_ORIGIN || ev.source !== _listen.iframe.contentWindow) return;
   let m;
   try { m = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data; } catch (_) { return; }
+  const state = m && (m.event === 'onStateChange' ? m.info
+    : (m.event === 'infoDelivery' && m.info && typeof m.info.playerState === 'number' ? m.info.playerState : null));
+  if (state === 1 || state === 2) {                // 1 playing, 2 paused
+    if (_listen.playing !== (state === 1)) { _listen.playing = state === 1; _renderBar(); }
+  }
   if (m && m.event === 'onError') {
     _listen.iframe.hidden = true;
     const fb = _listen.el.querySelector('.mb-listen-fallback');

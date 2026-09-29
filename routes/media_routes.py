@@ -18,6 +18,12 @@ from fastapi import APIRouter, HTTPException, Request
 logger = logging.getLogger(__name__)
 
 
+# The newest "Listen here" (or handoff): a browser playing an older one stops,
+# so the song plays on one device at a time. Reported: "I can press open here
+# on the website, then I have it running on both my devices".
+_LISTEN_NOW: Dict[str, str] = {"id": ""}
+
+
 def setup_media_routes(mcp_manager) -> APIRouter:
     router = APIRouter(prefix="/api/media", tags=["media"])
 
@@ -129,8 +135,12 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                                # it drove the phone.
                                "device": target or dev or {"server_id": sid},
                                "here": dev,
+                               "listen_id": _LISTEN_NOW["id"],
                                # For the machine picker and "Play on" (handoff).
-                               "available": [{k: d.get(k) for k in ("server_id", "name", "kind")}
+                               "available": [dict({k: d.get(k) for k in ("server_id", "name", "kind")},
+                                                  # "Hear it on" only where it can work
+                                                  can_receive="bluetooth_audio_receive" in (d.get("tools") or []),
+                                                  can_pair="bluetooth_pair" in (d.get("tools") or []))
                                              for d in device_routing.all_devices(mcp_manager)]}
         for name, res in zip(wanted, results):
             if isinstance(res, Exception):
@@ -253,8 +263,40 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                                       {"url": url}))
         if opened.get("ok") is False:
             raise HTTPException(502, f"Could not open it on {known[dst_id].get('name')}: {opened.get('error')}")
+        import uuid
+        _LISTEN_NOW["id"] = "handoff-" + uuid.uuid4().hex[:8]        # a browser player elsewhere stops
         return {"ok": True, "title": title, "artist": artist, "url": url,
                 "from": known[src_id].get("name"), "to": known[dst_id].get("name")}
+
+    @router.post("/pair")
+    async def pair(request: Request):
+        """Pair the phone with a computer over Bluetooth from here, for "Hear
+        it on". Body {from: "device:<phone>", to: <computer>, manual: bool}:
+        manual opens the computer's Bluetooth settings instead."""
+        _require_user(request)
+        from src import device_routing
+        body = await request.json() if request.headers.get("content-type", "").startswith(
+            "application/json") else {}
+        known = {d.get("server_id"): d for d in device_routing.all_devices(mcp_manager)}
+        dst_id = str(body.get("to") or "").strip()
+        dst = known.get(dst_id)
+        if not dst or dst_id.startswith("device:"):
+            raise HTTPException(400, "Pick a computer to pair with")
+        tools = set(dst.get("tools") or [])
+        if body.get("manual"):
+            if "open_bluetooth_settings" not in tools:
+                raise HTTPException(409, f"{dst.get('name')} needs the updated desktop MCP for this")
+            _payload(await _call(dst_id, "open_bluetooth_settings", {}))
+            return {"ok": True, "opened": "bluetooth settings", "to": dst.get("name")}
+        if "bluetooth_pair" not in tools:
+            raise HTTPException(409, f"{dst.get('name')} needs the updated desktop MCP for this")
+        src = known.get(str(body.get("from") or ""))
+        if not src:
+            raise HTTPException(400, "Pick the phone to pair")
+        res = _payload(await _call(dst_id, "bluetooth_pair", {"device": src.get("name") or "", "seconds": 25}))
+        if res.get("ok") is False:
+            raise HTTPException(409, res.get("error") or "It did not pair")
+        return dict(res, ok=True, to=dst.get("name"))
 
     @router.post("/receive")
     async def receive(request: Request):
@@ -317,7 +359,10 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             start_s = max(0, int((np.get("position_ms") or 0) / 1000))
         except (TypeError, ValueError):
             start_s = 0
+        import uuid
+        _LISTEN_NOW["id"] = uuid.uuid4().hex[:12]
         return {"ok": True, "title": title, "artist": artist, "video_id": vid, "start_s": start_s,
+                "listen_id": _LISTEN_NOW["id"],
                 "url": f"https://music.youtube.com/watch?v={vid}",
                 "from": src_id, "from_name": known[src_id].get("name") or src_id}
 

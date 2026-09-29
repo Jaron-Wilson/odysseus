@@ -28,6 +28,7 @@ handling (process checks, CLI access) means editing APPS below, deliberately.
 
 import glob
 import json
+import asyncio
 import os
 import re
 import subprocess
@@ -1400,6 +1401,16 @@ def _norm_name(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
+async def _paired_named(want: str):
+    """A paired Bluetooth device whose name contains `want` (normalized)."""
+    from winsdk.windows.devices.bluetooth import BluetoothDevice
+    from winsdk.windows.devices.enumeration import DeviceInformation
+    for d in await DeviceInformation.find_all_async(BluetoothDevice.get_device_selector_from_pairing_state(True), []):
+        if want and want in _norm_name(d.name):
+            return d
+    return None
+
+
 async def _audio_sources():
     from winsdk.windows.media.audio import AudioPlaybackConnection
     from winsdk.windows.devices.enumeration import DeviceInformation
@@ -1443,9 +1454,16 @@ async def bluetooth_audio_receive(device: str = "", on: bool = True) -> Dict[str
     match = [d for d in devs if want and want in _norm_name(d.name)] or (devs if not want and len(devs) == 1 else [])
     if not match:
         names = ", ".join(d.name for d in devs) or "none"
+        stale = await _paired_named(want)
+        if stale:
+            # Seen live: the Pixel was paired, but only its plain Bluetooth
+            # record existed (no audio side), so it could never stream here.
+            return {"ok": False, "stale_pairing": stale.name, "sources": [d.name for d in devs],
+                    "error": (f"{stale.name} is paired with this PC but not as an audio source (an old or "
+                              "incomplete pairing). Re-pair it: Pair removes the old pairing and pairs again.")}
         return {"ok": False, "error": (f"No paired device matching {device!r} can play through this PC "
-                                       f"(ones that can: {names}). Pair the phone with this PC in "
-                                       "Bluetooth settings first."), "sources": [d.name for d in devs]}
+                                       f"(ones that can: {names}). Pair the phone with this PC first."),
+                "sources": [d.name for d in devs]}
     d = match[0]
     if old is not None and _RECEIVE["id"] == d.id:
         return {"ok": True, "receiving": d.name, "already": True}
@@ -1470,6 +1488,87 @@ async def bluetooth_audio_receive(device: str = "", on: bool = True) -> Dict[str
             pass
     _RECEIVE.update(conn=conn, name=d.name, id=d.id)
     return {"ok": True, "receiving": d.name}
+
+@mcp.tool()
+async def bluetooth_pair(device: str, seconds: int = 20) -> Dict[str, Any]:
+    """Pair a phone with this PC over Bluetooth, from Odysseus, so it can
+    play through this PC (bluetooth_audio_receive). The phone must be
+    discoverable (on Android: Settings > Connected devices > Pair new
+    device) and the user taps Pair when it asks; this PC accepts on its side.
+    `device` is part of the phone's Bluetooth name ("Pixel")."""
+    want = _norm_name(device)
+    if not want:
+        return {"ok": False, "error": "name the phone (part of its Bluetooth name)"}
+    from winsdk.windows.devices.bluetooth import BluetoothDevice
+    from winsdk.windows.devices.enumeration import DeviceInformation, DevicePairingKinds
+    removed = ""
+    if not any(want in _norm_name(d.name) for d in await _audio_sources()):
+        stale = await _paired_named(want)
+        if stale is not None:
+            # Paired, but not as an audio source: start over.
+            try:
+                await stale.pairing.unpair_async()
+                removed = stale.name
+            except Exception as e:
+                return {"ok": False, "error": f"Could not remove the old pairing of {stale.name}: {e}"}
+    found: Dict[str, Any] = {}
+    seen: List[str] = []
+
+    def added(_w, info):
+        seen.append(info.name)
+        if info.name and want in _norm_name(info.name) and not found:
+            found["info"] = info
+    watcher = DeviceInformation.create_watcher(
+        BluetoothDevice.get_device_selector_from_pairing_state(False), ["System.ItemNameDisplay"])
+    watcher.add_added(added)
+    watcher.start()
+    deadline = time.time() + max(5, min(60, int(seconds or 20)))
+    while time.time() < deadline and not found:
+        await asyncio.sleep(0.5)
+    try:
+        watcher.stop()
+    except Exception:
+        pass
+    if not found:
+        return {"ok": False, "error": ((f"Removed the old pairing of {removed}. " if removed else "")
+                                       + f"No phone matching {device!r} is discoverable near this PC. On the phone "
+                                       "open Settings > Connected devices > Pair new device (forget "
+                                       "DESKTOP-JARON there first if it is listed), keep that screen open, and "
+                                       "press Pair again."), "seen": sorted(set(n for n in seen if n))[:12]}
+    info = found["info"]
+    custom = info.pairing.custom
+
+    def requested(_c, args):
+        args.accept()          # this PC's side; the phone asks the user to confirm the code
+    token = custom.add_pairing_requested(requested)
+    try:
+        res = await custom.pair_async(DevicePairingKinds.CONFIRM_ONLY | DevicePairingKinds.CONFIRM_PIN_MATCH
+                                      | DevicePairingKinds.DISPLAY_PIN)
+    finally:
+        try:
+            custom.remove_pairing_requested(token)
+        except Exception:
+            pass
+    status = int(res.status)
+    names = {0: "paired", 1: "not ready to pair", 2: "not paired (not supported)", 3: "already paired",
+             4: "rejected by the phone", 5: "too many connections", 6: "hardware failure",
+             7: "authentication timed out (Pair was not tapped on the phone)", 8: "authentication not allowed",
+             9: "authentication failed", 10: "no supported pairing", 11: "protection level not met",
+             12: "access denied", 13: "invalid ceremony data", 14: "pairing canceled", 15: "operation already in progress",
+             16: "required handler not registered", 17: "rejected by handler", 18: "remote device has an association",
+             19: "failed"}
+    ok = status in (0, 3)
+    return {"ok": ok, "device": info.name, "status": names.get(status, str(status)),
+            **({"removed_old_pairing": removed} if removed else {}),
+            **({} if ok else {"error": f"Could not pair {info.name}: {names.get(status, status)}"})}
+
+
+@mcp.tool()
+def open_bluetooth_settings() -> Dict[str, Any]:
+    """Open Windows' Bluetooth settings on this PC (to pair a phone by hand)."""
+    os.startfile("ms-settings:bluetooth")  # noqa: S606 - fixed settings URI
+    return {"ok": True}
+
 
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)
