@@ -2273,6 +2273,36 @@ export function addMessage(role, content, modelName, metadata) {
         }
 
         const roundTools = toolsByRound[roundNum] || [];
+        // A step that only used tools still gets its chat bubble, saying
+        // which: "its getting anoying not having a chat when its just a tool
+        // call" (2026-09-29). Steps in a row share one.
+        let toolOnly = false;
+        if (!txt && roundTools.length > 0) {
+          const prevBubble = lastWrap && lastWrap.classList.contains('agent-thread')
+            ? lastWrap.previousElementSibling : null;
+          if (prevBubble && prevBubble.classList.contains('msg-tool-only')) {
+            addToolStatus(prevBubble, roundTools.map(toolDisplayName), false);
+          } else {
+            const wrap = document.createElement('div');
+            wrap.className = 'msg msg-ai msg-tool-only' + (r > 0 ? ' msg-continuation' : '');
+            const roleEl = document.createElement('div');
+            roleEl.className = 'role';
+            const pair = replyModelPair(modelName, metadata);
+            const contModel = pair.actualModel || pair.requestedModel;
+            roleEl.textContent = modelRouteLabel(pair.requestedModel, contModel);
+            applyModelColor(roleEl, contModel);
+            if (r === 0) roleEl.appendChild(roleTimestamp(metadata?.timestamp));
+            wrap.appendChild(roleEl);
+            const body = document.createElement('div');
+            body.className = 'body';
+            wrap.appendChild(body);
+            addToolStatus(wrap, roundTools.map(toolDisplayName), false);
+            box.appendChild(wrap);
+            lastWrap = wrap;
+            if (!firstMsgAi) firstMsgAi = wrap;
+            toolOnly = true;
+          }
+        }
         if (roundTools.length > 0) {
           // Reuse previous thread if no text separated us (merge consecutive tool rounds)
           let threadWrap = null;
@@ -2282,7 +2312,7 @@ export function addMessage(role, content, modelName, metadata) {
             threadWrap = document.createElement('div');
             threadWrap.className = 'agent-thread';
             // Extend line up if there's a chat bubble above
-            if (txt) threadWrap.classList.add('has-top');
+            if (txt || toolOnly) threadWrap.classList.add('has-top');
             box.appendChild(threadWrap);
           }
           for (const ev of roundTools) {
@@ -2722,6 +2752,37 @@ export function addMessage(role, content, modelName, metadata) {
   }
 }
 
+// The line in a tool-only step's chat bubble: "Using OpenCode…" while it
+// runs, "Used OpenCode, Shell" once done. Names are added as tools start.
+export function addToolStatus(bubble, names, running) {
+  if (!bubble) return;
+  const body = bubble.querySelector('.body') || bubble;
+  let el = body.querySelector('.msg-tool-status');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'msg-tool-status';
+    body.appendChild(el);
+  }
+  const have = (el.dataset.tools || '').split('\u0001').filter(Boolean);
+  for (const raw of names || []) {
+    // "mcp__builtin_browser__browser_navigate" reads as "browser navigate".
+    const n = String(raw || '').replace(/^mcp__.+?__/, '').replace(/_/g, ' ').trim();
+    if (n && !have.includes(n)) have.push(n);
+  }
+  el.dataset.tools = have.join('\u0001');
+  el.classList.toggle('running', !!running);
+  const list = have.length > 3 ? `${have.slice(0, 3).join(', ')} and ${have.length - 3} more` : have.join(', ');
+  el.textContent = running ? `Using ${list}\u2026` : `Used ${list}`;
+}
+
+// Once the reply ends, a tool-only bubble says what it used, not "Using …".
+export function settleToolStatus(root = document) {
+  root.querySelectorAll('.msg-tool-status.running').forEach((el) => {
+    const bubble = el.closest('.msg');
+    addToolStatus(bubble, [], false);
+  });
+}
+
 // The name shown on a tool card. claude_code runs name the engine that ran
 // them (most are OpenCode): the server sends it as `label`, and older saved
 // runs show it in the console's first line ("$ opencode ..." / "$ claude ...").
@@ -2927,6 +2988,8 @@ const chatRenderer = {
   displayMetrics,
   addMessage,
   updateMessageAttachments,
+  addToolStatus,
+  settleToolStatus,
 };
 
 export default chatRenderer;

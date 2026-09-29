@@ -37406,3 +37406,9 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .mp-prog-track { height: 4px; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--fg) 12%, transparent); }
 .mp-prog-times { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; opacity: .6;
   font-variant-numeric: tabular-nums; }
+
+/* A step that only used tools still has its chat bubble (chatRenderer.js
+   addToolStatus): "Using OpenCode…" while it runs, "Used OpenCode" after. */
+.msg-tool-status { font-size: 13px; opacity: .75; }
+.msg-tool-status.running { animation: msg-tool-pulse 1.6s ease-in-out infinite; }
+@keyframes msg-tool-pulse { 50% { opacity: .45; } }

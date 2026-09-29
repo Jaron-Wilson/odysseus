@@ -1799,6 +1799,39 @@ async def _with_stall_timeout(agen, first_timeout, later_timeout, model_label):
         yield chunk
 
 
+_THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
+
+
+async def _closing_words(messages, tool_events, *, endpoint_url, model, headers, max_tokens) -> str:
+    """What the agent says after its tools, when its last round said nothing:
+    one short call over the conversation (which holds every tool result), and
+    failing that, a line naming what ran."""
+    try:
+        from src.llm_core import llm_call_async
+        raw = await llm_call_async(
+            url=endpoint_url, model=model, headers=headers, temperature=0.3,
+            max_tokens=min(max_tokens or 1024, 1024), timeout=60,
+            messages=list(messages) + [{"role": "user", "content": (
+                "Your tools have finished (their results are above). Tell the user now, in a few "
+                "short sentences, what you did and what you found or changed, and anything they "
+                "need to do next. Do NOT call any tools.")}])
+        text = _THINK_RE.sub("", strip_tool_blocks(raw or "")).strip()
+        if text:
+            return text
+    except Exception as e:
+        logger.warning(f"[agent] closing words failed: {e}")
+    last = tool_events[-1] if tool_events else {}
+    names = []
+    for ev in tool_events:
+        n = str(ev.get("tool") or "a tool")
+        if n not in names:
+            names.append(n)
+    ok = last.get("exit_code") in (0, None)
+    return (f"I ran {', '.join(names[:4])}{' and more' if len(names) > 4 else ''}; the last step "
+            f"{'finished' if ok else 'failed'} (details in the tool card above), but I could not "
+            "write a summary. Ask me to go over the results.")
+
+
 _VERIFIER_MAX_ROUNDS = 2  # cap re-verify cycles per turn — never loop forever
 
 
@@ -2946,6 +2979,17 @@ async def stream_agent_loop(
                 # Visible signal in the stream so the user knows we caught it.
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
                 continue
+            # A reply always ends with the agent saying something. Seen
+            # 2026-09-29: "there should not ever AND I MEAN EVER JUST BE A
+            # PLAIN OLD TOOL CALL AT THE BOTTOM OF THE PAGE IT SHOULD ALWAYS
+            # END WITH WHAT AN AGENT SAYS". Tools ran and the last round wrote
+            # nothing: one more call, tools off, for the closing words.
+            if (tool_events and not _force_answer
+                    and not _THINK_RE.sub("", strip_tool_blocks(round_response)).strip()):
+                _closing = await _closing_words(messages, tool_events, endpoint_url=endpoint_url,
+                                                model=model, headers=headers, max_tokens=max_tokens)
+                yield f'data: {json.dumps({"delta": _closing})}\n\n'
+                full_response += _closing
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────
