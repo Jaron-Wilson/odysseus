@@ -56,5 +56,6 @@ def test_the_bash_tool_does_not_run_a_refused_pull(tmp_path):
 def test_the_prompt_says_to_ask_not_copy():
     src = open(os.path.join(ROOT, "src", "agent_loop.py"), encoding="utf-8").read()
     assert "do NOT fetch the file over the tailnet (no scp, rsync, or ssh cat)" in src
+    assert "Windows and Linux alike, has share_media" in src           # "the Windows PC can't stream": wrong
     enroll = open(os.path.join(ROOT, "routes", "enroll_routes.py"), encoding="utf-8").read()
     assert enroll.count('"Play its videos in the chat": "share_media"') == 2   # Devices offers the update
