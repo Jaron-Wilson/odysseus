@@ -1600,6 +1600,124 @@ def open_bluetooth_settings() -> Dict[str, Any]:
     return {"ok": True}
 
 
+# ── This PC's sound, streamed live to another machine on the tailnet ──────
+# Asked for: "what if I'm wanting to stream from my PC over to my laptop but
+# my laptop's not nearby? but it's on the tailnet". What the PC plays is
+# captured from its default output (WASAPI loopback, needs pyaudiowpatch) and
+# served here as a live WAV at /live/<key>.wav, on the tailnet address only,
+# to whoever holds the one-time key. The laptop plays it (play_stream there).
+import queue as _queue
+import struct as _struct
+import threading as _threading
+
+_LIVE: Dict[str, Any] = {"key": "", "stop": None, "thread": None, "fmt": None,
+                         "clients": set(), "error": ""}
+LIVE_CHUNK = 1024                    # frames per read (about 21 ms at 48 kHz)
+
+
+def _wav_header(rate: int, channels: int) -> bytes:
+    """A WAV header for a stream of unknown length (sizes left at maximum)."""
+    block = channels * 2
+    return (b"RIFF" + _struct.pack("<I", 0xFFFFFFFF) + b"WAVEfmt "
+            + _struct.pack("<IHHIIHH", 16, 1, channels, rate, rate * block, block, 16)
+            + b"data" + _struct.pack("<I", 0xFFFFFFFF))
+
+
+def _capture(stop):
+    try:
+        import pyaudiowpatch as pa
+    except ImportError:
+        _LIVE["error"] = "pyaudiowpatch is not installed here: python -m pip install pyaudiowpatch"
+        return
+    p = pa.PyAudio()
+    try:
+        wasapi = p.get_host_api_info_by_type(pa.paWASAPI)
+        dev = p.get_device_info_by_index(wasapi["defaultOutputDevice"])
+        if not dev.get("isLoopbackDevice"):
+            for lb in p.get_loopback_device_info_generator():
+                if dev["name"] in lb["name"]:
+                    dev = lb
+                    break
+        rate, ch = int(dev["defaultSampleRate"]), int(dev["maxInputChannels"] or 2)
+        stream = p.open(format=pa.paInt16, channels=ch, rate=rate, input=True,
+                        input_device_index=dev["index"], frames_per_buffer=LIVE_CHUNK)
+        _LIVE["fmt"] = (rate, ch)
+        while not stop.is_set():
+            data = stream.read(LIVE_CHUNK, exception_on_overflow=False)
+            for q in list(_LIVE["clients"]):
+                try:
+                    q.put_nowait(data)
+                except _queue.Full:
+                    pass                     # a slow listener drops, never stalls the rest
+        stream.stop_stream()
+        stream.close()
+    except Exception as e:
+        _LIVE["error"] = f"could not capture this PC's sound: {e}"
+    finally:
+        p.terminate()
+
+
+@mcp.tool()
+def audio_stream_start() -> Dict[str, Any]:
+    """Start streaming what this PC plays, live, for another machine on the
+    tailnet to play (the laptop's play_stream). Returns the stream's URL."""
+    if _LIVE["thread"] is None or not _LIVE["thread"].is_alive():
+        _LIVE.update(key=_secrets.token_urlsafe(18), fmt=None, error="")
+        _LIVE["stop"] = _threading.Event()
+        _LIVE["thread"] = _threading.Thread(target=_capture, args=(_LIVE["stop"],), daemon=True)
+        _LIVE["thread"].start()
+        for _ in range(40):                  # the device opens in well under 2 s
+            if _LIVE["fmt"] or _LIVE["error"]:
+                break
+            time.sleep(0.05)
+    if _LIVE["error"]:
+        return {"ok": False, "error": _LIVE["error"]}
+    host = os.environ.get("DESKTOP_MCP_HOST", "100.102.86.125")
+    port = int(os.environ.get("DESKTOP_MCP_PORT", "8931"))
+    rate, ch = _LIVE["fmt"] or (48000, 2)
+    return {"ok": True, "url": f"http://{host}:{port}/live/{_LIVE['key']}.wav",
+            "rate": rate, "channels": ch}
+
+
+@mcp.tool()
+def audio_stream_stop() -> Dict[str, Any]:
+    """Stop streaming this PC's sound."""
+    if _LIVE["stop"] is not None:
+        _LIVE["stop"].set()
+    _LIVE.update(key="", thread=None, fmt=None)
+    return {"ok": True}
+
+
+@mcp.custom_route("/live/{name}", methods=["GET"])
+async def _live_route(request):
+    from starlette.responses import PlainTextResponse, StreamingResponse
+    key = request.path_params["name"].removesuffix(".wav")
+    if not _LIVE["key"] or not _secrets.compare_digest(key, _LIVE["key"]):
+        return PlainTextResponse("not found", status_code=404)
+    q: "_queue.Queue[bytes]" = _queue.Queue(maxsize=240)
+    _LIVE["clients"].add(q)
+
+    async def body():
+        try:
+            for _ in range(60):
+                if _LIVE["fmt"]:
+                    break
+                await asyncio.sleep(0.05)
+            rate, ch = _LIVE["fmt"] or (48000, 2)
+            yield _wav_header(rate, ch)
+            # Windows sends nothing while nothing plays: fill with silence so
+            # the listener's player keeps the stream open and in time.
+            silence = b"\0" * (LIVE_CHUNK * ch * 2)
+            while _LIVE["key"] == key:
+                try:
+                    yield await asyncio.to_thread(q.get, True, LIVE_CHUNK / rate)
+                except _queue.Empty:
+                    yield silence
+        finally:
+            _LIVE["clients"].discard(q)
+    return StreamingResponse(body(), media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)
     # Default to the tailnet address, never all interfaces. These tools launch

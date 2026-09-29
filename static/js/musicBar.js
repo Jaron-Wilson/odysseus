@@ -23,7 +23,8 @@ const KEY_DEVICE = 'odysseus.musicBar.pick';
 try { localStorage.removeItem('odysseus.musicBar.device'); } catch (_) { /* private mode */ }
 let _autoDevice = '';
 let _receiving = null;
-let _pairFor = null;         // {id, name}: the computer to pair the phone with, after 'not paired'       // {from, to, toId}: a phone playing through a computer (Bluetooth)
+let _pairFor = null;
+let _streaming = null;       // {from, fromName, to, toName}: a computer's sound streaming to another         // {id, name}: the computer to pair the phone with, after 'not paired'       // {from, to, toId}: a phone playing through a computer (Bluetooth)
 let _autoAt = 0;          // re-made every 30s, so a machine that reconnects wins again
 const KEY_VOLTARGET = 'odysseus.musicBar.volTarget';   // 'pc' or 'app': what the bar's +/- drive
 const POLL_MS = 4000;
@@ -221,6 +222,13 @@ async function _renderPanel() {
       <button type="button" class="mb-handoff" data-mb-receive-stop="${_esc(_receiving.toId)}">Stop</button></div>` : ''}
     <div class="mp-handoff"><button type="button" class="mb-handoff" data-mb-listen="${_esc(current)}" title="Pause it on ${_esc(_devName())} and play it in this browser">\u{1F310} This browser</button>${devs.filter((d) => d.server_id !== current).map((d) =>
       `<button type="button" class="mb-handoff" data-mb-handoff="${_esc(d.server_id)}" title="Pause it here and play it on ${_esc(d.name || d.server_id)}">${d.kind === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} ${_esc(d.name || d.server_id)}</button>`).join('')}</div>
+    ${_streaming ? `<div class="mp-receiving">\u{1F4E1} ${_esc(_streaming.fromName)}'s sound is playing on ${_esc(_streaming.toName)}
+      <button type="button" class="mb-handoff" data-mb-stream-stop="${_esc(_streaming.to)}">Stop</button></div>` : ''}
+    ${!String(current).startsWith('device:') && (devs.find((d) => d.server_id === current) || {}).can_stream_out
+      && devs.some((d) => d.can_play_stream && d.server_id !== current) ? `
+    <div class="mp-handoff mp-hear">${devs.filter((d) => d.can_play_stream && d.server_id !== current).map((d) =>
+      `<button type="button" class="mb-handoff" data-mb-stream="${_esc(d.server_id)}" title="Keep playing here; ${_esc(d.name)} plays this computer's sound over the tailnet (any distance)">\u{1F4E1} Stream to ${_esc(d.name)}</button>`).join('')}
+      <div class="mp-hint">Streams this computer's sound over the tailnet, so the other one can be anywhere. About half a second behind.</div></div>` : ''}
     ${_pairFor ? `<div class="mp-pair"><b>Pair ${_esc(_devName())} with ${_esc(_pairFor.name)}</b> (once):
       <ol><li>Press Pair: Modes opens the phone's pairing screen (with Modes 0.1.62+; otherwise open
       Settings \u203A Connected devices \u203A Pair new device yourself).</li>
@@ -452,6 +460,35 @@ document.addEventListener('click', async (ev) => {
     } else if (window.showToast) {
       window.showToast(`${on ? 'Could not connect' : 'Could not stop'}: ${e.message}`);
     }
+  } finally {
+    delete b.dataset.busy;
+    b.textContent = label;
+    if (_panelOpen) _renderPanel();
+  }
+});
+
+document.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-mb-stream],[data-mb-stream-stop]');
+  if (!b) return;
+  ev.preventDefault();
+  if (b.dataset.busy) return;
+  b.dataset.busy = '1';
+  const on = !!b.dataset.mbStream;
+  const to = b.dataset.mbStream || b.dataset.mbStreamStop;
+  const from = on ? (_device() || (_state && _state.device && _state.device.server_id) || '') : (_streaming && _streaming.from) || '';
+  const label = b.textContent;
+  b.textContent = on ? 'Starting the stream\u2026' : 'Stopping\u2026';
+  try {
+    const r = await fetch('/api/media/stream', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to, on }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    _streaming = on ? { from, fromName: d.from, to, toName: d.to } : null;
+    if (window.showToast) window.showToast(on ? `${d.to} is playing ${d.from}'s sound` : 'Stream stopped');
+  } catch (e) {
+    if (window.showToast) window.showToast(`${on ? 'Could not stream' : 'Could not stop'}: ${e.message}`);
   } finally {
     delete b.dataset.busy;
     b.textContent = label;
