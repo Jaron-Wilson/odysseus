@@ -89,7 +89,7 @@ class Job:
             "cwd": self.cwd,
             "model": self.model,
             "engine": self.engine,
-            "prompt": self.prompt,
+            "prompt": display_prompt(self.prompt),
             "cli_session_id": self.cli_session_id,
             "plan_id": self.plan_id,
             "pid": self.pid,
@@ -103,7 +103,7 @@ class Job:
             "attached": bool(self.attached),
             "reattached": self.reattached,
             "chat_name": _chat_name(self.chat_session_id),
-            "agent_status": self.agent_status,
+            "agent_status": shown_status(self.status, self.agent_status),
         }
         if lines:
             out["timeline"] = self.timeline[-20:]
@@ -125,6 +125,29 @@ class Job:
             "server_pid": os.getpid(),
             "agent_status": self.agent_status, "timeline": self.timeline[-20:],
         }
+
+
+# The run's own progress instructions (claude_code_tool.STATUS_INSTRUCTIONS)
+# go to the agent after the task. The panel showed them as the title.
+_STATUS_MARK = "--- Status for the user ---"
+
+
+def display_prompt(prompt: str) -> str:
+    """The task as the user would read it, without our instructions to the agent."""
+    text = prompt or ""
+    i = text.find(_STATUS_MARK)
+    return text[:i].rstrip() if i >= 0 else text
+
+
+def shown_status(status: str, agent_status: Optional[Dict]) -> Optional[Dict]:
+    """The agent's last progress line, while it still means something. A
+    finished run kept showing "working · Creating the worktree" next to
+    "done"; its last step is not what it is doing any more."""
+    if not agent_status:
+        return None
+    if status != "running" and agent_status.get("state") in ("working", "needs_input", None):
+        return None
+    return agent_status
 
 
 def _chat_name(session_id: str) -> str:
