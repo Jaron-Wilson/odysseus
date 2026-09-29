@@ -10,6 +10,7 @@ import settingsModule from './settings.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { addFillChatAreaButton } from './fillChatArea.js';
+import * as inboundMail from './inboundMail.js';
 import {
   _esc, _escLinkify, _extractName, _parseTurnMeta,
   _formatBubbleDate, _formatRecipients, _senderColor, _initials,
@@ -730,6 +731,9 @@ export function initEmailLibrary(config) {
 export function isOpen() { return state._libOpen; }
 
 export function openEmailLibrary(opts = {}) {
+  // Opens on the accounts' mail; Inbound is asked again (its unread count).
+  _inbound.on = false;
+  _inbound.available = null;
   // Force-clean any stale state from previous attempts
   const existing = document.getElementById('email-lib-modal');
   if (existing) existing.remove();
@@ -948,6 +952,7 @@ export function openEmailLibrary(opts = {}) {
       const g = document.getElementById('email-lib-grid');
       if (!g) return;
       g.querySelectorAll('.doclib-card.doclib-card-expanded').forEach(c => {
+        if (c.classList.contains('email-inbound-card')) { _collapseInbound(c); return; }
         const uid = c.dataset.uid;
         const liveEm = state._libEmails.find(e => String(e.uid) === String(uid));
         if (liveEm) _toggleCardPreview(c, liveEm);
@@ -1309,15 +1314,29 @@ function _renderAccountsStrip() {
   strip.style.display = 'flex';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const allActive = !state._libAccountId ? ' active' : '';
-  let html = `<button class="memory-toolbar-btn gallery-chip${allActive}" data-acc-id="">All (default)</button>`;
+  const allActive2 = allActive && !_inbound.on ? ' active' : '';
+  let html = `<button class="memory-toolbar-btn gallery-chip${allActive2}" data-acc-id="">All (default)</button>`;
   for (const a of state._libAccounts) {
-    const active = state._libAccountId === a.id ? ' active' : '';
+    const active = state._libAccountId === a.id && !_inbound.on ? ' active' : '';
     const label = a.name || a.from_address || a.imap_user || 'account';
     html += `<button class="memory-toolbar-btn gallery-chip${active}" data-acc-id="${esc(a.id)}" title="${esc(a.from_address || a.imap_user || '')}${a.is_default ? ' (default)' : ''}">${esc(label)}</button>`;
   }
+  if (_inbound.available) {
+    html += `<button class="memory-toolbar-btn gallery-chip${_inbound.on ? ' active' : ''}" data-inbound="1" title="Mail that came in through the Odysseus mail Worker">Inbound${_inbound.unread ? ` <span class="email-inbound-chip-count">${_inbound.unread}</span>` : ''}</button>`;
+  } else if (_inbound.available === null) {
+    _checkInbound().then((d) => { if (d) _renderAccountsStrip(); });
+  }
   strip.innerHTML = html;
+  strip.querySelector('button[data-inbound]')?.addEventListener('click', () => {
+    if (_inbound.on) return;
+    _inbound.on = true;
+    _renderAccountsStrip();
+    _loadEmails({ force: true, useCache: false });
+  });
   strip.querySelectorAll('button[data-acc-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
+      _inbound.on = false;
+      _showMailControls(true);
       state._libAccountId = btn.dataset.accId || null;
       _publishActiveAccount();
       _resetEmailListForFreshLoad();
@@ -1647,6 +1666,10 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
 
   const grid = document.getElementById('email-lib-grid');
   if (!grid) { if (seq === _libLoadSeq) state._libLoading = false; return; }
+  if (_inbound.on) {
+    try { await _loadInbound(grid, seq); } finally { if (seq === _libLoadSeq) state._libLoading = false; }
+    return;
+  }
 
   // SWR: when loading the first page of a real folder with no search,
   // paint the cached list immediately (no spinner, no blank grid) and
@@ -1783,6 +1806,165 @@ async function _loadScheduled(grid, sp) {
 
     grid.appendChild(card);
   }
+}
+
+// ── Inbound mail in the Email window ──
+// Mail that came in through the Cloudflare mail Worker (src/mail_listener.py,
+// inboundMail.js) as its own entry after the accounts. Asked for 2026-09-29:
+// "i see all default, then my gmail, but the inbounds are not there". An HTML
+// email is shown as HTML, sanitized like every other email.
+const _inbound = { available: null, unread: 0, on: false };
+
+async function _checkInbound() {
+  try {
+    const d = await inboundMail.list();
+    _inbound.available = true;
+    _inbound.unread = d.unread || 0;
+    return d;
+  } catch (_) {
+    _inbound.available = false;          // not an admin, or not set up
+    return null;
+  }
+}
+
+// Folder, filter and search are for the accounts' mail, not this list.
+function _showMailControls(on) {
+  const tb = document.querySelector('#email-lib-modal .memory-toolbar');
+  if (tb) tb.style.display = on ? '' : 'none';
+}
+
+function _inboundWhen(ts) {
+  const d = new Date((ts || 0) * 1000);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+async function _loadInbound(grid, seq) {
+  _showMailControls(false);
+  const sp = _renderEmailLoading(grid);
+  let d;
+  try { d = await inboundMail.list(); } catch (e) {
+    if (seq !== _libLoadSeq) return;
+    if (sp) sp.destroy();
+    grid.innerHTML = `<div class="email-loading">Could not load Inbound mail: ${_esc(e.message)}</div>`;
+    return;
+  }
+  if (seq !== _libLoadSeq || !_inbound.on) return;
+  if (sp) sp.destroy();
+  _inbound.unread = d.unread || 0;
+  const stats = document.getElementById('email-lib-stats');
+  if (stats) stats.textContent = `${d.messages.length} inbound`;
+  grid.innerHTML = '';
+  if (!d.messages.length) {
+    grid.innerHTML = '<div class="email-loading">No mail yet. Mail to an address you route to the Odysseus mail Worker shows up here (Settings › Email › Inbound mail).</div>';
+    return;
+  }
+  for (const m of d.messages) {
+    const card = document.createElement('div');
+    card.className = `doclib-card memory-item email-inbound-card${m.read ? '' : ' email-unread'}`;
+    card.dataset.inboundKey = m.key;
+    const note = m.action && m.action !== 'in Inbound mail' ? ` · ${_esc(m.action)}` : '';
+    card.innerHTML = `
+      <div class="email-inbound-row" style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          ${m.read ? '' : '<span class="email-inbound-dot" title="Unread"></span>'}
+          <span class="memory-item-title">${_esc(m.subject || '(no subject)')}</span>
+        </div>
+        <div style="font-size:10px;opacity:0.7;margin-top:2px;">${_esc(m.from)} → ${_esc((m.to || []).join(', '))} · ${_esc(_inboundWhen(m.received))}${note}</div>
+      </div>`;
+    card.addEventListener('click', (ev) => {
+      if (ev.target.closest('.email-card-reader')) return;
+      _openInbound(card, m);
+    });
+    grid.appendChild(card);
+  }
+}
+
+function _collapseInbound(card) {
+  card.classList.remove('email-card-expanded', 'doclib-card-expanded');
+  card.style.minHeight = '';
+  card.querySelector('.email-card-reader')?.remove();
+  const modal = document.getElementById('email-lib-modal');
+  modal?.classList.remove('email-reading');
+  modal?.style.removeProperty('--email-reading-modal-min-h');
+}
+
+async function _openInbound(card, m) {
+  if (card.classList.contains('email-card-expanded')) { _collapseInbound(card); return; }
+  const grid = document.getElementById('email-lib-grid');
+  grid?.querySelectorAll('.email-card-expanded').forEach(_collapseInbound);
+  const modal = document.getElementById('email-lib-modal');
+  const modalRect = card.closest('.modal-content')?.getBoundingClientRect?.();
+  card.classList.add('email-card-expanded', 'doclib-card-expanded');
+  if (modal && modalRect?.height) modal.style.setProperty('--email-reading-modal-min-h', `${Math.round(modalRect.height)}px`);
+  modal?.classList.add('email-reading');
+  const reader = document.createElement('div');
+  reader.className = 'email-card-reader email-card-reader-loading';
+  const wait = spinnerModule.createWhirlpool(28);
+  const waitWrap = document.createElement('div');
+  waitWrap.style.cssText = 'padding:20px;display:flex;justify-content:center;';
+  waitWrap.appendChild(wait.element);
+  reader.appendChild(waitWrap);
+  card.appendChild(reader);
+  _markEmailReaderActive(reader);
+  let e;
+  try { e = await inboundMail.read(m.key); } catch (err) {
+    reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Could not open it: ${_esc(err.message)}</div>`;
+    return;
+  }
+  if (!card.isConnected || !card.classList.contains('email-card-expanded')) return;
+  card.classList.remove('email-unread');
+  card.querySelector('.email-inbound-dot')?.remove();
+  if (!m.read) { m.read = true; _inbound.unread = Math.max(0, _inbound.unread - 1); _renderAccountsStrip(); }
+  const btn = 'memory-toolbar-btn reader-icon-btn';
+  reader.innerHTML = `
+    <div class="email-reader-header">
+      <div class="email-reader-meta">
+        <div class="email-reader-meta-row"><strong>From:</strong><span>${_esc(e.from)}</span></div>
+        <div class="email-reader-meta-row"><strong>To:</strong><span>${_esc((e.to || []).join(', '))}</span></div>
+        <div class="email-reader-meta-row"><strong>Date:</strong><span>${_esc(e.date || _inboundWhen(e.received))}</span></div>
+      </div>
+      <div class="email-reader-actions">
+        <div class="email-reader-actions-row email-reader-actions-row-primary">
+          <button class="${btn} email-reader-back" data-act="close" title="Back to the email list"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg><span class="reader-btn-label">Back</span></button>
+          ${e.chat_id
+            ? `<button class="${btn}" data-act="chat" title="Open the chat made for this email"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="reader-btn-label">Open its chat</span></button>`
+            : `<button class="${btn}" data-act="ask" title="Make a chat with this email in it, and ask the AI about it">${_aiReplyIcon({})}<span class="reader-btn-label">Ask AI</span></button>`}
+          <button class="${btn}" data-act="delete" title="Delete from Inbound mail (the copy in Gmail stays)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg><span class="reader-btn-label">Delete</span></button>
+        </div>
+      </div>
+    </div>
+    ${e.attachments && e.attachments.length ? `<div class="email-reader-meta-row" style="padding:4px 12px;font-size:12px;opacity:.8">Attachments: ${e.attachments.map(_esc).join(', ')}</div>` : ''}
+    ${e.action && e.action !== 'in Inbound mail' ? `<div style="padding:4px 12px;font-size:12px;opacity:.8">${_esc(e.action)}</div>` : ''}
+    <div class="email-reader-body${e.body_html ? ' html-body' : ''}">${_safeRenderEmailBody({ body: e.body || '', body_html: e.body_html || '' })}</div>`;
+  reader.classList.remove('email-card-reader-loading');
+  _markEmailReaderActive(reader);
+  reader.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-act]');
+    if (!b) return;
+    ev.stopPropagation();
+    const act = b.dataset.act;
+    try {
+      if (act === 'close') _collapseInbound(card);
+      else if (act === 'chat') { closeEmailLibrary(); window.sessionModule?.selectSession(e.chat_id); }
+      else if (act === 'ask') {
+        b.disabled = true;
+        b.querySelector('.reader-btn-label').textContent = 'Making its chat…';
+        await inboundMail.ask(e.key);
+        closeEmailLibrary();
+      } else if (act === 'delete') {
+        const ok = await styledConfirm('Delete this email from Inbound mail? The copy in Gmail stays.', { confirmText: 'Delete', cancelText: 'Keep', danger: true });
+        if (!ok) return;
+        await inboundMail.remove(e.key);
+        _collapseInbound(card);
+        card.remove();
+      }
+    } catch (err) {
+      showToast(err.message);
+      if (act === 'ask') { b.disabled = false; b.querySelector('.reader-btn-label').textContent = 'Ask AI'; }
+    }
+  });
 }
 
 function _renderGrid() {
@@ -2291,6 +2473,7 @@ async function _toggleCardPreview(card, em) {
         </div>
         <div class="email-reader-actions">
           <div class="email-reader-actions-row email-reader-actions-row-primary">
+            <button class="memory-toolbar-btn reader-icon-btn email-reader-back" data-act="close" title="Back to the email list"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg><span class="reader-btn-label">Back</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
             ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>

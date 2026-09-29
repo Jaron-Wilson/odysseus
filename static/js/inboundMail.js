@@ -136,6 +136,29 @@ async function onClick(ev) {
   }
 }
 
+// For the Email window's Inbound list (emailLibrary.js): the same actions.
+export async function read(key) {
+  const m = await call(`${API}/${encodeURIComponent(key)}`);
+  refreshCount();
+  return m;
+}
+
+export async function list() { return call(API); }
+
+export async function remove(key) {
+  await call(`${API}/${encodeURIComponent(key)}`, 'DELETE');
+  refreshCount();
+}
+
+export async function ask(key) {
+  const r = await call(`${API}/${encodeURIComponent(key)}/ask`, 'POST', model());
+  if (window.sessionModule) {
+    if (window.sessionModule.loadSessions) await window.sessionModule.loadSessions();
+    await window.sessionModule.selectSession(r.id);
+  }
+  return r;
+}
+
 export function open(key) {
   shell();
   if (key) showOne(key); else showList();
@@ -183,5 +206,5 @@ function wire() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
 else wire();
 
-window.inboundMail = { open, refreshCount };
+window.inboundMail = { open, refreshCount, read, list, remove, ask };
 export default { open };

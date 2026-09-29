@@ -37412,3 +37412,8 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .msg-tool-status { font-size: 13px; opacity: .75; }
 .msg-tool-status.running { animation: msg-tool-pulse 1.6s ease-in-out infinite; }
 @keyframes msg-tool-pulse { 50% { opacity: .45; } }
+
+/* Inbound mail in the Email window (emailLibrary.js) */
+.email-inbound-chip-count { display:inline-block; min-width:14px; padding:0 4px; margin-left:3px; border-radius:7px;
+  background:var(--accent, #e0715c); color:#fff; font-size:9px; line-height:14px; text-align:center; }
+.email-inbound-dot { width:6px; height:6px; border-radius:50%; background:var(--accent, #e0715c); flex-shrink:0; }
