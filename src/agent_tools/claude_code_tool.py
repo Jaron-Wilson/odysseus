@@ -491,6 +491,13 @@ class ClaudeCodeTool:
             return {"error": "prompt is required", "exit_code": 1}
 
         resume_id = (args.get("session_id") or "").strip()
+        # A check is not a plan: "its asked me about 12 times for plans"
+        # (2026-09-29). A chat sent read-only status checks and questions as
+        # plans, and each one asked the user to approve a plan that changed
+        # nothing. Those run as 'ask', which needs no approval.
+        if action == "plan" and not resume_id and _is_read_only_check(prompt):
+            logger.info("[claude_code] a read-only check sent as a plan runs as ask")
+            action = "ask"
         # A list of shell commands is a chore, not coding work: seen live, a
         # branch rename (six git commands) went through an OpenCode plan and
         # approval. Refused so the agent runs them itself with bash.
@@ -1619,6 +1626,20 @@ _CMD_LINE_RE = re.compile(r"^\s*(?:[-*>\d.)]+\s*)?`?\$?\s*(git|gh|ssh|scp|cd|ls|
 _CODE_WORK_RE = re.compile(r"\b(implement|refactor|rewrite|write (?:the |a |new )?(?:code|function|test|component|module|script)|"
                            r"fix (?:the |a )?bug|add (?:a |the )?(?:feature|endpoint|route|page|test|function)|debug|"
                            r"build (?:a |the )?(?:feature|page|component|api)|design)\b", re.I)
+
+
+_CHECK_RE = re.compile(
+    r"\b(read[- ]only (status )?check|status check|sanity check|just check|check only|"
+    r"do not (write|change|edit|modify) anything|no changes|nothing to change|"
+    r"answer (these|the following|this|\d+|one|two|three|four|five|six) questions?)\b", re.I)
+_PLAN_WORD_RE = re.compile(r"\bplan(s|ning|ned)?\b|\bdesign\b|\bimplement", re.I)
+
+
+def _is_read_only_check(prompt: str) -> bool:
+    """A prompt that asks for facts, not a change: it says it is a check (or
+    questions to answer) and never speaks of a plan or of building anything."""
+    head = (prompt or "")[:600]
+    return bool(_CHECK_RE.search(head)) and not _PLAN_WORD_RE.search(prompt or "")
 
 
 def _is_command_list(prompt: str) -> bool:
