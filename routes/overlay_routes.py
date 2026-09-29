@@ -52,8 +52,68 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
+# What the phones are playing, for the overlay when its own PC plays nothing.
+# Asked for: "popup says nothing playing when it's from my phone". Cached a
+# few seconds: the overlay polls every second or two.
+_REMOTE_CACHE: Dict[str, Any] = {"at": 0.0, "item": None}
+REMOTE_CACHE_S = 4.0
+
+
+async def _remote_now_playing() -> Any:
+    from src import device_routing, devices
+    if time.time() - _REMOTE_CACHE["at"] < REMOTE_CACHE_S:
+        return _REMOTE_CACHE["item"]
+    best = None
+    for ph in device_routing.phone_devices():
+        dev = devices.get(ph["name"])
+        if not dev:
+            continue
+        try:
+            import asyncio
+            r = await asyncio.wait_for(devices.send_command(dev, "now_playing", {}), 4)
+        except Exception:
+            continue
+        np = (r or {}).get("result") or {}
+        if not np.get("title"):
+            continue
+        item = {"server_id": ph["server_id"], "name": ph["name"], "title": np.get("title") or "",
+                "artist": np.get("artist") or "", "playing": bool(np.get("playing")),
+                "art_jpeg_b64": np.get("art_jpeg_b64") or ""}
+        if item["playing"] or best is None:
+            best = item
+        if item["playing"]:
+            break
+    _REMOTE_CACHE.update(at=time.time(), item=best)
+    return best
+
+
 def setup_overlay_routes() -> APIRouter:
     router = APIRouter(tags=["overlay"])
+
+    @router.get("/api/overlay/remote_media")
+    async def remote_media(request: Request):
+        """A phone's song, for the overlay to show when its PC plays nothing."""
+        _owner(request)
+        return {"item": await _remote_now_playing()}
+
+    @router.post("/api/overlay/remote_media/control")
+    async def remote_media_control(request: Request):
+        """Play/pause, next or previous on that phone, from the overlay."""
+        _owner(request)
+        body = await request.json()
+        action = str(body.get("action") or "")
+        sid = str(body.get("server_id") or "")
+        if action not in ("play_pause", "next", "previous") or not sid.startswith("device:"):
+            raise HTTPException(400, "action must be play_pause, next or previous, on a phone")
+        from src import devices
+        dev = devices.get(sid[len("device:"):])
+        if not dev:
+            raise HTTPException(404, "No such phone")
+        r = await devices.send_command(dev, "media_control", {"action": action})
+        _REMOTE_CACHE["at"] = 0.0                         # show the change at the next poll
+        if not (r or {}).get("ok"):
+            raise HTTPException(502, (r or {}).get("error") or "The phone did not answer")
+        return {"ok": True}
 
     @router.get("/api/overlay/inbox")
     async def inbox(request: Request, since: float = 0.0) -> Dict[str, Any]:
