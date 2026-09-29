@@ -27,7 +27,16 @@ $Dest   = Join-Path $env:USERPROFILE 'odysseus-mcp'
 $KeyOnly = ($PubKey -split ' ')[0..1] -join ' '
 
 function Say($m) { Write-Host "==> $m" -ForegroundColor Cyan }
-function Die($m) { Write-Host "Error: $m" -ForegroundColor Red; throw $m }
+function Unlock { if ($script:lock) { try { $script:lock.ReleaseMutex() } catch {} ; $script:lock = $null } }
+function Die($m) { Write-Host "Error: $m" -ForegroundColor Red; Unlock; throw $m }
+
+# One install at a time: copies started over SSH piled up on 2026-09-29, each
+# rewriting the MCP server's file, and one left it locked ("can't open file
+# ... desktop_mcp_server.py: [Errno 13] Permission denied"), so the server
+# died at every start.
+$lock = New-Object System.Threading.Mutex($false, 'Global\OdysseusInstall')
+try { $got = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+if (-not $got) { $lock = $null; Die 'Another Odysseus install is already running on this computer. Wait for it to finish, then run this again if needed.' }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -54,7 +63,18 @@ if (-not $py) { Die 'Python 3 is not installed. Install it (winget install Pytho
 Say "using Python at $py"
 
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
-function Fetch($name) { Invoke-WebRequest "$Base/enroll/$Code/file/$name" -OutFile (Join-Path $Dest $name) -UseBasicParsing }
+# Download next to the file, then swap it in, so a stopped download never
+# leaves a half-written or locked file where the server reads it.
+function Fetch($name) {
+    $final = Join-Path $Dest $name
+    $tmp = "$final.download"
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    Invoke-WebRequest "$Base/enroll/$Code/file/$name" -OutFile $tmp -UseBasicParsing -TimeoutSec 120
+    for ($i = 0; $i -lt 10; $i++) {
+        try { Move-Item -Force $tmp $final; return } catch { Start-Sleep -Milliseconds 500 }
+    }
+    Die "Could not replace $final (another program has it open). Close it, then run this again."
+}
 
 Say 'installing the desktop MCP server'
 Fetch 'desktop_mcp_server.py'
@@ -167,6 +187,7 @@ try {
     $r.PSObject.Properties.Remove('overlay_token')
     Say ("done: " + ($r | ConvertTo-Json -Compress))
     Write-Host 'Open Settings > Devices in Odysseus to see this PC.'
+    Unlock
 } catch {
     Die 'Odysseus did not accept the registration. The code may have expired: make a new one in Settings > Devices.'
 }
