@@ -340,3 +340,20 @@ def finish(job: Job, status: str, result: Optional[Dict] = None) -> None:
     job.finished = time.time()
     job.result = result
     save()
+    _add_history(job)
+
+
+HISTORY_FILE = os.path.join(DATA_DIR, "claude_code_history.jsonl")
+
+
+def _add_history(job: Job) -> None:
+    """One line per finished run, kept after the job itself is pruned, for the
+    DevOps page's coder stats (src/devops_stats.py). Never raises."""
+    try:
+        rec = {"id": job.id, "engine": job.engine, "model": job.model, "action": job.action,
+               "status": job.status, "started": job.started, "finished": job.finished,
+               "owner": job.owner, "chat_session_id": job.chat_session_id}
+        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception as e:
+        logger.warning("Could not note the finished Claude Code run: %s", e)

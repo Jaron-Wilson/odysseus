@@ -117,3 +117,79 @@ def models() -> Tuple[List[Tuple[str, str]], str]:
         for mid in prov["models"]:
             out.append((f"{pid}/{mid}", f"{mid} · {prov['name']}"))
     return out, str(cfg.get("model") or "")
+
+
+# "when approving an opencode and selecting a model i would like to see if a
+# model is already being used: ie: chat session, in a opencode already etc."
+# What is using each model right now, so the Approve dialog can say so.
+
+def _base(url: str) -> str:
+    u = _norm(url)
+    for tail in ("/chat/completions", "/completions", "/v1"):
+        if u.endswith(tail):
+            u = u[: -len(tail)].rstrip("/")
+    return u
+
+
+def _provider_bases() -> Dict[str, str]:
+    """OpenCode provider id -> its server address."""
+    out = {pid: _base(((p or {}).get("options") or {}).get("baseURL", ""))
+           for pid, p in (_own_config().get("provider") or {}).items()}
+    out.update({pid: _base(p["options"]["baseURL"]) for pid, p in providers().items()})
+    return {k: v for k, v in out.items() if v}
+
+
+def _replying_chats() -> List[Dict]:
+    """Chats with a reply being written now: name, server, model."""
+    from src import agent_runs
+    ids = agent_runs.active_sessions()
+    if not ids:
+        return []
+    try:
+        from core.database import SessionLocal, Session as DbSession
+    except Exception:
+        return []
+    db = SessionLocal()
+    try:
+        rows = db.query(DbSession).filter(DbSession.id.in_(ids)).all()
+        return [{"id": s.id, "name": s.name or "a chat", "base": _base(s.endpoint_url or ""),
+                 "model": s.model or ""} for s in rows]
+    except Exception as e:
+        logger.debug("[opencode] could not read replying chats: %s", e)
+        return []
+    finally:
+        db.close()
+
+
+def in_use(model_ids: List[str]) -> Dict[str, Dict[str, List[str]]]:
+    """For each OpenCode model id: "busy", what runs on that very model now,
+    and "server_busy", what runs on the same server with another model (a
+    shared GPU is slower for both). Only ids with something are returned."""
+    from src import claude_code_jobs as jobs
+    bases = _provider_bases()
+    default = str(_own_config().get("model") or "")
+    running = [j for j in jobs.list_jobs("") if j.status == "running"]
+    chats = _replying_chats()
+    out: Dict[str, Dict[str, List[str]]] = {}
+    for mid in model_ids:
+        pid, _, name = mid.partition("/")
+        base = bases.get(pid, "")
+        busy, near = [], []
+        for j in running:
+            jm = j.model or (default if j.engine == "opencode" else "")
+            if j.engine != "opencode" or not jm:
+                continue
+            what = f"an OpenCode {j.action or 'run'} in {jobs._chat_name(j.chat_session_id) or 'a chat'}"
+            jpid, _, jname = jm.partition("/")
+            if jm == mid:
+                busy.append(what)
+            elif base and bases.get(jpid) == base:
+                near.append(f"{what} ({jname})")
+        for c in chats:
+            if not base or c["base"] != base:
+                continue
+            what = f"a reply in chat “{c['name'][:40]}”"
+            (busy if c["model"] == name else near).append(what if c["model"] == name else f"{what} ({c['model']})")
+        if busy or near:
+            out[mid] = {"busy": busy, "server_busy": near}
+    return out

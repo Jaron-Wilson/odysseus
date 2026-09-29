@@ -6,6 +6,8 @@
 // its chat (with the email in it). A notification opens it here too, through
 // #email-inbound=<key>.
 
+import { addFillChatAreaButton } from './fillChatArea.js';
+
 const API = '/api/mail-listener/messages';
 
 function esc(s) {
@@ -59,6 +61,8 @@ function shell() {
     </div>`;
   document.body.appendChild(_panel);
   _panel.addEventListener('click', onClick);
+  // Read mail at the size of the chat column (fillChatArea.js).
+  addFillChatAreaButton(_panel.querySelector('.im-panel'), { kind: 'inbound' });
   return _panel;
 }
 

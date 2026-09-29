@@ -37303,3 +37303,57 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .im-actions .im-ask { font-weight: 600; border-color: color-mix(in srgb, var(--accent, var(--fg)) 50%, transparent); }
 .im-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.5; margin-top: 12px; padding: 10px 12px;
   border-radius: 8px; background: color-mix(in srgb, var(--fg) 5%, transparent); max-height: 60vh; overflow: auto; }
+
+/* A window filling the chat column (fillChatArea.js): no dimmed backdrop,
+   so the sidebar stays usable beside it. */
+.fill-chat-area-btn { background: none; border: 0; color: inherit; cursor: pointer; opacity: .65;
+  padding: 2px 6px; display: inline-grid; place-items: center; }
+.fill-chat-area-btn:hover, .fill-chat-area-btn[aria-pressed="true"] { opacity: 1; }
+.modal:has(> .modal-content.fill-chat-area),
+.bg-panel-backdrop:has(> .fill-chat-area) { background: transparent !important; pointer-events: none; }
+.modal-content.fill-chat-area, .bg-panel.fill-chat-area { pointer-events: auto; box-shadow: none;
+  border-top: 0; border-bottom: 0; }
+.bg-panel.fill-chat-area .bg-body { flex: 1; min-height: 0; }
+.im-panel.fill-chat-area .im-text { max-height: none; font-size: 15px; }
+.im-panel.fill-chat-area .im-body { max-width: 980px; width: 100%; margin: 0 auto; }
+.bg-panel-head .fill-chat-area-btn { margin-left: auto; margin-right: 6px; }
+.run-model-busy { color: color-mix(in srgb, var(--fg) 75%, #d9a400); }
+.run-model-busy.run-model-busy-hard { color: color-mix(in srgb, var(--fg) 55%, #e5533d); }
+
+/* The DevOps page (devopsPage.js). */
+.dv-panel { width: min(1100px, 100%); }
+.dv-panel .bg-panel-head { gap: 10px; justify-content: flex-start; }
+.dv-panel .bg-panel-head > span:first-child { flex: 1; }
+.dv-window { font: inherit; font-size: 12px; font-weight: 400; padding: 3px 6px; border-radius: 7px;
+  background: var(--bg); color: inherit; border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); }
+.dv-panel .fill-chat-area-btn { margin-left: 0; }
+.dv-panel.fill-chat-area .dv-body { max-width: 1200px; width: 100%; margin: 0 auto; }
+.dv-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 6px 0 10px; }
+.dv-tile { padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent); min-width: 0; }
+.dv-tile-v { font-size: 20px; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.dv-tile-v small { font-size: 12px; font-weight: 500; opacity: .7; }
+.dv-tile-v .dv-chip { font-size: 11px; vertical-align: 3px; }
+.dv-tile-l { font-size: 12px; opacity: .8; margin-top: 2px; }
+.dv-tile-s { font-size: 11px; opacity: .55; margin-top: 2px; }
+.dv-live, .dv-run { padding: 7px 2px; font-size: 13px; border-bottom: 1px solid color-mix(in srgb, var(--fg) 7%, transparent); }
+.dv-live .bg-dot, .dv-run .bg-dot { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.dv-live a, .dv-run a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--fg) 35%, transparent); }
+.dv-run a { margin-left: 6px; font-size: 12px; opacity: .8; }
+.dv-sub { font-size: 12px; opacity: .65; margin: 2px 0 0 20px; }
+.dv-meta { font-size: 12px; opacity: .6; margin-left: 4px; }
+.dv-chip { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 6px; font-weight: 500;
+  background: color-mix(in srgb, var(--fg) 9%, transparent); }
+.dv-chip.dv-good { background: color-mix(in srgb, #3fb950 22%, transparent); }
+.dv-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 4px 0 8px; }
+.dv-table th { text-align: left; font-weight: 600; opacity: .65; padding: 4px 6px; font-size: 11.5px; }
+.dv-table td { padding: 5px 6px; border-top: 1px solid color-mix(in srgb, var(--fg) 7%, transparent); }
+.dv-chart { position: relative; margin: 4px 0 12px; }
+.dv-chart svg { width: 100%; height: 120px; display: block; }
+.dv-chart rect { fill: color-mix(in srgb, var(--accent, #60a5fa) 70%, transparent); }
+.dv-chart rect:hover { fill: var(--accent, #60a5fa); }
+.dv-chart-top { font-size: 11px; opacity: .55; margin-bottom: 2px; }
+.dv-ticks { position: relative; height: 16px; font-size: 11px; opacity: .55; }
+.dv-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.dv-foot { font-size: 11px; opacity: .5; margin: 14px 0 4px; }
+@media (max-width: 700px) { .dv-table th:nth-child(n+5), .dv-table td:nth-child(n+5) { display: none; } }

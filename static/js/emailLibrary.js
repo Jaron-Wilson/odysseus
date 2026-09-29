@@ -9,6 +9,7 @@ import { folderDisplayName, sortedFolders } from './emailInbox.js';
 import settingsModule from './settings.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { addFillChatAreaButton } from './fillChatArea.js';
 import {
   _esc, _escLinkify, _extractName, _parseTurnMeta,
   _formatBubbleDate, _formatRecipients, _senderColor, _initials,
@@ -957,6 +958,8 @@ export function openEmailLibrary(opts = {}) {
   // Drag-to-top edge → snap to fullscreen (Aero Snap). Dragging away from
   // the top edge while fullscreen unsnaps back to a centered window.
   _makeDraggable(content, modal, 'email-lib-fullscreen');
+  // Read the inbox at the size of the chat column (fillChatArea.js).
+  try { addFillChatAreaButton(content, { kind: 'email-inbox' }); } catch {}
 
   document.getElementById('email-lib-folder').addEventListener('change', (e) => {
     state._libFolder = e.target.value;
@@ -3870,6 +3873,8 @@ async function _openEmailAsTab(em, folder) {
   // dynamically-created modals — so we replicate it here.
   const content = modal.querySelector('.modal-content');
   const mh = modal.querySelector('.modal-header');
+  // Read the email at the size of the chat column (fillChatArea.js).
+  try { addFillChatAreaButton(content, { kind: 'email' }); } catch {}
   if (mh && content) {
     let dragX = 0, dragY = 0, startLeft = 0, startTop = 0, dragging = false;
     const startDrag = (clientX, clientY) => {
@@ -4072,6 +4077,7 @@ async function _openEmailWindow(em, folder) {
   }
   modal.querySelector('.close-btn')?.addEventListener('click', () => modal.remove());
   try { _makeDraggable(content, modal, 'email-window-fullscreen'); } catch {}
+  try { addFillChatAreaButton(content, { kind: 'email' }); } catch {}
 
   // Load + render
   const bodyEl = modal.querySelector('.email-window-body');
