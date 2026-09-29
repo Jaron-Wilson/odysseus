@@ -143,3 +143,12 @@ def test_the_dialog_sends_the_choice():
     assert "/api/claude_code/plan/${encodeURIComponent(planId)}/run_options" in js
     assert "JSON.stringify({ limits: a._runLimits, engine: a._runEngine || '', model: a._runModel || '' })" in js
     assert "}, planId);" in js
+
+
+def test_switching_coder_says_it_stays_in_this_chat():
+    # "why does it say when i want to switch it to claude code instead of
+    # opencode ... that it needs to make new chat" (2026-09-29): the note
+    # said "starts a fresh session", which read as a new chat.
+    js = open(os.path.join(HERE, "static", "js", "chatRenderer.js"), encoding="utf-8").read()
+    assert "starts a fresh session" not in js
+    assert "Stays in this chat." in js
