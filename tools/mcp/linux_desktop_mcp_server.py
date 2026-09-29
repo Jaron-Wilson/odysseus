@@ -670,6 +670,60 @@ def start_music_overlay() -> Dict[str, Any]:
     if not r.get("ok"):
         return {"ok": False, "error": r.get("error") or r.get("stderr")
                 or "the overlay is not installed here (run the Odysseus setup command)"}
+
+
+# ── Playing another machine's live sound (the PC's audio_stream_start) ──
+# Asked for: streaming from the PC to this laptop over the tailnet when they
+# are not near each other. Only a stream from the tailnet is played.
+_STREAM: Dict[str, Any] = {"proc": None, "url": ""}
+
+
+def _tailnet_stream_url(url: str) -> bool:
+    import ipaddress
+    import urllib.parse
+    u = urllib.parse.urlparse(url or "")
+    if u.scheme not in ("http", "https") or not u.hostname:
+        return False
+    if u.hostname.endswith(".ts.net"):
+        return True
+    try:
+        return ipaddress.ip_address(u.hostname) in ipaddress.ip_network("100.64.0.0/10")
+    except ValueError:
+        return False
+
+
+@mcp.tool()
+def play_stream(url: str) -> Dict[str, Any]:
+    """Play a live audio stream from another machine on the tailnet (the PC's
+    sound) through this laptop's speakers or headphones, until stop_stream."""
+    if not _tailnet_stream_url(url):
+        return {"ok": False, "error": "only streams from the tailnet (100.64.0.0/10 or *.ts.net)"}
+    player = shutil.which("ffplay")
+    if not player:
+        return {"ok": False, "error": "ffplay is not installed here (sudo apt install ffmpeg)"}
+    stop_stream()
+    _STREAM["proc"] = subprocess.Popen(
+        [player, "-nodisp", "-loglevel", "error", "-fflags", "nobuffer", "-flags", "low_delay",
+         "-probesize", "32", "-analyzeduration", "0", url],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _STREAM["url"] = url
+    time.sleep(1.0)
+    if _STREAM["proc"].poll() is not None:
+        return {"ok": False, "error": "the player stopped at once: is the stream still running on the PC?"}
+    return {"ok": True, "playing": url}
+
+
+@mcp.tool()
+def stop_stream() -> Dict[str, Any]:
+    """Stop playing a live stream here."""
+    proc = _STREAM.get("proc")
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except Exception:
+            proc.kill()
+    _STREAM.update(proc=None, url="")
     return {"ok": True}
 
 

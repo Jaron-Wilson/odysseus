@@ -28,6 +28,7 @@ handling (process checks, CLI access) means editing APPS below, deliberately.
 
 import glob
 import json
+import asyncio
 import os
 import re
 import subprocess
@@ -1400,6 +1401,42 @@ def _norm_name(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
+def _name_matches(want: str, name: str) -> bool:
+    """The phone's own name, not just a word in it: "pixel-8a" is "Pixel 8a"
+    or "Jaron's Pixel 8a", never "Jaron's Pixel Buds Pro". Seen live: a loose
+    match on "pixel" hit the Pixel Buds and removed their pairing."""
+    got = _norm_name(name)
+    return bool(want) and len(want) >= 4 and (got == want or got.endswith(want))
+
+
+_AEP = ["System.Devices.Aep.DeviceAddress", "System.Devices.Aep.IsPaired"]
+
+
+async def _is_phone(info) -> bool:
+    """Whether a Bluetooth device's class says phone (not headphones or a
+    speaker), from its address. Unknown counts as not a phone."""
+    try:
+        from winsdk.windows.devices.bluetooth import BluetoothDevice, BluetoothMajorClass
+        addr = (info.properties.lookup("System.Devices.Aep.DeviceAddress") or "").replace(":", "")
+        if not addr:
+            return False
+        dev = await BluetoothDevice.from_bluetooth_address_async(int(addr, 16))
+        return dev is not None and dev.class_of_device.major_class == BluetoothMajorClass.PHONE
+    except Exception:
+        return False
+
+
+async def _paired_named(want: str):
+    """A paired Bluetooth device that is this phone (strict name match)."""
+    from winsdk.windows.devices.bluetooth import BluetoothDevice
+    from winsdk.windows.devices.enumeration import DeviceInformation, DeviceInformationKind
+    for d in await DeviceInformation.find_all_async(BluetoothDevice.get_device_selector_from_pairing_state(True),
+                                                    _AEP, DeviceInformationKind.ASSOCIATION_ENDPOINT):
+        if _name_matches(want, d.name):
+            return d
+    return None
+
+
 async def _audio_sources():
     from winsdk.windows.media.audio import AudioPlaybackConnection
     from winsdk.windows.devices.enumeration import DeviceInformation
@@ -1440,12 +1477,19 @@ async def bluetooth_audio_receive(device: str = "", on: bool = True) -> Dict[str
     except Exception as e:
         return {"ok": False, "error": f"Bluetooth audio is not available here: {e}"}
     want = _norm_name(device)
-    match = [d for d in devs if want and want in _norm_name(d.name)] or (devs if not want and len(devs) == 1 else [])
+    match = [d for d in devs if _name_matches(want, d.name)] or (devs if not want and len(devs) == 1 else [])
     if not match:
         names = ", ".join(d.name for d in devs) or "none"
+        stale = await _paired_named(want)
+        if stale:
+            # Seen live: the Pixel was paired, but only its plain Bluetooth
+            # record existed (no audio side), so it could never stream here.
+            return {"ok": False, "stale_pairing": stale.name, "sources": [d.name for d in devs],
+                    "error": (f"{stale.name} is paired with this PC but not as an audio source (an old or "
+                              "incomplete pairing). Re-pair it: Pair removes the old pairing and pairs again.")}
         return {"ok": False, "error": (f"No paired device matching {device!r} can play through this PC "
-                                       f"(ones that can: {names}). Pair the phone with this PC in "
-                                       "Bluetooth settings first."), "sources": [d.name for d in devs]}
+                                       f"(ones that can: {names}). Pair the phone with this PC first."),
+                "sources": [d.name for d in devs]}
     d = match[0]
     if old is not None and _RECEIVE["id"] == d.id:
         return {"ok": True, "receiving": d.name, "already": True}
@@ -1470,6 +1514,209 @@ async def bluetooth_audio_receive(device: str = "", on: bool = True) -> Dict[str
             pass
     _RECEIVE.update(conn=conn, name=d.name, id=d.id)
     return {"ok": True, "receiving": d.name}
+
+@mcp.tool()
+async def bluetooth_pair(device: str, seconds: int = 20) -> Dict[str, Any]:
+    """Pair a phone with this PC over Bluetooth, from Odysseus, so it can
+    play through this PC (bluetooth_audio_receive). The phone must be
+    discoverable (on Android: Settings > Connected devices > Pair new
+    device) and the user taps Pair when it asks; this PC accepts on its side.
+    `device` is part of the phone's Bluetooth name ("Pixel")."""
+    want = _norm_name(device)
+    if not want:
+        return {"ok": False, "error": "name the phone (part of its Bluetooth name)"}
+    from winsdk.windows.devices.bluetooth import BluetoothDevice
+    from winsdk.windows.devices.enumeration import DeviceInformation, DevicePairingKinds
+    removed = ""
+    if not any(_name_matches(want, d.name) for d in await _audio_sources()):
+        stale = await _paired_named(want)
+        if stale is not None and await _is_phone(stale):
+            # Paired, but not as an audio source: start over. Only ever a phone.
+            try:
+                await stale.pairing.unpair_async()
+                removed = stale.name
+            except Exception as e:
+                return {"ok": False, "error": f"Could not remove the old pairing of {stale.name}: {e}"}
+    found: Dict[str, Any] = {}
+    seen: List[str] = []
+
+    def added(_w, info):
+        seen.append(info.name)
+        if info.name and _name_matches(want, info.name) and not found:
+            found["info"] = info
+    # Association endpoints: where nearby, not yet paired devices appear. The
+    # default kind (device interfaces) never lists them, so the scan saw nothing.
+    from winsdk.windows.devices.enumeration import DeviceInformationKind
+    watcher = DeviceInformation.create_watcher(
+        BluetoothDevice.get_device_selector_from_pairing_state(False), _AEP,
+        DeviceInformationKind.ASSOCIATION_ENDPOINT)
+    watcher.add_added(added)
+    watcher.start()
+    deadline = time.time() + max(5, min(60, int(seconds or 20)))
+    while time.time() < deadline and not found:
+        await asyncio.sleep(0.5)
+    try:
+        watcher.stop()
+    except Exception:
+        pass
+    if not found:
+        return {"ok": False, "error": ((f"Removed the old pairing of {removed}. " if removed else "")
+                                       + f"No phone matching {device!r} is discoverable near this PC. On the phone "
+                                       "open Settings > Connected devices > Pair new device (forget "
+                                       "DESKTOP-JARON there first if it is listed), keep that screen open, and "
+                                       "press Pair again."), "seen": sorted(set(n for n in seen if n))[:12]}
+    info = found["info"]
+    custom = info.pairing.custom
+
+    def requested(_c, args):
+        args.accept()          # this PC's side; the phone asks the user to confirm the code
+    token = custom.add_pairing_requested(requested)
+    try:
+        res = await custom.pair_async(DevicePairingKinds.CONFIRM_ONLY | DevicePairingKinds.CONFIRM_PIN_MATCH
+                                      | DevicePairingKinds.DISPLAY_PIN)
+    finally:
+        try:
+            custom.remove_pairing_requested(token)
+        except Exception:
+            pass
+    status = int(res.status)
+    names = {0: "paired", 1: "not ready to pair", 2: "not paired (not supported)", 3: "already paired",
+             4: "rejected by the phone", 5: "too many connections", 6: "hardware failure",
+             7: "authentication timed out (Pair was not tapped on the phone)", 8: "authentication not allowed",
+             9: "authentication failed", 10: "no supported pairing", 11: "protection level not met",
+             12: "access denied", 13: "invalid ceremony data", 14: "pairing canceled", 15: "operation already in progress",
+             16: "required handler not registered", 17: "rejected by handler", 18: "remote device has an association",
+             19: "failed"}
+    ok = status in (0, 3)
+    return {"ok": ok, "device": info.name, "status": names.get(status, str(status)),
+            **({"removed_old_pairing": removed} if removed else {}),
+            **({} if ok else {"error": f"Could not pair {info.name}: {names.get(status, status)}"})}
+
+
+@mcp.tool()
+def open_bluetooth_settings() -> Dict[str, Any]:
+    """Open Windows' Bluetooth settings on this PC (to pair a phone by hand)."""
+    os.startfile("ms-settings:bluetooth")  # noqa: S606 - fixed settings URI
+    return {"ok": True}
+
+
+# ── This PC's sound, streamed live to another machine on the tailnet ──────
+# Asked for: "what if I'm wanting to stream from my PC over to my laptop but
+# my laptop's not nearby? but it's on the tailnet". What the PC plays is
+# captured from its default output (WASAPI loopback, needs pyaudiowpatch) and
+# served here as a live WAV at /live/<key>.wav, on the tailnet address only,
+# to whoever holds the one-time key. The laptop plays it (play_stream there).
+import queue as _queue
+import struct as _struct
+import threading as _threading
+
+_LIVE: Dict[str, Any] = {"key": "", "stop": None, "thread": None, "fmt": None,
+                         "clients": set(), "error": ""}
+LIVE_CHUNK = 1024                    # frames per read (about 21 ms at 48 kHz)
+
+
+def _wav_header(rate: int, channels: int) -> bytes:
+    """A WAV header for a stream of unknown length (sizes left at maximum)."""
+    block = channels * 2
+    return (b"RIFF" + _struct.pack("<I", 0xFFFFFFFF) + b"WAVEfmt "
+            + _struct.pack("<IHHIIHH", 16, 1, channels, rate, rate * block, block, 16)
+            + b"data" + _struct.pack("<I", 0xFFFFFFFF))
+
+
+def _capture(stop):
+    try:
+        import pyaudiowpatch as pa
+    except ImportError:
+        _LIVE["error"] = "pyaudiowpatch is not installed here: python -m pip install pyaudiowpatch"
+        return
+    p = pa.PyAudio()
+    try:
+        wasapi = p.get_host_api_info_by_type(pa.paWASAPI)
+        dev = p.get_device_info_by_index(wasapi["defaultOutputDevice"])
+        if not dev.get("isLoopbackDevice"):
+            for lb in p.get_loopback_device_info_generator():
+                if dev["name"] in lb["name"]:
+                    dev = lb
+                    break
+        rate, ch = int(dev["defaultSampleRate"]), int(dev["maxInputChannels"] or 2)
+        stream = p.open(format=pa.paInt16, channels=ch, rate=rate, input=True,
+                        input_device_index=dev["index"], frames_per_buffer=LIVE_CHUNK)
+        _LIVE["fmt"] = (rate, ch)
+        while not stop.is_set():
+            data = stream.read(LIVE_CHUNK, exception_on_overflow=False)
+            for q in list(_LIVE["clients"]):
+                try:
+                    q.put_nowait(data)
+                except _queue.Full:
+                    pass                     # a slow listener drops, never stalls the rest
+        stream.stop_stream()
+        stream.close()
+    except Exception as e:
+        _LIVE["error"] = f"could not capture this PC's sound: {e}"
+    finally:
+        p.terminate()
+
+
+@mcp.tool()
+def audio_stream_start() -> Dict[str, Any]:
+    """Start streaming what this PC plays, live, for another machine on the
+    tailnet to play (the laptop's play_stream). Returns the stream's URL."""
+    if _LIVE["thread"] is None or not _LIVE["thread"].is_alive():
+        _LIVE.update(key=_secrets.token_urlsafe(18), fmt=None, error="")
+        _LIVE["stop"] = _threading.Event()
+        _LIVE["thread"] = _threading.Thread(target=_capture, args=(_LIVE["stop"],), daemon=True)
+        _LIVE["thread"].start()
+        for _ in range(40):                  # the device opens in well under 2 s
+            if _LIVE["fmt"] or _LIVE["error"]:
+                break
+            time.sleep(0.05)
+    if _LIVE["error"]:
+        return {"ok": False, "error": _LIVE["error"]}
+    host = os.environ.get("DESKTOP_MCP_HOST", "100.102.86.125")
+    port = int(os.environ.get("DESKTOP_MCP_PORT", "8931"))
+    rate, ch = _LIVE["fmt"] or (48000, 2)
+    return {"ok": True, "url": f"http://{host}:{port}/live/{_LIVE['key']}.wav",
+            "rate": rate, "channels": ch}
+
+
+@mcp.tool()
+def audio_stream_stop() -> Dict[str, Any]:
+    """Stop streaming this PC's sound."""
+    if _LIVE["stop"] is not None:
+        _LIVE["stop"].set()
+    _LIVE.update(key="", thread=None, fmt=None)
+    return {"ok": True}
+
+
+@mcp.custom_route("/live/{name}", methods=["GET"])
+async def _live_route(request):
+    from starlette.responses import PlainTextResponse, StreamingResponse
+    key = request.path_params["name"].removesuffix(".wav")
+    if not _LIVE["key"] or not _secrets.compare_digest(key, _LIVE["key"]):
+        return PlainTextResponse("not found", status_code=404)
+    q: "_queue.Queue[bytes]" = _queue.Queue(maxsize=240)
+    _LIVE["clients"].add(q)
+
+    async def body():
+        try:
+            for _ in range(60):
+                if _LIVE["fmt"]:
+                    break
+                await asyncio.sleep(0.05)
+            rate, ch = _LIVE["fmt"] or (48000, 2)
+            yield _wav_header(rate, ch)
+            # Windows sends nothing while nothing plays: fill with silence so
+            # the listener's player keeps the stream open and in time.
+            silence = b"\0" * (LIVE_CHUNK * ch * 2)
+            while _LIVE["key"] == key:
+                try:
+                    yield await asyncio.to_thread(q.get, True, LIVE_CHUNK / rate)
+                except _queue.Empty:
+                    yield silence
+        finally:
+            _LIVE["clients"].discard(q)
+    return StreamingResponse(body(), media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
 
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)

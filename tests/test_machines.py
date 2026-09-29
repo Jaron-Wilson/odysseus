@@ -227,3 +227,53 @@ def test_routes_overview_prefs_and_ping(prefs_file, monkeypatch):
     assert r["started"]["error"] == "SSH was refused"
     assert any("DaVinci Resolve itself" in n for n in r["notes"])
     assert c.post("/api/devices/machines/nope/ping").json()["ok"] is False
+
+
+class _ProbingMgr(_Mgr):
+    def __init__(self, statuses, probes):
+        super().__init__(statuses, lambda sid, n: True)
+        self.probes = probes
+
+    async def probe(self, sid, timeout=6.0):
+        return self.probes[sid]
+
+
+def test_a_connected_server_that_restarted_is_reconnected():
+    # Seen live: the PC's desktop MCP was restarted with two new tools, and
+    # Odysseus stayed "connected" to the old process, with the old tool list,
+    # until Reconnect was pressed by hand.
+    mcp_health._last_start.clear()
+    peers = machines.parse_peers(TS, now=NOW)
+    servers = SERVERS[:2]                                    # both on the PC, which is online
+    mgr = _ProbingMgr({"res": {"status": "connected"}, "win": {"status": "connected"}},
+                      {"res": {"alive": True, "changed": False}, "win": {"alive": True, "changed": True}})
+    done = asyncio.run(mcp_health.check_once(mgr, servers, peers, {}, _never_start))
+    assert done == {"windows-desktop": "tools changed, reconnected"} and mgr.reconnects == ["win"]
+    mgr = _ProbingMgr({"res": {"status": "connected"}, "win": {"status": "connected"}},
+                      {"res": {"alive": False, "changed": False}, "win": {"alive": True, "changed": False}})
+    done = asyncio.run(mcp_health.check_once(mgr, servers, peers, {}, _never_start))
+    assert done == {"davinci-resolve": "stale, reconnected"} and mgr.reconnects == ["res"]
+
+
+def test_probe_compares_tools_and_notices_a_dead_session():
+    from types import SimpleNamespace
+    from src.mcp_manager import McpManager as MCPManager
+
+    class _Session:
+        def __init__(self, names=None, dead=False):
+            self.names, self.dead = names or [], dead
+
+        async def list_tools(self):
+            if self.dead:
+                raise ConnectionError("closed")
+            return SimpleNamespace(tools=[SimpleNamespace(name=n) for n in self.names])
+    m = MCPManager.__new__(MCPManager)
+    m._sessions, m._tools = {}, {}
+    m._sessions["win"] = _Session(["now_playing", "bluetooth_pair"])
+    m._tools["win"] = [{"name": "now_playing"}]
+    assert asyncio.run(m.probe("win")) == {"alive": True, "changed": True, "tool_count": 2}
+    m._tools["win"] = [{"name": "bluetooth_pair"}, {"name": "now_playing"}]
+    assert asyncio.run(m.probe("win"))["changed"] is False
+    m._sessions["win"] = _Session(dead=True)
+    assert asyncio.run(m.probe("win"))["alive"] is False
+    assert asyncio.run(m.probe("nope")) == {"alive": False, "changed": False}

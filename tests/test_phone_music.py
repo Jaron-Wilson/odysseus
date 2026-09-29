@@ -236,3 +236,145 @@ def test_pop_out_opens_on_this_computer_even_when_the_bar_drives_the_phone(env, 
     assert r.status_code == 400 and "computer" in r.json()["detail"]
     r = c.post("/api/media/overlay", json={"server_id": "19d772b0"}, headers={"x-forwarded-for": "100.96.131.64"})
     assert r.status_code == 200 and started[-1] == ("desktop-jaron", "MusicOverlay")
+
+
+def test_one_device_plays_at_a_time(env):
+    # Reported: "I can press open here on the website, then I have it running
+    # on both my devices".
+    c, sent, mcp, st = env
+    first = c.post("/api/media/listen", json={"from": "device:pixel-8a"}).json()["listen_id"]
+    state = c.get("/api/media/state?server_id=device:pixel-8a", headers={"x-forwarded-for": "100.102.86.125"}).json()
+    assert state["listen_id"] == first
+    st["playing"] = True
+    second = c.post("/api/media/listen", json={"from": "device:pixel-8a"}).json()["listen_id"]
+    assert second != first                                             # the first browser's player stops
+    c.post("/api/media/handoff", json={"from": "device:pixel-8a", "to": "19d772b0"})
+    state = c.get("/api/media/state?server_id=device:pixel-8a", headers={"x-forwarded-for": "100.102.86.125"}).json()
+    assert state["listen_id"] not in (first, second)                   # a handoff stops browser players too
+    js = open(os.path.join(HERE, "static", "js", "musicBar.js"), encoding="utf-8").read()
+    assert "if (_state.listen_id && _listen.id && _state.listen_id !== _listen.id)" in js
+    assert "} else if (_listen && ['play_pause', 'next', 'previous'].includes(what)) {" in js
+    assert "_listenCommand(_listen.playing ? 'pauseVideo' : 'playVideo')" in js
+
+
+def test_hear_it_only_where_it_works_and_pairing_from_here(env):
+    c, sent, mcp, st = env
+    pc = device_routing.device_map(None)["100.102.86.125"]
+    avail = {d["server_id"]: d for d in c.get("/api/media/state", headers={"x-forwarded-for": "100.102.86.125"}).json()["available"]}
+    assert avail["19d772b0"]["can_receive"] is False and avail["19d772b0"]["can_pair"] is False
+    assert c.post("/api/media/pair", json={"from": "device:pixel-8a", "to": "19d772b0"}).status_code == 409
+    pc["tools"] = pc["tools"] + ["bluetooth_audio_receive", "bluetooth_pair", "open_bluetooth_settings"]
+    avail = {d["server_id"]: d for d in c.get("/api/media/state", headers={"x-forwarded-for": "100.102.86.125"}).json()["available"]}
+    assert avail["19d772b0"]["can_receive"] and avail["19d772b0"]["can_pair"]
+    r = c.post("/api/media/pair", json={"from": "device:pixel-8a", "to": "19d772b0"}).json()
+    assert r["ok"] and ("mcp__19d772b0__bluetooth_pair", {"device": "pixel-8a", "seconds": 25}) in mcp
+    r = c.post("/api/media/pair", json={"to": "19d772b0", "manual": True}).json()
+    assert r["opened"] == "bluetooth settings" and ("mcp__19d772b0__open_bluetooth_settings", {}) in mcp
+    js = open(os.path.join(HERE, "static", "js", "musicBar.js"), encoding="utf-8").read()
+    assert "d.kind !== 'phone' && d.can_receive && d.server_id !== current" in js
+    assert "if (on && /pair/i.test(e.message))" in js and "data-mb-pair-manual" in js
+    mcp_src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
+    assert "async def bluetooth_pair(device: str, seconds: int = 20)" in mcp_src and "args.accept()" in mcp_src
+
+
+def test_a_stale_pairing_is_named_and_redone():
+    # Seen live: the Pixel was paired with the PC, but only its plain Bluetooth
+    # record existed (no audio side), so Hear it could never connect.
+    src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
+    assert "is paired with this PC but not as an audio source" in src and '"stale_pairing": stale.name' in src
+    assert "await stale.pairing.unpair_async()" in src and '"removed_old_pairing": removed' in src
+
+
+def test_pair_opens_the_phones_pairing_screen_first(env, monkeypatch):
+    c, sent, mcp, st = env
+    pc = device_routing.device_map(None)["100.102.86.125"]
+    pc["tools"] = pc["tools"] + ["bluetooth_pair", "open_bluetooth_settings", "bluetooth_audio_receive"]
+    PHONE["commands"] = PHONE["commands"] + ["bt_pairing"]
+    try:
+        import routes.media_routes as mr
+        slept = []
+
+        async def no_sleep(s):
+            slept.append(s)
+        monkeypatch.setattr(mr.asyncio, "sleep", no_sleep)
+        r = c.post("/api/media/pair", json={"from": "device:pixel-8a", "to": "19d772b0"}).json()
+        assert r["phone_screen_opened"] is True and slept == [2]
+        assert [cmd for cmd, _ in sent][-1] == "bt_pairing"                       # the phone first...
+        assert ("mcp__19d772b0__bluetooth_pair", {"device": "pixel-8a", "seconds": 25}) == mcp[-1]  # ...then the PC
+    finally:
+        PHONE["commands"] = [x for x in PHONE["commands"] if x != "bt_pairing"]
+
+
+def test_the_pc_matches_the_phone_strictly_and_only_unpairs_a_phone():
+    # Seen live: a loose match on "pixel" hit "Jaron's Pixel Buds Pro" and
+    # removed their pairing from the PC.
+    src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
+    ns = {"re": __import__("re")}
+    exec(src[src.index("def _norm_name"):src.index("_AEP = [")], ns)
+    m, n = ns["_name_matches"], ns["_norm_name"]
+    assert m(n("pixel-8a"), "Pixel 8a") and m(n("pixel-8a"), "Jaron's Pixel 8a")
+    assert not m(n("pixel-8a"), "Jaron's Pixel Buds Pro") and not m(n("pixel"), "Jaron's Pixel Buds Pro")
+    assert not m("", "Pixel 8a") and not m(n("px"), "px")
+    assert "if stale is not None and await _is_phone(stale):" in src
+    assert "BluetoothMajorClass.PHONE" in src
+    assert "DeviceInformationKind.ASSOCIATION_ENDPOINT)" in src
+    assert "want in _norm_name" not in src
+
+
+def test_stream_a_computers_sound_to_another_over_the_tailnet(env, monkeypatch):
+    # Asked for: "stream from my PC over to my laptop but my laptop's not
+    # nearby, but it's on the tailnet".
+    pc = {"server_id": "pc1", "name": "windows-desktop", "host": "100.102.86.125",
+          "tools": ["now_playing", "audio_stream_start", "audio_stream_stop"]}
+    lap = {"server_id": "lap1", "name": "jaron-laptop-desktop", "host": "100.103.158.40",
+           "tools": ["now_playing", "play_stream", "stop_stream"]}
+    monkeypatch.setattr(device_routing, "device_map", lambda mgr: {"100.102.86.125": pc, "100.103.158.40": lap})
+    calls, laptop_ok = [], {"v": True}
+
+    class _MCP:
+        async def call_tool(self, name, args):
+            calls.append((name, args))
+            if name.endswith("__audio_stream_start"):
+                return {"stdout": json.dumps({"ok": True, "url": "http://100.102.86.125:8931/live/k.wav"})}
+            if name.endswith("__play_stream"):
+                return {"stdout": json.dumps({"ok": laptop_ok["v"], "error": "no ffplay"})}
+            return {"stdout": json.dumps({"ok": True})}
+    app = FastAPI()
+    app.include_router(media_routes.setup_media_routes(_MCP()))
+    c = TestClient(app)
+    avail = {d["server_id"]: d for d in c.get("/api/media/state", headers={"x-forwarded-for": "100.102.86.125"}).json()["available"]}
+    assert avail["pc1"]["can_stream_out"] and avail["lap1"]["can_play_stream"] and not avail["lap1"]["can_stream_out"]
+    r = c.post("/api/media/stream", json={"from": "pc1", "to": "lap1"}).json()
+    assert r == {"ok": True, "from": "windows-desktop", "to": "jaron-laptop-desktop"}
+    assert ("mcp__lap1__play_stream", {"url": "http://100.102.86.125:8931/live/k.wav"}) in calls
+    laptop_ok["v"] = False                               # the laptop cannot play: the PC stops streaming
+    assert c.post("/api/media/stream", json={"from": "pc1", "to": "lap1"}).status_code == 409
+    assert calls[-1] == ("mcp__pc1__audio_stream_stop", {})
+    c.post("/api/media/stream", json={"from": "pc1", "to": "lap1", "on": False})
+    assert calls[-2:] == [("mcp__lap1__stop_stream", {}), ("mcp__pc1__audio_stream_stop", {})]
+    assert c.post("/api/media/stream", json={"from": "lap1", "to": "pc1"}).status_code == 409   # the laptop cannot stream out
+
+
+def test_the_stream_pieces():
+    src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
+    ns = {"_struct": __import__("struct")}
+    exec(src[src.index("def _wav_header"):src.index("def _capture")], ns)
+    h = ns["_wav_header"](48000, 2)
+    import struct
+    assert h[:4] == b"RIFF" and h[8:16] == b"WAVEfmt " and len(h) == 44
+    assert struct.unpack("<HHIIHH", h[20:36]) == (1, 2, 48000, 192000, 4, 16)
+    assert '@mcp.custom_route("/live/{name}", methods=["GET"])' in src and "_secrets.compare_digest(key" in src
+    lin = open(os.path.join(HERE, "tools", "mcp", "linux_desktop_mcp_server.py"), encoding="utf-8").read()
+    ns2 = {}
+    exec(lin[lin.index("def _tailnet_stream_url"):lin.index("@mcp.tool()\ndef play_stream")], ns2)
+    ok = ns2["_tailnet_stream_url"]
+    assert ok("http://100.102.86.125:8931/live/x.wav") and ok("http://desktop-jaron.tail90b62a.ts.net:8931/live/x.wav")
+    assert not ok("http://example.com/x.wav") and not ok("http://192.168.1.5/x.wav") and not ok("file:///etc/passwd")
+
+
+def test_a_failed_pairing_logs_why():
+    # Seen live: the site's Pair failed twice with only "409 Conflict" in the
+    # server log, so the reason was lost.
+    src = open(os.path.join(HERE, "routes", "media_routes.py"), encoding="utf-8").read()
+    assert 'logger.warning("[media] pair %s with %s failed: %s"' in src
+    assert 'logger.warning("[media] hear %s on %s failed: %s"' in src
