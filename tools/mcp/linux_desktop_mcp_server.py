@@ -661,6 +661,18 @@ def open_media_url(url: str) -> Dict[str, Any]:
     subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {"ok": True, "opened": url}
 
+@mcp.tool()
+def start_music_overlay() -> Dict[str, Any]:
+    """Open the frameless music overlay on this desktop (Pop out in the
+    Odysseus music bar). Started here, as this user, so Odysseus needs no SSH
+    access to the machine for it."""
+    r = _run(["systemctl", "--user", "start", "odysseus-music-overlay.service"])
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("error") or r.get("stderr")
+                or "the overlay is not installed here (run the Odysseus setup command)"}
+    return {"ok": True}
+
+
 if __name__ == "__main__":
     import uvicorn  # noqa: F401
     # HOST/PORT come from the module scope above, where the Host allowlist was
