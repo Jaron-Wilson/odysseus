@@ -45,6 +45,42 @@ PY
 echo "==> installing the user unit"
 mkdir -p "$HOME/.config/systemd/user"
 cp "$SRC_DIR/$UNIT" "$HOME/.config/systemd/user/"
+
+# The music overlay (Pop out in the music bar): the same frameless player as
+# on Windows. Started on demand by Odysseus, so it is installed, not enabled.
+OVERLAY_DIR="$SRC_DIR/../music_overlay"
+if [ -f "$OVERLAY_DIR/music_overlay.py" ]; then
+    echo "==> installing the music overlay"
+    cp "$OVERLAY_DIR/music_overlay.py" "$DEST/"
+    cp "$OVERLAY_DIR/odysseus-music-overlay.service" "$HOME/.config/systemd/user/"
+    "$DEST/venv/bin/pip" install --quiet pillow        # album art (optional)
+    "$DEST/venv/bin/python" -c "import tkinter" 2>/dev/null \
+        || echo "    NOTE: the overlay needs Tk: sudo apt install python3-tk"
+    command -v wpctl >/dev/null || echo "    NOTE: volume buttons need wpctl (PipeWire)"
+    # Messages and the phone's song need an Odysseus API token with the
+    # "overlay" scope: pass it as ODYSSEUS_OVERLAY_TOKEN to save it here.
+    CONF="${XDG_CONFIG_HOME:-$HOME/.config}/odysseus-music-overlay"
+    mkdir -p "$CONF"
+    if [ -n "${ODYSSEUS_OVERLAY_TOKEN:-}" ]; then
+        "$DEST/venv/bin/python" - "$CONF/settings.json" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+try:
+    s = json.load(open(path))
+except Exception:
+    s = {}
+s["token"] = os.environ["ODYSSEUS_OVERLAY_TOKEN"]
+s["url"] = os.environ.get("ODYSSEUS_URL") or s.get("url") or "https://jaron-dev-server.tail90b62a.ts.net/"
+json.dump(s, open(path, "w"), indent=2)
+os.chmod(path, 0o600)
+print("    saved the overlay token")
+PY
+    elif [ ! -f "$CONF/settings.json" ]; then
+        echo "    NOTE: no overlay token yet: music works; messages and the phone's song need"
+        echo "          ODYSSEUS_OVERLAY_TOKEN=<token with the overlay scope> $0"
+    fi
+fi
+
 systemctl --user daemon-reload
 systemctl --user enable --now "$UNIT"
 

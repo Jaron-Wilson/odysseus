@@ -47,7 +47,14 @@ try:
 except ImportError:                                    # art is optional
     Image = ImageTk = None
 
-APP_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "odysseus-music-overlay")
+IS_WINDOWS = sys.platform == "win32"
+# Linux too (asked for: "on my linux device opened the website tried popup but
+# it didn't work"): media players through MPRIS (gdbus), the volume through
+# wpctl. Settings live in ~/.config there.
+APP_DIR = (os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "odysseus-music-overlay")
+           if IS_WINDOWS else
+           os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                        "odysseus-music-overlay"))
 SETTINGS = os.path.join(APP_DIR, "settings.json")
 LOG = os.path.join(APP_DIR, "overlay.log")
 ODYSSEUS_URL = os.environ.get("ODYSSEUS_URL", "https://jaron-dev-server.tail90b62a.ts.net/")
@@ -143,8 +150,112 @@ class Media:
         return self.run(self._do(what))
 
 
+# ── Linux: media players over MPRIS (D-Bus, through gdbus) ───────────────
+class MprisMedia:
+    """The same info() / do() as Media, for Linux. Uses the gdbus tool, so
+    nothing needs installing: every desktop with a session bus has it."""
+
+    _BUS = ["gdbus", "call", "--session"]
+    _PATH = "/org/mpris/MediaPlayer2"
+
+    def __init__(self):
+        self._art_cache = {}
+        self._name = ""
+
+    def _call(self, *args, timeout=3):
+        import subprocess
+        r = subprocess.run(self._BUS + list(args), capture_output=True, text=True, timeout=timeout)
+        return r.stdout if r.returncode == 0 else ""
+
+    def _players(self):
+        out = self._call("--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+                         "--method", "org.freedesktop.DBus.ListNames")
+        return [n for n in re.findall(r"org\.mpris\.MediaPlayer2\.[\w.\-]+", out) if not n.endswith("playerctld")]
+
+    def _prop(self, name, prop):
+        return self._call("--dest", name, "--object-path", self._PATH, "--method",
+                          "org.freedesktop.DBus.Properties.Get", "org.mpris.MediaPlayer2.Player", prop)
+
+    @staticmethod
+    def _str(meta, key):
+        m = re.search(r"'" + re.escape(key) + r"': <\[?(['\"])(.*?)(?<!\\)\1", meta)
+        return m.group(2).replace("\\'", "'").replace('\\"', '"') if m else ""
+
+    def _art(self, url):
+        if not url:
+            return b""
+        if url in self._art_cache:
+            return self._art_cache[url]
+        data = b""
+        try:
+            if url.startswith("file://"):
+                import urllib.parse
+                with open(urllib.parse.unquote(url[7:]), "rb") as f:
+                    data = f.read(8_000_000)
+            elif url.startswith(("http://", "https://")):
+                with urllib.request.urlopen(url, timeout=5) as r:
+                    data = r.read(8_000_000)
+        except Exception as e:
+            log(f"art read failed: {e}")
+        self._art_cache = {url: data}                    # one song's art at a time
+        return data
+
+    def info(self):
+        best = None
+        for name in self._players():
+            status = self._prop(name, "PlaybackStatus")
+            meta = self._prop(name, "Metadata")
+            title = self._str(meta, "xesam:title")
+            if not title:
+                continue
+            item = (name, "'Playing'" in status, title, meta)
+            if item[1]:
+                best = item
+                break
+            best = best or item
+        if not best:
+            self._name = ""
+            return None
+        name, playing, title, meta = best
+        self._name = name
+        source = name.split(".")[3] if name.count(".") >= 3 else name
+        return {"title": title, "artist": self._str(meta, "xesam:artist"), "playing": playing,
+                "art": self._art(self._str(meta, "mpris:artUrl")), "source": source}
+
+    def do(self, what):
+        name = self._name or next(iter(self._players()), "")
+        method = {"play_pause": "PlayPause", "next": "Next", "previous": "Previous"}[what]
+        return bool(name) and self._call("--dest", name, "--object-path", self._PATH, "--method",
+                                         f"org.mpris.MediaPlayer2.Player.{method}") != ""
+
+
+class _WpctlVolume:
+    """The four calls the overlay makes on the Windows volume endpoint, for
+    Linux (PipeWire's wpctl on the default output)."""
+    SINK = "@DEFAULT_AUDIO_SINK@"
+
+    def _run(self, *args):
+        import subprocess
+        return subprocess.run(["wpctl", *args], capture_output=True, text=True, timeout=3).stdout
+
+    def GetMasterVolumeLevelScalar(self):
+        m = re.search(r"Volume:\s*([0-9.]+)", self._run("get-volume", self.SINK))
+        return float(m.group(1)) if m else 0.0
+
+    def SetMasterVolumeLevelScalar(self, v, _ctx=None):
+        self._run("set-volume", "-l", "1.0", self.SINK, f"{max(0.0, min(1.0, v)):.2f}")
+
+    def GetMute(self):
+        return "[MUTED]" in self._run("get-volume", self.SINK)
+
+    def SetMute(self, m, _ctx=None):
+        self._run("set-mute", self.SINK, "1" if m else "0")
+
+
 # ── system volume (pycaw) ─────────────────────────────────────────────────
 def volume_endpoint():
+    if not IS_WINDOWS:
+        return _WpctlVolume()
     from ctypes import cast, POINTER
     from comtypes import CLSCTX_ALL
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
@@ -247,7 +358,7 @@ class Overlay:
 
     def __init__(self):
         self.settings = load_settings()
-        self.media = Media()
+        self.media = Media() if IS_WINDOWS else MprisMedia()
         self.q: "queue.Queue" = queue.Queue()
         self.last_key = None
         self.art_img = None
@@ -753,8 +864,11 @@ class Overlay:
             w.attributes("-topmost", True)
             w.lift()
         try:
-            import winsound
-            winsound.MessageBeep(0x40)
+            if IS_WINDOWS:
+                import winsound
+                winsound.MessageBeep(0x40)
+            else:
+                self.root.bell()
         except Exception:
             pass
 
