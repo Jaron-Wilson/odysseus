@@ -1193,3 +1193,33 @@ async function _registerEndpointFromButton(btn) {
     start();
   }
 })();
+
+// Players for media links however a reply got on screen. The live stream
+// calls enhanceMedia when a reply ends, but a reply the page picked up again
+// (the chat was left and reopened mid-run, or it finished in the background)
+// arrives by other paths, and its video showed as a bare link until a refresh
+// ("video linked in chat then i refreshed and it showed the video", 2026-09-29).
+// So: whenever finished replies in the chat change, give their links players.
+// A reply still streaming is left alone (it is re-rendered on every token).
+(() => {
+  const start = () => {
+    const root = document.getElementById('chat-history');
+    if (!root) return;
+    let timer = null;
+    const run = () => {
+      timer = null;
+      root.querySelectorAll('.msg-ai:not(.streaming)').forEach((m) => {
+        if (m.querySelector('a[href]:not([data-media-done])')) enhanceMedia(m);
+      });
+    };
+    new MutationObserver(() => {
+      if (!timer) timer = setTimeout(run, 300);
+    }).observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    run();
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start, { once: true });
+  } else {
+    start();
+  }
+})();
