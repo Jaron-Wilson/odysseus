@@ -1168,15 +1168,19 @@ class _FileTail:
 async def _follow(job, stream: "_Stream", add, exited, tail: "_FileTail") -> None:
     """Feed the run's output to `stream` until `exited()` is true."""
     status_tail = _FileTail(os.path.join(job.run_dir, "status.jsonl"))
+    last_heard = time.time()
     while True:
         done = exited()                    # checked first, so the last read gets everything
         for raw in tail.lines(final=done):
+            last_heard = time.time()
             for ln in stream.feed(raw):
                 add(ln)
         for raw in status_tail.lines(final=done):
+            last_heard = time.time()
             _take_status(job, raw)
         if not done:
             _check_limits(job, stream, add)
+            _check_stalled(job, add, last_heard)
         if stream.session_id and job.cli_session_id != stream.session_id:
             job.cli_session_id = stream.session_id
             job.spec["session_id"] = stream.session_id
@@ -1306,6 +1310,27 @@ def _limit_text(limits: Dict) -> str:
     return " · ".join(parts)
 
 
+# A run that writes nothing for this long is stuck (a model server that
+# stopped answering), not thinking. Seen 2026-09-29: two runs sat silent for
+# 20 and 40 minutes, and the chat showed a bare tool call the whole time
+# ("there should not ever ... just be a plain old tool call at the bottom of
+# the page"). OpenCode writes a line per finished step, so a slow model can
+# be quiet for minutes while it thinks: the limit is well past that.
+STALL_S = int(os.environ.get("ODYSSEUS_CODER_STALL_S", "900"))
+
+
+def _check_stalled(job, add, last_heard: float) -> None:
+    if job.spec.get("stalled") or job.status != "running" or STALL_S <= 0:
+        return
+    quiet = time.time() - last_heard
+    if quiet < STALL_S:
+        return
+    job.spec["stalled"] = max(1, round(quiet / 60))
+    add(f"\u25a0 No output for {job.spec['stalled']} minutes: the model server looks stuck. Stopping the run.")
+    claude_code_jobs.save()
+    claude_code_jobs.kill_run(job)
+
+
 def _check_limits(job, stream: "_Stream", add) -> None:
     """Stop the run once a limit is reached; the wrap-up follows in _build_result."""
     limits = (job.spec or {}).get("limits") or {}
@@ -1425,6 +1450,19 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
                 "usage": {"turns": stream.turns, "cost_usd": round(stream.cost, 2), "limits": limits},
                 "engine_label": engine_label(spec.get("engine", job.engine)), "exit_code": 0,
                 "job_id": job.id}
+    if spec.get("stalled"):
+        restored = action == "execute" and approvals.restore_approval(session_id)
+        return {
+            "error": (
+                f"Stopped: {engine_label(spec.get('engine', job.engine))} wrote nothing for "
+                f"{spec['stalled']} minutes on {model_label}, so the model server is stuck or overloaded. "
+                + ("The approval is restored, so it can run again. " if restored else "")
+                + "Tell the user this in your reply, and suggest another model (a different server) "
+                  "or trying again later. Do not retry on the same model by yourself."),
+            "output": console[-MAX_RESULT_CHARS:],
+            "session_id": session_id, "approval_restored": restored, "stalled": True,
+            "exit_code": 1,
+        }
     if timed_out:
         restored = action == "execute" and approvals.restore_approval(session_id)
         return {
@@ -1487,9 +1525,10 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
                 model=model_label, action=action, prompt=spec.get("prompt", ""), summary=body)
         except Exception:
             pass
+    plan_ref = session_id
     if action == "plan":
         try:
-            approvals.record_plan(
+            plan_ref = session_id + "~" + approvals.record_plan(
                 session_id,
                 cwd=cwd,
                 plan=body,
@@ -1524,14 +1563,14 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
 
         result["nothing_changed"] = True
         result["approval"] = {
-            "approve": f"[Approve plan · runs on {run_label}](#claudecode-approve-{session_id})",
-            "deny": f"[Deny](#claudecode-deny-{session_id})",
+            "approve": f"[Approve plan · runs on {run_label}](#claudecode-approve-{plan_ref})",
+            "deny": f"[Deny](#claudecode-deny-{plan_ref})",
         }
         result["next_step"] = (
             "Show the plan to the user in full. If the result has a `pdf` field, show that "
             "link too so they can read it as a paginated document. Then show these two links "
             "on their own line exactly as given so they can click one:\n"
-            f"[Approve plan · runs on {run_label}](#claudecode-approve-{session_id})  ·  [Deny](#claudecode-deny-{session_id})\n"
+            f"[Approve plan · runs on {run_label}](#claudecode-approve-{plan_ref})  ·  [Deny](#claudecode-deny-{plan_ref})\n"
             f"Say plainly that approving runs it on {run_label}. "
             "Tell them they can also just reply with changes they want instead of approving, "
             "including a different model (for example 'haiku' for small changes). "

@@ -171,6 +171,18 @@ def setup_claude_code_routes() -> APIRouter:
         if not _SESSION_ID_RE.fullmatch(session_id):
             raise HTTPException(400, "Invalid session ID format")
 
+    def _current(ref: str) -> str:
+        """The session id of a plan link ("<session>~<version>"), refusing a
+        link from an earlier plan the chat's newer plan replaced."""
+        sid, version = approvals.split_ref(ref)
+        _validate(sid)
+        if version and not version.isdigit():
+            raise HTTPException(400, "Invalid plan version")
+        if approvals.stale(sid, version):
+            raise HTTPException(409, "This button is for an earlier plan in this chat, which a newer "
+                                     "plan replaced. Use the newest plan's Approve or Deny.")
+        return sid
+
     @router.get("/api/claude_code/plan/{session_id}")
     async def get_plan(request: Request, session_id: str):
         """Fetch a plan and its current status, for rendering the approval UI."""
@@ -241,7 +253,7 @@ def setup_claude_code_routes() -> APIRouter:
         """Authorise ONE execute run of this plan. Single-use, and the execute
         call must target the same directory the plan was made for."""
         user = _require_user(request)
-        _validate(session_id)
+        session_id = _current(session_id)
         body = {}
         try:
             if int(request.headers.get("content-length") or 0) > 0:
@@ -255,7 +267,7 @@ def setup_claude_code_routes() -> APIRouter:
     async def plan_run_options(request: Request, session_id: str):
         """Engines and models the Approve dialog offers for this plan."""
         _require_user(request)
-        _validate(session_id)
+        session_id = _current(session_id)
         entry = approvals.get(session_id)
         if not entry:
             raise HTTPException(404, "No such plan (it may have expired)")
@@ -264,8 +276,7 @@ def setup_claude_code_routes() -> APIRouter:
     @router.post("/api/claude_code/deny/{session_id}")
     async def deny(request: Request, session_id: str):
         user = _require_user(request)
-        _validate(session_id)
-        return deny_plan(session_id, user)
+        return deny_plan(_current(session_id), user)
 
     # ------------------------------------------------------------------ #
     # Background tasks: Claude Code runs started from chats

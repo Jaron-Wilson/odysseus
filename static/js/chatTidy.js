@@ -81,5 +81,25 @@ function attach(popup) {
   });
 }
 
-window.chatTidy = { attach, tidyNow };
-export default { attach, tidyNow };
+// From a reply's "···" menu. The context ring only shows on replies that
+// carry token counts, so it was missing on some ("i dont see that tidy
+// button on the latest response just see 3 dots, a copy and regenerate").
+let _running = false;
+async function run(sid = _sid()) {
+  if (!sid || _running) return;
+  _running = true;
+  _toast('Tidying this chat: writing notes first\u2026');
+  try {
+    const r = await tidyNow(sid);
+    if (!r.tidied) { _toast(r.reason || 'Nothing to tidy.'); return; }
+    _toast(`Tidied: ${r.notes.length} notes saved, ${r.pruned} messages left out of context`);
+    if (window.sessionModule) await window.sessionModule.selectSession(sid);
+  } catch (e) {
+    _toast(`Could not tidy: ${e.message}`);
+  } finally {
+    _running = false;
+  }
+}
+
+window.chatTidy = { attach, tidyNow, run };
+export default { attach, tidyNow, run };
