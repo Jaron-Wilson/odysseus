@@ -252,6 +252,7 @@ class Overlay:
         self.last_key = None
         self.art_img = None
         self.source = ""                               # the playing app's media id
+        self.remote = None                             # a phone's server_id while its song is shown
         root = self.root = tk.Tk()
         root.title("Odysseus music")
         root.overrideredirect(True)                    # no title bar, no X
@@ -398,6 +399,19 @@ class Overlay:
         self.root.after(1800, lambda: self.badge.configure(text=""))
 
     def _click(self, name):
+        if getattr(self, "remote", None) and name in ("previous", "next", "play"):
+            # The phone's song: its own player does it.
+            action = "play_pause" if name == "play" else name
+            sid = self.remote
+
+            def go():
+                try:
+                    self._api("POST", "api/overlay/remote_media/control", {"server_id": sid, "action": action})
+                except Exception as e:
+                    log(f"phone control failed: {e}")
+            threading.Thread(target=go, daemon=True).start()
+            self._flash("\U0001F4F1 " + {"play": "play/pause", "next": "next", "previous": "previous"}[name])
+            return
         try:
             if name in ("previous", "next"):
                 self.media.do(name)
@@ -470,12 +484,36 @@ class Overlay:
 
     # polling (a thread; the window is updated on the Tk thread)
     def _poll(self):
+        remote, remote_at = None, 0.0
         while True:
             try:
-                self.q.put(self.media.info())
+                info = self.media.info()
             except Exception as e:
                 log(f"media info failed: {e}")
-                self.q.put(None)
+                info = None
+            # Nothing playing on this PC: what the phone is playing, through
+            # Odysseus. Asked for: "popup says nothing playing when it's from
+            # my phone". The one that is actually playing wins.
+            if not (info and info.get("playing")) and self.token and self.url:
+                if time.time() - remote_at > POLL_S * 3:
+                    remote_at = time.time()
+                    try:
+                        remote = self._api("GET", "api/overlay/remote_media").get("item")
+                    except Exception as e:
+                        log(f"remote media failed: {e}")
+                        remote = None
+                if remote and (remote.get("playing") or not (info and info.get("title"))):
+                    import base64
+                    try:
+                        art = base64.b64decode(remote.get("art_jpeg_b64") or "")
+                    except Exception:
+                        art = b""
+                    info = {"title": remote.get("title") or "", "artist": remote.get("artist") or "",
+                            "playing": bool(remote.get("playing")), "art": art, "source": "",
+                            "remote": remote.get("server_id"), "remote_name": remote.get("name") or "phone"}
+            else:
+                remote = None
+            self.q.put(info)
             time.sleep(POLL_S)
 
     def _drain(self):
@@ -829,13 +867,16 @@ class Overlay:
 
     def _show(self, info):
         if not info:
+            self.remote = None
             self.title.configure(text="Nothing playing")
             self.artist.configure(text="")
             self.buttons["play"].configure(text=self.GLYPH["play"])
             return
         self.source = info.get("source", "")
+        self.remote = info.get("remote")               # a phone's song (see _poll)
         self.title.configure(text=info["title"] or "Unknown")
-        self.artist.configure(text=info["artist"])
+        self.artist.configure(text=(f"{info['artist']} \u00b7 \U0001F4F1 {info['remote_name']}"
+                                    if self.remote else info["artist"]))
         self.buttons["play"].configure(text=self.GLYPH["pause" if info["playing"] else "play"])
         key = (info["title"], info["artist"], len(info["art"]))
         if key != self.last_key:

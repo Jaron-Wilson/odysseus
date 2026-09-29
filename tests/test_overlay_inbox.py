@@ -92,3 +92,40 @@ def test_wiring():
     assert "winsound.MessageBeep" in app
     assert "/api/media/overlay" in read("static", "js", "musicBar.js")
     assert '@router.post("/overlay")' in read("routes", "media_routes.py")
+
+
+def test_the_overlay_shows_and_controls_the_phones_song(monkeypatch):
+    # Reported: "popup says nothing playing when it's from my phone".
+    from routes import overlay_routes
+    from src import device_routing, devices
+    overlay_routes._REMOTE_CACHE.update(at=0.0, item=None)
+    phone = {"name": "pixel-8a", "endpoint": "http://pixel-8a.example:8778", "commands": ["now_playing", "media_control"]}
+    monkeypatch.setattr(device_routing, "phone_devices",
+                        lambda: [{"server_id": "device:pixel-8a", "name": "pixel-8a"}])
+    monkeypatch.setattr(devices, "get", lambda n: phone if n == "pixel-8a" else None)
+    sent = []
+
+    async def send(dev, cmd, params=None):
+        sent.append((cmd, params))
+        if cmd == "now_playing":
+            return {"ok": True, "result": {"ok": True, "playing": True, "title": "Happier",
+                                           "artist": "Marshmello & Bastille", "art_jpeg_b64": "AAAA"}}
+        return {"ok": True, "result": {"ok": True}}
+    monkeypatch.setattr(devices, "send_command", send)
+    ok = {"api_token": True, "api_token_owner": "jaron", "api_token_scopes": ["overlay"], "current_user": "api"}
+    c = _client(ok)
+    item = c.get("/api/overlay/remote_media").json()["item"]
+    assert item["title"] == "Happier" and item["server_id"] == "device:pixel-8a" and item["art_jpeg_b64"] == "AAAA"
+    c.get("/api/overlay/remote_media")
+    assert [cmd for cmd, _ in sent].count("now_playing") == 1         # cached between polls
+    assert c.post("/api/overlay/remote_media/control",
+                  json={"server_id": "device:pixel-8a", "action": "next"}).json()["ok"]
+    assert ("media_control", {"action": "next"}) in sent
+    assert c.post("/api/overlay/remote_media/control",
+                  json={"server_id": "device:pixel-8a", "action": "format"}).status_code == 400
+    assert c.post("/api/overlay/remote_media/control",
+                  json={"server_id": "19d772b0", "action": "next"}).status_code == 400
+    assert _client(dict(ok, api_token_scopes=["chat"])).get("/api/overlay/remote_media").status_code == 403
+    app = open(os.path.join(HERE, "tools", "music_overlay", "music_overlay.py"), encoding="utf-8").read()
+    assert 'self._api("GET", "api/overlay/remote_media")' in app
+    assert '"api/overlay/remote_media/control"' in app and "if self.remote else info[\"artist\"]" in app
