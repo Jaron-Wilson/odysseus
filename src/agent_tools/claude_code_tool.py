@@ -286,12 +286,18 @@ class ClaudeCodeTool:
             "exit_code": 0,
         }
 
-    async def _job_status(self, job_id: Optional[str]) -> Dict:
+    async def _job_status(self, job_id: Optional[str], chat_id: str = "") -> Dict:
         """Report on background sessions, so the user can just ask how it is going.
 
-        Reads the CLI's own view rather than a local job table, so the ids here
-        are the same ones `claude attach` / `logs` / `stop` accept.
+        Odysseus's own runs first (the job ids its cards, Background tasks and
+        "Bring back" use): asked about job fd81af50, this said "no background
+        session matching fd81af50", because it only read the Claude CLI's
+        sessions (2026-09-29). Then the CLI's own view, whose ids are the ones
+        `claude attach` / `logs` / `stop` accept.
         """
+        own = self._own_job_status(job_id, chat_id)
+        if own:
+            return own
         listing = await self._list_agents()
         if listing.get("exit_code") != 0:
             return listing
@@ -403,6 +409,32 @@ class ClaudeCodeTool:
             "exit_code": 0,
         }
 
+    @staticmethod
+    def _own_job_status(job_id: Optional[str], chat_id: str) -> Optional[Dict]:
+        if job_id:
+            job = claude_code_jobs.get(job_id)
+            jobs = [job] if job else []
+        else:
+            jobs = [j for j in claude_code_jobs.list_jobs("")
+                    if j.status == "running" and (not chat_id or j.chat_session_id == chat_id)]
+        if not jobs:
+            return None
+        lines = []
+        for j in jobs:
+            took = round(((j.finished or time.time()) - j.started) / 60, 1)
+            st = claude_code_jobs.shown_status(j.status, j.agent_status) or {}
+            on = f" on {j.model}" if j.model else ""
+            detail = f" \u00b7 {st['detail']}" if st.get("detail") else ""
+            lines.append(f"- `{j.id}` {j.status} \u2014 {engine_label(j.engine)} {j.action}{on}, {took} min{detail}")
+            tail = [l for l in list(j.lines)[-6:] if l.strip()]
+            if tail:
+                lines.append("  last output: " + " | ".join(t.strip()[:160] for t in tail))
+        running = [j for j in jobs if j.status == "running"]
+        hint = (" To follow one here, call claude_code with action 'attach' and its job_id. "
+                "Do not start it again." if running else "")
+        return {"output": "\n".join(lines) + ("\n" + hint.strip() if hint else ""), "exit_code": 0,
+                "jobs": [j.public() for j in jobs]}
+
     async def _attach(self, job_id: str, ctx: dict) -> Dict:
         """Follow a background run in this chat turn again ("bring it back"):
         its live output streams into the card here and its result is returned
@@ -429,7 +461,14 @@ class ClaudeCodeTool:
                             pass
                     await asyncio.sleep(PROGRESS_INTERVAL_S)
             except asyncio.CancelledError:
-                job.attached = False       # the chat's Stop: it carries on in the background
+                # The chat's Stop stops a run brought back into the chat, as it
+                # does one that never left: "the inchat does not do it"
+                # (2026-09-29), only Background tasks' Stop did. A restart
+                # leaves it running, to be picked up again.
+                job.attached = False
+                if not _restarting():
+                    claude_code_jobs.kill_run(job)
+                    claude_code_jobs.finish(job, "stopped")
                 raise
             if job.status == "running":    # sent to the background again
                 return {"background": True, "job_id": job.id, "exit_code": 0,
@@ -484,7 +523,7 @@ class ClaudeCodeTool:
         if action == "agents":
             return self._chat_agents((ctx or {}).get("session_id") or "")
         if action == "status":
-            return await self._job_status(args.get("job_id"))
+            return await self._job_status(args.get("job_id"), (ctx or {}).get("session_id") or "")
 
         prompt = (args.get("prompt") or args.get("task") or "").strip()
         if not prompt:
@@ -937,10 +976,16 @@ class ClaudeCodeTool:
             done, _ = await asyncio.wait({follow_task, detach_task}, timeout=timeout,
                                          return_when=asyncio.FIRST_COMPLETED)
         except asyncio.CancelledError:
-            # The chat's Stop, while the run is still in the foreground.
             detach_task.cancel()
             if prog:
                 prog.cancel()
+            if _restarting():
+                # A deploy restart, not the user: the run keeps going and the
+                # next server reattaches to it and posts its result.
+                job.detached = True
+                claude_code_jobs.save()
+                raise
+            # The chat's Stop, while the run is still in the foreground.
             claude_code_jobs.kill_run(job)
             follow_task.cancel()
             claude_code_jobs.finish(job, "stopped")
@@ -1640,6 +1685,14 @@ def _is_read_only_check(prompt: str) -> bool:
     questions to answer) and never speaks of a plan or of building anything."""
     head = (prompt or "")[:600]
     return bool(_CHECK_RE.search(head)) and not _PLAN_WORD_RE.search(prompt or "")
+
+
+def _restarting() -> bool:
+    try:
+        from src import agent_runs
+        return bool(agent_runs.restarting)
+    except Exception:
+        return False
 
 
 def _is_command_list(prompt: str) -> bool:

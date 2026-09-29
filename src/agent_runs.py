@@ -36,6 +36,8 @@ class _Run:
 
 
 _RUNS: Dict[str, _Run] = {}
+# Set by stop_all: the turns are being stopped for a restart, not by the user.
+restarting = False
 
 # How long a FINISHED run (and its full replay buffer) is retained after the
 # last subscriber disconnects, so a reconnect within the window can still
@@ -164,6 +166,10 @@ async def stop_all(timeout: float = 10.0) -> int:
     wrapped generator's CancelledError handler does that). Used just before a
     deploy restarts the server: a turn cut off by the process exiting was lost
     without a trace (seen live, 2026-09-28)."""
+    global restarting
+    # Coding-agent runs followed by these turns carry on and are picked up
+    # again after the restart, rather than being stopped as a Stop would.
+    restarting = True
     tasks = [r.task for r in _RUNS.values() if r.task and not r.task.done() and r.status == "running"]
     for t in tasks:
         t.cancel()
