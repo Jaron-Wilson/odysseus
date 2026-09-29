@@ -88,6 +88,22 @@ _BUILTIN_NPX_SERVERS = {
     },
 }
 
+async def _browser_args(args):
+    """The agent's browser is the cloud browser (src/cloud_browser.py), the
+    one the user can watch and take over. Falls back to the MCP's own
+    headless browser if it cannot start."""
+    try:
+        from src import cloud_browser
+        endpoint = await asyncio.to_thread(cloud_browser.ensure)
+    except Exception as e:
+        logger.warning(f"Cloud browser could not start: {e}")
+        endpoint = ""
+    if not endpoint:
+        return args
+    kept = [a for a in args if a not in ("--headless", "--browser", "chromium")]
+    return kept + ["--cdp-endpoint", endpoint]
+
+
 # Global flag to disable MCP if there are compatibility issues
 MCP_DISABLED = os.environ.get("ODYSSEUS_DISABLE_MCP", "").lower() in ("1", "true", "yes")
 
@@ -147,6 +163,8 @@ async def register_builtin_servers(mcp_manager):
             # loop and downs the app. Detecting installed-state up-front lets
             # us bail with a useful warning before we ever touch stdio_client.
             args = cfg["args"]
+            if server_id == "builtin_browser":
+                args = await _browser_args(args)
             pkg_spec = _npx_package_from_args(args)
             if pkg_spec and not await _is_npx_package_cached(npx_path, pkg_spec):
                 logger.warning(

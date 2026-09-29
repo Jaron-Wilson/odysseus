@@ -637,6 +637,8 @@ from routes.special_chat_routes import setup_special_chat_routes
 app.include_router(setup_special_chat_routes(session_manager))
 from routes.mail_listener_routes import setup_mail_listener_routes
 app.include_router(setup_mail_listener_routes())
+from routes.cloud_browser_routes import setup_cloud_browser_routes
+app.include_router(setup_cloud_browser_routes())
 
 # claude_code plan approvals — the only path that can authorise an execute run.
 from routes.claude_code_routes import setup_claude_code_routes

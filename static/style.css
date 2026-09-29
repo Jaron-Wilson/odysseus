@@ -37357,3 +37357,36 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .dv-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .dv-foot { font-size: 11px; opacity: .5; margin: 14px 0 4px; }
 @media (max-width: 700px) { .dv-table th:nth-child(n+5), .dv-table td:nth-child(n+5) { display: none; } }
+
+/* The cloud browser (cloudBrowser.js): a window with no backdrop, so the chat
+   keeps working beside it. */
+.cb-backdrop { position: fixed; inset: 0; z-index: 900; pointer-events: none; }
+.cb-panel { position: fixed; right: 18px; bottom: 18px; width: min(860px, calc(100vw - 36px)); height: min(640px, calc(100vh - 36px));
+  max-height: none; pointer-events: auto; overflow: hidden; }
+.cb-head { gap: 10px; justify-content: flex-start; padding: 8px 12px; }
+.cb-head .cb-title { flex: 0 0 auto; }
+.cb-status { flex: 1; font-size: 12px; font-weight: 400; opacity: .6; }
+.cb-head .fill-chat-area-btn { margin-left: 0; }
+.cb-bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); }
+.cb-bar button { background: none; border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent); color: inherit;
+  border-radius: 7px; padding: 3px 9px; cursor: pointer; font-size: 13px; line-height: 1.3; }
+.cb-bar button:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.cb-go { flex: 1; min-width: 0; margin: 0; }
+.cb-url { width: 100%; font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 14px; color: inherit;
+  background: color-mix(in srgb, var(--fg) 6%, transparent); border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); }
+.cb-tabs { max-width: 180px; font: inherit; font-size: 12px; padding: 3px 4px; border-radius: 7px; color: inherit; background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent); }
+.cb-tabs[hidden] { display: none; }
+.cb-take { font-weight: 600; }
+.cb-control .cb-take { background: color-mix(in srgb, var(--accent, #60a5fa) 25%, transparent) !important; }
+.cb-screen { flex: 1; min-height: 0; background: #111; display: flex; outline: none; cursor: default; }
+.cb-control .cb-screen { cursor: pointer; box-shadow: inset 0 0 0 2px var(--accent, #60a5fa); }
+.cb-img { width: 100%; height: 100%; object-fit: contain; user-select: none; }
+.cb-img:not([src]) { visibility: hidden; }
+.cb-foot { display: flex; gap: 10px; padding: 5px 12px; font-size: 11.5px; opacity: .75; }
+.cb-mode { flex: 1; }
+.cb-note { color: #e5533d; }
+.cb-note[hidden] { display: none; }
+.cb-watch { margin-left: 8px; font-size: 11px; padding: 0 7px; border-radius: 7px; cursor: pointer; color: inherit; background: none;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--fg)) 45%, transparent); }
