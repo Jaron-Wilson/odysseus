@@ -222,8 +222,9 @@ async function _renderPanel() {
     <div class="mp-handoff"><button type="button" class="mb-handoff" data-mb-listen="${_esc(current)}" title="Pause it on ${_esc(_devName())} and play it in this browser">\u{1F310} This browser</button>${devs.filter((d) => d.server_id !== current).map((d) =>
       `<button type="button" class="mb-handoff" data-mb-handoff="${_esc(d.server_id)}" title="Pause it here and play it on ${_esc(d.name || d.server_id)}">${d.kind === 'phone' ? '\u{1F4F1}' : '\u{1F5A5}'} ${_esc(d.name || d.server_id)}</button>`).join('')}</div>
     ${_pairFor ? `<div class="mp-pair"><b>Pair ${_esc(_devName())} with ${_esc(_pairFor.name)}</b> (once):
-      <ol><li>On the phone: Settings \u203A Connected devices \u203A Pair new device. Keep that screen open.</li>
-      <li>Press Pair, then tap Pair on the phone when it asks.</li></ol>
+      <ol><li>Press Pair: Modes opens the phone's pairing screen (with Modes 0.1.62+; otherwise open
+      Settings \u203A Connected devices \u203A Pair new device yourself).</li>
+      <li>Tap Pair on the phone when it asks.</li></ol>
       <button type="button" class="mb-handoff" data-mb-pair="${_esc(_pairFor.id)}">Pair</button>
       <button type="button" class="mb-handoff" data-mb-pair-manual="${_esc(_pairFor.id)}">Open Bluetooth settings on ${_esc(_pairFor.name)}</button>
       <button type="button" class="mb-handoff" data-mb-pair-cancel>Not now</button></div>` : ''}

@@ -43,6 +43,9 @@ KNOWN_COMMANDS = {
     "install_app": "Open the Play Store page for a package so it can be installed",
     # Music on the phone (Modes 0.1.60+), for the music bar opened on the phone.
     "now_playing": "What is playing on the device",
+    # Pairing a computer with the phone from the music bar (Modes 0.1.62+):
+    # opens "Pair new device", which keeps the phone visible while open.
+    "bt_pairing": "Open the phone's Bluetooth pairing screen",
     "media_control": "Play, pause or skip what is playing",
     "get_volume": "The device's music volume",
     "set_volume": "Set the device's music volume",

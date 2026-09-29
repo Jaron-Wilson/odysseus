@@ -283,3 +283,39 @@ def test_a_stale_pairing_is_named_and_redone():
     src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
     assert "is paired with this PC but not as an audio source" in src and '"stale_pairing": stale.name' in src
     assert "await stale.pairing.unpair_async()" in src and '"removed_old_pairing": removed' in src
+
+
+def test_pair_opens_the_phones_pairing_screen_first(env, monkeypatch):
+    c, sent, mcp, st = env
+    pc = device_routing.device_map(None)["100.102.86.125"]
+    pc["tools"] = pc["tools"] + ["bluetooth_pair", "open_bluetooth_settings", "bluetooth_audio_receive"]
+    PHONE["commands"] = PHONE["commands"] + ["bt_pairing"]
+    try:
+        import routes.media_routes as mr
+        slept = []
+
+        async def no_sleep(s):
+            slept.append(s)
+        monkeypatch.setattr(mr.asyncio, "sleep", no_sleep)
+        r = c.post("/api/media/pair", json={"from": "device:pixel-8a", "to": "19d772b0"}).json()
+        assert r["phone_screen_opened"] is True and slept == [2]
+        assert [cmd for cmd, _ in sent][-1] == "bt_pairing"                       # the phone first...
+        assert ("mcp__19d772b0__bluetooth_pair", {"device": "pixel-8a", "seconds": 25}) == mcp[-1]  # ...then the PC
+    finally:
+        PHONE["commands"] = [x for x in PHONE["commands"] if x != "bt_pairing"]
+
+
+def test_the_pc_matches_the_phone_strictly_and_only_unpairs_a_phone():
+    # Seen live: a loose match on "pixel" hit "Jaron's Pixel Buds Pro" and
+    # removed their pairing from the PC.
+    src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
+    ns = {"re": __import__("re")}
+    exec(src[src.index("def _norm_name"):src.index("_AEP = [")], ns)
+    m, n = ns["_name_matches"], ns["_norm_name"]
+    assert m(n("pixel-8a"), "Pixel 8a") and m(n("pixel-8a"), "Jaron's Pixel 8a")
+    assert not m(n("pixel-8a"), "Jaron's Pixel Buds Pro") and not m(n("pixel"), "Jaron's Pixel Buds Pro")
+    assert not m("", "Pixel 8a") and not m(n("px"), "px")
+    assert "if stale is not None and await _is_phone(stale):" in src
+    assert "BluetoothMajorClass.PHONE" in src
+    assert "DeviceInformationKind.ASSOCIATION_ENDPOINT)" in src
+    assert "want in _norm_name" not in src
