@@ -187,7 +187,14 @@ def consume_approval(session_id: str, cwd: str) -> tuple[bool, str]:
     if status == "denied":
         return False, "the user denied this plan"
     if status == "used":
-        return False, "this approval was already used; plan again for a new run"
+        # "plan again" read as an instruction: a second execute on the same
+        # approval made the agent plan again, and the user was asked to
+        # approve the same work once more (2026-09-29).
+        run = entry.get("run_id") or ""
+        return False, ("this approval was already used: its run " + (f"(job {run}) " if run else "")
+                       + "has started, so do NOT plan again. Report that run's result, or call "
+                       + "claude_code with action 'status'" + (f" and job_id '{run}'" if run else "")
+                       + " to see how it is going. Only plan again if the user asks for new work.")
     if os.path.realpath(entry.get("cwd") or "") != os.path.realpath(cwd):
         return False, "cwd does not match the approved plan"
     entry["status"] = "used"
