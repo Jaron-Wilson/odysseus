@@ -214,6 +214,14 @@ async function loadTools() {
   } catch (_) { /* not an admin, or no machines */ }
 }
 
+// One click installs what is missing and updates what is old, so the button
+// says both when both apply: it said "Install" beside "an update is
+// available" ("Install not an update?", 2026-09-29).
+function toolsButton(t) {
+  if (t.missing.length && t.outdated.length) return 'Install and update';
+  return t.missing.length ? 'Install' : 'Update';
+}
+
 function toolsLine(t) {
   if (!t.connected) return `<div class="admin-toggle-sub">${esc(t.name)}: not connected, so its tools cannot be checked.</div>`;
   if (t.up_to_date) return `<div class="admin-toggle-sub">${dot(true)}${esc(t.name)}: every Odysseus tool is installed and current.</div>`;
@@ -221,7 +229,7 @@ function toolsLine(t) {
     t.outdated.length ? 'an update is available' : ''].filter(Boolean).join('; ');
   return `<div class="admin-toggle-sub" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <span>${esc(t.name)}: ${what}.</span>
-    <button ${BTN} data-m-update="${esc(t.server_id)}" data-m-host="${esc(t.host || '')}" ${t.online ? '' : 'disabled title="Offline"'}>${t.missing.length ? 'Install' : 'Update'}</button></div>`;
+    <button ${BTN} data-m-update="${esc(t.server_id)}" data-m-host="${esc(t.host || '')}" ${t.online ? '' : 'disabled title="Offline"'}>${toolsButton(t)}</button></div>`;
 }
 
 async function load(refresh = false) {

@@ -842,6 +842,7 @@ import './chatThreads.js';
         }
       });
       document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+      if (chatRenderer.settleToolStatus) chatRenderer.settleToolStatus();
 
       // Clean up any thinking spinners
       document.querySelectorAll('.agent-thinking-dots').forEach(el => {
@@ -2590,7 +2591,22 @@ import './chatThreads.js';
                     _contentEl3.innerHTML = markdownModule.processWithThinking(markdownModule.squashOutsideCode(dt));
                     if (window.hljs) roundHolder.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
                   } else {
-                    roundHolder.style.display = 'none';
+                    // A step that only uses tools keeps its chat bubble, with
+                    // what it is using: "its getting anoying not having a chat
+                    // when its just a tool call" (2026-09-29). Straight after
+                    // another such step, that step's bubble is used instead.
+                    const _prevThread = roundHolder.previousElementSibling;
+                    const _prevBubble = _prevThread && _prevThread.classList.contains('agent-thread')
+                      ? _prevThread.previousElementSibling : null;
+                    if (_prevBubble && _prevBubble.classList.contains('msg-tool-only')) {
+                      roundHolder.style.display = 'none';
+                    } else {
+                      var _body4 = roundHolder.querySelector('.body');
+                      var _contentEl4 = _ensureStreamLayout(_body4);
+                      _contentEl4.style.minHeight = '';
+                      _contentEl4.innerHTML = '';
+                      roundHolder.classList.add('msg-tool-only');
+                    }
                   }
                 }
 
@@ -2634,6 +2650,12 @@ import './chatThreads.js';
                 const toolLabel = json.tool.toLowerCase() === 'claude_code'
                   ? chatRenderer.toolDisplayName(json)
                   : (_toolLabels[json.tool.toLowerCase()] || json.tool);
+                {
+                  const _sb = threadWrap.previousElementSibling;
+                  if (_sb && _sb.classList.contains('msg-tool-only')) {
+                    chatRenderer.addToolStatus(_sb, [json.tool.toLowerCase() === 'claude_code' ? toolLabel : json.tool], true);
+                  }
+                }
                 const toolIcon = _toolIcons[json.tool.toLowerCase()] || '\u25B6';
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
@@ -3069,6 +3091,7 @@ import './chatThreads.js';
       _releaseHeldSpace();
       // Stop any thread pulse animations
       document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+      if (chatRenderer.settleToolStatus) chatRenderer.settleToolStatus();
       // --- Final render (skip if stream was ever backgrounded or currently in background) ---
       // Remove streaming class from all round bubbles
       holder.classList.remove('streaming');
@@ -3336,6 +3359,7 @@ import './chatThreads.js';
       _removeThinkingSpinner();
       _releaseHeldSpace();
       document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+      if (chatRenderer.settleToolStatus) chatRenderer.settleToolStatus();
       // Check if this stream was running in background
       const _isBgCatch = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
 
