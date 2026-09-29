@@ -614,6 +614,24 @@ def setup_history_routes(session_manager) -> APIRouter:
         except Exception as e:
             raise HTTPException(500, f"Topic analysis failed: {e}")
 
+    @router.post("/api/session/{session_id}/tidy")
+    async def tidy_session(request: Request, session_id: str):
+        """Write the chat's notes to Needs to know, then leave the older
+        messages out of context (src/chat_tidy.py). Nothing is deleted."""
+        _verify_session_owner(request, session_id)
+        from src.auth_helpers import effective_user
+        from src import chat_tidy
+        try:
+            session = session_manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+        _reject_compact_during_active_run(session_id)
+        try:
+            return await chat_tidy.tidy(session, owner=effective_user(request) or "")
+        except Exception as e:
+            logger.warning("Tidy failed for %s: %s", session_id, e)
+            raise HTTPException(502, f"Could not tidy: {e}")
+
     @router.post("/api/session/{session_id}/compact")
     async def compact_session(request: Request, session_id: str):
         """Manually trigger context compaction for a session."""

@@ -17,7 +17,8 @@ from typing import Dict
 from src.constants import DATA_DIR
 
 PREFS_FILE = os.path.join(DATA_DIR, "chat_prefs.json")
-DEFAULTS = {"claude": True, "opencode": True}
+# "tidy": when the chat gets full, write its notes and prune (chat_tidy.py).
+DEFAULTS = {"claude": True, "opencode": True, "tidy": False}
 
 
 def _load() -> Dict[str, dict]:

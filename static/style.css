@@ -37284,3 +37284,8 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 }
 .dp-tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 12px; max-height: 320px; overflow: auto; }
 .dp-tools label { display: flex; gap: 6px; align-items: center; font-size: 12.5px; cursor: pointer; overflow-wrap: anywhere; }
+
+/* Tidy in the Context Window popup (chatTidy.js). */
+.ctx-tidy-auto { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.78rem; cursor: pointer; opacity: .85; }
+.ctx-tidy-msg { font-size: 0.75rem; margin-top: 4px; opacity: .75; }
+.ctx-tidy-msg:empty { display: none; }

@@ -1106,6 +1106,14 @@ def run_post_response_tasks(
     if last_metrics:
         accumulate_token_usage(session_id, last_metrics)
 
+    # Tidy (notes, then prune) once a chat that asked for it is getting full.
+    if not incognito and not compare_mode:
+        try:
+            from src import chat_tidy
+            chat_tidy.schedule_if_full(sess, last_metrics, owner=owner or "")
+        except Exception:
+            logger.debug("Tidy check skipped", exc_info=True)
+
     # Webhook
     if webhook_manager and not compare_mode:
         asyncio.create_task(webhook_manager.fire("chat.completed", {
