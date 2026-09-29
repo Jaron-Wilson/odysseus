@@ -11,11 +11,62 @@ permission click in front of a volume slider would make the panel useless.
 
 import asyncio
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
 logger = logging.getLogger(__name__)
+
+
+def _seconds(v) -> Optional[float]:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f >= 0 and f == f else None
+
+
+def normalize_now_playing(np: Any) -> Dict[str, Any]:
+    """One player the bar can draw, with times for its progress line.
+
+    Asked for: "a line to have music duration/duration left". Each machine
+    answers in its own shape: the Linux MCP lists every MPRIS player
+    ({playing, players: [...]}), Windows and the phone answer with one. The
+    active player is kept (Playing, else Paused, else the first), and
+    position / duration are seconds on every one of them (the phone sends
+    position_ms / duration_ms). position_at is when the position was true,
+    on the machine's clock: Linux reads it live, Windows says when its app
+    last reported it, and the phone does not say (None: the page counts on
+    from when it first saw that value)."""
+    if not isinstance(np, dict) or not np:
+        return {}
+    np = dict(np)
+    players = np.get("players")
+    if isinstance(players, list):
+        ps = [p for p in players if isinstance(p, dict)]
+        active = (next((p for p in ps if p.get("status") == "Playing"), None)
+                  or next((p for p in ps if p.get("status") == "Paused"), None)
+                  or (ps[0] if ps else {}))
+        flat = {k: v for k, v in np.items() if k != "players"}
+        flat.update(active)
+        flat["playing"] = bool(np.get("playing")) if "playing" in np else active.get("status") == "Playing"
+        np = flat
+    pos = _seconds(np.get("position"))
+    if pos is None and np.get("position_ms") is not None:
+        pos = _seconds(np.get("position_ms"))
+        pos = round(pos / 1000, 2) if pos is not None else None
+    dur = _seconds(np.get("duration"))
+    if dur is None and np.get("duration_ms") is not None:
+        dur = _seconds(np.get("duration_ms"))
+        dur = round(dur / 1000, 2) if dur is not None else None
+    if not dur:
+        pos = dur = None                   # a stream, or a player that does not say
+    elif pos is not None:
+        pos = min(pos, dur)
+    np["position"], np["duration"] = pos, dur
+    np["position_at"] = _seconds(np.get("position_at")) if pos is not None else None
+    return np
 
 
 # The newest "Listen here" (or handoff): a browser playing an older one stops,
@@ -150,6 +201,10 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                 out[name] = {"ok": False, "error": str(res)}
             else:
                 out[name] = _payload(res)
+        if isinstance(out.get("now_playing"), dict):
+            out["now_playing"] = normalize_now_playing(out["now_playing"])
+        # The server's clock, so the page can place position_at on its own.
+        out["server_now"] = round(time.time(), 3)
         # Nothing playing here: say where it is playing. Reported: "the music
         # didn't work from my phone, I was playing yet my PC saw nothing".
         if not (out.get("now_playing") or {}).get("playing"):
@@ -163,8 +218,6 @@ def setup_media_routes(mcp_manager) -> APIRouter:
         """What the other devices are playing, for a "Playing on" row. Each
         is asked at most every 8 s (the bar polls far more often) and given
         3 s: a phone that is asleep must not hold up this machine's bar."""
-        import time
-
         async def one(d):
             sid = d.get("server_id") or ""
             if "now_playing" not in set(d.get("tools") or ["now_playing"]):
@@ -178,6 +231,7 @@ def setup_media_routes(mcp_manager) -> APIRouter:
                 except Exception:
                     np = {}
                 _elsewhere_cache[sid] = (time.time(), np)
+            np = normalize_now_playing(np)       # the laptop's players list, too
             if not np.get("playing") or not np.get("title"):
                 return None
             return {"server_id": sid, "name": d.get("name") or sid, "kind": d.get("kind"),
