@@ -13,10 +13,36 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
+_EXC_GROUP = getattr(__import__("builtins"), "BaseExceptionGroup", ())   # Python 3.11+
+
+
+def _root_error(error: BaseException) -> BaseException:
+    """The error inside the MCP client's task groups: shown as "unhandled
+    errors in a TaskGroup (1 sub-exception)", which names nothing (seen on
+    Settings > Devices, 2026-09-29)."""
+    seen = 0
+    while isinstance(error, _EXC_GROUP) and error.exceptions and seen < 10:
+        error = error.exceptions[0]
+        seen += 1
+    return error
+
+
+def _describe_error(error: BaseException) -> str:
+    error = _root_error(error)
+    text = str(error).strip() or type(error).__name__
+    kind = type(error).__name__
+    if kind in ("ConnectTimeout", "TimeoutException", "ReadTimeout") or "timed out" in text.lower():
+        return (f"{text}: nothing answered on its port. The MCP server on that computer is not "
+                "running (or crashes when it starts); check its log there.")
+    if kind == "ConnectError" and ("refused" in text.lower() or "errno 111" in text.lower()):
+        return f"{text}: the computer is up but no MCP server is listening on that port."
+    return text if kind in text else f"{kind}: {text}"
+
+
 def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
     """Return a user-actionable MCP connection error message."""
     args = args or []
-    raw_error = str(error) if error else "Unknown error"
+    raw_error = _describe_error(error) if error else "Unknown error"
     command_line = " ".join([command or "", *args]).strip()
     lower_command = command_line.lower()
 
@@ -170,7 +196,7 @@ class McpManager:
                 self._generation += 1
             return res
         except Exception as e:
-            logger.error(f"Failed to connect MCP server {name} ({server_id}): {e}")
+            logger.error(f"Failed to connect MCP server {name} ({server_id}): {_describe_error(e)}")
             error_message = _format_mcp_connection_error(name, command or "", args or [], e)
             self._connections[server_id] = {"status": "error", "error": error_message, "name": name}
             self._generation += 1

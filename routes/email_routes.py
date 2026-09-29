@@ -1396,6 +1396,46 @@ def setup_email_routes():
         except RuntimeError:
             pass
 
+    # ── Pictures in HTML emails ──
+    # The page only loads images from Odysseus itself, so an email's remote
+    # pictures come through here: public http(s) only (never this server's
+    # LAN or tailnet), redirects checked too, images only, 8 MB at most.
+    # Asked for 2026-09-29: "in the emails i dont see any rendering".
+    @router.get("/image")
+    async def email_image(u: str = Query(..., max_length=4096), owner: str = Depends(require_owner)):
+        from fastapi.responses import Response
+        import httpx
+        from src.url_security import is_public_http_url
+        url = u.strip()
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False,
+                                         headers={"User-Agent": "Mozilla/5.0 (Odysseus email images)"}) as client:
+                for _ in range(4):
+                    if not await _asyncio.to_thread(is_public_http_url, url):
+                        raise HTTPException(400, "Not a public image address")
+                    async with client.stream("GET", url) as r:
+                        if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+                            url = str(httpx.URL(url).join(r.headers["location"]))
+                            continue
+                        ctype = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+                        if r.status_code != 200 or not ctype.startswith("image/"):
+                            raise HTTPException(404, "No image there")
+                        data = bytearray()
+                        async for chunk in r.aiter_bytes():
+                            data += chunk
+                            if len(data) > 8 * 1024 * 1024:
+                                raise HTTPException(413, "Image too large")
+                        return Response(bytes(data), media_type=ctype, headers={
+                            "Cache-Control": "private, max-age=86400",
+                            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+                            "X-Content-Type-Options": "nosniff"})
+                raise HTTPException(404, "Too many redirects")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.info(f"[email] image not loaded: {type(e).__name__}")
+            raise HTTPException(404, "Image not loaded")
+
     @router.get("/attachments/{uid}")
     async def list_attachments(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """List attachments for an email."""
