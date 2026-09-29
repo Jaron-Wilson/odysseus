@@ -151,6 +151,12 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         _schedule_evict(session_id)
 
 
+def active_sessions() -> list:
+    """Chats with a reply being written right now."""
+    return [sid for sid, r in _RUNS.items()
+            if r.status == "running" and r.task and not r.task.done()]
+
+
 async def stop_all(timeout: float = 10.0) -> int:
     """Stop every running turn so each saves what it has written so far (the
     wrapped generator's CancelledError handler does that). Used just before a
