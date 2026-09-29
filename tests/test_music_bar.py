@@ -94,4 +94,5 @@ def test_an_automatic_machine_pick_is_not_saved():
     assert "localStorage.removeItem('odysseus.musicBar.device')" in js
     assert "Desktop overlay unavailable" in js
     routes = read("routes", "media_routes.py")
-    assert 'target = next((d for d in devices if d.get("server_id") == dev.get("server_id")), None)' in routes
+    # The overlay goes on the computer this browser is on first (test_phone_music).
+    assert 'target = next((d for d in desktops if d.get("server_id") == dev.get("server_id")), None)' in routes

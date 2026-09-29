@@ -294,24 +294,32 @@ def setup_media_routes(mcp_manager) -> APIRouter:
             "application/json") else {}
         ip = _client_ip(request)
         dev = device_routing.for_client(mcp_manager, ip)
-        devices = device_routing.all_devices(mcp_manager)
-        sid = str(body.get("server_id") or "").strip() or (dev or {}).get("server_id", "")
-        target = next((d for d in devices if d.get("server_id") == sid), None)
-        if not target and dev:
-            # A stale pick (a machine no longer offered): the overlay belongs
-            # on the machine this browser is on.
-            target = next((d for d in devices if d.get("server_id") == dev.get("server_id")), None)
+        # Only computers have the overlay. The bar may be controlling the
+        # phone (server_id "device:..."); the overlay still goes on the
+        # computer this browser is on. Seen live: with the bar on the phone,
+        # every Pop out asked the phone for a Windows task, failed with 502,
+        # and fell back to Chrome's pop-out window.
+        desktops = [d for d in device_routing.all_devices(mcp_manager)
+                    if not str(d.get("server_id") or "").startswith("device:")]
+        sid = str(body.get("server_id") or "").strip()
+        target = None
+        if dev and not str(dev.get("server_id") or "").startswith("device:"):
+            target = next((d for d in desktops if d.get("server_id") == dev.get("server_id")), None)
+        if not target and sid:
+            target = next((d for d in desktops if d.get("server_id") == sid), None)
         if not target:
-            raise HTTPException(400, "No machine to open the overlay on"
-                                + (f" ({sid} is not connected)" if sid else ""))
+            raise HTTPException(400, "The overlay opens on a computer: use Pop out from the "
+                                     "browser on your PC")
         all_peers = await asyncio.to_thread(machines.peers)
         peer = machines.find_peer(all_peers, target.get("host", ""))
         if not peer:
             raise HTTPException(404, "That machine is not on the tailnet")
         r = await machines.run_user_task(peer, getpass.getuser(), "MusicOverlay")
         if not r.get("ok"):
+            logger.warning("[overlay] could not start MusicOverlay on %s: %s",
+                           target.get("name"), r.get("error"))
             raise HTTPException(502, f"Could not open the overlay: {r.get('error')}")
-        return {"ok": True, "machine": target.get("name") or sid}
+        return {"ok": True, "machine": target.get("name") or target.get("server_id")}
 
     # ------------------------------------------------------------------ #
     # Album art and lyrics for the music bar (static/js/musicBar.js). The
