@@ -2798,8 +2798,11 @@ export function showRunLimits(anchor, onApprove, planId) {
     if (want) modelSel.value = want;
     const fresh = q('fresh');
     fresh.hidden = engine === opts.plan_engine;
-    fresh.textContent = `The plan was written on ${engineOf(opts.plan_engine) ? engineOf(opts.plan_engine).label : opts.plan_engine}. `
-      + `${e ? e.label : engine} starts a fresh session, handed the approved plan.`;
+    // "session" read as a new chat ("it says that it needs to make new chat",
+    // 2026-09-29). It is the coder's own session; the run stays in this chat.
+    const _by = engineOf(opts.plan_engine) ? engineOf(opts.plan_engine).label : opts.plan_engine;
+    fresh.textContent = `Stays in this chat. ${_by} wrote the plan, and ${e ? e.label : engine} cannot pick up `
+      + `${_by}'s own working session, so it is handed the approved plan to carry out instead.`;
     q('costwrap').hidden = engine !== 'claude';     // local models cost nothing
     q('ok').textContent = `Approve \u00b7 runs on ${e ? e.label : engine}`;
   };
