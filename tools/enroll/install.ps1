@@ -18,6 +18,11 @@
 #   4. tells Odysseus what it found so it can add and connect the servers.
 # Safe to re-run: it upgrades in place.
 $ErrorActionPreference = 'Stop'
+# No progress bar: Windows PowerShell 5.1 draws one for every Invoke-WebRequest,
+# and over SSH (no console) the downloads crawled or hung there, holding
+# desktop_mcp_server.py open; seven such installs were still stuck hours
+# later (2026-09-29).
+$ProgressPreference = 'SilentlyContinue'
 $Base   = '__ODYSSEUS_BASE__'
 $Code   = '__ENROLL_CODE__'
 $PubKey = '__ODYSSEUS_PUBKEY__'

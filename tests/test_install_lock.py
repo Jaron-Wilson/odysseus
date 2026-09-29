@@ -38,3 +38,8 @@ def test_a_timed_out_ssh_is_killed(tmp_path):
     assert r["rc"] == -1 and "timed out" in r["err"]
     time.sleep(3.5)
     assert not marker.exists()
+
+
+def test_no_progress_bar_over_ssh():
+    assert "$ProgressPreference = 'SilentlyContinue'" in PS1
+    assert PS1.index("$ProgressPreference = 'SilentlyContinue'") < PS1.index("function Fetch($name)")
