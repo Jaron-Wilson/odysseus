@@ -2751,6 +2751,7 @@ export function showRunLimits(anchor, onApprove, planId) {
       <div class="run-engines" data-rl="engines"></div>
       <div class="run-dialog-label">Model</div>
       <select class="run-model" data-rl="model" aria-label="Model"></select>
+      <div class="run-dialog-note run-model-busy" data-rl="busy" hidden></div>
       <div class="run-dialog-note" data-rl="fresh" hidden></div>
       <div class="run-dialog-label">Limits</div>
       <div class="run-limits-row">
@@ -2790,12 +2791,18 @@ export function showRunLimits(anchor, onApprove, planId) {
     // for "vllm3090/qwen3.8-27b"): match on the part after the slash.
     const known = (id) => (id && (models.find((m) => m.id === id) || models.find((m) => m.id.split('/').pop() === id)) || {}).id || id;
     const want = known(lastModel[engine] || planned || (e && e.default_model) || '');
-    modelSel.innerHTML = models.map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')
+    // What is using each model right now (a reply in a chat, another OpenCode
+    // run), so a free one can be picked: "just so i wont pick that and pick
+    // one thats going to b available to use" (2026-09-29).
+    const tag = (m) => ((m.busy || []).length ? '\u25CF in use \u00b7 '
+      : (m.server_busy || []).length ? '\u25D0 server busy \u00b7 ' : '');
+    modelSel.innerHTML = models.map((m) => `<option value="${esc(m.id)}">${esc(tag(m) + m.label)}</option>`).join('')
       || '<option value="">Default</option>';
     if (want && !models.some((m) => m.id === want) && models.length) {
       modelSel.insertAdjacentHTML('afterbegin', `<option value="${esc(want)}">${esc(want)}</option>`);
     }
     if (want) modelSel.value = want;
+    showBusy();
     const fresh = q('fresh');
     fresh.hidden = engine === opts.plan_engine;
     // "session" read as a new chat ("it says that it needs to make new chat",
@@ -2806,6 +2813,18 @@ export function showRunLimits(anchor, onApprove, planId) {
     q('costwrap').hidden = engine !== 'claude';     // local models cost nothing
     q('ok').textContent = `Approve \u00b7 runs on ${e ? e.label : engine}`;
   };
+  const showBusy = () => {
+    const note = q('busy');
+    const e = engineOf(engine);
+    const m = ((e && e.models) || []).find((x) => x.id === modelSel.value) || {};
+    const busy = m.busy || [], near = m.server_busy || [];
+    note.hidden = !busy.length && !near.length;
+    note.classList.toggle('run-model-busy-hard', !!busy.length);
+    note.textContent = busy.length
+      ? `In use now: ${busy.join('; ')}. It will be slower, or wait its turn; a model without \u25CF is free.`
+      : near.length ? `Same server is busy with ${near.join('; ')}. A shared server runs slower.` : '';
+  };
+  modelSel.addEventListener('change', showBusy);
   const sync = () => { turns.disabled = cost.disabled = free.checked; };
   free.addEventListener('change', sync);
   sync();

@@ -75,11 +75,17 @@ def run_options(chat_id: str = "", plan: dict = None) -> dict:
         allowed = {"opencode": True, "claude": True}
     oc_models, oc_default = _opencode_models()
     plan = plan or {}
+    try:
+        from src import opencode_providers
+        using = opencode_providers.in_use([i for i, _ in oc_models])
+    except Exception as e:
+        logger.debug("[claude_code] could not tell which models are in use: %s", e)
+        using = {}
     return {
         "engines": [
             {"id": "opencode", "label": "OpenCode", "hint": "local models, free",
              "allowed": allowed["opencode"], "default_model": oc_default,
-             "models": [{"id": i, "label": l} for i, l in oc_models]},
+             "models": [dict({"id": i, "label": l}, **using.get(i, {})) for i, l in oc_models]},
             {"id": "claude", "label": "Claude Code", "hint": "uses your Claude plan",
              "allowed": allowed["claude"], "default_model": DEFAULT_MODEL,
              "models": [{"id": i, "label": l} for i, l in CLAUDE_MODELS]},

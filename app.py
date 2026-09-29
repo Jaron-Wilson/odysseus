@@ -653,6 +653,8 @@ app.include_router(setup_chat_prefs_routes())
 
 from routes.deploy_routes import setup_deploy_routes
 app.include_router(setup_deploy_routes())
+from routes.devops_routes import setup_devops_routes
+app.include_router(setup_devops_routes())
 
 
 @app.get("/api/version")
