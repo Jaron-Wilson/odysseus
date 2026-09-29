@@ -16,6 +16,7 @@ Safe by construction:
   and the page warns about that first.
 """
 
+import logging
 import os
 import re
 import subprocess
@@ -26,6 +27,8 @@ from typing import Dict, List
 from fastapi import APIRouter, HTTPException, Request
 
 from core.middleware import require_admin
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FETCH_EVERY_S = 60
@@ -159,7 +162,12 @@ def setup_deploy_routes() -> APIRouter:
                 raise HTTPException(500, f"git merge --ff-only failed: {r.stderr.strip()[:300]}")
         # Stop replies being written so each is saved as far as it got,
         # rather than vanishing when this process exits.
-        from src import agent_runs
+        from src import agent_runs, restart_resume
+        # ...and carried on once the new code is up (restart_resume).
+        try:
+            restart_resume.remember_active()
+        except Exception as e:
+            logger.warning("Could not note the replies to carry on: %s", e)
         stopped = await agent_runs.stop_all(timeout=10)
         _restart()
         new_prs = [p["pr"] for p in st["new_prs"] if p["pr"]]

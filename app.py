@@ -1000,6 +1000,12 @@ async def _startup_event():
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
+    # Chats a restart cut off mid-reply carry on by themselves (src/restart_resume.py).
+    try:
+        from src import restart_resume
+        _startup_tasks.append(asyncio.create_task(restart_resume.resume_later()))
+    except Exception as _e:
+        logger.warning("Failed to schedule carrying on cut-off chats: %s", _e)
     # Inbound mail from the Cloudflare mail Worker (src/mail_listener.py).
     if os.environ.get("ODYSSEUS_INPROCESS_POLLERS", "1").strip().lower() not in ("0", "false", "no", "off", ""):
         try:
@@ -1232,6 +1238,16 @@ async def _startup_event():
 
 async def _shutdown_event():
     logger.info("Application shutting down...")
+    # Replies still being written (a restart that did not come from Deploy,
+    # which does this itself): note them to carry on after the restart, then
+    # stop them so each is saved as far as it got.
+    try:
+        from src import agent_runs, restart_resume
+        if agent_runs.active_sessions():
+            restart_resume.remember_active()
+            await agent_runs.stop_all(timeout=8)
+    except Exception as e:
+        logger.warning(f"Could not save running replies: {e}")
     if upload_cleanup_task:
         upload_cleanup_task.cancel()
         try:

@@ -2514,6 +2514,13 @@ export function addMessage(role, content, modelName, metadata) {
           + `<details class="auto-prompt-details"><summary>What the agent was told</summary>${_full}</details>`;
         wrap.classList.add('msg-auto-prompt');
       }
+      // A chat a restart cut off, carried on by itself (src/restart_resume.py).
+      if (String(textRaw || '').startsWith('[Continued after a restart]')) {
+        const _full = b.innerHTML;
+        b.innerHTML = '<span class="auto-prompt-tag">\u21BB Continued after a restart</span>'
+          + `<details class="auto-prompt-details"><summary>What the agent was told</summary>${_full}</details>`;
+        wrap.classList.add('msg-auto-prompt');
+      }
       // A side thread merged into this chat (routes/thread_routes.py).
       const _merged = metadata?.source === 'thread_merge'
         && String(textRaw || '').match(/^\[Side thread merged \u00b7 ([^\]\n]+)\]/);
