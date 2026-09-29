@@ -2058,7 +2058,9 @@ export function displayMetrics(messageElement, metrics) {
           <div><span class="ctx-label">Window</span> ${fmtNum(totalCtx)} tokens</div>
         </div>
         ${ctxPct >= 70 ? `<button class="ctx-compact-btn" title="Summarize older messages to free up context">Compact context</button>` : ''}
+        <div class="ctx-tidy"></div>
       `;
+      if (window.chatTidy) window.chatTidy.attach(popup);
 
       const compactBtn = popup.querySelector('.ctx-compact-btn');
       if (compactBtn) {
