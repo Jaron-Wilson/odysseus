@@ -39,6 +39,7 @@ function initTabs() {
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
       if (tab === 'devices') window.devicesSettings?.load();
+      if (tab === 'email') window.mailListenerSettings?.load();
     });
   });
 }

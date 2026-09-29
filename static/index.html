@@ -2042,6 +2042,37 @@
             </div>
           </div>
 
+          <!-- Inbound mail from the Cloudflare mail Worker (mailListenerSettings.js) -->
+          <div class="admin-card" id="mail-listener-card">
+            <h2>Inbound mail</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Mail to addresses you route to the Odysseus mail Worker, like submissions@clevernode.org. The Worker forwards each message to your Gmail and keeps a copy here. Odysseus picks it up every minute and follows your rule for that address. Setup steps: <code>tools/mail-worker/README.md</code>.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Worker URL</label>
+                <input id="ml-url" class="settings-select" type="text" placeholder="https://odysseus-mail.you.workers.dev" style="flex:1" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Secret</label>
+                <input id="ml-secret" class="settings-select" type="password" autocomplete="off" placeholder="the PULL_SECRET you set on the Worker" style="flex:1" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">On</label>
+                <input id="ml-enabled" type="checkbox" checked />
+                <span class="admin-toggle-sub" id="ml-status" style="flex:1"></span>
+              </div>
+              <div class="admin-toggle-sub" style="margin:6px 0 2px"><strong>Rules</strong>, first match wins. <strong>Notify</strong> posts the email in that address's Mail chat and notifies you. <strong>Task</strong> also has the agent work on it with your instructions. It plans first and never deploys on its own. <strong>Allowed senders</strong> limits who can start a task, for example <code>gateway@clevernode.org</code>. Leave it empty for anyone.</div>
+              <div id="ml-rules"></div>
+              <div class="settings-row">
+                <button class="settings-btn" type="button" id="ml-add-rule" style="padding:3px 10px;font-size:12px">Add a rule</button>
+                <span id="ml-msg" class="admin-toggle-sub" style="flex:1"></span>
+                <button class="admin-btn-add" type="button" id="ml-check">Check now</button>
+                <button class="admin-btn-add" type="button" id="ml-save">Save</button>
+              </div>
+              <div class="admin-toggle-sub" style="margin-top:6px"><strong>Recent</strong></div>
+              <div id="ml-recent" class="admin-toggle-sub"></div>
+            </div>
+          </div>
+
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Writing Style</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">AI-extracted from your sent emails. Used when AI drafts replies.</div>
@@ -2555,6 +2586,7 @@
 <script type="module" src="/static/js/ui.js"></script>
 <script type="module" src="/static/js/devicesSettings.js"></script>
 <script type="module" src="/static/js/devicesPanel.js"></script>
+<script type="module" src="/static/js/mailListenerSettings.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
 <script type="module" src="/static/js/sessions.js"></script>
