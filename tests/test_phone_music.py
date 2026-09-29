@@ -210,3 +210,29 @@ def test_the_desktop_side_matches_the_phone_by_name_and_opens_the_app():
     ns = {}
     exec(src[src.index("def _norm_name"):src.index("async def _audio_sources")], {"re": __import__("re")}, ns)
     assert ns["_norm_name"]("pixel-8a") in ns["_norm_name"]("Pixel 8a")
+
+def test_pop_out_opens_on_this_computer_even_when_the_bar_drives_the_phone(env, monkeypatch):
+    # Seen live: with the bar controlling the phone, every Pop out asked the
+    # phone for the Windows overlay task, got 502 and fell back to Chrome's
+    # pop-out window ("popup for music is doing the chrome new tab still").
+    c, sent, mcp, st = env
+    from src import machines
+    started = []
+    peers = [{"host": "100.102.86.125", "os": "windows", "name": "desktop-jaron"},
+             {"host": "pixel-8a.example", "os": "android", "name": "pixel-8a"}]
+    monkeypatch.setattr(machines, "peers", lambda: peers)
+    monkeypatch.setattr(machines, "find_peer", lambda ps, host: next((p for p in ps if p["host"] == host), None))
+
+    async def run_task(peer, user, task):
+        started.append((peer["name"], task))
+        return {"ok": True} if peer["os"] == "windows" else {"ok": False, "error": "only Windows machines have this task"}
+    monkeypatch.setattr(machines, "run_user_task", run_task)
+    r = c.post("/api/media/overlay", json={"server_id": "device:pixel-8a"},
+               headers={"x-forwarded-for": "100.102.86.125"})
+    assert r.status_code == 200 and started == [("desktop-jaron", "MusicOverlay")]
+    # From the phone's own browser there is no computer here: say so, unless one is picked.
+    r = c.post("/api/media/overlay", json={"server_id": "device:pixel-8a"},
+               headers={"x-forwarded-for": "100.96.131.64"})
+    assert r.status_code == 400 and "computer" in r.json()["detail"]
+    r = c.post("/api/media/overlay", json={"server_id": "19d772b0"}, headers={"x-forwarded-for": "100.96.131.64"})
+    assert r.status_code == 200 and started[-1] == ("desktop-jaron", "MusicOverlay")
