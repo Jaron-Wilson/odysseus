@@ -60,6 +60,19 @@ DEFAULT_ENGINE = (os.environ.get("ODYSSEUS_CODE_ENGINE", "opencode").strip().low
 if DEFAULT_ENGINE not in ("claude", "opencode"):
     DEFAULT_ENGINE = "opencode"
 OPENCODE_DEFAULT_LABEL = "local default (vllm3090/qwen3.8-27b)"
+
+
+def opencode_model_ids() -> list:
+    """The models OpenCode can run, as provider/model, from its own config.
+    Empty when the config cannot be read (then nothing is refused)."""
+    path = os.path.expanduser("~/.config/opencode/opencode.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return []
+    return [f"{pid}/{mid}" for pid, prov in (cfg.get("provider") or {}).items()
+            for mid in ((prov or {}).get("models") or {})]
 # 900s killed a real rebrand at ~15 minutes, after it had already written every
 # file — the work survived but the run was recorded as a timeout and the
 # approval was spent. Refactors across a large codebase genuinely take this long.
@@ -683,6 +696,23 @@ class ClaudeCodeTool:
         if action == "execute":
             prompt = prompt.rstrip() + STATUS_INSTRUCTIONS
         prompt_via_stdin = True
+        if engine == "opencode" and args.get("model"):
+            # OpenCode only knows the models in its own config. Seen
+            # 2026-09-29: "totoro/qwen3.8:27b" (an Odysseus endpoint OpenCode
+            # has no provider for) exited 1 with nothing useful, and the
+            # Claude-only hint sent the agent off to change the server's
+            # default model. Refuse it here, naming the ones that work.
+            known = opencode_model_ids()
+            if known and str(args["model"]) not in known:
+                if action == "execute" and resume_id:
+                    approvals.restore_approval(resume_id)     # nothing ran: the approval still stands
+                return {
+                    "error": (f"OpenCode has no model {str(args['model'])!r}. Use one of: "
+                              f"{', '.join(known)}, or leave `model` out for its default. Do not "
+                              "change Odysseus settings to get a model: ask the user to add it to "
+                              "OpenCode (~/.config/opencode/opencode.json)."),
+                    "exit_code": 2,
+                }
         if engine == "opencode":
             # OpenCode mints its own ses_… id, which the event stream reports.
             session_id = "" if run_fresh else (resume_id or "")
@@ -1359,7 +1389,11 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
             approvals.restore_approval(session_id)
         detail = "\n".join(_stderr_tail(job)) or console[-2000:]
         hint = ""
-        if spec.get("args_model"):
+        if spec.get("args_model") and spec.get("engine", job.engine) == "opencode":
+            hint = (f" — note model was set to {spec['args_model']!r}; OpenCode's models are "
+                    f"{', '.join(opencode_model_ids()) or 'those in ~/.config/opencode/opencode.json'}. "
+                    "Retry without `model` to use its default.")
+        elif spec.get("args_model"):
             # The common cause by far: an invented id like claude-opus-4. The
             # CLI's own message does not always make that obvious.
             hint = (
