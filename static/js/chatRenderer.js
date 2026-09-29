@@ -1202,11 +1202,13 @@ document.addEventListener('click', function(e) {
     if (a.dataset.busy) return;          // a second click while the first is out
     // Approving first asks for run limits (turns, budget, or take your time).
     if (verb === 'approve' && !a.dataset.limitsChosen) {
-      showRunLimits(a, (limits) => {
+      showRunLimits(a, (choice) => {
         a.dataset.limitsChosen = '1';
-        a._runLimits = limits;
+        a._runLimits = choice.limits;
+        a._runEngine = choice.engine || '';
+        a._runModel = choice.model || '';
         a.click();
-      });
+      }, planId);
       return;
     }
     a.dataset.busy = '1';
@@ -1241,7 +1243,7 @@ document.addEventListener('click', function(e) {
           method: 'POST', credentials: 'same-origin',
         }, withLimits ? {
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ limits: a._runLimits }),
+          body: JSON.stringify({ limits: a._runLimits, engine: a._runEngine || '', model: a._runModel || '' }),
         } : {}));
       } catch (_) {
         res = null;                                      // offline mid-restart
@@ -2718,45 +2720,132 @@ export function toolDisplayName(ev) {
 // away!) or select take your time and it does unlimited". The last choice is
 // remembered for next time.
 const RUN_LIMITS_KEY = 'odysseus.runLimits';
-export function showRunLimits(anchor, onApprove) {
-  document.querySelectorAll('.run-limits').forEach((n) => n.remove());
+// The Approve dialog: which coder runs the plan (OpenCode or Claude Code),
+// on which model, and within which limits. Asked for: "when approving the
+// plans, let me manually switch from each type of coder, ie: opencode,
+// claude code, and the models too, make that popup look nicer".
+export function showRunLimits(anchor, onApprove, planId) {
+  document.querySelectorAll('.run-dialog-backdrop').forEach((n) => n.remove());
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(RUN_LIMITS_KEY) || '{}') || {}; } catch (_) { saved = {}; }
-  const box = document.createElement('div');
-  box.className = 'run-limits';
-  box.innerHTML = `
-    <div class="run-limits-title">Run limits</div>
-    <label>Max turns <input type="number" min="1" max="1000" step="1" data-rl="turns" placeholder="no limit"></label>
-    <label>Budget $ <input type="number" min="0.05" max="1000" step="0.05" data-rl="cost" placeholder="no limit"></label>
-    <label class="run-limits-free"><input type="checkbox" data-rl="free"> Take your time (no turn or cost limit)</label>
-    <div class="run-limits-note">At the limit it stops and writes a short wrap-up of what is done and what is left.</div>
-    <div class="run-limits-actions"><button type="button" data-rl="ok">Approve</button><button type="button" data-rl="cancel">Cancel</button></div>`;
-  const turns = box.querySelector('[data-rl="turns"]');
-  const cost = box.querySelector('[data-rl="cost"]');
-  const free = box.querySelector('[data-rl="free"]');
-  if (saved.max_turns) turns.value = saved.max_turns;
-  if (saved.max_cost_usd) cost.value = saved.max_cost_usd;
-  free.checked = !!saved.take_your_time;
+  const lastModel = saved.models || {};
+  const esc = uiModule.esc;
+  const wrap = document.createElement('div');
+  wrap.className = 'run-dialog-backdrop';
+  wrap.innerHTML = `
+    <div class="run-dialog" role="dialog" aria-label="Approve plan">
+      <div class="run-dialog-head"><span>Approve plan</span>
+        <button type="button" class="run-dialog-x" data-rl="cancel" aria-label="Cancel">\u00D7</button></div>
+      <div class="run-dialog-sub" data-rl="written">Loading the choices\u2026</div>
+      <div class="run-dialog-label">Runs on</div>
+      <div class="run-engines" data-rl="engines"></div>
+      <div class="run-dialog-label">Model</div>
+      <select class="run-model" data-rl="model" aria-label="Model"></select>
+      <div class="run-dialog-note" data-rl="fresh" hidden></div>
+      <div class="run-dialog-label">Limits</div>
+      <div class="run-limits-row">
+        <label>Max turns <input type="number" min="1" max="1000" step="1" data-rl="turns" placeholder="no limit"></label>
+        <label data-rl="costwrap">Budget $ <input type="number" min="0.05" max="1000" step="0.05" data-rl="cost" placeholder="no limit"></label>
+      </div>
+      <label class="run-limits-free"><input type="checkbox" data-rl="free"> Take your time (no turn or cost limit)</label>
+      <div class="run-dialog-hint">At a limit it stops and writes a short wrap-up of what is done and what is left.</div>
+      <div class="run-dialog-actions">
+        <button type="button" class="run-cancel" data-rl="cancel">Cancel</button>
+        <button type="button" class="run-approve" data-rl="ok">Approve</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const q = (k) => wrap.querySelector(`[data-rl="${k}"]`);
+  const turns = q('turns'), cost = q('cost'), free = q('free'), modelSel = q('model');
+  const lim = saved.limits || saved;              // older saves were the limits themselves
+  if (lim.max_turns) turns.value = lim.max_turns;
+  if (lim.max_cost_usd) cost.value = lim.max_cost_usd;
+  free.checked = !!lim.take_your_time;
+  let opts = null;
+  let engine = '';
+  const engineOf = (id) => (opts && opts.engines.find((e) => e.id === id)) || null;
+
+  const render = () => {
+    const box = q('engines');
+    if (!opts) { box.innerHTML = ''; return; }
+    box.innerHTML = opts.engines.map((e) => `
+      <button type="button" class="run-engine${e.id === engine ? ' on' : ''}" data-engine="${esc(e.id)}"
+        ${e.allowed ? '' : 'disabled title="Switched off for this chat (the coding-agent button in the chat bar)"'}>
+        <span class="run-engine-name">${esc(e.label)}</span><span class="run-engine-hint">${esc(e.allowed ? e.hint : 'off for this chat')}</span>
+      </button>`).join('');
+    const e = engineOf(engine);
+    const planned = engine === opts.plan_engine ? opts.plan_model : '';
+    const models = (e && e.models) || [];
+    // A plan records OpenCode models without their provider ("qwen3.8-27b"
+    // for "vllm3090/qwen3.8-27b"): match on the part after the slash.
+    const known = (id) => (id && (models.find((m) => m.id === id) || models.find((m) => m.id.split('/').pop() === id)) || {}).id || id;
+    const want = known(lastModel[engine] || planned || (e && e.default_model) || '');
+    modelSel.innerHTML = models.map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')
+      || '<option value="">Default</option>';
+    if (want && !models.some((m) => m.id === want) && models.length) {
+      modelSel.insertAdjacentHTML('afterbegin', `<option value="${esc(want)}">${esc(want)}</option>`);
+    }
+    if (want) modelSel.value = want;
+    const fresh = q('fresh');
+    fresh.hidden = engine === opts.plan_engine;
+    fresh.textContent = `The plan was written on ${engineOf(opts.plan_engine) ? engineOf(opts.plan_engine).label : opts.plan_engine}. `
+      + `${e ? e.label : engine} starts a fresh session, handed the approved plan.`;
+    q('costwrap').hidden = engine !== 'claude';     // local models cost nothing
+    q('ok').textContent = `Approve \u00b7 runs on ${e ? e.label : engine}`;
+  };
   const sync = () => { turns.disabled = cost.disabled = free.checked; };
   free.addEventListener('change', sync);
   sync();
-  box.addEventListener('click', (ev) => {
+
+  const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey, true); };
+  const approve = () => {
+    const limits = free.checked ? { take_your_time: true }
+      : { max_turns: parseInt(turns.value, 10) || null,
+          max_cost_usd: engine === 'claude' ? (parseFloat(cost.value) || null) : null };
+    const model = modelSel.value || '';
+    try {
+      localStorage.setItem(RUN_LIMITS_KEY, JSON.stringify({ limits, models: Object.assign({}, lastModel, engine ? { [engine]: model } : {}) }));
+    } catch (_) { /* private mode */ }
+    close();
+    onApprove({ limits, engine, model });
+  };
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(); }
+    else if (ev.key === 'Enter' && ev.target.tagName !== 'SELECT') { ev.preventDefault(); ev.stopPropagation(); approve(); }
+  };
+  document.addEventListener('keydown', onKey, true);
+  wrap.addEventListener('click', (ev) => {
+    if (ev.target === wrap) { close(); return; }
+    const eb = ev.target.closest('[data-engine]');
+    if (eb && !eb.disabled) { engine = eb.dataset.engine; render(); return; }
     const b = ev.target.closest('[data-rl="ok"],[data-rl="cancel"]');
     if (!b) return;
     ev.preventDefault();
     ev.stopPropagation();
-    if (b.dataset.rl === 'ok') {
-      const limits = free.checked ? { take_your_time: true }
-        : { max_turns: parseInt(turns.value, 10) || null, max_cost_usd: parseFloat(cost.value) || null };
-      try { localStorage.setItem(RUN_LIMITS_KEY, JSON.stringify(limits)); } catch (_) { /* private mode */ }
-      box.remove();
-      onApprove(limits);
-    } else {
-      box.remove();
-    }
+    if (b.dataset.rl === 'ok') approve(); else close();
   });
-  (anchor.closest('p, li') || anchor).after(box);
-  turns.focus();
+
+  (async () => {
+    try {
+      const r = planId ? await fetch(`/api/claude_code/plan/${encodeURIComponent(planId)}/run_options`, { credentials: 'same-origin' }) : null;
+      opts = r && r.ok ? await r.json() : null;
+    } catch (_) { opts = null; }
+    if (!opts) {
+      // Older server, or the plan is gone: approve as written.
+      q('written').textContent = 'Runs as the plan was written.';
+      ['engines', 'model'].forEach((k) => { q(k).hidden = true; });
+      wrap.querySelectorAll('.run-dialog-label')[0].hidden = true;
+      wrap.querySelectorAll('.run-dialog-label')[1].hidden = true;
+      engine = '';
+      q('ok').textContent = 'Approve';
+      return;
+    }
+    const planE = engineOf(opts.plan_engine);
+    engine = (planE && planE.allowed) ? opts.plan_engine : ((opts.engines.find((e) => e.allowed) || {}).id || opts.plan_engine);
+    q('written').textContent = `Written by ${planE ? planE.label : opts.plan_engine}${opts.plan_model ? ' \u00b7 ' + opts.plan_model : ''}. Pick who carries it out.`;
+    render();
+    q('ok').focus();
+  })();
 }
 
 const chatRenderer = {

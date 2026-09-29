@@ -115,6 +115,17 @@ def assign_run_id(session_id: str) -> str:
     return entry["run_id"]
 
 
+def set_run_choice(session_id: str, engine: str = "", model: str = "") -> None:
+    """The engine and model picked in the Approve dialog for the run."""
+    data = _prune(_load())
+    if session_id in data:
+        if engine:
+            data[session_id]["run_engine"] = engine
+        if model:
+            data[session_id]["run_model"] = model
+        _save(data)
+
+
 def set_limits(session_id: str, limits: dict) -> None:
     """The run limits chosen when approving (turns, budget, take your time)."""
     data = _prune(_load())

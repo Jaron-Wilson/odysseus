@@ -54,7 +54,53 @@ _EXECUTE_PROMPT = (
 )
 
 
-def approve_plan(session_id: str, user: str, limits: dict = None) -> dict:
+CLAUDE_MODELS = [("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
+
+
+def _opencode_models() -> tuple:
+    """OpenCode's models from its own config (~/.config/opencode/opencode.json):
+    [(id, label)], and its default."""
+    path = os.path.expanduser("~/.config/opencode/opencode.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return [], ""
+    out = []
+    for pid, prov in (cfg.get("provider") or {}).items():
+        where = (prov or {}).get("name") or pid
+        for mid, m in ((prov or {}).get("models") or {}).items():
+            out.append((f"{pid}/{mid}", f"{(m or {}).get('name') or mid} \u00b7 {where}"))
+    return out, str(cfg.get("model") or "")
+
+
+def run_options(chat_id: str = "", plan: dict = None) -> dict:
+    """What the Approve dialog offers: each engine with its models, whether
+    this chat allows it, and what the plan was written with."""
+    from src.agent_tools.claude_code_tool import DEFAULT_MODEL
+    try:
+        from src import chat_prefs
+        allowed = {e: chat_prefs.engine_allowed(chat_id, e) for e in ("opencode", "claude")}
+    except Exception:
+        allowed = {"opencode": True, "claude": True}
+    oc_models, oc_default = _opencode_models()
+    plan = plan or {}
+    return {
+        "engines": [
+            {"id": "opencode", "label": "OpenCode", "hint": "local models, free",
+             "allowed": allowed["opencode"], "default_model": oc_default,
+             "models": [{"id": i, "label": l} for i, l in oc_models]},
+            {"id": "claude", "label": "Claude Code", "hint": "uses your Claude plan",
+             "allowed": allowed["claude"], "default_model": DEFAULT_MODEL,
+             "models": [{"id": i, "label": l} for i, l in CLAUDE_MODELS]},
+        ],
+        "plan_engine": plan.get("engine") or "opencode",
+        "plan_model": plan.get("model") or "",
+    }
+
+
+def approve_plan(session_id: str, user: str, limits: dict = None,
+                 engine: str = "", model: str = "") -> dict:
     """Approve a plan and start its run in the plan's chat. Shared by the
     chat's Approve link and the desktop overlay (routes/overlay_routes.py)."""
     entry = approvals.get(session_id)
@@ -68,8 +114,20 @@ def approve_plan(session_id: str, user: str, limits: dict = None) -> dict:
         return {"session_id": session_id, "status": entry["status"], "already": True,
                 "run_id": entry["run_id"], "chat_session_id": chat_id,
                 "running": bool(job and job.status == "running"), "resuming": False}
+    # The engine and model picked in the Approve dialog, if any.
+    engine = (engine or "").strip().lower()
+    model = (model or "").strip()[:120]
+    if engine and engine not in ("opencode", "claude"):
+        raise HTTPException(400, "engine must be 'opencode' or 'claude'")
+    if engine:
+        from src import chat_prefs
+        if not chat_prefs.engine_allowed(chat_id, engine):
+            raise HTTPException(409, f"{'Claude Code' if engine == 'claude' else 'OpenCode'} is switched off "
+                                     "for this chat (the coding-agent button in the chat bar)")
     if not approvals.set_status(session_id, "approved", owner=user):
         raise HTTPException(409, f"Plan is already {entry.get('status')}")
+    if engine or model:
+        approvals.set_run_choice(session_id, engine, model)
     run_id = approvals.assign_run_id(session_id)
     if limits:
         # Turns / budget / take your time, chosen in the Approve dialog.
@@ -81,8 +139,9 @@ def approve_plan(session_id: str, user: str, limits: dict = None) -> dict:
     # for the user to say "go". Registered before this returns so the page
     # can attach and show it running.
     from src.screen_control_resume import start_turn
+    run_engine = engine or entry.get("engine")
     resuming = start_turn(chat_id, _EXECUTE_PROMPT.format(
-        run_id=run_id, engine="Claude Code" if entry.get("engine") == "claude" else "OpenCode",
+        run_id=run_id, engine="Claude Code" if run_engine == "claude" else "OpenCode",
         args=json.dumps({
             "action": "execute", "session_id": session_id, "cwd": entry.get("cwd") or "",
             "prompt": "Carry out the approved plan."})),
@@ -187,13 +246,24 @@ def setup_claude_code_routes() -> APIRouter:
         call must target the same directory the plan was made for."""
         user = _require_user(request)
         _validate(session_id)
-        limits = None
+        body = {}
         try:
             if int(request.headers.get("content-length") or 0) > 0:
-                limits = (await request.json()).get("limits")
+                body = await request.json() or {}
         except Exception:
-            limits = None
-        return approve_plan(session_id, user, limits)
+            body = {}
+        return approve_plan(session_id, user, body.get("limits"),
+                            engine=str(body.get("engine") or ""), model=str(body.get("model") or ""))
+
+    @router.get("/api/claude_code/plan/{session_id}/run_options")
+    async def plan_run_options(request: Request, session_id: str):
+        """Engines and models the Approve dialog offers for this plan."""
+        _require_user(request)
+        _validate(session_id)
+        entry = approvals.get(session_id)
+        if not entry:
+            raise HTTPException(404, "No such plan (it may have expired)")
+        return run_options(entry.get("chat_session_id") or "", entry)
 
     @router.post("/api/claude_code/deny/{session_id}")
     async def deny(request: Request, session_id: str):
