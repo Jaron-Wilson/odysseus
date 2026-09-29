@@ -584,6 +584,24 @@ class McpManager:
             result_dict["images"] = images
         return result_dict
 
+    async def probe(self, server_id: str, timeout: float = 6.0) -> Dict:
+        """Whether a server marked connected still answers, and whether its
+        tools changed. A connection whose server restarted (the desktop MCP
+        after an update) still says "connected" but is dead, and kept the old
+        tool list: seen live, the PC's new Bluetooth tools stayed unseen until
+        someone pressed Reconnect by hand."""
+        import asyncio
+        session = self._sessions.get(server_id)
+        if session is None:
+            return {"alive": False, "changed": False}
+        try:
+            res = await asyncio.wait_for(session.list_tools(), timeout)
+        except Exception as e:
+            return {"alive": False, "changed": False, "error": str(e)[:200]}
+        names = sorted(t.name for t in getattr(res, "tools", []) or [])
+        known = sorted((t.get("name") or "").split("__")[-1] for t in self._tools.get(server_id, []))
+        return {"alive": True, "changed": names != known, "tool_count": len(names)}
+
     async def _reconnect_configured(self, server_id: str) -> bool:
         """Reconnect a database-configured server from its stored row.
 

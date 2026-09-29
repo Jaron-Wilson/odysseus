@@ -50,11 +50,24 @@ async def check_once(mgr=None, servers=None, all_peers=None, prefs=None,
         if not s.get("enabled", True) or not s.get("url"):
             continue
         st = mgr.get_server_status(s["id"]).get("status")
-        if st in ("connected", "connecting", "needs_auth"):
+        if st in ("connecting", "needs_auth"):
             continue
         peer = machines.find_peer(all_peers, machines.url_host(s["url"]))
         if peer is None:
             continue                         # a service, not one of the machines
+        if st == "connected":
+            # Still there? A server that restarted (an update) leaves this side
+            # "connected" to nothing, with its old tools.
+            probe = getattr(mgr, "probe", None)
+            if probe is None or not peer["online"]:
+                continue
+            p = await probe(s["id"])
+            if p.get("alive") and not p.get("changed"):
+                continue
+            ok = await mgr._reconnect_configured(s["id"])
+            done[s["name"]] = (("tools changed, reconnected" if p.get("alive") else "stale, reconnected")
+                               if ok else "stale, reconnect failed")
+            continue
         if not peer["online"]:
             done[s["name"]] = "machine offline"
             continue
