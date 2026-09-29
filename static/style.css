@@ -37178,6 +37178,10 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .mp-source { font-weight: normal; opacity: .65; text-transform: none; letter-spacing: 0; }
 .mp-hear { margin-top: -2px; }
 .mp-hint { flex-basis: 100%; font-size: 11px; opacity: .55; }
+.mp-pair { margin: 4px 0 10px; padding: 8px 10px; border-radius: 10px; font-size: 12.5px;
+  background: color-mix(in srgb, #6fa3e0 10%, transparent); border: 1px solid color-mix(in srgb, #6fa3e0 35%, transparent); }
+.mp-pair ol { margin: 6px 0 8px 18px; padding: 0; }
+.mp-pair .mb-handoff { margin: 2px 4px 2px 0; }
 .mp-receiving { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12.5px; padding: 6px 8px;
   border-radius: 10px; background: color-mix(in srgb, #6fa3e0 12%, transparent); }
 /* "Playing on <phone>" when nothing plays on this machine: its own line. */
