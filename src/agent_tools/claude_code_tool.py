@@ -494,6 +494,22 @@ class ClaudeCodeTool:
             # Carry on with the engine the approved plan was written with.
             engine = str((approvals.get(resume_id) or {}).get("engine") or "")
         engine = engine or DEFAULT_ENGINE
+        # The engine and model the user picked when approving (the Approve
+        # dialog). Asked for: "when approving the plans, let me manually
+        # switch from each type of coder, ie: opencode, claude code, and the
+        # models too". A plan's session only exists for the engine that wrote
+        # it, so another engine starts fresh, handed the approved plan.
+        run_fresh, plan_text, plan_engine = False, "", ""
+        if action == "execute":
+            appr = approvals.get(resume_id) or {}
+            plan_engine = str(appr.get("engine") or "")
+            chosen = str(appr.get("run_engine") or "").lower()
+            if chosen in ("claude", "opencode"):
+                run_fresh = bool(plan_engine) and chosen != plan_engine
+                engine = chosen
+            if appr.get("run_model"):
+                args["model"] = str(appr["run_model"])
+            plan_text = str(appr.get("plan") or "")
         if engine not in ("claude", "opencode"):
             return {"error": "engine must be 'claude' or 'opencode'", "exit_code": 1}
         # Plans are written on OpenCode (the local model) unless the user
@@ -660,17 +676,21 @@ class ClaudeCodeTool:
         # (verified — it refuses to edit and says so) and `build` writes, so the
         # approval gate above applies to it unchanged. Its prompt rides as a
         # positional argument; exec involves no shell, so nothing needs quoting.
+        if action == "execute" and run_fresh:
+            prompt = (f"The user approved the plan below (written by {engine_label(plan_engine)} for this "
+                      f"folder) and chose you to carry it out.\n\n<approved-plan>\n{plan_text}\n"
+                      f"</approved-plan>\n\n{prompt}")
         if action == "execute":
             prompt = prompt.rstrip() + STATUS_INSTRUCTIONS
         prompt_via_stdin = True
         if engine == "opencode":
             # OpenCode mints its own ses_… id, which the event stream reports.
-            session_id = resume_id or ""
+            session_id = "" if run_fresh else (resume_id or "")
             cmd = [cli, "run", "--format", "json", "--dir", str(cwd_path),
                    "--agent", "build" if action == "execute" else "plan"]
             if args.get("model"):
                 cmd += ["--model", str(args["model"])]
-            if resume_id:
+            if resume_id and not run_fresh:
                 cmd += ["--session", resume_id]
             cmd.append(prompt)
             prompt_via_stdin = False
@@ -697,9 +717,9 @@ class ClaudeCodeTool:
                 "--allowedTools", args.get("allowed_tools") or PLAN_TOOLS,
             ]
         else:
-            session_id = resume_id
+            session_id = str(uuid.uuid4()) if run_fresh else resume_id
             cmd += [
-                "--resume", session_id,
+                *(["--session-id", session_id] if run_fresh else ["--resume", session_id]),
                 # Headless has nobody to answer a permission prompt:
                 # --permission-prompts only offers "host" or "none", and
                 # acceptEdits still prompts here, so the run exits 0 having
@@ -722,7 +742,9 @@ class ClaudeCodeTool:
         if (not any(limits.values())) and action == "execute":
             limits = normalize_limits((approvals.get(resume_id) or {}).get("limits"))
         if engine != "opencode":
-            if not model and action == "execute":
+            if not model and action == "execute" and plan_engine == "claude":
+                # The plan's own model, when it was a Claude plan: an OpenCode
+                # model name means nothing to Claude.
                 model = str((approvals.get(resume_id) or {}).get("model") or "")
             model = model or DEFAULT_MODEL
             cmd += ["--model", model]
