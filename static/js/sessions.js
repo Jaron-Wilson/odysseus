@@ -1524,6 +1524,10 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
   try {
     const navToken = ++_sessionNavToken;
     const prevSessionId = currentSessionId;
+    // Opening a chat drops a New chat that was never sent to. Left set, the
+    // next message in this chat (typed, or a queued reply from the music
+    // overlay) became the first message of a brand-new chat instead.
+    _pendingChat = null;
     // Re-archive peeked session when navigating away
     _checkPeekCleanup(id);
     // Clear any leftover document text selection so it doesn't bleed into the new chat
