@@ -58,20 +58,10 @@ CLAUDE_MODELS = [("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
 
 
 def _opencode_models() -> tuple:
-    """OpenCode's models from its own config (~/.config/opencode/opencode.json):
-    [(id, label)], and its default."""
-    path = os.path.expanduser("~/.config/opencode/opencode.json")
-    try:
-        with open(path, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except Exception:
-        return [], ""
-    out = []
-    for pid, prov in (cfg.get("provider") or {}).items():
-        where = (prov or {}).get("name") or pid
-        for mid, m in ((prov or {}).get("models") or {}).items():
-            out.append((f"{pid}/{mid}", f"{(m or {}).get('name') or mid} \u00b7 {where}"))
-    return out, str(cfg.get("model") or "")
+    """The models an OpenCode run can use: its own config's and Odysseus's
+    servers (src/opencode_providers.py), as [(id, label)], and its default."""
+    from src import opencode_providers
+    return opencode_providers.models()
 
 
 def run_options(chat_id: str = "", plan: dict = None) -> dict:
