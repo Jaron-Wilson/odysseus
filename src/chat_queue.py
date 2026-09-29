@@ -501,23 +501,30 @@ async def send_done_notification(session_id: str, notify: Dict, *, failed: bool 
 
 
 async def send_notification(session_id: str, notify: Dict, heading: str, body: str,
-                            *, kind: str = "done", _options: Optional[List[str]] = None) -> Dict:
+                            *, kind: str = "done", _options: Optional[List[str]] = None,
+                            anchor: Optional[str] = None) -> Dict:
     """Push to the chosen browsers, and also show it through each chosen
     device's Modes listener. Seen live: the push was accepted for the phone
-    but never shown with the site closed, while the listener was up."""
+    but never shown with the site closed, while the listener was up.
+
+    `anchor`: what tapping it opens instead of a chat (for example
+    "email-inbound=<key>", an email in Inbound mail). With no chat to reply
+    in, it is left out of the overlay's reply box."""
     from src import webpush
-    try:
-        from src import overlay_inbox
-        overlay_inbox.record(session_id, kind, heading, body, options=_options)
-    except Exception:
-        pass
+    target = anchor or session_id
+    if not anchor:
+        try:
+            from src import overlay_inbox
+            overlay_inbox.record(session_id, kind, heading, body, options=_options)
+        except Exception:
+            pass
 
     async def _push():
         try:
             return await webpush.send(
                 heading, body,
                 device=notify.get("device", ""), endpoint=notify.get("endpoint", ""),
-                url=f"/#{session_id}", tag=f"odysseus-{kind}-{session_id}")
+                url=f"/#{target}", tag=f"odysseus-{kind}-{target}")
         except Exception as e:
             logger.warning("%s push for %s failed: %s", kind, session_id, e)
             return {"sent": 0, "failed": 1, "errors": [str(e)]}
@@ -526,7 +533,7 @@ async def send_notification(session_id: str, notify: Dict, heading: str, body: s
         from src import devices as _devices
         # Modes 0.1.53+ shows the title; older builds show only the text.
         params = {"title": "Odysseus", "text": f"{heading}. {body}"}
-        link = chat_link(session_id, notify)
+        link = chat_link(target, notify)
         if link:
             params["url"] = link          # tapping it opens the chat (Modes 1.x+)
         r = await _devices.send_command(device, "notify", params)
@@ -544,7 +551,7 @@ async def send_notification(session_id: str, notify: Dict, heading: str, body: s
         name, out = r
         listeners[name] = "shown" if out.get("ok") else out.get("error", "failed")
     result = {**push, "listeners": listeners}
-    logger.info("%s notification for %s: %s", kind.capitalize(), session_id, result)
+    logger.info("%s notification for %s: %s", kind.capitalize(), target, result)
     return result
 
 

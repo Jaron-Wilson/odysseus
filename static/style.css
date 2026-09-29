@@ -37289,3 +37289,17 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .ctx-tidy-auto { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.78rem; cursor: pointer; opacity: .85; }
 .ctx-tidy-msg { font-size: 0.75rem; margin-top: 4px; opacity: .75; }
 .ctx-tidy-msg:empty { display: none; }
+
+/* Inbound mail (inboundMail.js). */
+.email-inbound-btn { font-size: 11px; padding: 1px 7px; border-radius: 8px; display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); background: none; color: inherit; cursor: pointer; opacity: .8; }
+.email-inbound-btn[hidden] { display: none; }
+.email-inbound-btn:hover { opacity: 1; }
+.im-panel { width: min(820px, 100%); }
+.im-row { cursor: pointer; }
+.im-unread .bg-job-title { font-weight: 700; }
+.im-subject { margin: 10px 0 4px; font-size: 16px; }
+.im-actions { margin: 6px 0 4px; }
+.im-actions .im-ask { font-weight: 600; border-color: color-mix(in srgb, var(--accent, var(--fg)) 50%, transparent); }
+.im-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.5; margin-top: 12px; padding: 10px 12px;
+  border-radius: 8px; background: color-mix(in srgb, var(--fg) 5%, transparent); max-height: 60vh; overflow: auto; }

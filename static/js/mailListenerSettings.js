@@ -105,7 +105,8 @@ function render(cfg) {
       <span style="white-space:nowrap">${esc(new Date(e.received * 1000).toLocaleString())}</span>
       <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.from)}: ${esc(e.subject || '(no subject)')}</span>
       <span>${esc(e.action)}</span>
-      ${e.chat_id ? `<a href="#${esc(e.chat_id)}" data-chat="${esc(e.chat_id)}" class="ml-open">Open</a>` : ''}
+      ${e.chat_id ? `<a href="#${esc(e.chat_id)}" data-chat="${esc(e.chat_id)}" class="ml-open">Open chat</a>`
+        : `<a href="#" data-mail-key="${esc(e.key)}" class="ml-open">Open</a>`}
     </div>`).join('') : 'Nothing received yet.';
 }
 
@@ -157,7 +158,8 @@ async function onClick(ev) {
     } else if (t.classList.contains('ml-open')) {
       const m = await import('./settings.js');
       m.close();
-      window.sessionModule?.selectSession(t.dataset.chat);
+      if (t.dataset.mailKey) window.inboundMail?.open(t.dataset.mailKey);
+      else window.sessionModule?.selectSession(t.dataset.chat);
     }
   } catch (e) {
     say(e.message, true);
