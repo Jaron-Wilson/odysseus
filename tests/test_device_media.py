@@ -21,6 +21,12 @@ dms = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(dms)
 
 
+@pytest.fixture(autouse=True)
+def _shares_in_tmp(tmp_path, monkeypatch):
+    # Shared links are saved next to the server file; keep the test's own.
+    monkeypatch.setattr(dms, "_SHARED_FILE", str(tmp_path / "shared_media.json"))
+
+
 @pytest.fixture
 def video(tmp_path):
     p = tmp_path / "Great Commission - teaser_30s.mp4"

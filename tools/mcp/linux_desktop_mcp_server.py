@@ -571,7 +571,41 @@ _MEDIA_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quickti
                 ".flac": "audio/flac", ".ogg": "audio/ogg", ".oga": "audio/ogg",
                 ".opus": "audio/ogg"}
 _SHARED: Dict[str, Dict[str, Any]] = {}      # token -> {"path", "ts"}
-_SHARE_TTL_S = 7 * 24 * 3600
+_SHARE_TTL_S = 7 * 24 * 3600                  # since it was last shared or played
+# Kept on disk next to this file: they were only in memory, so a restart (a
+# reinstall, a reboot, signing out) ended every link, "That file is not
+# shared any more" a few hours after sharing it (2026-09-29).
+_SHARED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shared_media.json")
+_SHARED_SAVED = [0.0]
+
+
+def _load_shared() -> None:
+    try:
+        with open(_SHARED_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return
+    now = time.time()
+    for t, r in (data.items() if isinstance(data, dict) else []):
+        try:
+            if isinstance(r.get("path"), str) and now - float(r["ts"]) <= _SHARE_TTL_S:
+                _SHARED[str(t)] = {"path": r["path"], "ts": float(r["ts"])}
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+
+
+def _save_shared() -> None:
+    tmp = _SHARED_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_SHARED, f)
+        os.replace(tmp, _SHARED_FILE)
+        _SHARED_SAVED[0] = time.time()
+    except OSError:
+        pass
+
+
+_load_shared()
 
 
 def _media_roots() -> List[str]:
@@ -622,6 +656,7 @@ def share_media(path: str) -> Dict[str, Any]:
         _SHARED.pop(t, None)
     token = next((t for t, r in _SHARED.items() if r["path"] == p), None) or _secrets.token_urlsafe(18)
     _SHARED[token] = {"path": p, "ts": now}
+    _save_shared()
     name = os.path.basename(p)
     return {"ok": True, "name": name, "mb": round(os.path.getsize(p) / 1048576, 1),
             "link": f"/api/device-media/{token}/{_quote(name)}",
@@ -632,8 +667,12 @@ def _media_response(request):
     """The shared file, honouring Range (206) so the player can seek."""
     from starlette.responses import Response, StreamingResponse
     rec = _SHARED.get(request.path_params.get("token", ""))
-    if not rec or not os.path.isfile(rec["path"]):
+    now = time.time()
+    if not rec or now - rec["ts"] > _SHARE_TTL_S or not os.path.isfile(rec["path"]):
         return Response("not shared", status_code=404)
+    rec["ts"] = now                               # played: another 7 days
+    if now - _SHARED_SAVED[0] > 3600:
+        _save_shared()
     path = rec["path"]
     size = os.path.getsize(path)
     ctype = _MEDIA_TYPES.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
