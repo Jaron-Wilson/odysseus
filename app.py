@@ -635,6 +635,8 @@ from routes.enroll_routes import setup_enroll_routes
 app.include_router(setup_enroll_routes())
 from routes.special_chat_routes import setup_special_chat_routes
 app.include_router(setup_special_chat_routes(session_manager))
+from routes.mail_listener_routes import setup_mail_listener_routes
+app.include_router(setup_mail_listener_routes())
 
 # claude_code plan approvals — the only path that can authorise an execute run.
 from routes.claude_code_routes import setup_claude_code_routes
@@ -998,6 +1000,13 @@ async def _startup_event():
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
+    # Inbound mail from the Cloudflare mail Worker (src/mail_listener.py).
+    if os.environ.get("ODYSSEUS_INPROCESS_POLLERS", "1").strip().lower() not in ("0", "false", "no", "off", ""):
+        try:
+            from src import mail_listener
+            _startup_tasks.append(asyncio.create_task(mail_listener.run_forever()))
+        except Exception as _e:
+            logger.warning("Failed to start the mail listener: %s", _e)
     # Claude Code runs that outlived the previous server process: follow them
     # to the end and post their results (src/claude_code_jobs.py).
     try:
