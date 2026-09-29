@@ -188,6 +188,13 @@ def parse(raw: bytes, meta: Optional[Dict] = None) -> Dict:
         body = _extract_text(msg) or ""
     except Exception:
         body = ""
+    # The HTML part too, so an HTML email is shown as it was written (the
+    # page sanitizes it, as for every other email).
+    try:
+        from routes.email_helpers import _extract_html
+        body_html = _extract_html(msg) or ""
+    except Exception:
+        body_html = ""
     attachments = [p.get_filename() for p in msg.walk() if p.get_filename()]
     return {
         "from": str(msg.get("From", "")) or meta.get("from", ""),
@@ -196,6 +203,7 @@ def parse(raw: bytes, meta: Optional[Dict] = None) -> Dict:
         "subject": str(msg.get("Subject", "")) or meta.get("subject", ""),
         "date": str(msg.get("Date", "")),
         "body": body.strip(),
+        "body_html": body_html,
         "attachments": attachments,
     }
 
@@ -360,7 +368,9 @@ def read_message(key: str) -> Dict:
         m = parse(f.read(), {})
     if not e.get("read"):
         _update(key, read=True)
+    html = m["body_html"]
     return {**e, "read": True, "date": m["date"], "body": m["body"][:50000],
+            "body_html": html if len(html) <= 500000 else "",
             "attachments": m["attachments"], "to": m["to"] or e.get("to")}
 
 
