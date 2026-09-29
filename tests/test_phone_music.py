@@ -319,3 +319,11 @@ def test_the_pc_matches_the_phone_strictly_and_only_unpairs_a_phone():
     assert "BluetoothMajorClass.PHONE" in src
     assert "DeviceInformationKind.ASSOCIATION_ENDPOINT)" in src
     assert "want in _norm_name" not in src
+
+
+def test_a_failed_pairing_logs_why():
+    # Seen live: the site's Pair failed twice with only "409 Conflict" in the
+    # server log, so the reason was lost.
+    src = open(os.path.join(HERE, "routes", "media_routes.py"), encoding="utf-8").read()
+    assert 'logger.warning("[media] pair %s with %s failed: %s"' in src
+    assert 'logger.warning("[media] hear %s on %s failed: %s"' in src
