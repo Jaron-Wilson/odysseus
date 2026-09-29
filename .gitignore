@@ -95,3 +95,6 @@ _scratch/
 # (a taken port, a different bind); committing it would impose that on every
 # checkout, which is the opposite of what an override is for.
 docker-compose.override.yml
+
+# Links shared by a desktop MCP run from the repo (tools/mcp/*_server.py)
+tools/mcp/shared_media.json
