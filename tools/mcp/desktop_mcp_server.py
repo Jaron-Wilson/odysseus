@@ -1718,6 +1718,34 @@ async def _live_route(request):
     return StreamingResponse(body(), media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
+@mcp.tool()
+def tools_version() -> Dict[str, Any]:
+    """Fingerprints (sha256) of this machine's Odysseus files, so Odysseus
+    can tell when they are out of date and offer an update."""
+    import hashlib
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = {}
+    for name in (os.path.basename(__file__), "music_overlay.py", "mcp_transport_security.py"):
+        path = os.path.join(here, name)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                out[name] = hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
+    return {"ok": True, "files": out}
+
+
+@mcp.tool()
+def start_music_overlay() -> Dict[str, Any]:
+    """Open the frameless music overlay on this desktop (Pop out in the
+    Odysseus music bar), through its MusicOverlay task. Started from here, in
+    the logged-in session, so Odysseus needs no SSH access for it."""
+    import subprocess
+    r = subprocess.run(["schtasks", "/run", "/tn", "MusicOverlay"], capture_output=True, text=True, timeout=20)
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or r.stdout).strip()
+                or "the MusicOverlay task is not set up here (update this computer from Settings > Devices)"}
+    return {"ok": True}
+
+
 if __name__ == "__main__":
     import uvicorn  # noqa: F401  (imported for parity with the Resolve server)
     # Default to the tailnet address, never all interfaces. These tools launch

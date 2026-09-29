@@ -71,8 +71,30 @@ RestartSec=10
 [Install]
 WantedBy=graphical-session.target
 UNIT_EOF
+    # The music overlay (Pop out in the music bar): installed, started on demand.
+    say "installing the music overlay"
+    curl -fsSL "$BASE/enroll/$CODE/file/music_overlay.py" -o "$DEST/music_overlay.py"
+    "$DEST/venv/bin/pip" install --quiet pillow || true            # album art; optional
+    cat > "$HOME/.config/systemd/user/odysseus-music-overlay.service" <<UNIT_EOF
+[Unit]
+Description=Odysseus music overlay (frameless always-on-top player)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.odysseus-mcp/venv/bin/python %h/.odysseus-mcp/music_overlay.py
+Restart=no
+UNIT_EOF
+    "$DEST/venv/bin/python" -c "import tkinter" 2>/dev/null || say "note: the overlay needs Tk: sudo apt install python3-tk"
+    command -v ffplay >/dev/null 2>&1 || say "note: playing another computer's sound here needs ffplay: sudo apt install ffmpeg"
+
     systemctl --user daemon-reload
-    systemctl --user enable --now "$UNIT" || say "could not start it now (no graphical session?); it starts at your next desktop login"
+    if systemctl --user is-active --quiet "$UNIT"; then
+        systemctl --user restart "$UNIT"          # an update: load the new version
+    else
+        systemctl --user enable --now "$UNIT" || say "could not start it now (no graphical session?); it starts at your next desktop login"
+    fi
     MCP_PORT="$PORT"
 else
     say "no desktop MCP server for $OS yet; adding it for SSH work only"
@@ -108,5 +130,25 @@ print(json.dumps({"dns": os.environ["TS_DNS"], "ip": os.environ["TS_IP"], "os": 
                               if os.environ["MCP_PORT"] else [])}))')"
 RESULT="$(curl -fsS -X POST "$BASE/enroll/$CODE/register" -H 'Content-Type: application/json' -d "$BODY")" \
     || die "Odysseus did not accept the registration. The code may have expired: make a new one in Settings > Devices."
-say "done: $RESULT"
+# The overlay's token (messages, the phone's song), saved where the overlay reads it.
+if [ "$OS" = linux ]; then
+    RESULT="$RESULT" BASE="$BASE" python3 - <<'PY'
+import json, os
+r = json.loads(os.environ["RESULT"])
+tok = r.pop("overlay_token", "")
+if tok:
+    d = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "odysseus-music-overlay")
+    os.makedirs(d, exist_ok=True)
+    p = os.path.join(d, "settings.json")
+    try:
+        s = json.load(open(p))
+    except Exception:
+        s = {}
+    s.update(token=tok, url=os.environ["BASE"].rstrip("/") + "/")
+    json.dump(s, open(p, "w"), indent=2)
+    os.chmod(p, 0o600)
+    print("==> saved the music overlay's token")
+PY
+fi
+say "done: $(printf '%s' "$RESULT" | python3 -c 'import json,sys; r=json.load(sys.stdin); r.pop("overlay_token", None); print(json.dumps(r))')"
 echo "Open Settings > Devices in Odysseus to see this machine."

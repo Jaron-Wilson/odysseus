@@ -123,6 +123,7 @@ function renderMachines() {
             : `<div class="admin-toggle-sub" style="margin-top:4px"><em>${isPhone
               ? 'Not registered yet: add it below with its Modes listener endpoint.'
               : 'No MCP server on this machine yet.'}</em></div>`)}
+        ${(state.tools || []).filter((t) => t.host === m.host).map(toolsLine).join('')}
         ${(m.phones || []).map(phoneRow).join('')}
         <div class="admin-toggle-sub" data-m-result="${h}" style="margin-top:4px"></div>
         <div data-m-qr="${esc((m.phones && m.phones[0] && m.phones[0].name) || m.host)}" style="margin-top:6px"></div>
@@ -203,16 +204,37 @@ function renderCommandPicker() {
   box.dataset.ready = '1';
 }
 
+// Each linked computer's Odysseus tools: what it is missing, whether it is
+// current, and Install/Update. Asked for: "when I get my device linked, ask to
+// install all MCPs available ... my laptop does not have music on it".
+async function loadTools() {
+  try {
+    state.tools = (await api('GET', '/api/devices/tools')).machines || [];
+    renderMachines();
+  } catch (_) { /* not an admin, or no machines */ }
+}
+
+function toolsLine(t) {
+  if (!t.connected) return `<div class="admin-toggle-sub">${esc(t.name)}: not connected, so its tools cannot be checked.</div>`;
+  if (t.up_to_date) return `<div class="admin-toggle-sub">${dot(true)}${esc(t.name)}: every Odysseus tool is installed and current.</div>`;
+  const what = [t.missing.length ? `can add ${t.missing.map(esc).join(', ')}` : '',
+    t.outdated.length ? 'an update is available' : ''].filter(Boolean).join('; ');
+  return `<div class="admin-toggle-sub" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span>${esc(t.name)}: ${what}.</span>
+    <button ${BTN} data-m-update="${esc(t.server_id)}" data-m-host="${esc(t.host || '')}" ${t.online ? '' : 'disabled title="Offline"'}>${t.missing.length ? 'Install' : 'Update'}</button></div>`;
+}
+
 async function load(refresh = false) {
   try {
     const [base, overview] = await Promise.all([
       api('GET', '/api/devices'),
       api('GET', `/api/devices/overview${refresh ? '?refresh=true' : ''}`),
     ]);
-    state = { ...base, overview };
+    state = { ...base, overview, tools: state.tools || [] };
     renderDevices();
     renderSubs();
     renderCommandPicker();
+    loadTools();
   } catch (e) {
     say(`Could not load devices: ${e.message}`, true);
   }
@@ -498,4 +520,25 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
 else init();
 
 window.devicesSettings = { load };
+document.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-m-update]');
+  if (!b || b.disabled) return;
+  ev.preventDefault();
+  const out = document.querySelector(`[data-m-result="${CSS.escape(b.dataset.mHost || '')}"]`);
+  b.disabled = true;
+  const label = b.textContent;
+  b.textContent = 'Installing\u2026';
+  if (out) out.textContent = 'Installing on that computer over SSH (the same install command as Add a device). This can take a few minutes the first time.';
+  try {
+    const r = await api('POST', `/api/devices/tools/${encodeURIComponent(b.dataset.mUpdate)}/update`);
+    if (out) out.textContent = `Done: ${r.machine} has the latest Odysseus tools. It reconnects within a minute.`;
+    setTimeout(loadTools, 20000);
+  } catch (e) {
+    if (out) out.textContent = `Could not install: ${e.message}`;
+  } finally {
+    b.disabled = false;
+    b.textContent = label;
+  }
+});
+
 export default { load };

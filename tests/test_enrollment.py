@@ -272,3 +272,109 @@ def test_check_page_can_turn_notifications_on_under_the_device_name(client, monk
     assert saved == ["pixel-8a", "pixel-8a"] and sent == ["pixel-8a", "pixel-8a"]
     t = c.post(f"/enroll/{r['code']}/check/push").json()
     assert t["sent"] == 1
+
+
+# ── Every Odysseus tool on every linked computer ───────────────────────────
+# Asked for on 2026-09-29: "lets say I get my device linked, ask to install all
+# MCPs available on that server or PC that my PC has? cause I know my laptop
+# does not have music on it, so that popup would be nice to have".
+
+def test_the_scripts_install_the_overlay_its_packages_and_token(client, tmp_path):
+    c, _ = client
+    code = c.post("/api/devices/enroll", json={"kind": "computer"}).json()["code"]
+    sh = c.get(f"/enroll/{code}/install.sh").text
+    assert "file/music_overlay.py" in sh and "odysseus-music-overlay.service" in sh
+    assert 'tok = r.pop("overlay_token", "")' in sh and "odysseus-music-overlay" in sh
+    (tmp_path / "i.sh").write_text(sh)
+    assert subprocess.run(["bash", "-n", str(tmp_path / "i.sh")]).returncode == 0
+    ps1 = c.get(f"/enroll/{code}/install.ps1").text
+    assert "winsdk pyaudiowpatch" in ps1 and "Fetch 'music_overlay.py'" in ps1
+    assert "Register-ScheduledTask -TaskName 'MusicOverlay'" in ps1 and "$r.overlay_token" in ps1
+    assert "ConvertFrom-Json -AsHashtable" not in ps1                               # Windows PowerShell 5.1-safe
+    assert "def main():" in c.get(f"/enroll/{code}/file/music_overlay.py").text   # served from its own folder
+
+
+def test_register_mints_an_overlay_only_token_per_machine(client, db, monkeypatch):
+    import core.database as cdb
+    engine = db.kw["bind"]
+    cdb.ApiToken.__table__.create(bind=engine)
+    c, _ = client
+    body = {"dns": "jaron-laptop.tail0.ts.net", "ip": "100.70.1.3", "os": "linux", "user": "jaron",
+            "ssh": True, "servers": [{"kind": "desktop", "port": 8932}]}
+    first = c.post(f"/enroll/{c.post('/api/devices/enroll', json={'kind': 'computer'}).json()['code']}/register",
+                   json=body).json()["overlay_token"]
+    second = c.post(f"/enroll/{c.post('/api/devices/enroll', json={'kind': 'computer'}).json()['code']}/register",
+                    json=body).json()["overlay_token"]
+    assert first.startswith("ody_") and first != second
+    s = db()
+    rows = s.query(cdb.ApiToken).filter(cdb.ApiToken.name == "overlay · jaron-laptop").all()
+    assert sorted(r.is_active for r in rows) == [False, True] and {r.scopes for r in rows} == {"overlay"}
+    s.close()
+
+
+class _ToolsMgr:
+    def __init__(self, tools, versions):
+        self._tools, self.versions = tools, versions
+
+    def get_server_status(self, sid):
+        return {"status": "connected"}
+
+    async def call_tool(self, name, args):
+        import json
+        return {"stdout": json.dumps({"ok": True, "files": self.versions[name.split("__")[1]]})}
+
+
+def test_the_tools_check_names_what_each_computer_lacks(monkeypatch):
+    from routes import device_routes as dr
+    monkeypatch.setattr(dr, "_configured_servers", lambda: [
+        {"id": "win", "name": "desktop-jaron-desktop", "url": "http://100.70.1.2:8931/sse", "enabled": True},
+        {"id": "lap", "name": "jaron-laptop-desktop", "url": "http://100.70.1.3:8932/sse", "enabled": True},
+        {"id": "res", "name": "desktop-jaron-resolve", "url": "http://100.70.1.2:8930/sse", "enabled": True}])
+    peers = [{"host": "desktop-jaron", "os": "windows", "online": True, "dns": "desktop-jaron.tail0.ts.net", "ips": ["100.70.1.2"]},
+             {"host": "jaron-laptop", "os": "linux", "online": True, "dns": "jaron-laptop.tail0.ts.net", "ips": ["100.70.1.3"]}]
+    monkeypatch.setattr(machines, "peers", lambda refresh=False: peers)
+    monkeypatch.setattr(machines, "find_peer", lambda ps, h: next((p for p in ps if h in p["ips"]), None))
+    here = enroll_routes._sha_file(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"))
+    ov = enroll_routes._sha_file(os.path.join(HERE, "tools", "music_overlay", "music_overlay.py"))
+    win_tools = [{"name": t} for t in enroll_routes.FEATURES["windows"].values()] + [{"name": "tools_version"}]
+    mgr = _ToolsMgr({"win": win_tools, "lap": [{"name": "now_playing"}]},
+                    {"win": {"desktop_mcp_server.py": here, "music_overlay.py": ov}})
+    rows = {m["server_id"]: m for m in asyncio.run(enroll_routes.machine_tools(mgr))}
+    assert set(rows) == {"win", "lap"}                                   # the Resolve server is not a desktop MCP
+    assert rows["win"]["up_to_date"] and rows["win"]["missing"] == []
+    assert rows["lap"]["missing"] == ["Music overlay (Pop out)", "Play another computer's sound"]
+    assert rows["lap"]["outdated"] == ["linux_desktop_mcp_server.py"]   # no tools_version: too old to say
+    mgr.versions["win"]["music_overlay.py"] = "old"
+    rows = {m["server_id"]: m for m in asyncio.run(enroll_routes.machine_tools(mgr))}
+    assert rows["win"]["outdated"] == ["music_overlay.py"] and not rows["win"]["up_to_date"]
+
+
+def test_update_runs_the_install_command_over_ssh(monkeypatch):
+    ran = []
+
+    async def fake_run(argv, timeout):
+        ran.append(argv)
+        return {"rc": 0, "out": "==> done", "err": ""}
+    monkeypatch.setattr(machines, "_run", fake_run)
+    monkeypatch.setattr(machines, "_ssh_keys", lambda: ["/k"])
+    monkeypatch.setattr(machines, "load_prefs", lambda: {"jaron-laptop": {"ssh_user": "jaron"}})
+    lap = {"name": "jaron-laptop-desktop", "os": "linux",
+           "_peer": {"host": "jaron-laptop", "dns": "jaron-laptop.tail0.ts.net", "ips": ["100.70.1.3"]}}
+    r = asyncio.run(enroll_routes.run_installer(lap, "https://ody.tail0.ts.net", "abcdefghjkmnpqrs"))
+    assert r["ok"] and "jaron@jaron-laptop.tail0.ts.net" in ran[-1]
+    assert "curl -fsSL https://ody.tail0.ts.net/enroll/abcdefghjkmnpqrs/install.sh | bash" in ran[-1][-1]
+    win = dict(lap, name="desktop-jaron-desktop", os="windows",
+               _peer={"host": "desktop-jaron", "dns": "desktop-jaron.tail0.ts.net", "ips": []})
+    asyncio.run(enroll_routes.run_installer(win, "https://ody.tail0.ts.net", "abcdefghjkmnpqrs"))
+    assert ran[-1][-1].startswith("powershell -NoProfile -EncodedCommand ")
+
+
+def test_both_desktop_mcps_report_their_version_and_start_the_overlay():
+    for name in ("desktop_mcp_server.py", "linux_desktop_mcp_server.py"):
+        src = open(os.path.join(HERE, "tools", "mcp", name), encoding="utf-8").read()
+        assert "def tools_version()" in src and "def start_music_overlay()" in src, name
+    media = open(os.path.join(HERE, "routes", "media_routes.py"), encoding="utf-8").read()
+    assert 'if "start_music_overlay" in set(target.get("tools") or []):' in media
+    ui = open(os.path.join(HERE, "static", "js", "devicesSettings.js"), encoding="utf-8").read()
+    assert "/api/devices/tools/${encodeURIComponent(b.dataset.mUpdate)}/update" in ui
+    assert "import './deviceToolsNudge.js';" in open(os.path.join(HERE, "static", "js", "chat.js")).read()

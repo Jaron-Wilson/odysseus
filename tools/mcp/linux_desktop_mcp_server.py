@@ -727,6 +727,21 @@ def stop_stream() -> Dict[str, Any]:
     return {"ok": True}
 
 
+@mcp.tool()
+def tools_version() -> Dict[str, Any]:
+    """Fingerprints (sha256) of this machine's Odysseus files, so Odysseus
+    can tell when they are out of date and offer an update."""
+    import hashlib
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = {}
+    for name in (os.path.basename(__file__), "music_overlay.py", "mcp_transport_security.py"):
+        path = os.path.join(here, name)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                out[name] = hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
+    return {"ok": True, "files": out}
+
+
 if __name__ == "__main__":
     import uvicorn  # noqa: F401
     # HOST/PORT come from the module scope above, where the Host allowlist was
