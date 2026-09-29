@@ -63,16 +63,28 @@ OPENCODE_DEFAULT_LABEL = "local default (vllm3090/qwen3.8-27b)"
 
 
 def opencode_model_ids() -> list:
-    """The models OpenCode can run, as provider/model, from its own config.
-    Empty when the config cannot be read (then nothing is refused)."""
-    path = os.path.expanduser("~/.config/opencode/opencode.json")
+    """The models an OpenCode run can use, as provider/model: its own config's
+    and the Odysseus servers it is handed (src/opencode_providers.py). Empty
+    when neither can be read (then nothing is refused)."""
+    from src import opencode_providers
+    return [mid for mid, _ in opencode_providers.models()[0]]
+
+
+def _cli_env() -> dict:
+    """The environment a coding-agent CLI runs in (see run())."""
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
+    # Undo the DATA_DIR HOME so the CLI finds its own credentials.
+    env["HOME"] = str(Path.home())
+    # Odysseus's own model servers, for OpenCode (Claude ignores it).
     try:
-        with open(path, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except Exception:
-        return []
-    return [f"{pid}/{mid}" for pid, prov in (cfg.get("provider") or {}).items()
-            for mid in ((prov or {}).get("models") or {})]
+        from src import opencode_providers
+        extra = opencode_providers.config_content()
+        if extra:
+            env["OPENCODE_CONFIG_CONTENT"] = extra
+    except Exception as e:
+        logger.debug("OpenCode providers skipped: %s", e)
+    return env
 # 900s killed a real rebrand at ~15 minutes, after it had already written every
 # file — the work survived but the run was recorded as a timeout and the
 # approval was spent. Refactors across a large codebase genuinely take this long.
@@ -225,9 +237,7 @@ class ClaudeCodeTool:
         argv = [c for c in cmd if c not in drop]
         argv.insert(1, "--bg")
 
-        env = {k: v for k, v in os.environ.items()
-               if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
-        env["HOME"] = str(Path.home())
+        env = _cli_env()
 
         proc = await asyncio.create_subprocess_exec(
             *argv, cwd=str(cwd_path), env=env,
@@ -297,9 +307,7 @@ class ClaudeCodeTool:
             return {"output": "No background Claude Code sessions are running.", "exit_code": 0}
 
         cli = shutil.which("claude")
-        env = {k: v for k, v in os.environ.items()
-               if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
-        env["HOME"] = str(Path.home())
+        env = _cli_env()
 
         lines = []
         for s in sessions:
@@ -357,9 +365,7 @@ class ClaudeCodeTool:
         cli = shutil.which("claude")
         if not cli:
             return {"error": "claude CLI not found on PATH.", "exit_code": 1}
-        env = {k: v for k, v in os.environ.items()
-               if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
-        env["HOME"] = str(Path.home())
+        env = _cli_env()
         proc = await asyncio.create_subprocess_exec(
             cli, "agents", "--json",
             env=env,
@@ -798,10 +804,7 @@ class ClaudeCodeTool:
         # it then refuses its own edit tools — the run exits 0 having silently
         # changed nothing. Only relevant when this server was itself launched
         # from a Claude Code session, which is exactly the case while developing.
-        env = {k: v for k, v in os.environ.items()
-               if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
-        # Undo the DATA_DIR HOME so the CLI finds its own credentials.
-        env["HOME"] = str(Path.home())
+        env = _cli_env()
 
         try:
             timeout = max(30, min(3600, int(args.get("timeout") or DEFAULT_TIMEOUT_S)))
@@ -1294,8 +1297,7 @@ async def _wrap_up(job, reason: str) -> str:
         if cost_cap:
             cmd += ["--max-budget-usd", f"{max(0.05, cost_cap):.2f}"]
         stdin_data = prompt.encode()
-    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE_") and k != "CLAUDECODE"}
-    env["HOME"] = str(Path.home())
+    env = _cli_env()
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=spec.get("cwd") or job.cwd, env=env,

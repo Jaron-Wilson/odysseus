@@ -19,7 +19,8 @@ from src.agent_tools import claude_code_tool as cct
 
 FAKE = r'''#!{py}
 import json, sys
-open({log!r}, "a").write(json.dumps({{"argv": sys.argv[1:]}}) + "\n")
+import os
+open({log!r}, "a").write(json.dumps({{"argv": sys.argv[1:], "extra": os.environ.get("OPENCODE_CONFIG_CONTENT", "")}}) + "\n")
 print(json.dumps({{"type": "text", "part": {{"text": "Plan: 1. look 2. do"}}}}), flush=True)
 '''
 
@@ -47,6 +48,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(jobs, "RUNS_DIR", str(tmp_path / "runs"))
     monkeypatch.setattr(jobs, "JOBS_FILE", str(tmp_path / "jobs.json"))
     jobs._JOBS.clear()
+    from src import opencode_providers
+    monkeypatch.setattr(opencode_providers, "_endpoints", lambda: [])
     work = tmp_path / "work"
     work.mkdir()
     return work, log
@@ -91,3 +94,47 @@ def test_a_failed_opencode_run_gets_opencode_advice():
     src = open(cct.__file__, encoding="utf-8").read()
     i = src.index('if spec.get("args_model") and spec.get("engine", job.engine) == "opencode":')
     assert "OpenCode's models are" in src[i:i + 400]
+
+
+# "when approving plans it wont allow me to pick a different server for the
+# open code": Odysseus's own servers are offered to OpenCode too.
+SERVERS = [
+    {"id": "06e32a54", "name": "totoro:114335", "base_url": "http://100.102.86.125:11435/v1",
+     "models": ["qwen3.8:27b", "gpt-oss:20b"], "api_key": ""},
+    {"id": "3d297b8d", "name": "3090", "base_url": "http://192.168.100.101:8114/v1/",
+     "models": ["qwen3.8-27b"], "api_key": ""},
+]
+
+
+def test_odysseus_servers_opencode_lacks_are_added(env, monkeypatch):
+    from src import opencode_providers as op
+    own = {"provider": {"vllm3090": {"options": {"baseURL": "http://192.168.100.101:8114/v1"},
+                                     "models": {"qwen3.8-27b": {}}}}}
+    monkeypatch.setattr(op, "_own_config", lambda: own)
+    monkeypatch.setattr(op, "_endpoints", lambda: SERVERS)
+    prov = op.providers()
+    assert list(prov) == ["ody-totoro-114335"]                 # the 3090 is already OpenCode's
+    assert prov["ody-totoro-114335"]["options"]["baseURL"] == "http://100.102.86.125:11435/v1"
+    ids = [m for m, _ in op.models()[0]]
+    assert ids == ["vllm3090/qwen3.8-27b", "ody-totoro-114335/qwen3.8:27b", "ody-totoro-114335/gpt-oss:20b"]
+    assert json.loads(op.config_content())["provider"]["ody-totoro-114335"]["models"]["gpt-oss:20b"]
+
+
+def test_a_run_on_an_odysseus_server_gets_it_handed_to_opencode(env, monkeypatch):
+    work, log = env
+    from src import opencode_providers as op
+    monkeypatch.setattr(op, "_endpoints", lambda: SERVERS[:1])
+    out = _plan(work, "ody-totoro-114335/qwen3.8:27b")
+    assert out.get("exit_code") != 2, out
+    call = _calls(log)[-1]
+    assert call["argv"][call["argv"].index("--model") + 1] == "ody-totoro-114335/qwen3.8:27b"
+    assert "ody-totoro-114335" in json.loads(call["extra"])["provider"]
+
+
+def test_the_approve_dialog_lists_them(env, monkeypatch):
+    from src import opencode_providers as op
+    import routes.claude_code_routes as ccr
+    monkeypatch.setattr(op, "_endpoints", lambda: SERVERS[:1])
+    ids = [m["id"] if isinstance(m, dict) else m[0] for m in
+           next(e for e in ccr.run_options("", {})["engines"] if e["id"] == "opencode")["models"]]
+    assert "ody-totoro-114335/qwen3.8:27b" in ids
