@@ -36,6 +36,7 @@ import './pdfViewer.js';
 import './bgTasks.js';
 import './chatFollow.js';
 import './deviceToolsNudge.js';
+import './specialChats.js';
 import './chatThreads.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
