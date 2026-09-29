@@ -275,3 +275,11 @@ def test_hear_it_only_where_it_works_and_pairing_from_here(env):
     assert "if (on && /pair/i.test(e.message))" in js and "data-mb-pair-manual" in js
     mcp_src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
     assert "async def bluetooth_pair(device: str, seconds: int = 20)" in mcp_src and "args.accept()" in mcp_src
+
+
+def test_a_stale_pairing_is_named_and_redone():
+    # Seen live: the Pixel was paired with the PC, but only its plain Bluetooth
+    # record existed (no audio side), so Hear it could never connect.
+    src = open(os.path.join(HERE, "tools", "mcp", "desktop_mcp_server.py"), encoding="utf-8").read()
+    assert "is paired with this PC but not as an audio source" in src and '"stale_pairing": stale.name' in src
+    assert "await stale.pairing.unpair_async()" in src and '"removed_old_pairing": removed' in src
