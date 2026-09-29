@@ -2518,6 +2518,13 @@ async def stream_agent_loop(
     requested_model = model
     actual_model = model
     total_tool_calls = 0  # for budget enforcement
+    # This chat's cap on bash calls in a row (chat_prefs "bash_limit", set with
+    # the Shell button by the message box); 0 is no limit.
+    try:
+        from src import chat_prefs as _chat_prefs
+        _bash_stop = _chat_prefs.bash_limit(session_id) if session_id else BASH_STREAK_STOP
+    except Exception:
+        _bash_stop = BASH_STREAK_STOP
 
     # Loop-breaker state. Small models (e.g. deepseek-v4-flash) can get
     # stuck firing the same tool call over and over with no text — burns
@@ -3156,12 +3163,13 @@ async def stream_agent_loop(
                 }
                 logger.info("[agent] refused %s: the user did not ask to see it", block.tool_type)
                 yield f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "round": round_num})}\n\n'
-            elif block.tool_type == "bash" and _bash_streak > BASH_STREAK_STOP:
+            elif block.tool_type == "bash" and _bash_stop and _bash_streak > _bash_stop:
                 desc = f"{block.tool_type}: refused"
                 result = {
-                    "error": (f"Not run: that would be more than {BASH_STREAK_STOP} bash calls in a row. "
-                              "Stop now and tell the user what you found and what you would check "
-                              "next; they can tell you to carry on."),
+                    "error": (f"Not run: that would be more than {_bash_stop} bash calls in a row, this "
+                              "chat's limit. Stop now and tell the user what you found and what you would "
+                              "check next; they can tell you to carry on, or raise this chat's limit with "
+                              "the Shell button beside the message box (up to no limit)."),
                     "exit_code": 1,
                 }
                 logger.info("[agent] refused bash call %d in a row", _bash_streak)

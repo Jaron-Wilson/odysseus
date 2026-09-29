@@ -18,7 +18,12 @@ from src.constants import DATA_DIR
 
 PREFS_FILE = os.path.join(DATA_DIR, "chat_prefs.json")
 # "tidy": when the chat gets full, write its notes and prune (chat_tidy.py).
-DEFAULTS = {"claude": True, "opencode": True, "tidy": False}
+# "bash_limit": bash calls in a row in one turn before the agent must stop and
+# report (agent_loop.py); 0 is no limit. Asked for: "in the chat let me be able
+# to change tool bash calls, current limit is 12 but i want to in the chat
+# bypass that limit".
+DEFAULTS = {"claude": True, "opencode": True, "tidy": False, "bash_limit": 12}
+BASH_LIMIT_MAX = 1000
 
 
 def _load() -> Dict[str, dict]:
@@ -59,6 +64,13 @@ def set_pref(session_id: str, key: str, value) -> dict:
         raise ValueError(f"unknown setting {key!r}")
     data = _load()
     entry = get(session_id)                    # folds in the old single switch
+    if key == "bash_limit":
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("bash_limit must be a whole number (0 for no limit)")
+        if not 0 <= value <= BASH_LIMIT_MAX:
+            raise ValueError(f"bash_limit must be between 0 (no limit) and {BASH_LIMIT_MAX}")
     entry[key] = type(DEFAULTS[key])(value)
     if entry == DEFAULTS:
         data.pop(session_id, None)              # back to the defaults: nothing to keep
@@ -79,3 +91,13 @@ def engine_allowed(session_id: str, engine: str) -> bool:
 def claude_code_allowed(session_id: str) -> bool:
     """Whether any coding agent is allowed in this chat (the tool at all)."""
     return engine_allowed(session_id, "claude") or engine_allowed(session_id, "opencode")
+
+
+def bash_limit(session_id: str) -> int:
+    """This chat's cap on bash calls in a row; 0 means no limit."""
+    if not session_id:
+        return DEFAULTS["bash_limit"]
+    try:
+        return int(get(session_id).get("bash_limit", DEFAULTS["bash_limit"]))
+    except (TypeError, ValueError):
+        return DEFAULTS["bash_limit"]

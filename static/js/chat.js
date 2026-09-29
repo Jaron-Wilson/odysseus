@@ -29,6 +29,7 @@ import './chatNotes.js';
 import './chatSkipOffscreen.js';
 import './buildBadge.js';
 import './chatClaudeToggle.js';
+import './chatShellLimit.js';
 import './chatTidy.js';
 import './musicBar.js';
 import './openRequests.js';
