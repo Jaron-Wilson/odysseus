@@ -554,7 +554,18 @@ document.addEventListener('click', async (ev) => {
   b.textContent = 'Installing\u2026';
   if (out) out.textContent = 'Installing on that computer over SSH (the same install command as Add a device). This can take a few minutes the first time.';
   try {
-    const r = await api('POST', `/api/devices/tools/${encodeURIComponent(b.dataset.mUpdate)}/update`);
+    // It runs on the server by itself (the first install can take minutes,
+    // past the 45s request limit); this asks how it is going.
+    const path = `/api/devices/tools/${encodeURIComponent(b.dataset.mUpdate)}/update`;
+    let r = await api('POST', path);
+    const started = Date.now();
+    while (r.running && Date.now() - started < 16 * 60 * 1000) {
+      if (out) out.textContent = `Installing on ${r.machine || 'that computer'}${r.step ? `: ${r.step}` : ''}\u2026 (${Math.round((Date.now() - started) / 1000)}s)`;
+      await new Promise((ok) => setTimeout(ok, 3000));
+      r = await api('GET', path);
+    }
+    if (r.running) throw new Error(`still running after 16 minutes${r.step ? `, at: ${r.step}` : ''}`);
+    if (!r.ok) throw new Error(r.error || 'the install did not finish');
     if (out) out.textContent = `Done: ${r.machine} has the latest Odysseus tools. It reconnects within a minute.`;
     setTimeout(loadTools, 20000);
   } catch (e) {

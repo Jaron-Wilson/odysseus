@@ -189,8 +189,14 @@ def setup_enroll_routes(get_mcp_manager=None) -> APIRouter:
     async def update_tools(server_id: str, request: Request):
         """Install or update everything on a linked computer: Odysseus runs its
         install command there over the SSH access the first install set up,
-        with a fresh one-time code."""
+        with a fresh one-time code. It runs on its own (the first install can
+        take minutes, past the 45s request limit, which cut it off: "Could not
+        install: Request exceeded 45s timeout", 2026-09-29); the page asks
+        GET .../update how it went."""
         require_admin(request)
+        job = _INSTALLS.get(server_id)
+        if job and job.get("running"):
+            return _install_view(job)
         rows = {m["server_id"]: m for m in await machine_tools(_mgr())}
         m = rows.get(server_id)
         if not m:
@@ -198,11 +204,17 @@ def setup_enroll_routes(get_mcp_manager=None) -> APIRouter:
         if not m.get("online"):
             raise HTTPException(409, f"{m['name']} is offline")
         rec = enrollment.create("computer", owner=_owner(request))
-        r = await run_installer(m, base_url(request), rec["code"])
-        logger.info("[enroll] update of %s: %s", m["name"], "ok" if r.get("ok") else r.get("error"))
-        if not r.get("ok"):
-            raise HTTPException(502, r.get("error") or "the install did not finish")
-        return r
+        job = _INSTALLS[server_id] = {"running": True, "machine": m["name"], "ok": None, "error": ""}
+        job["task"] = asyncio.create_task(_install(job, m, base_url(request), rec["code"]))
+        return _install_view(job)
+
+    @router.get("/api/devices/tools/{server_id}/update")
+    async def update_status(server_id: str, request: Request):
+        require_admin(request)
+        job = _INSTALLS.get(server_id)
+        if not job:
+            raise HTTPException(404, "No install has been started for that computer")
+        return _install_view(job)
 
     # ── Computer: script, files, register ──────────────────────────────
 
@@ -404,8 +416,30 @@ async def machine_tools(mgr) -> list:
     return out
 
 
-async def run_installer(m: dict, base: str, code: str) -> dict:
-    """Run this computer's install command there, over SSH."""
+# Installs running or finished, by server id: {running, machine, ok, error, output}.
+_INSTALLS: dict = {}
+
+
+def _install_view(job: dict) -> dict:
+    return {k: v for k, v in job.items() if k != "task"}
+
+
+async def _install(job: dict, m: dict, base: str, code: str) -> None:
+    try:
+        r = await run_installer(m, base, code, job)
+    except Exception as e:
+        r = {"ok": False, "error": str(e) or type(e).__name__}
+    job.update(running=False, ok=bool(r.get("ok")),
+               error="" if r.get("ok") else (r.get("error") or "the install did not finish"),
+               output=r.get("output", ""))
+    logger.info("[enroll] update of %s: %s", m["name"], "ok" if job["ok"] else job["error"])
+
+
+async def run_installer(m: dict, base: str, code: str, job: dict = None, timeout: float = 900) -> dict:
+    """Run this computer's install command there, over SSH. Its output is kept
+    as it comes (job["output"], and job["step"]: the last "==>" line), so a
+    stall shows where it is; at the timeout ssh is killed, which ends the
+    install there rather than leaving it running."""
     import getpass
     peer = m.get("_peer") or {}
     host = peer.get("dns") or (peer.get("ips") or [peer.get("host")])[0]
@@ -415,15 +449,47 @@ async def run_installer(m: dict, base: str, code: str) -> dict:
                   f"iwr -useb {base}/enroll/{code}/install.ps1 | iex"]
     else:
         remote = ["bash", "-lc", f"curl -fsSL {base}/enroll/{code}/install.sh | bash"]
+    job = job if job is not None else {}
     last = ""
     for key in machines._ssh_keys():
-        r = await machines._run(machines._ssh_argv(user, host, key, remote, m["os"]), timeout=900)
+        r = await _run_streamed(machines._ssh_argv(user, host, key, remote, m["os"]), job, timeout)
         if r["rc"] == 0:
-            return {"ok": True, "machine": m["name"], "output": (r.get("out") or "")[-3000:]}
-        last = (r.get("err") or r.get("out") or "")
+            return {"ok": True, "machine": m["name"], "output": r["out"][-3000:]}
+        last = r["err"] or r["out"]
         if "Permission denied" not in last:
             break
-    return {"ok": False, "error": last[-800:] or "SSH failed", "machine": m["name"]}
+    return {"ok": False, "error": last[-800:] or "SSH failed", "machine": m["name"],
+            "output": job.get("output", "")}
+
+
+async def _run_streamed(argv: list, job: dict, timeout: float) -> dict:
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    lines: list = []
+
+    async def read():
+        async for raw in proc.stdout:
+            line = re.sub(r"\x1b\[[0-9;]*m", "", raw.decode(errors="replace")).rstrip()
+            lines.append(line)
+            del lines[:-200]
+            job["output"] = "\n".join(lines)[-3000:]
+            if "==> " in line:
+                job["step"] = line.split("==> ", 1)[1].strip()
+        await proc.wait()
+
+    try:
+        await asyncio.wait_for(read(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        step = job.get("step")
+        return {"rc": -1, "out": "\n".join(lines),
+                "err": f"timed out after {timeout:.0f}s" + (f", at: {step}" if step else "")}
+    except asyncio.CancelledError:
+        proc.kill()
+        raise
+    out = "\n".join(lines)
+    return {"rc": proc.returncode, "out": out, "err": "" if proc.returncode == 0 else out}
 
 
 def _owner(request: Request) -> str:

@@ -352,10 +352,10 @@ def test_the_tools_check_names_what_each_computer_lacks(monkeypatch):
 def test_update_runs_the_install_command_over_ssh(monkeypatch):
     ran = []
 
-    async def fake_run(argv, timeout):
+    async def fake_run(argv, job, timeout):
         ran.append(argv)
         return {"rc": 0, "out": "==> done", "err": ""}
-    monkeypatch.setattr(machines, "_run", fake_run)
+    monkeypatch.setattr(enroll_routes, "_run_streamed", fake_run)
     monkeypatch.setattr(machines, "_ssh_keys", lambda: ["/k"])
     monkeypatch.setattr(machines, "load_prefs", lambda: {"jaron-laptop": {"ssh_user": "jaron"}})
     lap = {"name": "jaron-laptop-desktop", "os": "linux",
@@ -367,6 +367,43 @@ def test_update_runs_the_install_command_over_ssh(monkeypatch):
                _peer={"host": "desktop-jaron", "dns": "desktop-jaron.tail0.ts.net", "ips": []})
     asyncio.run(enroll_routes.run_installer(win, "https://ody.tail0.ts.net", "abcdefghjkmnpqrs"))
     assert ran[-1][-1].startswith("powershell -NoProfile -EncodedCommand ")
+
+
+def test_an_install_shows_its_step_and_is_stopped_at_the_timeout(tmp_path):
+    # Seen 2026-09-29: the Windows install hung over SSH, the button said
+    # "Could not install: Request exceeded 45s timeout", and each click
+    # started another copy on the PC.
+    marker = tmp_path / "still-running"
+    script = f"printf '\\033[1m==>\\033[0m installing its Python packages (pip)\\n'; sleep 30; touch {marker}"
+    job = {}
+    r = asyncio.run(enroll_routes._run_streamed(["bash", "-c", script], job, timeout=1))
+    assert r["rc"] == -1 and r["err"] == "timed out after 1s, at: installing its Python packages (pip)"
+    assert job["step"] == "installing its Python packages (pip)"
+    import time
+    time.sleep(0.3)
+    assert not marker.exists()                                   # killed, not left running
+    r = asyncio.run(enroll_routes._run_streamed(["bash", "-c", "echo '==> done'; exit 3"], {}, timeout=5))
+    assert r["rc"] == 3 and r["err"] == "==> done"
+
+
+def test_the_install_runs_by_itself_and_the_page_asks(monkeypatch):
+    async def fake(m, base, code, job):
+        job["step"] = "registering with Odysseus"
+        return {"ok": True, "machine": m["name"], "output": "==> done"}
+    monkeypatch.setattr(enroll_routes, "run_installer", fake)
+    job = {"running": True, "machine": "windows-desktop", "ok": None, "error": ""}
+    asyncio.run(enroll_routes._install(job, {"name": "windows-desktop"}, "https://o", "c"))
+    assert enroll_routes._install_view(job) == {"running": False, "machine": "windows-desktop", "ok": True,
+                                                "error": "", "output": "==> done",
+                                                "step": "registering with Odysseus"}
+    src = open(enroll_routes.__file__, encoding="utf-8").read()
+    assert "asyncio.create_task(_install(job, m," in src
+    assert 'if job and job.get("running"):' in src               # a second click does not start another
+    assert '@router.get("/api/devices/tools/{server_id}/update")' in src
+    ui = open(os.path.join(HERE, "static", "js", "devicesSettings.js"), encoding="utf-8").read()
+    assert "r = await api('GET', path);" in ui
+    ps1 = open(os.path.join(HERE, "tools", "enroll", "install.ps1"), encoding="utf-8").read()
+    assert "--no-input --prefer-binary --timeout 60" in ps1 and "Say 'installing its Python packages (pip)'" in ps1
 
 
 def test_both_desktop_mcps_report_their_version_and_start_the_overlay():
