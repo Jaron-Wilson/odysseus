@@ -80,15 +80,43 @@ def test_studios_quick_starts_ship_hidden_so_classic_never_shows_them():
     assert ".hidden = false" not in (_STATIC / "js" / "uiDesign.js").read_text()
 
 
+def _split_list(sel: str):
+    """A selector list split at its top-level commas (not those inside :is())."""
+    parts, depth, buf = [], 0, ""
+    for ch in sel:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(buf.strip())
+            buf = ""
+        else:
+            buf += ch
+    parts.append(buf.strip())
+    return [p for p in parts if p]
+
+
+def _scoped(part: str) -> bool:
+    """The first compound selector is `html` carrying the ui-studio class,
+    e.g. html.ui-studio or html[data-theme-mode="light"].ui-studio."""
+    m = re.match(r"^html((?:\[[^\]]*\]|[.#:][\w-]+(?:\([^)]*\))?)*)", part)
+    return bool(m) and re.search(r"\.ui-studio(?![\w-])", m.group(1)) is not None
+
+
+def test_the_scope_check_catches_a_leak():
+    css = ("html.ui-studio :is(#a, #b) .x{c:d} html[data-theme-mode=\"light\"].ui-studio .y{c:d}"
+           " .leak{c:d} @media (x){ .leak2, html.ui-studio .z{c:d} } html .ui-studio-ish{c:d}")
+    parts = [p for s in _selectors(css) for p in _split_list(s)]
+    assert [p for p in parts if not _scoped(p)] == [".leak", ".leak2", "html .ui-studio-ish"]
+
+
 @pytest.mark.parametrize("path", _STUDIO_CSS, ids=lambda p: p.name)
 def test_every_studio_rule_is_scoped_so_classic_is_untouched(path):
     bad = []
     for sel in _selectors(path.read_text()):
-        for part in sel.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            if part.startswith("html.ui-studio"):
+        for part in _split_list(sel):
+            if _scoped(part):
                 continue
             if re.match(r"^\.ui-design-[\w-]+", part):
                 continue            # the Interface picker, shown in both designs
