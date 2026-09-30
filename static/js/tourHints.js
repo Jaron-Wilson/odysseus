@@ -67,6 +67,8 @@ function _onModalOpened(modal) {
 
 function _show(modal) {
   if (_hasSeen()) return;
+  // Workspace tools are tab pages; there is no window to drag.
+  if (document.documentElement.classList.contains('ui-workspace')) return;
   const content = modal.querySelector('.modal-content') || modal;
   const r = content.getBoundingClientRect();
 

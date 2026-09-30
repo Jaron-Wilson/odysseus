@@ -549,6 +549,8 @@ async function _createEventReminder(ev, dueDate) {
 // ── Sidebar collapse ──
 
 function _collapseSidebar() {
+  // Workspace opens the calendar as a tab page beside the sidebar.
+  if (document.documentElement.classList.contains('ui-workspace')) return;
   const sb = document.getElementById('sidebar');
   if (sb && !sb.classList.contains('hidden')) {
     // Only remember the prior state on desktop. On mobile the sidebar is an

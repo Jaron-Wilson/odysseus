@@ -236,7 +236,9 @@ export function initSidebarLayout(Storage, opts) {
     // sidebar → safe-rect changes → reclamp modal → new chat width → ...
     const chatContainer = document.querySelector('.chat-container');
     const hasTileSnapped = document.querySelector('.modal-content[data-_tile-zone], .research-pane[data-_tile-zone]');
-    const chatTooNarrow = chatContainer && chatContainer.offsetWidth < MIN_CHAT_WIDTH && !isHidden && !hasTileSnapped;
+    // Workspace split view narrows the chat on purpose.
+    const wsSplit = document.documentElement.classList.contains('ws-split');
+    const chatTooNarrow = chatContainer && chatContainer.offsetWidth < MIN_CHAT_WIDTH && !isHidden && !hasTileSnapped && !wsSplit;
 
     if ((window.innerWidth < AUTO_COLLAPSE_WIDTH || chatTooNarrow) && !isHidden) {
       sidebar.classList.add('hidden');

@@ -18,7 +18,8 @@
 
 /* --- The Interface picker itself (shown in both designs) ------------------ */
 .ui-design-hint { margin: 2px 0 12px; font-size: 12.5px; opacity: .65; }
-.ui-design-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ui-design-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 520px) { .ui-design-choices { grid-template-columns: minmax(0, 1fr); } }
 .ui-design-choice {
   display: flex; flex-direction: column; gap: 3px; padding: 10px; cursor: pointer;
   border: 1px solid var(--border); border-radius: 10px; background: transparent;
@@ -36,7 +37,15 @@
   position: relative; display: block; height: 64px; margin-bottom: 6px; border-radius: 7px;
   overflow: hidden; border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
 }
-.ui-design-thumb i, .ui-design-thumb b, .ui-design-thumb u { position: absolute; display: block; }
+.ui-design-thumb i, .ui-design-thumb b, .ui-design-thumb u, .ui-design-thumb s { position: absolute; display: block; }
+/* Workspace: chats column, a tab strip with the active tab, cards below. */
+.ui-design-thumb-workspace { background: #0f1115; }
+.ui-design-thumb-workspace i { left: 0; top: 0; bottom: 0; width: 24%; background: #13161b; border-right: 1px solid #262a31; }
+.ui-design-thumb-workspace u { left: 24%; right: 0; top: 0; height: 11px; background: #13161b; border-bottom: 1px solid #262a31;
+  box-shadow: inset 6px 0 0 #13161b, inset 30px 0 0 #1c2027; }
+.ui-design-thumb-workspace b { left: 30%; top: 18px; width: 30%; height: 38px; border-radius: 4px; background: #16191e; border: 1px solid #2c313a; }
+.ui-design-thumb-workspace s { left: 64%; right: 6%; top: 18px; height: 38px; border-radius: 4px; background: #16191e; border: 1px solid #2c313a;
+  box-shadow: inset 0 3px 0 #7c8cff; }
 .ui-design-thumb-studio { background: #0f1115; }
 .ui-design-thumb-studio i { left: 0; top: 0; bottom: 0; width: 30%; background: #13161b; border-right: 1px solid #262a31; }
 .ui-design-thumb-studio b { left: 38%; right: 8%; bottom: 8px; height: 14px; border-radius: 5px; background: #16191e; border: 1px solid #2c313a; }

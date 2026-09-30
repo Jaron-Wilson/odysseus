@@ -1,4 +1,8 @@
-// Interface design: "studio" (the redesign) or "classic" (the original look).
+// Interface design: "workspace" (tabs + dashboard home), "studio" (the
+// restyled single-pane layout) or "classic" (the original look).
+//
+// Workspace is Studio's look plus a different structure: html carries both
+// ui-studio and ui-workspace, and static/js/workspace/ builds the tab shell.
 //
 // Asked for 2026-09-30: "add a setting to rebrand/redesign everything, im not
 // liking the ui very much so im wanting it to be completely redone and more
@@ -16,8 +20,11 @@
 import themeModule from './theme.js';
 
 export const LS_KEY = 'odysseus-ui-design';
-export const DESIGNS = ['studio', 'classic'];
-export const DEFAULT_DESIGN = 'studio';
+export const DESIGNS = ['workspace', 'studio', 'classic'];
+export const DEFAULT_DESIGN = 'workspace';
+
+// Workspace and Studio share the Studio stylesheets and palettes.
+const _studioLike = (design) => design === 'studio' || design === 'workspace';
 
 const PAIRS = { dark: 'studio', light: 'studio-light' };   // classic -> studio
 
@@ -30,7 +37,8 @@ export function getDesign() {
 
 function _applyClass(design) {
   const root = document.documentElement;
-  root.classList.toggle('ui-studio', design === 'studio');
+  root.classList.toggle('ui-studio', _studioLike(design));
+  root.classList.toggle('ui-workspace', design === 'workspace');
   root.classList.toggle('ui-classic', design === 'classic');
   root.dataset.ui = design;
 }
@@ -39,9 +47,9 @@ function _applyClass(design) {
 // theme is the user's choice and stays.
 function _swapPalette(design) {
   const saved = themeModule.getSaved();
-  const name = saved ? saved.name : (design === 'studio' ? 'dark' : null);
+  const name = saved ? saved.name : (_studioLike(design) ? 'dark' : null);
   let target = null;
-  if (design === 'studio' && name && PAIRS[name]) target = PAIRS[name];
+  if (_studioLike(design) && name && PAIRS[name]) target = PAIRS[name];
   if (design === 'classic' && name) {
     for (const [classic, studio] of Object.entries(PAIRS)) if (studio === name) target = classic;
   }
@@ -149,7 +157,7 @@ function init() {
   _loadFromServer();
   // First run of Studio on a stock theme: bring in the Studio palette once.
   try {
-    if (getDesign() === 'studio' && !localStorage.getItem(LS_KEY + '-palette-done')) {
+    if (_studioLike(getDesign()) && !localStorage.getItem(LS_KEY + '-palette-done')) {
       _swapPalette('studio');
       localStorage.setItem(LS_KEY + '-palette-done', '1');
     }
