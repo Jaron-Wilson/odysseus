@@ -74,30 +74,86 @@ export function setDesign(design, { sync = true } = {}) {
   window.dispatchEvent(new CustomEvent('odysseus:ui-design', { detail: { design } }));
 }
 
+// Picking a design in Settings (or the Theme panel's select) only marks it;
+// Save stores it and reloads into it. Asked for 2026-09-30 after switching
+// live away from Workspace crashed the tab: "i would prefer to press save
+// before it changes". A reload also means no layout is torn down in place.
+let _pending = null;
+
 function _syncControls(design) {
+  const shown = _pending || design;
   document.querySelectorAll('[data-ui-design-choice]').forEach(el => {
-    const on = el.dataset.uiDesignChoice === design;
+    const on = el.dataset.uiDesignChoice === shown;
     el.classList.toggle('active', on);
+    el.classList.toggle('pending', on && !!_pending);
     el.setAttribute('aria-checked', on ? 'true' : 'false');
   });
   const sel = document.getElementById('theme-design-select');
-  if (sel) sel.value = design;
+  if (sel) sel.value = shown;
+  const dirty = !!_pending && _pending !== design;
+  document.querySelectorAll('.ui-design-actions').forEach(el => { el.hidden = !dirty; });
+  const themeSave = document.getElementById('theme-design-save');
+  if (themeSave) themeSave.hidden = !dirty;
+}
+
+function _choose(design) {
+  if (!DESIGNS.includes(design)) return;
+  _pending = design === getDesign() ? null : design;
+  _syncControls(getDesign());
+}
+
+function _cancel() {
+  _pending = null;
+  _syncControls(getDesign());
+}
+
+// Store the design (here and on the server) and reload into it.
+export async function saveDesign(design) {
+  if (!DESIGNS.includes(design)) return;
+  try { localStorage.setItem(LS_KEY, design); } catch {}
+  _swapPalette(design);
+  try {
+    await Promise.race([
+      fetch('/api/prefs/ui-design', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin', body: JSON.stringify({ value: design }),
+      }),
+      new Promise(r => setTimeout(r, 1500)),
+    ]);
+  } catch {}
+  location.reload();
+}
+
+function _save() {
+  if (!_pending) return;
+  document.querySelectorAll('.ui-design-save, #theme-design-save').forEach(b => { b.disabled = true; });
+  saveDesign(_pending);
 }
 
 function _wireControls() {
   document.querySelectorAll('[data-ui-design-choice]').forEach(el => {
     if (el._uiDesignWired) return;
     el._uiDesignWired = true;
-    el.addEventListener('click', () => setDesign(el.dataset.uiDesignChoice));
+    el.addEventListener('click', () => _choose(el.dataset.uiDesignChoice));
     el.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDesign(el.dataset.uiDesignChoice); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _choose(el.dataset.uiDesignChoice); }
     });
   });
   const sel = document.getElementById('theme-design-select');
   if (sel && !sel._uiDesignWired) {
     sel._uiDesignWired = true;
-    sel.addEventListener('change', () => setDesign(sel.value));
+    sel.addEventListener('change', () => _choose(sel.value));
   }
+  document.querySelectorAll('.ui-design-save, #theme-design-save').forEach(b => {
+    if (b._uiDesignWired) return;
+    b._uiDesignWired = true;
+    b.addEventListener('click', _save);
+  });
+  document.querySelectorAll('.ui-design-cancel').forEach(b => {
+    if (b._uiDesignWired) return;
+    b._uiDesignWired = true;
+    b.addEventListener('click', _cancel);
+  });
   _syncControls(getDesign());
 }
 
@@ -170,4 +226,4 @@ if (document.readyState === 'loading') {
   init();
 }
 
-export default { getDesign, setDesign, DESIGNS, DEFAULT_DESIGN, LS_KEY };
+export default { getDesign, setDesign, saveDesign, DESIGNS, DEFAULT_DESIGN, LS_KEY };

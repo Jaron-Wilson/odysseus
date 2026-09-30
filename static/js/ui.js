@@ -1191,16 +1191,20 @@ if (!window._odyEscExpandGuard) {
   // open guarantees most-recently-opened wins both visually AND for ESC.
   let _zCounter = 1000;
   const _isVisible = (m) => !m.classList.contains('hidden') && getComputedStyle(m).display !== 'none';
+  // Promote on the hidden -> visible transition only. Re-promoting on every
+  // class/style change never settles once two modals are visible and change
+  // in the same batch: each bump leaves the other one below the counter, so
+  // they leapfrog forever (it hung the page switching Interface design with
+  // several tools open, and the tab crashed).
+  const _wasVisible = new WeakMap();
   const _promote = (m) => {
-    if (!m?.classList?.contains('modal') || !_isVisible(m)) return;
-    // Workspace tab pages (workspace/shell.js) stack by workspace.css; two
-    // of them promoting each other in turn never settles.
+    if (!m?.classList?.contains('modal')) return;
+    const vis = _isVisible(m);
+    const was = _wasVisible.get(m) === true;
+    _wasVisible.set(m, vis);
+    if (!vis || was) return;
+    // Workspace tab pages (workspace/shell.js) stack by workspace.css.
     if (m.classList.contains('ws-docked')) return;
-    // Re-entry guard: setting style.zIndex itself fires the observer that
-    // calls us back. Skip if this element is already pinned to the top
-    // (matches the current counter) so we don't spin into an infinite loop.
-    const cur = parseInt(m.style.zIndex, 10) || 0;
-    if (cur === _zCounter) return;
     m.style.zIndex = String(++_zCounter);
   };
   new MutationObserver((muts) => {

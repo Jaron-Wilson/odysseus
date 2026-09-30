@@ -37449,3 +37449,11 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
   word-break: break-all;
 }
 .sms-error { color: var(--red, #d33); }
+
+/* Theme panel: Save for a changed Interface design (uiDesign.js). */
+.theme-fd-save {
+  margin-top: 6px; height: 28px; padding: 0 12px; border-radius: 7px; border: none; cursor: pointer;
+  background: var(--red); color: #fff; font: inherit; font-size: 12px; font-weight: 600;
+}
+.theme-fd-save[hidden] { display: none; }
+.theme-fd-save:disabled { opacity: .6; cursor: default; }
