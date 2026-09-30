@@ -847,6 +847,9 @@ html.ui-studio #notes-pane .note-card-label-chip {
   color: var(--st-text-2); background: var(--st-press); border: 1px solid transparent; border-radius: 999px;
 }
 html.ui-studio #notes-pane .note-card-label-chip:hover { background: var(--st-hover); border-color: var(--st-line-2); color: var(--st-text); }
+@media (pointer: coarse), (max-width: 768px) {
+  html.ui-studio #notes-pane .note-card-label-chip { height: 26px; padding: 0 10px; }
+}
 /* Colored notes: a faint wash + a colored edge instead of a heavy fill */
 html.ui-studio #notes-pane .note-card[class*="note-color-"] { box-shadow: var(--st-shadow-sm); }
 html.ui-studio #notes-pane .note-card.note-color-yellow { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--hl-string, #d9a23a) 70%, transparent), var(--st-shadow-sm); }
