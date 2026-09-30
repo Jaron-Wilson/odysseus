@@ -11,6 +11,26 @@ from typing import Optional, Dict, Any
 logger = logging.getLogger(__name__)
 
 
+def audio_container(audio_bytes: bytes) -> tuple:
+    """(file suffix, MIME type) for uploaded audio, from its magic bytes.
+
+    The composer's recorder sends WebM; the voice call sends WAV; Safari's
+    MediaRecorder makes MP4. OpenAI-compatible transcription APIs go by the
+    file name, so a WAV labelled audio.webm is rejected. Unknown bytes keep
+    the old WebM label.
+    """
+    head = bytes(audio_bytes[:12])
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return ".wav", "audio/wav"
+    if head[:4] == b"OggS":
+        return ".ogg", "audio/ogg"
+    if head[4:8] == b"ftyp":
+        return ".mp4", "audio/mp4"
+    if head[:3] == b"ID3" or (len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
+        return ".mp3", "audio/mpeg"
+    return ".webm", "audio/webm"
+
+
 class STTService:
     """Multi-provider STT service.
 
@@ -94,7 +114,8 @@ class STTService:
         tmp_path = None
         try:
             # Write to temp file (faster-whisper needs a file path or file-like)
-            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
+            suffix, _mime = audio_container(audio_bytes)
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
                 tmp.write(audio_bytes)
                 tmp_path = tmp.name
 
@@ -135,7 +156,8 @@ class STTService:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        files = {"file": ("audio.webm", io.BytesIO(audio_bytes), "audio/webm")}
+        suffix, mime = audio_container(audio_bytes)
+        files = {"file": ("audio" + suffix, io.BytesIO(audio_bytes), mime)}
         data = {"model": model or "whisper-1"}
         if language:
             data["language"] = language

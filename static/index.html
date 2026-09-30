@@ -237,6 +237,7 @@
   <link rel="stylesheet" href="/static/css/studio-pages-a.css">
   <link rel="stylesheet" href="/static/css/studio-pages-b.css">
   <link rel="stylesheet" href="/static/css/workspace.css">
+  <link rel="stylesheet" href="/static/css/voiceCall.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
@@ -1260,6 +1261,8 @@
           <span class="notify-done-wrap">
             <button type="button" class="input-icon-btn notify-done-btn" id="notify-done-btn" aria-label="Notify me when the reply is done" aria-pressed="false"></button>
           </span>
+          <!-- Voice call with the agent in this chat (voiceCall.js) -->
+          <button type="button" class="input-icon-btn voice-call-btn" id="voice-call-btn" aria-label="Voice call" aria-pressed="false" title="Voice call: talk with the agent"></button>
           <!-- Agent / Chat mode toggle -->
           <div class="mode-toggle">
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
@@ -1687,6 +1690,58 @@
                 <input id="set-researchRunTimeout" type="text" inputmode="numeric" placeholder="1800 sec (0 = no limit)" class="settings-select" style="width:120px;">
               </div>
               <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+            </div>
+          </div>
+          <!-- Voice call (static/js/voiceCall.js). Listening, pause and
+               barge-in are kept on this device; the engines are the app's
+               Speech to Text and Text to Speech settings. -->
+          <div class="admin-card" id="voice-call-settings">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Voice call</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Talk with the agent from the phone button by the composer, or <code>/call</code>. Your words go into the chat as messages and the reply is read out loud.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" for="set-vcMode">Listening</label>
+                <select id="set-vcMode" class="settings-select">
+                  <option value="auto">Automatic: a pause sends</option>
+                  <option value="ptt">Push to talk (hold Space)</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="set-vcSilence">Pause length</label>
+                <select id="set-vcSilence" class="settings-select">
+                  <option value="500">0.5 seconds</option>
+                  <option value="700">0.7 seconds</option>
+                  <option value="1000">1 second</option>
+                  <option value="1500">1.5 seconds</option>
+                  <option value="2000">2 seconds</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="set-vcBargeIn">Barge-in</label>
+                <span style="flex:1;font-size:12px;opacity:0.7">Talking over the agent stops it</span>
+                <label class="admin-switch"><input type="checkbox" id="set-vcBargeIn" checked><span class="admin-slider"></span></label>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="set-vcStt">Hears with</label>
+                <select id="set-vcStt" class="settings-select">
+                  <option value="disabled">Off</option>
+                  <option value="local">Local (Whisper)</option>
+                  <option value="browser">Browser (built-in)</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="set-vcTts">Speaks with</label>
+                <select id="set-vcTts" class="settings-select">
+                  <option value="browser">Browser (built-in)</option>
+                  <option value="local">Local (Kokoro-82M)</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="set-vcVoice">Voice</label>
+                <input id="set-vcVoice" class="settings-select" type="text" list="set-vcVoiceList" autocomplete="off" spellcheck="false">
+                <datalist id="set-vcVoiceList"></datalist>
+              </div>
+              <div id="set-vcMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <!-- Agent card moved to the Agent Tools tab. -->
@@ -2760,6 +2815,7 @@
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
+<script type="module" src="/static/js/voiceCall.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
