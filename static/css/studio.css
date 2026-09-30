@@ -379,10 +379,12 @@ html.ui-studio .msg .body table {
   border-collapse: separate; border-spacing: 0; width: auto; max-width: 100%;
   border: 1px solid var(--st-line-2); border-radius: var(--st-r); overflow: hidden; font-size: 13.5px;
 }
-/* Wide tables scroll inside their frame instead of running off a phone */
+/* style.css makes a chat table a scrolling block at least 100% wide. Studio
+   frames the table itself, so that minimum would leave the frame wider than
+   the rows: the table hugs its content instead (the renderer's inline
+   width:100% needs the !important) and a wide one still scrolls in it. */
 html.ui-studio .msg .body table {
-  display: block; width: max-content; max-width: 100%; overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  width: max-content !important; min-width: 0; max-width: 100%;
 }
 html.ui-studio .msg .body th {
   background: var(--st-surface-2); font-weight: 600; text-align: left; color: var(--st-text);
