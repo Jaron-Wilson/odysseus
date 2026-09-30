@@ -219,6 +219,23 @@ html.ui-studio .sidebar .email-inbound-btn {
 html.ui-studio .sidebar .list-item-plus-btn { border-radius: var(--st-r-xs); color: var(--st-text-3); }
 html.ui-studio .sidebar .list-item-plus-btn:hover { background: var(--st-press); color: var(--st-text); }
 
+/* Touch / phone: the row's small +, header and collapse buttons get a
+   28px hit area */
+@media (pointer: coarse), (max-width: 768px) {
+  html.ui-studio .sidebar .list-item-plus-btn,
+  html.ui-studio .sidebar .section-header-btn,
+  html.ui-studio .sidebar .section-collapse-btn {
+    min-width: 28px; min-height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  /* style.css pins the + at 14px tall with !important. The negative margin
+     keeps the row at its usual height. */
+  html.ui-studio .sidebar .list-item-plus-btn {
+    height: 28px !important; min-height: 28px !important; min-width: 28px !important;
+    margin-block: -6px;
+  }
+}
+
 /* User bar */
 html.ui-studio .sidebar-user-bar {
   border-top: 1px solid var(--st-line);
@@ -467,7 +484,7 @@ html.ui-studio .model-picker-btn {
   color: var(--st-text-2); border: 1px solid var(--st-line); background: transparent;
 }
 html.ui-studio .model-picker-btn:hover { background: var(--st-hover); color: var(--st-text); }
-@media (pointer: coarse) {
+@media (pointer: coarse), (max-width: 768px) {
   html.ui-studio .model-picker-btn { min-height: 28px; padding: 5px 11px; }
 }
 html.ui-studio .chat-input-bar {
