@@ -8,16 +8,67 @@ Commands (any case, extra spaces are fine):
 
 | Text | What it does |
 |---|---|
-| `help` | Lists the commands. |
+| `help` | Lists the commands, and which chat you are talking to. |
 | `list` | Your 10 most recently active chats, numbered: `1. Trip plans (qwen, 3h ago)`. |
-| `say <n> <text>` | Sends `<text>` to chat `n` from your last `list` and texts back its answer (up to 500 characters, cut with `...(truncated)`). |
-| `status` | Running coding-agent runs, background jobs, and chats writing a reply. |
+| `new [model]` | Starts a new chat and makes it your conversation. With no model it uses your default model (the one a new chat in the web app starts on). |
+| `chat <n>` | Makes chat `n` from your last `list` your conversation. |
+| `end` or `stop` | Ends the conversation. The chat itself stays. |
+| `models` | The models you can use, numbered (up to 10). `*` marks the current chat's. |
+| `model <n\|name>` | Switches the current chat to model `n` from `models`, or to the model whose name matches (`model llama`, `model gpt 5`). |
+| `say <n> <text>` | Sends `<text>` to chat `n` from your last `list` and texts back its answer, without changing your conversation. |
+| `status` | Running coding-agent runs, background jobs, chats writing a reply, and your conversation. |
 
-`say` numbers come from the last `list` you were sent (kept for 6 hours), so
-`say 2` still means the same chat after it moves to the top. Only your own
-chats are listed or reachable. `say` sends a plain model turn to that chat
-(the same path as the agent's `send_to_session` tool): the message and the
-answer are saved in the chat, and no tools run.
+Any other text goes to your conversation as a message, and its answer comes
+back. With no conversation, you get a short hint to send `new` or `chat <n>`.
+
+`chat` and `say` numbers come from the last `list` you were sent (kept for 6
+hours), so `say 2` still means the same chat after it moves to the top. Only
+your own chats are listed or reachable. A message sends a plain model turn to
+that chat (the same path as the agent's `send_to_session` tool): the message
+and the answer are saved in the chat, and no tools run.
+
+## Conversations
+
+Text `new` (or `chat <n>`) once, then just text. Each of your numbers has its
+own conversation, and it is saved with your settings, so it survives a
+restart. An example:
+
+```
+You:       new
+Odysseus:  New chat with qwen3-32b. Text anything to talk to it, end to stop.
+You:       What are three things to pack for Costa Rica in the rainy season?
+Odysseus:  A light rain jacket, quick-dry clothes, and a dry bag for your phone.
+You:       models
+Odysseus:  1. qwen3-32b *
+           2. llama-3.3-70b
+           3. gpt-5
+           Reply: model <n> to switch this chat, new <n> for a new one
+You:       model gpt 5
+Odysseus:  qwen3-32b 14:05 (SMS) now uses gpt-5.
+You:       And which of those matters most?
+Odysseus:  The dry bag: rain is certain, a soaked phone is the real problem.
+You:       end
+Odysseus:  Conversation ended. Text new or chat <n> to start another.
+```
+
+- A word command counts only on its own: `stop` ends the conversation, but
+  `stop the build if it fails` is a message. `chat` counts only when a number
+  follows. `say`, `new` and `model` always count as commands, so start a
+  message some other way if it would begin with one of those words.
+- `model` changes the chat the same way the model picker in the web app does,
+  so the chat shows the new model there too.
+- The chat `new` makes is named after its model and the time, with `(SMS)`,
+  and shows up in the web app like any other chat.
+- If the chat is deleted, the conversation is forgotten and the next text gets
+  the hint.
+
+### Long answers
+
+An answer that does not fit in one text (450 characters) is split on line or
+sentence breaks into numbered texts, `(1/3) ...`, `(2/3) ...`, sent in order.
+At most 6 are sent; after that the last one ends with `...continued in the
+app`, and the whole answer is in the chat. With web push replies (no reply
+URL) the parts go as one notification.
 
 ## How it is secured
 
@@ -131,14 +182,14 @@ older builds send `phoneNumber`, which works too). Differences to know:
   default); lower the retry count in its webhook settings. This is why SMS
   Forwarder is the recommended way to receive.
 
-## How long `say` takes
+## How long an answer takes
 
-A `say` is a model turn, and the forwarder apps give up on a slow request and
-retry it, which would send your message twice. So Odysseus waits at most 5
-seconds. If the answer is ready by then, it is the reply. If not, the request
-is answered at once ("Sent to Trip plans. The answer will follow when it is
-ready.") and the answer is sent through the reply channel (text or
-notification) when the chat finishes. Every reply goes through the reply
+A message (or a `say`) is a model turn, and the forwarder apps give up on a
+slow request and retry it, which would send your message twice. So Odysseus
+waits at most 5 seconds. If the answer is ready by then, it is the reply. If
+not, the request is answered at once ("Sent to Trip plans. The answer will
+follow when it is ready.") and the answer is sent through the reply channel
+(text or notification) when the chat finishes. Every reply goes through the reply
 channel, since the forwarder apps do not show the HTTP response to you.
 
 A chat that is already writing a reply answers "That chat is busy" instead of

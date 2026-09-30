@@ -3,6 +3,10 @@
 Asked for: "your Pixel's SMS-Forwarder posts each incoming text to a new
 POST /api/sms/inbound ... commands are list, say <n> <text>, status, help;
 replies go back over the phone's send endpoint, or web-push if that's unset".
+Then: "what if i want to just chat with an agent, can i select a model for
+that text messaging? so then i can talk back and forth between it". So each
+sender has a current conversation (new, chat <n>, end): any text that is not
+a command is a turn in it, and models / model <n|name> pick its model.
 
 Phone side (the secret in the path is the credential, like the task webhooks):
     POST /api/sms/inbound/{secret}      one incoming text from the forwarder app
@@ -25,7 +29,8 @@ slow webhook and retry, which would send the message twice, so the answer is
 waited for only SAY_INLINE_WAIT seconds. After that the response is an
 acknowledgement and the answer goes out through the reply channel when ready.
 Every reply goes through the reply channel either way, since the forwarder
-apps do not show the HTTP response to anyone.
+apps do not show the HTTP response to anyone. A long answer goes out as up to
+MAX_PARTS numbered texts, "(1/3) ...", in order.
 """
 
 import asyncio
@@ -52,9 +57,11 @@ INBOUND_PREFIX = "/api/sms/inbound/"
 SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{32,64}$")
 MAX_NUMBERS = 5
 MAX_TEXT = 2000
-REPLY_CHARS = 500
-TRUNCATED = "...(truncated)"
+REPLY_CHARS = 450
+MAX_PARTS = 6
+CONTINUED = "...continued in the app"
 LIST_LIMIT = 10
+MODELS_LIMIT = 10
 SAY_INLINE_WAIT = 5.0
 REPLY_TIMEOUT = 5.0
 
@@ -62,14 +69,24 @@ REPLY_TIMEOUT = 5.0
 # number 2 in that text even after a reply has moved it to the top.
 _LAST_LIST: Dict[str, Tuple[float, List[str]]] = {}
 LIST_MEMORY_S = 6 * 3600
+# Likewise the last "models", so "model 3" is the model that was number 3.
+_LAST_MODELS: Dict[str, Tuple[float, List[Dict]]] = {}
 # Replies and long "say" turns run past the request; keep them referenced.
 _PENDING: set = set()
 
 HELP = ("Odysseus commands:\n"
+        "new [model] - start a chat and talk to it\n"
+        "chat <n> - talk to chat n from the last list\n"
+        "end - stop talking to it\n"
+        "models - models you can use, numbered\n"
+        "model <n|name> - switch this chat's model\n"
         "list - your recent chats, numbered\n"
-        "say <n> <text> - send text to chat n from the last list\n"
+        "say <n> <text> - one text to chat n\n"
         "status - running agents and jobs\n"
-        "help - this message")
+        "help - this message\n"
+        "Anything else goes to the chat you are talking to.")
+HINT = ("You are not talking to a chat. Text new to start one, or list and then "
+        "chat <n> to pick one. help lists the commands.")
 
 
 # ── Phone numbers ──────────────────────────────────────────────────────────
@@ -127,6 +144,27 @@ def save_config(user: Optional[str], cfg: Dict) -> None:
     prefs = prefs_routes._load_for_user(user)
     prefs[PREF_KEY] = cfg
     prefs_routes._save_for_user(user, prefs)
+
+
+def get_conversation(owner: Optional[str], sender: str) -> str:
+    """The chat this sender is talking to, or "". Kept in the owner's sms
+    config, keyed by normalized number, so it survives a restart."""
+    conv = get_config(owner).get("conversations")
+    entry = conv.get(sender) if isinstance(conv, dict) else None
+    return str(entry.get("sid") or "") if isinstance(entry, dict) else ""
+
+
+def set_conversation(owner: Optional[str], sender: str, sid: Optional[str]) -> None:
+    """Make `sid` the sender's current chat (None clears it). Re-reads the
+    config first so a save from Settings in the meantime is kept."""
+    cfg = get_config(owner)
+    conv = dict(cfg.get("conversations") or {})
+    if sid:
+        conv[sender] = {"sid": sid, "since": time.time()}
+    else:
+        conv.pop(sender, None)
+    cfg["conversations"] = conv
+    save_config(owner, cfg)
 
 
 def match_secret(secret: str) -> Optional[Tuple[Optional[str], Dict]]:
@@ -244,7 +282,7 @@ def cmd_list(session_manager, owner: Optional[str]) -> str:
         return "You have no chats yet."
     lines = [f"{i}. {(s.name or 'Untitled')[:40]} ({getattr(s, 'model', '') or 'no model'}, {_ago(ts)})"
              for i, (sid, s, ts) in enumerate(rows, 1)]
-    return "\n".join(lines) + "\nReply: say <n> <text>"
+    return "\n".join(lines) + "\nReply: chat <n> to talk to one, or say <n> <text>"
 
 
 def _resolve_n(session_manager, owner: Optional[str], n: int):
@@ -268,11 +306,74 @@ def _resolve_n(session_manager, owner: Optional[str], n: int):
     return sid, sess
 
 
-def truncate(text: str, limit: int = REPLY_CHARS) -> str:
+def _owned(session_manager, owner: Optional[str], sid: str):
+    """The session `sid`, only if it still exists and is the owner's."""
+    try:
+        sess = session_manager.get_session(sid) if sid else None
+    except Exception:
+        return None
+    scope = _session_owner_scope(owner)
+    if not sess or (scope is not None and getattr(sess, "owner", None) != scope):
+        return None
+    return sess
+
+
+def _current(session_manager, owner: Optional[str], sender: str):
+    """(sid, session) the sender is talking to. A chat that was deleted or
+    is no longer theirs is forgotten."""
+    sid = get_conversation(owner, sender)
+    if not sid:
+        return None
+    sess = _owned(session_manager, owner, sid)
+    if not sess:
+        set_conversation(owner, sender, None)
+        return None
+    return sid, sess
+
+
+def _chat_label(sess) -> str:
+    return f"{(getattr(sess, 'name', '') or 'Untitled')[:40]} ({getattr(sess, 'model', '') or 'no model'})"
+
+
+def _cut(text: str, limit: int) -> int:
+    """Where to end a part of at most `limit` characters: the last line
+    break or sentence end in its second half, else the last space."""
+    head = text[: limit + 1]
+    best = head.rfind("\n", 0, limit)
+    for m in re.finditer(r"[.!?][\"')\]]*\s", head):
+        if m.end() - 1 <= limit:
+            best = max(best, m.end() - 1)
+    if best >= limit // 2:
+        return best
+    space = head.rfind(" ", 0, limit)
+    return space if space >= limit // 3 else limit
+
+
+def split_reply(text: str, size: int = REPLY_CHARS, max_parts: int = MAX_PARTS) -> List[str]:
+    """A reply as texts of at most `size` characters. One that fits is sent
+    as is; a longer one becomes "(1/3) ...", "(2/3) ..." parts, and past
+    `max_parts` the last part ends with CONTINUED."""
     text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - len(TRUNCATED)].rstrip() + TRUNCATED
+    if len(text) <= size:
+        return [text]
+    budget = size - len(f"({max_parts}/{max_parts}) ")
+    parts: List[str] = []
+    rest = text
+    while rest and len(parts) < max_parts:
+        if len(rest) <= budget:
+            parts.append(rest)
+            rest = ""
+            break
+        at = _cut(rest, budget)
+        parts.append(rest[:at].rstrip())
+        rest = rest[at:].lstrip()
+    if rest:
+        room = budget - len(CONTINUED) - 1
+        last = parts[-1]
+        if len(last) > room:
+            last = last[:_cut(last, room)].rstrip()
+        parts[-1] = f"{last} {CONTINUED}"
+    return [f"({i}/{len(parts)}) {p}" for i, p in enumerate(parts, 1)]
 
 
 async def _say(sid: str, message: str, owner: Optional[str]) -> str:
@@ -282,7 +383,80 @@ async def _say(sid: str, message: str, owner: Optional[str]) -> str:
     if r.get("error"):
         logger.warning("[sms] say to %s failed: %s", sid, r["error"])
         return "Sorry, that chat could not answer right now."
-    return truncate(r.get("response") or "(empty answer)")
+    return (r.get("response") or "(empty answer)").strip()
+
+
+# ── Models ─────────────────────────────────────────────────────────────────
+
+def available_models(owner: Optional[str], is_admin: bool) -> List[Dict]:
+    """Every chat model the owner can pick, in the web picker's order (the
+    same owner-scoped list GET /api/models serves). Offline and image
+    endpoints are left out."""
+    from routes.model_routes import fetch_models
+    out: List[Dict] = []
+    for item in fetch_models(owner=owner or "", is_admin=is_admin).get("items") or []:
+        if item.get("offline") or (item.get("model_type") or "llm") != "llm":
+            continue
+        ids = list(item.get("models") or []) + list(item.get("models_extra") or [])
+        shown = list(item.get("models_display") or []) + list(item.get("models_extra_display") or [])
+        for i, mid in enumerate(ids):
+            out.append({"model": mid, "name": shown[i] if i < len(shown) else mid.split("/")[-1],
+                        "endpoint_id": item.get("endpoint_id") or "", "url": item.get("url") or "",
+                        "endpoint_name": item.get("endpoint_name") or ""})
+    return out
+
+
+def cmd_models(owner: Optional[str], is_admin: bool, current_model: str = "") -> str:
+    models = available_models(owner, is_admin)
+    shown = models[:MODELS_LIMIT]
+    _LAST_MODELS[_owner_key(owner)] = (time.time(), shown)
+    if not shown:
+        return "No models are available. Add a model endpoint in Settings."
+    names = [m["name"] for m in shown]
+    lines = []
+    for i, m in enumerate(shown, 1):
+        # The endpoint only when two endpoints serve a model of that name.
+        where = f" ({m['endpoint_name'][:20]})" if names.count(m["name"]) > 1 and m["endpoint_name"] else ""
+        mark = " *" if current_model and m["model"] == current_model else ""
+        lines.append(f"{i}. {m['name'][:40]}{where}{mark}")
+    if len(models) > len(shown):
+        lines.append(f"(+{len(models) - len(shown)} more, model <name> finds them)")
+    return "\n".join(lines) + "\nReply: model <n> to switch this chat, new <n> for a new one"
+
+
+def _squash(s: str) -> str:
+    return re.sub(r"[\s._:/-]+", "", s.lower())
+
+
+def resolve_model(owner: Optional[str], is_admin: bool, arg: str) -> Optional[Dict]:
+    """A model by its number in the last "models" text, or by name: an exact
+    name first, then one that starts with it, then one that contains it,
+    ignoring case, spaces and punctuation ("gpt 5" finds gpt-5)."""
+    arg = arg.strip()
+    if re.fullmatch(r"\d+", arg):
+        remembered = _LAST_MODELS.get(_owner_key(owner))
+        if remembered and time.time() - remembered[0] < LIST_MEMORY_S:
+            shown = remembered[1]
+        else:
+            shown = available_models(owner, is_admin)[:MODELS_LIMIT]
+        n = int(arg)
+        return shown[n - 1] if 1 <= n <= len(shown) else None
+    want = _squash(arg)
+    if not want:
+        return None
+    models = available_models(owner, is_admin)
+    for test in (lambda k: k == want, lambda k: k.startswith(want), lambda k: want in k):
+        for m in models:
+            if test(_squash(m["name"])) or test(_squash(m["model"])):
+                return m
+    return None
+
+
+def _no_such_model(arg: str) -> str:
+    arg = arg.strip()
+    if re.fullmatch(r"\d+", arg):
+        return f"There is no model {arg}. Send models to see the numbers."
+    return f"No model matches \"{arg[:40]}\". Send models to see them."
 
 
 def cmd_status(session_manager, owner: Optional[str]) -> str:
@@ -313,6 +487,15 @@ def cmd_status(session_manager, owner: Optional[str]) -> str:
     except Exception as e:
         logger.debug("[sms] chat status unavailable: %s", e)
     return "\n".join(lines) if lines else "Nothing is running."
+
+
+def _is_admin(request: Request, owner: Optional[str]) -> bool:
+    """Admins see every endpoint in the model list, as in the web picker."""
+    try:
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        return bool(owner and auth_mgr is not None and auth_mgr.is_admin(owner))
+    except Exception:
+        return False
 
 
 # ── Replies ────────────────────────────────────────────────────────────────
@@ -376,6 +559,17 @@ async def deliver(owner: Optional[str], cfg: Dict, to: str, text: str) -> str:
         return "failed"
 
 
+async def deliver_parts(owner: Optional[str], cfg: Dict, to: str, parts: List[str]) -> None:
+    """Send a split reply. Texts go one at a time, each after the last was
+    taken, so they arrive in order. A web push is one notification (they
+    share a tag, so a second would replace the first)."""
+    if not str(cfg.get("reply_url") or "").strip():
+        await deliver(owner, cfg, to, "\n\n".join(parts))
+        return
+    for part in parts:
+        await deliver(owner, cfg, to, part)
+
+
 def _background(coro) -> asyncio.Task:
     task = asyncio.create_task(coro)
     _PENDING.add(task)
@@ -436,16 +630,94 @@ def setup_sms_routes(session_manager) -> APIRouter:
     router = APIRouter(tags=["sms"])
     _install_log_redaction()
 
-    async def _handle(owner: Optional[str], cfg: Dict, sender: str, text: str) -> Dict:
+    def _send(owner: Optional[str], cfg: Dict, sender: str, reply: str) -> Dict:
+        parts = split_reply(reply)
+        _background(deliver_parts(owner, cfg, sender, parts))
+        return {"ok": True, "reply": "\n".join(parts)}
+
+    async def _turn(owner: Optional[str], cfg: Dict, sender: str, sid: str, sess, message: str) -> Dict:
+        """One model turn in `sid`, for say and for the current conversation:
+        answered inline if it is quick, else acknowledged now and sent later."""
+        try:
+            from src import agent_runs
+            busy = agent_runs.is_active(sid)
+        except Exception:
+            busy = False
+        if busy:
+            return _send(owner, cfg, sender, "That chat is busy with a reply right now. Try again in a minute.")
+        logger.info("[sms] turn in %s for %s", sid, owner or "-")
+        turn = _background(_say(sid, message, owner))
+        try:
+            answer = await asyncio.wait_for(asyncio.shield(turn), SAY_INLINE_WAIT)
+        except asyncio.TimeoutError:
+            async def _later():
+                await deliver_parts(owner, cfg, sender, split_reply(await turn))
+            _background(_later())
+            name = (getattr(sess, "name", "") or "the chat")[:40]
+            return {"ok": True, "reply": f"Sent to {name}. The answer will follow when it is ready."}
+        return _send(owner, cfg, sender, answer)
+
+    def _new_chat(owner: Optional[str], sender: str, is_admin: bool, arg: str) -> str:
+        """`new [model]`: a chat on that model, or on the default model the
+        web UI's new chat starts on."""
+        from routes.session_routes import create_direct_chat
+        scope = _session_owner_scope(owner)
+        if arg:
+            m = resolve_model(owner, is_admin, arg)
+            if not m:
+                return _no_such_model(arg)
+            model, endpoint_id = m["model"], m["endpoint_id"]
+        else:
+            from routes.model_routes import resolve_default_chat
+            dc = resolve_default_chat(owner or "", is_admin)
+            model, endpoint_id = dc.get("model") or "", dc.get("endpoint_id") or ""
+            if not (model and endpoint_id):
+                return "No default model is set. Send models, then new <n>."
+        name = f"{model.split('/')[-1]} {datetime.now().strftime('%H:%M')} (SMS)"
+        try:
+            sid, sess = create_direct_chat(session_manager, scope, model, endpoint_id, name=name)
+        except HTTPException:
+            return "That model's endpoint is not available any more. Send models to pick another."
+        set_conversation(owner, sender, sid)
+        logger.info("[sms] new chat %s for %s", sid, owner or "-")
+        return f"New chat with {model.split('/')[-1]}. Text anything to talk to it, end to stop."
+
+    def _switch_model(owner: Optional[str], sender: str, is_admin: bool, arg: str) -> str:
+        current = _current(session_manager, owner, sender)
+        if not current:
+            return HINT
+        sid, sess = current
+        if not arg:
+            return f"This chat uses {getattr(sess, 'model', '') or 'no model'}. Send models to see others."
+        m = resolve_model(owner, is_admin, arg)
+        if not m:
+            return _no_such_model(arg)
+        from routes.session_routes import switch_session_model
+        try:
+            switch_session_model(sess, sid, m["model"], m["url"], m["endpoint_id"], _session_owner_scope(owner))
+        except HTTPException:
+            return "That model's endpoint is not available any more. Send models to pick another."
+        logger.info("[sms] chat %s switched model for %s", sid, owner or "-")
+        return f"{(getattr(sess, 'name', '') or 'This chat')[:40]} now uses {m['name']}."
+
+    async def _handle(owner: Optional[str], cfg: Dict, sender: str, text: str, is_admin: bool = False) -> Dict:
         words = text.strip().split(None, 1)
         cmd = words[0].lower() if words else ""
         rest = words[1].strip() if len(words) > 1 else ""
-        if cmd in ("help", "?", "commands"):
-            reply = HELP
-        elif cmd == "list":
+        # A bare word is a command only on its own ("stop" ends the
+        # conversation, "stop it from crashing" is a turn in it); say, new and
+        # model always are.
+        bare = not rest
+        if cmd in ("help", "?", "commands") and bare:
+            current = _current(session_manager, owner, sender)
+            reply = HELP + (f"\nNow talking to: {_chat_label(current[1])}" if current else "")
+        elif cmd == "list" and bare:
             reply = cmd_list(session_manager, owner)
-        elif cmd == "status":
+        elif cmd == "status" and bare:
+            current = _current(session_manager, owner, sender)
             reply = cmd_status(session_manager, owner)
+            if current:
+                reply += f"\nTalking to: {_chat_label(current[1])}"
         elif cmd == "say":
             m = re.match(r"^(\d+)\s+(.+)$", rest, re.S)
             if not m:
@@ -455,29 +727,34 @@ def setup_sms_routes(session_manager) -> APIRouter:
                 if not found:
                     reply = f"There is no chat {m.group(1)} in your list. Send list to see the numbers."
                 else:
-                    sid, sess = found
-                    try:
-                        from src import agent_runs
-                        busy = agent_runs.is_active(sid)
-                    except Exception:
-                        busy = False
-                    if busy:
-                        reply = "That chat is busy with a reply right now. Try again in a minute."
-                    else:
-                        logger.info("[sms] say to %s for %s", sid, owner or "-")
-                        turn = _background(_say(sid, m.group(2).strip(), owner))
-                        try:
-                            reply = await asyncio.wait_for(asyncio.shield(turn), SAY_INLINE_WAIT)
-                        except asyncio.TimeoutError:
-                            async def _later():
-                                await deliver(owner, cfg, sender, await turn)
-                            _background(_later())
-                            name = (getattr(sess, "name", "") or "the chat")[:40]
-                            return {"ok": True, "reply": f"Sent to {name}. The answer will follow when it is ready."}
+                    return await _turn(owner, cfg, sender, found[0], found[1], m.group(2).strip())
+        elif cmd == "chat" and re.fullmatch(r"\d+", rest):
+            found = _resolve_n(session_manager, owner, int(rest))
+            if not found:
+                reply = f"There is no chat {rest} in your list. Send list to see the numbers."
+            else:
+                set_conversation(owner, sender, found[0])
+                reply = f"Now talking to {_chat_label(found[1])}. Text anything to send it, end to stop."
+        elif cmd == "new":
+            reply = _new_chat(owner, sender, is_admin, rest)
+        elif cmd in ("end", "stop") and bare:
+            if get_conversation(owner, sender):
+                set_conversation(owner, sender, None)
+                reply = "Conversation ended. Text new or chat <n> to start another."
+            else:
+                reply = "You are not talking to a chat."
+        elif cmd == "models" and bare:
+            current = _current(session_manager, owner, sender)
+            reply = cmd_models(owner, is_admin, getattr(current[1], "model", "") if current else "")
+        elif cmd == "model":
+            reply = _switch_model(owner, sender, is_admin, rest)
         else:
-            reply = "Unknown command.\n" + HELP
-        _background(deliver(owner, cfg, sender, reply))
-        return {"ok": True, "reply": reply}
+            current = _current(session_manager, owner, sender)
+            if not current or not text.strip():
+                reply = HINT
+            else:
+                return await _turn(owner, cfg, sender, current[0], current[1], text.strip())
+        return _send(owner, cfg, sender, reply)
 
     @router.post("/api/sms/inbound/{secret}")
     async def inbound(secret: str, request: Request):
@@ -501,7 +778,7 @@ def setup_sms_routes(session_manager) -> APIRouter:
         logger.info("[sms] inbound from %s for %s: accepted (%d chars)", sender or "?", owner or "-", len(text))
         logger.debug("[sms] inbound text: %r", text[:200])
         try:
-            return await _handle(owner, cfg, sender, text)
+            return await _handle(owner, cfg, sender, text, _is_admin(request, owner))
         except Exception as e:
             logger.exception("[sms] command failed: %s", type(e).__name__)
             return {"ok": False, "reply": "Something went wrong on the server. Try again."}

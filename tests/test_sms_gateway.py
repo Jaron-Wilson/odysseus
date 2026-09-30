@@ -31,8 +31,51 @@ class _Mgr:
     def get_session(self, sid):
         return self.sessions.get(sid)
 
+    def create_session(self, session_id, name, endpoint_url, model, rag=False, owner=None, **kw):
+        s = Session(id=session_id, name=name, endpoint_url=endpoint_url, model=model, rag=rag, owner=owner)
+        self.sessions[session_id] = s
+        return s
+
     def _persist_message(self, sid, msg):
         pass
+
+
+def _model_db(monkeypatch):
+    """The endpoints the model list and the model switch read: Alice's with
+    three models, Bob's with one."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    import importlib
+    import sys
+    from core.database import Base, ModelEndpoint
+    import core.database
+    # The gateway imports these at call time. Some other test files leave a
+    # stub, or a copy built over stubbed core modules, in sys.modules; import
+    # the real ones for this test (monkeypatch puts theirs back after).
+    real = {"src.endpoint_resolver": lambda m: hasattr(m, "build_chat_url"),
+            "routes.model_routes": lambda m: getattr(m, "SessionLocal", None) is core.database.SessionLocal,
+            "routes.session_routes": lambda m: getattr(m, "SessionLocal", None) is core.database.SessionLocal}
+    for name, ok in real.items():
+        mod = sys.modules.get(name)
+        if mod is not None and not ok(mod):
+            monkeypatch.delitem(sys.modules, name)
+    model_routes = importlib.import_module("routes.model_routes")
+    session_routes = importlib.import_module("routes.session_routes")
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    db_factory = sessionmaker(bind=engine, autoflush=False)
+    db = db_factory()
+    db.add(ModelEndpoint(id="ep-a", name="Alice box", base_url="http://10.9.0.1:8000/v1", owner="alice",
+                         cached_models='["qwen", "llama", "mistral-small-24b"]'))
+    db.add(ModelEndpoint(id="ep-b", name="Bob box", base_url="http://10.9.0.2:8000/v1", owner="bob",
+                         cached_models='["gpt"]'))
+    db.commit()
+    db.close()
+    monkeypatch.setattr(model_routes, "SessionLocal", db_factory)
+    monkeypatch.setattr(session_routes, "SessionLocal", db_factory)
 
 
 @pytest.fixture
@@ -40,6 +83,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setattr(prefs_routes, "PREFS_FILE", str(tmp_path / "user_prefs.json"))
     sms_routes._LAST_LIST.clear()
+    sms_routes._LAST_MODELS.clear()
+    _model_db(monkeypatch)
 
     mgr = _Mgr([
         Session(id="a1", name="Trip plans", endpoint_url="http://llm/a", model="qwen", owner="alice"),
@@ -59,6 +104,10 @@ def env(tmp_path, monkeypatch):
 
     import src.llm_core
     monkeypatch.setattr(src.llm_core, "llm_call_async", fake_llm)
+
+    events = []
+    import src.event_bus
+    monkeypatch.setattr(src.event_bus, "fire_event", lambda name, owner=None: events.append((name, owner)))
 
     posted, pushed = [], []
 
@@ -91,8 +140,9 @@ def env(tmp_path, monkeypatch):
     with TestClient(app) as client:
         def setup(user, number, reply_url=""):
             h = {"x-test-user": user}
+            numbers = number if isinstance(number, list) else [number]
             assert client.put("/api/sms/config", headers=h,
-                              json={"numbers": [number], "reply_url": reply_url}).status_code == 200
+                              json={"numbers": numbers, "reply_url": reply_url}).status_code == 200
             return client.post("/api/sms/secret", headers=h).json()["secret"]
 
         def text(secret, frm, body):
@@ -101,7 +151,7 @@ def env(tmp_path, monkeypatch):
             return r
 
         yield {"client": client, "setup": setup, "text": text, "llm": llm_calls,
-               "posted": posted, "pushed": pushed, "mgr": mgr}
+               "posted": posted, "pushed": pushed, "mgr": mgr, "events": events}
 
 
 def test_wrong_number_is_a_generic_404_and_runs_nothing(env):
@@ -145,16 +195,183 @@ def test_say_reaches_the_numbered_session(env):
     assert env["mgr"].sessions["a1"].history == []
 
 
-def test_long_answers_are_truncated_with_a_marker(env, monkeypatch):
+def _texts(env):
+    return [p["textMessage"]["text"] for _, p in env["posted"]]
+
+
+def test_long_answers_arrive_as_numbered_texts_in_order(env, monkeypatch):
     import src.llm_core
+    answer = " ".join(f"Sentence number {i} says a little something about the trip." for i in range(1, 31))
 
     async def chatty(url, model, messages, **kw):
-        return "word " * 400
+        return answer
 
     monkeypatch.setattr(src.llm_core, "llm_call_async", chatty)
+    secret = env["setup"]("alice", ALICE_NUM, reply_url="http://phone/message")
+    env["text"](secret, ALICE_NUM, "say 1 go on")
+    texts = _texts(env)
+    n = len(texts)
+    assert 2 < n <= sms_routes.MAX_PARTS
+    assert [t.split(" ", 1)[0] for t in texts] == [f"({i}/{n})" for i in range(1, n + 1)]
+    assert all(len(t) <= sms_routes.REPLY_CHARS for t in texts)
+    # Cut between sentences, and nothing lost or reordered.
+    assert all(t.endswith(".") for t in texts)
+    assert " ".join(t.split(" ", 1)[1] for t in texts) == answer
+    # The whole answer is still saved in the chat.
+    assert env["mgr"].sessions["a1"].history[-1].content == answer
+
+
+def test_a_very_long_answer_stops_at_the_cap_and_points_to_the_app(env, monkeypatch):
+    import src.llm_core
+
+    async def endless(url, model, messages, **kw):
+        return "\n".join(f"Line {i} of a very long answer." for i in range(1, 500))
+
+    monkeypatch.setattr(src.llm_core, "llm_call_async", endless)
+    secret = env["setup"]("alice", ALICE_NUM, reply_url="http://phone/message")
+    env["text"](secret, ALICE_NUM, "say 1 tell me everything")
+    texts = _texts(env)
+    assert len(texts) == sms_routes.MAX_PARTS
+    assert texts[0].startswith(f"(1/{sms_routes.MAX_PARTS}) Line 1 of")
+    assert texts[-1].endswith(sms_routes.CONTINUED)
+    assert all(len(t) <= sms_routes.REPLY_CHARS for t in texts)
+
+
+def test_split_prefers_line_breaks_and_keeps_short_replies_whole():
+    assert sms_routes.split_reply("short answer") == ["short answer"]
+    text = "\n".join(["a" * 200, "b" * 200, "c" * 200])
+    parts = sms_routes.split_reply(text)
+    assert parts == ["(1/2) " + "a" * 200 + "\n" + "b" * 200, "(2/2) " + "c" * 200]
+    # One unbroken word still splits, at the size.
+    parts = sms_routes.split_reply("x" * 1000)
+    assert [len(p) <= sms_routes.REPLY_CHARS for p in parts] == [True] * len(parts)
+    assert "".join(p.split(" ", 1)[1] for p in parts) == "x" * 1000
+
+
+# ── Conversations: new / chat <n> / end, then plain texts ─────────────────
+
+def test_new_starts_a_conversation_that_plain_texts_reach_until_end(env):
     secret = env["setup"]("alice", ALICE_NUM)
-    reply = env["text"](secret, ALICE_NUM, "say 1 go on").json()["reply"]
-    assert len(reply) <= sms_routes.REPLY_CHARS and reply.endswith(sms_routes.TRUNCATED)
+    r = env["text"](secret, ALICE_NUM, "New")
+    assert r.status_code == 200 and r.json()["reply"].startswith("New chat with qwen.")
+    new = [s for s in env["mgr"].sessions.values() if s.id not in ("a1", "a2", "b1")]
+    assert len(new) == 1 and new[0].owner == "alice" and new[0].model == "qwen"
+    assert new[0].endpoint_url == "http://10.9.0.1:8000/v1/chat/completions"
+    assert env["events"] == [("session_created", "alice")]
+
+    assert env["text"](secret, ALICE_NUM, "What should I pack?").json()["reply"] == "answer from qwen"
+    assert env["text"](secret, ALICE_NUM, "And for rain?").json()["reply"] == "answer from qwen"
+    assert [m.content for m in new[0].history] == [
+        "What should I pack?", "answer from qwen", "And for rain?", "answer from qwen"]
+    assert env["llm"][-1]["url"] == "http://10.9.0.1:8000/v1/chat/completions"
+    assert "Now talking to: " in env["text"](secret, ALICE_NUM, "help").json()["reply"]
+
+    assert env["text"](secret, ALICE_NUM, "end").json()["reply"].startswith("Conversation ended.")
+    calls = len(env["llm"])
+    assert env["text"](secret, ALICE_NUM, "one more thing").json()["reply"] == sms_routes.HINT
+    assert len(env["llm"]) == calls and len(new[0].history) == 4
+
+
+def test_chat_n_picks_a_listed_chat_as_the_conversation(env):
+    secret = env["setup"]("alice", ALICE_NUM)
+    env["text"](secret, ALICE_NUM, "list")
+    r = env["text"](secret, ALICE_NUM, "CHAT 2")
+    assert r.json()["reply"].startswith("Now talking to Groceries (llama).")
+    assert env["text"](secret, ALICE_NUM, "do we need milk?").json()["reply"] == "answer from llama"
+    assert [m.content for m in env["mgr"].sessions["a2"].history] == ["do we need milk?", "answer from llama"]
+    assert "Talking to: Groceries (llama)" in env["text"](secret, ALICE_NUM, "status").json()["reply"]
+    # stop is end too; "stop" inside a sentence is just a turn.
+    assert env["text"](secret, ALICE_NUM, "stop the car?").json()["reply"] == "answer from llama"
+    assert env["text"](secret, ALICE_NUM, "stop").json()["reply"].startswith("Conversation ended.")
+    assert "no chat 7" in env["text"](secret, ALICE_NUM, "chat 7").json()["reply"]
+
+
+def test_models_lists_the_owners_models_and_model_switches_the_chat(env):
+    secret = env["setup"]("alice", ALICE_NUM)
+    env["text"](secret, ALICE_NUM, "new")
+    sid = sms_routes.get_conversation("alice", ALICE_NUM)
+    sess = env["mgr"].sessions[sid]
+    listing = env["text"](secret, ALICE_NUM, "models").json()["reply"]
+    assert listing.splitlines()[:3] == ["1. qwen *", "2. llama", "3. mistral-small-24b"]
+    assert "gpt" not in listing   # Bob's endpoint
+
+    assert env["text"](secret, ALICE_NUM, "model 2").json()["reply"].endswith("now uses llama.")
+    assert sess.model == "llama" and sess.endpoint_url == "http://10.9.0.1:8000/v1/chat/completions"
+    assert env["text"](secret, ALICE_NUM, "hi again").json()["reply"] == "answer from llama"
+    assert env["llm"][-1]["model"] == "llama"
+
+    assert env["text"](secret, ALICE_NUM, "Model Mistral Small").json()["reply"].endswith(
+        "now uses mistral-small-24b.")
+    assert sess.model == "mistral-small-24b"
+    assert "No model matches" in env["text"](secret, ALICE_NUM, "model gpt").json()["reply"]
+    assert "no model 9" in env["text"](secret, ALICE_NUM, "model 9").json()["reply"]
+    assert sess.model == "mistral-small-24b"
+
+    # new takes a model too, and the new chat becomes the conversation.
+    assert env["text"](secret, ALICE_NUM, "new llama").json()["reply"].startswith("New chat with llama.")
+    other = sms_routes.get_conversation("alice", ALICE_NUM)
+    assert other != sid and env["mgr"].sessions[other].model == "llama"
+
+
+def test_model_without_a_conversation_gets_the_hint(env):
+    secret = env["setup"]("alice", ALICE_NUM)
+    assert env["text"](secret, ALICE_NUM, "model 1").json()["reply"] == sms_routes.HINT
+
+
+def test_conversations_are_per_sender_and_per_owner_and_kept_in_prefs(env, tmp_path):
+    alice_work = "+15550104000"
+    secret = env["setup"]("alice", [ALICE_NUM, alice_work])
+    bob_secret = env["setup"]("bob", BOB_NUM)
+    env["text"](secret, ALICE_NUM, "new")
+    # Alice's other number has no conversation of its own.
+    assert env["text"](secret, alice_work, "hello?").json()["reply"] == sms_routes.HINT
+    # Bob's "new" is his chat, on his endpoint, and Alice's stays hers.
+    assert env["text"](bob_secret, BOB_NUM, "new").json()["reply"].startswith("New chat with gpt.")
+    assert env["text"](bob_secret, BOB_NUM, "hey").json()["reply"] == "answer from gpt"
+    alice_sid = sms_routes.get_conversation("alice", ALICE_NUM)
+    bob_sid = sms_routes.get_conversation("bob", BOB_NUM)
+    assert env["mgr"].sessions[alice_sid].owner == "alice" and env["mgr"].sessions[bob_sid].owner == "bob"
+    assert sms_routes.get_conversation("alice", BOB_NUM) == "" and sms_routes.get_conversation("bob", ALICE_NUM) == ""
+    # Saved in the prefs file, so a restart keeps it; Settings saves keep it too.
+    stored = __import__("json").loads((tmp_path / "user_prefs.json").read_text())
+    assert list(stored["_users"]["alice"]["sms_gateway"]["conversations"]) == [ALICE_NUM]
+    env["client"].put("/api/sms/config", headers={"x-test-user": "alice"},
+                      json={"numbers": [ALICE_NUM, alice_work], "reply_url": ""})
+    assert sms_routes.get_conversation("alice", ALICE_NUM) == alice_sid
+    assert env["text"](secret, ALICE_NUM, "still there?").json()["reply"] == "answer from qwen"
+    assert "conversations" not in env["client"].get("/api/sms/config", headers={"x-test-user": "alice"}).json()
+
+
+def test_a_conversation_on_a_chat_that_is_gone_is_forgotten(env):
+    secret = env["setup"]("alice", ALICE_NUM)
+    env["text"](secret, ALICE_NUM, "chat 1")
+    del env["mgr"].sessions["a1"]
+    assert env["text"](secret, ALICE_NUM, "are you there?").json()["reply"] == sms_routes.HINT
+    assert sms_routes.get_conversation("alice", ALICE_NUM) == ""
+    assert env["llm"] == []
+
+
+def test_plain_or_unknown_text_without_a_conversation_gets_the_hint(env):
+    secret = env["setup"]("alice", ALICE_NUM)
+    for body in ("hello", "flarb 7", "chat", "end"):
+        r = env["text"](secret, ALICE_NUM, body)
+        assert r.status_code == 200
+    assert _pushed_bodies(env)[:3] == [sms_routes.HINT] * 3
+    assert _pushed_bodies(env)[3] == "You are not talking to a chat."
+    assert env["llm"] == []
+
+
+def _pushed_bodies(env):
+    return [p["body"] for p in env["pushed"]]
+
+
+def test_say_still_goes_to_the_listed_chat_during_a_conversation(env):
+    secret = env["setup"]("alice", ALICE_NUM)
+    env["text"](secret, ALICE_NUM, "chat 1")
+    assert env["text"](secret, ALICE_NUM, "say 2 just this once").json()["reply"] == "answer from llama"
+    assert [m.content for m in env["mgr"].sessions["a2"].history] == ["just this once", "answer from llama"]
+    assert sms_routes.get_conversation("alice", ALICE_NUM) == "a1"
+    assert env["text"](secret, ALICE_NUM, "back to trips").json()["reply"] == "answer from qwen"
 
 
 def test_unknown_number_and_other_owners_chat_are_refused_politely(env):
