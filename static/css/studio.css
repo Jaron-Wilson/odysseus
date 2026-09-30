@@ -1,0 +1,601 @@
+/* ==========================================================================
+   Studio: the redesigned Odysseus interface.
+
+   A layer over style.css, active only under html.ui-studio (set before first
+   paint by the head script in index.html, switched in Settings > Appearance >
+   Interface or the Theme panel; see static/js/uiDesign.js). Classic is
+   style.css alone, untouched.
+
+   Colors still come from the theme variables (--bg, --fg, --panel, --border,
+   --red as the accent), so every color theme works on Studio. Studio adds
+   structure: one type family, a spacing and radius scale, hairline borders,
+   quiet surfaces, one accent, consistent focus rings.
+
+   This file: tokens, base, sidebar, chat, messages, code, composer.
+   studio-overlays.css: modals, dropdowns, menus, settings, theme panel.
+   studio-pages.css: the tool views (calendar, notes, email, ...).
+   ========================================================================== */
+
+/* --- The Interface picker itself (shown in both designs) ------------------ */
+.ui-design-hint { margin: 2px 0 12px; font-size: 12.5px; opacity: .65; }
+.ui-design-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ui-design-choice {
+  display: flex; flex-direction: column; gap: 3px; padding: 10px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px; background: transparent;
+  transition: border-color .15s, background .15s, box-shadow .15s; outline: none;
+}
+.ui-design-choice:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.ui-design-choice:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 35%, transparent); }
+.ui-design-choice.active {
+  border-color: color-mix(in srgb, var(--red) 70%, var(--border));
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.ui-design-name { font-weight: 600; font-size: 13px; }
+.ui-design-desc { font-size: 11.5px; opacity: .6; }
+.ui-design-thumb {
+  position: relative; display: block; height: 64px; margin-bottom: 6px; border-radius: 7px;
+  overflow: hidden; border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ui-design-thumb i, .ui-design-thumb b, .ui-design-thumb u { position: absolute; display: block; }
+.ui-design-thumb-studio { background: #0f1115; }
+.ui-design-thumb-studio i { left: 0; top: 0; bottom: 0; width: 30%; background: #13161b; border-right: 1px solid #262a31; }
+.ui-design-thumb-studio b { left: 38%; right: 8%; bottom: 8px; height: 14px; border-radius: 5px; background: #16191e; border: 1px solid #2c313a; }
+.ui-design-thumb-studio u { left: 38%; top: 10px; width: 36%; height: 6px; border-radius: 3px; background: #7c8cff; }
+.ui-design-thumb-classic { background: #17150f; }
+.ui-design-thumb-classic i { left: 0; top: 0; bottom: 0; width: 30%; background: #201d16; border-right: 1px solid #35322a; }
+.ui-design-thumb-classic b { left: 38%; right: 8%; bottom: 8px; height: 14px; border-radius: 7px; background: #201d16; border: 1px solid #35322a; }
+.ui-design-thumb-classic u { left: 38%; top: 10px; width: 36%; height: 6px; border-radius: 3px; background: #e06c75; }
+
+/* --- Tokens ---------------------------------------------------------------- */
+html.ui-studio {
+  /* Palette fallbacks for a first visit with no saved theme; a saved theme
+     sets these inline and wins. */
+  --bg: #0f1115; --fg: #e6e8ec; --panel: #16191e; --border: #262a31; --red: #7c8cff;
+
+  --st-accent: var(--red);
+  --st-accent-fg: #fff;
+  --st-accent-soft: color-mix(in srgb, var(--st-accent) 14%, transparent);
+  --st-accent-line: color-mix(in srgb, var(--st-accent) 55%, transparent);
+  --st-text: var(--fg);
+  --st-text-2: color-mix(in srgb, var(--fg) 72%, var(--bg));
+  --st-text-3: color-mix(in srgb, var(--fg) 50%, var(--bg));
+  --st-line: color-mix(in srgb, var(--fg) 9%, transparent);
+  --st-line-2: color-mix(in srgb, var(--fg) 14%, transparent);
+  --st-hover: color-mix(in srgb, var(--fg) 5.5%, transparent);
+  --st-press: color-mix(in srgb, var(--fg) 9%, transparent);
+  --st-surface: var(--panel);
+  --st-surface-2: color-mix(in srgb, var(--fg) 3.5%, var(--panel));
+  --st-sunken: color-mix(in srgb, var(--bg) 88%, #000);
+  --st-sidebar: color-mix(in srgb, var(--panel) 55%, var(--bg));
+  --st-r-xs: 5px; --st-r-sm: 7px; --st-r: 10px; --st-r-lg: 14px; --st-r-xl: 18px;
+  --st-shadow-sm: 0 1px 2px rgba(0,0,0,.18);
+  --st-shadow: 0 1px 2px rgba(0,0,0,.14), 0 4px 14px rgba(0,0,0,.16);
+  --st-shadow-lg: 0 2px 6px rgba(0,0,0,.18), 0 18px 48px rgba(0,0,0,.32);
+  --st-ring: 0 0 0 3px color-mix(in srgb, var(--st-accent) 30%, transparent);
+  --st-ease: cubic-bezier(.2, .7, .2, 1);
+  --st-font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --st-mono: 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Existing variables the rest of style.css reads */
+  --font-family: var(--st-font);
+  --font-display: var(--st-font);
+  --chat-max: 780px;
+  --sidebar-bg: var(--st-sidebar);
+  --accent: var(--st-accent);
+  --bubble-border: var(--st-line);
+}
+/* Light themes: shadows go softer, the accent carries white text */
+html.ui-studio[data-theme-mode="light"] {
+  /* Muted text a step darker on light backgrounds, for contrast */
+  --st-text-2: color-mix(in srgb, var(--fg) 78%, var(--bg));
+  --st-text-3: color-mix(in srgb, var(--fg) 60%, var(--bg));
+  --st-line: color-mix(in srgb, var(--fg) 10%, transparent);
+  --st-line-2: color-mix(in srgb, var(--fg) 15%, transparent);
+  --st-shadow-sm: 0 1px 2px rgba(16,24,40,.06);
+  --st-shadow: 0 1px 2px rgba(16,24,40,.05), 0 4px 12px rgba(16,24,40,.07);
+  --st-shadow-lg: 0 4px 10px rgba(16,24,40,.06), 0 20px 48px rgba(16,24,40,.14);
+}
+
+/* --- Base ------------------------------------------------------------------- */
+html.ui-studio body {
+  font-family: var(--st-font);
+  font-size: 14px;
+  letter-spacing: -0.006em;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+html.ui-studio h1, html.ui-studio h2, html.ui-studio h3, html.ui-studio h4 {
+  font-family: var(--st-font);
+  letter-spacing: -0.015em;
+  font-variation-settings: normal;
+}
+html.ui-studio ::selection { background: color-mix(in srgb, var(--st-accent) 32%, transparent); }
+html.ui-studio :focus-visible { outline: 2px solid var(--st-accent-line); outline-offset: 2px; }
+html.ui-studio * { scrollbar-width: thin; scrollbar-color: var(--st-line-2) transparent; }
+html.ui-studio ::-webkit-scrollbar { width: 10px; height: 10px; }
+html.ui-studio ::-webkit-scrollbar-thumb {
+  background: var(--st-line-2); border-radius: 10px; border: 3px solid transparent; background-clip: content-box;
+}
+html.ui-studio ::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--fg) 26%, transparent); }
+html.ui-studio ::-webkit-scrollbar-track { background: transparent; }
+
+/* --- Sidebar ---------------------------------------------------------------- */
+html.ui-studio .sidebar {
+  background: var(--st-sidebar);
+  border: none;
+  border-right: 1px solid var(--st-line);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+html.ui-studio .sidebar.right-side { border-right: none; border-left: 1px solid var(--st-line); }
+html.ui-studio .sidebar.hidden { border: none; }
+html.ui-studio .sidebar-header { background: var(--st-sidebar); padding-top: 14px; }
+html.ui-studio .sidebar-inner { padding: 8px 10px 10px; }
+
+/* Wordmark: a square mark in the accent + a sans name */
+html.ui-studio .sidebar-brand-title {
+  font-family: var(--st-font);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--st-text);
+  display: inline-flex; align-items: center; gap: 8px;
+  left: 0;
+}
+html.ui-studio .sidebar-brand-title::before {
+  content: ''; width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--st-accent) 100%, #fff 18%), color-mix(in srgb, var(--st-accent) 78%, #000 22%));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.14), 0 1px 2px rgba(0,0,0,.25);
+  -webkit-mask: none;
+}
+
+/* Rows */
+html.ui-studio .sidebar .list-item {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: var(--st-r-sm);
+  font-size: 13px;
+  font-weight: 450;
+  color: var(--st-text-2);
+  gap: 10px;
+  transition: background .12s, color .12s;
+}
+html.ui-studio .sidebar .list-item:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .sidebar .list-item:active { background: var(--st-press); }
+html.ui-studio .sidebar .list-item svg { color: var(--st-text-3); opacity: 1; flex-shrink: 0; }
+html.ui-studio .sidebar .list-item:hover svg { color: var(--st-text-2); }
+html.ui-studio .sidebar .list-item.active,
+html.ui-studio .sidebar .list-item.selected,
+html.ui-studio .sidebar .list-item[aria-current="true"] {
+  background: var(--st-accent-soft);
+  color: var(--st-text);
+}
+html.ui-studio .sidebar .list-item.active svg,
+html.ui-studio .sidebar .list-item.selected svg { color: var(--st-accent); }
+html.ui-studio #sidebar-new-chat-btn,
+html.ui-studio #sidebar-search-btn { padding: 6px 10px; margin: 0 0 1px; }
+html.ui-studio #tools-section .list-item { padding: 6px 10px; }
+html.ui-studio #sidebar-new-chat-btn {
+  color: var(--st-text);
+  font-weight: 550;
+}
+html.ui-studio #sidebar-new-chat-btn svg { color: var(--st-text); }
+
+/* Row labels: style.css pins these at 9.75-10px; Studio reads at 13px */
+html.ui-studio .sidebar .list-item .grow,
+html.ui-studio .sidebar .list-item > span:not([class*="dot"]):not([class*="badge"]):not([class*="count"]) {
+  font-size: 13px; line-height: 1.35; color: inherit; font-weight: inherit;
+}
+
+/* Section headers (Chats, Email, Models, Tools): a quiet label row */
+html.ui-studio .sidebar .section-header-flex {
+  height: 30px; padding: 6px 10px; margin: 0; border-radius: var(--st-r-sm);
+}
+html.ui-studio .sidebar .section-header-flex:hover { background: var(--st-hover); }
+html.ui-studio .sidebar .section-header-flex h4,
+html.ui-studio .sidebar .section-header-flex .section-title {
+  font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none;
+  color: var(--st-text-3); gap: 10px;
+}
+html.ui-studio .sidebar .section-header-flex:hover .section-title,
+html.ui-studio .sidebar .section-header-flex:hover h4 { color: var(--st-text-2); }
+html.ui-studio .sidebar .section-icon,
+html.ui-studio .sidebar .sidebar-action-icon { stroke: currentColor; color: var(--st-text-3); left: 0; }
+html.ui-studio .sidebar .section { margin-top: 6px; }
+html.ui-studio .sidebar .section-header-btn {
+  border-radius: var(--st-r-xs);
+  color: var(--st-text-3);
+}
+html.ui-studio .sidebar .section-header-btn:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* The pill "Inbound" style chips and + buttons in rows */
+html.ui-studio .sidebar .email-inbound-btn {
+  font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--st-line-2); background: transparent; color: var(--st-text-2);
+}
+html.ui-studio .sidebar .list-item-plus-btn { border-radius: var(--st-r-xs); color: var(--st-text-3); }
+html.ui-studio .sidebar .list-item-plus-btn:hover { background: var(--st-press); color: var(--st-text); }
+
+/* Touch / phone: the row's small +, header and collapse buttons get a
+   28px hit area */
+@media (pointer: coarse), (max-width: 768px) {
+  html.ui-studio .sidebar .list-item-plus-btn,
+  html.ui-studio .sidebar .section-header-btn,
+  html.ui-studio .sidebar .section-collapse-btn {
+    min-width: 28px; min-height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  /* style.css pins the + at 14px tall with !important. The negative margin
+     keeps the row at its usual height. */
+  html.ui-studio .sidebar .list-item-plus-btn {
+    height: 28px !important; min-height: 28px !important; min-width: 28px !important;
+    margin-block: -6px;
+  }
+}
+
+/* User bar */
+html.ui-studio .sidebar-user-bar {
+  border-top: 1px solid var(--st-line);
+  padding: 8px 10px;
+  min-height: 52px;
+}
+html.ui-studio .user-bar-left { border-radius: var(--st-r-sm); padding: 6px 8px; }
+html.ui-studio .user-bar-left:hover { background: var(--st-hover); }
+html.ui-studio .user-bar-avatar {
+  width: 26px; height: 26px; opacity: 1; font-size: 11px;
+  background: var(--st-press); color: var(--st-text-2);
+  box-shadow: inset 0 0 0 1px var(--st-line);
+}
+html.ui-studio .user-bar-name { font-size: 13px; font-weight: 550; opacity: 1; color: var(--st-text); }
+html.ui-studio .user-bar-left { min-width: 64px; }
+/* Version badge (buildBadge.js): a small pill that never squeezes the name */
+html.ui-studio .sidebar-user-bar .build-badge {
+  font-size: 11px; font-weight: 500; line-height: 18px; padding: 0 7px; border-radius: 999px;
+  max-width: 96px; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0;
+  color: var(--st-text-3); opacity: 1;
+}
+html.ui-studio .sidebar-user-bar .build-badge.newer,
+html.ui-studio .sidebar-user-bar .build-badge.deployable {
+  color: var(--st-accent); background: var(--st-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--st-accent) 35%, transparent);
+}
+html.ui-studio .user-bar-btn { opacity: 1; color: var(--st-text-3); border-radius: var(--st-r-sm); }
+html.ui-studio .user-bar-btn:hover { color: var(--st-text); background: var(--st-hover); }
+
+/* Hamburger + icon rail */
+html.ui-studio .hamburger-btn { opacity: 1; color: var(--st-text-3); border-radius: var(--st-r-sm); }
+html.ui-studio .hamburger-btn:hover { color: var(--st-text); background: var(--st-hover); }
+html.ui-studio .icon-rail { background: var(--st-sidebar); border-right: 1px solid var(--st-line); gap: 2px; }
+html.ui-studio .icon-rail-btn { border-radius: var(--st-r-sm); color: var(--st-text-3); }
+html.ui-studio .icon-rail-btn:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* --- Chat area -------------------------------------------------------------- */
+html.ui-studio .chat-container { background: var(--bg); }
+
+/* Welcome */
+html.ui-studio #welcome-screen .welcome-name {
+  font-family: var(--st-font);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  color: var(--st-text);
+}
+html.ui-studio #welcome-screen .welcome-name {
+  font-size: 34px; font-weight: 650; letter-spacing: -0.035em; margin-bottom: 8px;
+  background: none; -webkit-text-fill-color: currentColor; color: var(--st-text);
+  display: inline-flex; align-items: center; gap: 10px;
+}
+html.ui-studio #welcome-screen .welcome-boat {
+  width: 30px; height: 30px; margin: 0; padding: 5px; box-sizing: border-box; border-radius: 9px;
+  color: var(--st-accent); background: var(--st-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-accent) 28%, transparent);
+}
+html.ui-studio #welcome-screen .welcome-sub {
+  color: var(--st-text-2); opacity: 1; font-size: 15px; max-width: 420px;
+}
+html.ui-studio #welcome-screen .welcome-tip {
+  color: var(--st-text-3); opacity: 1; font-size: 12.5px; line-height: 1.55; max-width: 420px; margin-top: 18px;
+}
+html.ui-studio #welcome-screen .incognito-btn {
+  opacity: 1; font-size: 12px; font-weight: 500; padding: 5px 12px;
+}
+html.ui-studio #welcome-screen .incognito-btn:hover { opacity: 1; }
+html.ui-studio .welcome-sub { color: var(--st-text-2); font-size: 15px; }
+html.ui-studio .welcome-tip { color: var(--st-text-3); font-size: 13px; line-height: 1.55; }
+html.ui-studio .welcome-sub a, html.ui-studio .welcome-tip a { color: var(--st-accent); text-decoration: none; }
+html.ui-studio .incognito-btn {
+  border: 1px solid var(--st-line-2); border-radius: 999px; color: var(--st-text-3);
+  background: transparent; padding: 4px 12px;
+}
+html.ui-studio .incognito-btn:hover { color: var(--st-text); background: var(--st-hover); }
+
+/* Quick starts: under the composer of an empty chat, in the 30vh that
+   style.css leaves below it in the welcome state (desktop only). */
+@media (min-width: 769px) and (min-height: 620px) {
+  html.ui-studio .chat-container.welcome-active > #welcome-starters {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+    position: absolute; left: 50%; transform: translateX(-50%);
+    top: calc(100% - 30vh + 14px);     /* 14px below the composer */
+    width: min(800px, calc(100% - 32px));
+    animation: st-starters-in .4s ease-out both;
+  }
+}
+@keyframes st-starters-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+html.ui-studio .welcome-starter {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left;
+  height: auto; min-height: 0; box-sizing: border-box;
+  padding: 12px 14px; border-radius: var(--st-r); cursor: pointer; font: inherit;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line);
+  transition: background .15s, border-color .15s, color .15s;
+}
+html.ui-studio .welcome-starter:hover {
+  background: var(--st-hover); border-color: var(--st-line-2); color: var(--st-text);
+}
+html.ui-studio .welcome-starter:focus-visible { outline: none; box-shadow: var(--st-ring); }
+html.ui-studio .welcome-starter svg {
+  display: block; flex-shrink: 0; width: 16px; height: 16px; color: var(--st-text-3); margin-bottom: 6px;
+}
+html.ui-studio .welcome-starter:hover svg { color: var(--st-accent); }
+html.ui-studio .welcome-starter-title { font-size: 13px; font-weight: 600; color: var(--st-text); }
+html.ui-studio .welcome-starter-sub { font-size: 12px; color: var(--st-text-3); }
+
+/* Messages */
+html.ui-studio .msg { border-radius: var(--st-r-lg); line-height: 1.6; }
+html.ui-studio .msg .body { font-size: 14.5px; line-height: 1.65; }
+html.ui-studio .msg-user {
+  background: var(--st-surface-2);
+  border: 1px solid var(--st-line);
+  border-radius: var(--st-r-xl) var(--st-r-xl) var(--st-r-xs) var(--st-r-xl);
+  padding: 10px 14px;
+  max-width: 78%;
+}
+html.ui-studio .msg-ai {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 4px 2px 6px;
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+}
+html.ui-studio .msg .role {
+  font-size: 12.5px; font-weight: 600; color: var(--st-text-2); letter-spacing: -0.005em;
+}
+html.ui-studio .msg-user .role { color: var(--st-text-3); }
+html.ui-studio .msg .body h1, html.ui-studio .msg .body h2, html.ui-studio .msg .body h3 {
+  font-weight: 650; letter-spacing: -0.02em; line-height: 1.3; margin-top: 18px;
+  color: var(--st-text); font-family: var(--st-font);
+}
+html.ui-studio .msg .body h4, html.ui-studio .msg .body h5, html.ui-studio .msg .body h6 {
+  color: var(--st-text); font-family: var(--st-font); font-weight: 600;
+}
+html.ui-studio .msg .body strong { color: var(--st-text); font-weight: 620; }
+html.ui-studio .msg .body ol > li::marker, html.ui-studio .msg .body ul > li::marker { color: var(--st-text-3); }
+html.ui-studio .msg .body h1 { font-size: 1.45em; }
+html.ui-studio .msg .body h2 { font-size: 1.25em; }
+html.ui-studio .msg .body h3 { font-size: 1.08em; }
+html.ui-studio .msg .body a { color: var(--st-accent); text-decoration: none; }
+html.ui-studio .msg .body a:hover { text-decoration: underline; text-underline-offset: 2px; }
+html.ui-studio .msg .body blockquote {
+  border-left: 2px solid var(--st-accent-line); margin-left: 0; padding: 2px 0 2px 14px; color: var(--st-text-2);
+}
+html.ui-studio .msg .body hr { border: none; border-top: 1px solid var(--st-line-2); margin: 18px 0; }
+html.ui-studio .msg .body :not(pre) > code {
+  font-family: var(--st-mono); font-size: .86em; padding: .12em .38em; border-radius: var(--st-r-xs);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border: 1px solid var(--st-line);
+}
+html.ui-studio .msg .body table {
+  border-collapse: separate; border-spacing: 0; width: auto; max-width: 100%;
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r); overflow: hidden; font-size: 13.5px;
+}
+/* style.css makes a chat table a scrolling block at least 100% wide. Studio
+   frames the table itself, so that minimum would leave the frame wider than
+   the rows: the table hugs its content instead (the renderer's inline
+   width:100% needs the !important) and a wide one still scrolls in it. */
+html.ui-studio .msg .body table {
+  width: max-content !important; min-width: 0; max-width: 100%;
+  /* Scroll shadows: a soft edge shows only on a side with more columns
+     beyond it (the bg-colored covers scroll with the content and hide the
+     shadow once that edge is reached). */
+  background:
+    linear-gradient(to right, var(--bg) 40%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--bg) 40%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--fg) 22%, transparent), transparent) left / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--fg) 22%, transparent), transparent) right / 10px 100% no-repeat scroll;
+}
+html.ui-studio .msg .body th {
+  background: var(--st-surface-2); font-weight: 600; text-align: left; color: var(--st-text);
+}
+html.ui-studio .msg .body th, html.ui-studio .msg .body td {
+  padding: 8px 12px; border: none; border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio .msg .body tr:last-child td { border-bottom: none; }
+html.ui-studio .msg .body td + td, html.ui-studio .msg .body th + th { border-left: 1px solid var(--st-line); }
+
+/* Message actions (copy, retry, ...) */
+html.ui-studio .msg-actions button,
+html.ui-studio .msg-actions .msg-action-btn {
+  border-radius: var(--st-r-sm); color: var(--st-text-3);
+}
+html.ui-studio .msg-actions button:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* Code blocks */
+html.ui-studio .msg .body pre {
+  border-radius: var(--st-r);
+  border: 1px solid var(--st-line-2);
+  background: var(--hl-bg, var(--st-surface-2));
+}
+html.ui-studio pre code, html.ui-studio code.hljs {
+  font-family: var(--st-mono); font-size: 12.75px; line-height: 1.6;
+}
+
+/* --- Composer --------------------------------------------------------------- */
+html.ui-studio .chat-input-bar {
+  background: var(--st-surface);
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r-xl);
+  box-shadow: var(--st-shadow);
+  transition: border-color .15s var(--st-ease), box-shadow .15s var(--st-ease);
+}
+html.ui-studio .chat-input-bar:focus-within {
+  border-color: var(--st-accent-line);
+  box-shadow: var(--st-shadow), var(--st-ring);
+}
+html.ui-studio .chat-input-bar textarea#message {
+  font-family: var(--st-font);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--st-text);
+}
+html.ui-studio .chat-input-bar textarea#message::placeholder { color: var(--st-text-3); opacity: 1; }
+html.ui-studio .input-icon-btn {
+  border-radius: var(--st-r-sm);
+  color: var(--st-text-3);
+  opacity: 1;
+}
+html.ui-studio .input-icon-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .input-icon-btn[aria-pressed="true"],
+html.ui-studio .input-icon-btn.active {
+  background: var(--st-accent-soft); color: var(--st-accent);
+}
+/* Toolbar: even 32px squares on a wide composer (the phone container query
+   in style.css keeps its 44px tap targets below 420px). */
+@container chatbar (min-width: 421px) {
+  html.ui-studio .chat-input-bottom .input-icon-btn {
+    width: 32px; height: 32px; min-width: 32px; padding: 0; border-radius: var(--st-r-sm);
+  }
+  html.ui-studio .chat-input-bottom .input-icon-btn.claude-toggle-btn { width: auto; padding: 0 8px; gap: 4px; }
+  html.ui-studio .chat-input-bottom .chat-input-left { gap: 2px; }
+  html.ui-studio .chat-input-bottom .chat-input-right { gap: 2px; }
+  html.ui-studio .chat-input-bottom .chat-input-right > .mode-toggle { margin: 0 6px; }
+}
+html.ui-studio .input-icon-btn.expanded { background: var(--st-press); color: var(--st-text); }
+html.ui-studio .input-divider { background: var(--st-line-2); opacity: 1; }
+
+/* "Tools on" dot: pinned to the + button's corner */
+html.ui-studio .overflow-plus-btn { position: relative; }
+html.ui-studio .overflow-plus-btn .plus-active-dot {
+  top: 3px; right: 3px; width: 6px; height: 6px;
+  background: var(--st-accent); box-shadow: 0 0 0 2px var(--st-surface);
+}
+html.ui-studio .model-picker-btn {
+  border-radius: 999px; padding: 4px 10px; font-size: 12.5px; font-weight: 500;
+  color: var(--st-text-2); border: 1px solid var(--st-line); background: transparent;
+}
+html.ui-studio .model-picker-btn:hover { background: var(--st-hover); color: var(--st-text); }
+@media (pointer: coarse), (max-width: 768px) {
+  html.ui-studio .model-picker-btn { min-height: 28px; padding: 5px 11px; }
+}
+html.ui-studio .chat-input-bar {
+  margin-bottom: 14px;
+  padding: 10px 12px 10px 14px;
+}
+/* The composer is autofocused on load, so a full ring would always show;
+   focus reads as a firmer border instead. */
+html.ui-studio .chat-input-bar:focus-within {
+  border-color: color-mix(in srgb, var(--fg) 24%, transparent);
+  box-shadow: var(--st-shadow);
+}
+@media (max-width: 768px) {
+  html.ui-studio .chat-input-bar {
+    margin-bottom: max(8px, env(safe-area-inset-bottom));
+    border-radius: var(--st-r-lg);
+  }
+}
+
+/* Send */
+html.ui-studio .send-btn {
+  background: var(--st-accent);
+  color: var(--st-accent-fg);
+  border-radius: var(--st-r);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.2);
+}
+html.ui-studio .send-btn:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); color: var(--st-accent-fg); }
+html.ui-studio .send-btn.mic-mode,
+html.ui-studio .send-btn.newchat-mode {
+  background: var(--st-surface-2);
+  color: var(--st-text-2);
+  border: 1px solid var(--st-line-2);
+  box-shadow: none;
+}
+html.ui-studio .send-btn.mic-mode:hover,
+html.ui-studio .send-btn.newchat-mode:hover {
+  background: var(--st-press); color: var(--st-text);
+}
+
+/* Agent / Chat: a segmented control */
+html.ui-studio .mode-toggle {
+  height: 28px; padding: 2px; border-radius: var(--st-r-sm);
+  border: none; background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+html.ui-studio .mode-toggle::before {
+  top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); height: auto; border-radius: var(--st-r-sm);
+  background: var(--st-surface-2);
+  box-shadow: var(--st-shadow-sm), inset 0 0 0 1px var(--st-line-2);
+}
+html.ui-studio .mode-toggle-btn {
+  font-size: 12px; font-weight: 500; color: var(--st-text-3); border-radius: var(--st-r-xs);
+  background: transparent; padding: 0 10px; line-height: 24px;
+}
+html.ui-studio .mode-toggle::before { border-radius: var(--st-r-xs); }
+html.ui-studio .mode-toggle-btn.active,
+html.ui-studio .mode-toggle-btn.active:hover { color: var(--st-text); background: transparent; }
+/* Phones: style.css gives the buttons a 34px min-height; grow the track to
+   match so they are not clipped (and their labels pushed low) in a 28px pill. */
+@media (max-width: 768px) {
+  html.ui-studio .mode-toggle { height: 34px; }
+  html.ui-studio .mode-toggle-btn { min-height: 0; line-height: 30px; }
+}
+
+/* --- Chat top bar ----------------------------------------------------------- */
+html.ui-studio .chat-top-bar #current-meta {
+  font-size: 13px; font-weight: 550; color: var(--st-text); letter-spacing: -0.01em;
+}
+html.ui-studio .chat-meta-overlay { color: var(--st-text-3); font-size: 12px; }
+
+/* --- Sidebar icons at a size that matches 13px labels ------------------------ */
+html.ui-studio .sidebar .list-item > svg:first-child,
+html.ui-studio .sidebar .list-item > .list-icon svg,
+html.ui-studio .sidebar .section-title > svg.section-icon { width: 16px; height: 16px; }
+
+/* --- Messages: quieter chrome ----------------------------------------------- */
+/* Your own messages need no "You" label; the time stays in the actions row */
+html.ui-studio .msg-user > .role { display: none; }
+html.ui-studio .msg-user { padding: 9px 14px; }
+/* Actions show on hover (and always on touch screens and the latest reply) */
+@media (hover: hover) {
+  html.ui-studio .msg .msg-actions { opacity: 0; transition: opacity .15s var(--st-ease); }
+  html.ui-studio .msg:hover .msg-actions,
+  html.ui-studio .msg:focus-within .msg-actions,
+  html.ui-studio .msg:last-child .msg-actions { opacity: 1; }
+}
+/* Your message's footer (time + actions) floats beside the bubble on hover,
+   so the bubble is only as tall as its text. Only where there is room to
+   its left: the bubble is at most 78% wide and the footer ~130px. */
+@media (hover: hover) and (min-width: 900px) {
+  html.ui-studio .msg-user { overflow: visible; max-width: 78%; }
+  html.ui-studio .msg-user > .msg-footer {
+    position: absolute; right: calc(100% + 8px); bottom: 4px; margin: 0;
+    flex-wrap: nowrap; white-space: nowrap;
+    opacity: 0; transition: opacity .15s var(--st-ease);
+  }
+  html.ui-studio .msg-user:hover > .msg-footer,
+  html.ui-studio .msg-user:focus-within > .msg-footer { opacity: 1; }
+  html.ui-studio .msg-user > .msg-footer .msg-actions { opacity: 1; }
+}
+html.ui-studio .msg-footer { color: var(--st-text-3); font-size: 12px; }
+html.ui-studio .msg-footer .timestamp,
+html.ui-studio .msg-footer .response-metrics { color: var(--st-text-3); font-size: 12px; }
+html.ui-studio .footer-copy-btn, html.ui-studio .regen-btn,
+html.ui-studio .fork-btn, html.ui-studio .msg-action-btn {
+  color: var(--st-text-3); border-radius: var(--st-r-xs); padding: 4px 6px;
+}
+html.ui-studio .footer-copy-btn:hover, html.ui-studio .regen-btn:hover,
+html.ui-studio .fork-btn:hover, html.ui-studio .msg-action-btn:hover { color: var(--st-text); background: var(--st-hover); }
+html.ui-studio .footer-delete-btn:hover { color: #e5484d; }

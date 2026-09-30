@@ -1,0 +1,1178 @@
+/* ==========================================================================
+   Studio overlays: modals, settings, the theme panel, menus, dropdowns,
+   dialogs, toasts and the command palette. See the header of studio.css.
+
+   Everything is scoped to html.ui-studio and built from the --st-* tokens,
+   so Classic is untouched and every color theme works.
+
+   Rules of thumb
+   - A modal is a surface with --st-shadow-lg, --st-r-lg corners, a quiet
+     header (15px/600 title, muted icon buttons) and hairline dividers.
+   - A menu is a surface with --st-shadow, 6px padding, 32px rows.
+   - Inputs are 34px, --st-r-sm, --st-line-2 border; focus = accent + ring.
+   - Buttons: primary = accent, secondary = surface-2 + line, danger = red.
+   - Background overrides that fight inline styles use !important, and skip
+     body.theme-frosted so the glass look keeps working.
+   - No sizes that drag/snap/tile JS measures are changed (widths, heights
+     and positions of .modal / .modal-content stay as style.css sets them).
+   ========================================================================== */
+
+html.ui-studio {
+  --sto-danger: #e5484d;
+  --sto-danger-soft: color-mix(in srgb, #e5484d 12%, transparent);
+  --sto-danger-line: color-mix(in srgb, #e5484d 38%, transparent);
+  --sto-field: color-mix(in srgb, var(--bg) 55%, var(--panel));
+  --sto-field-hover: color-mix(in srgb, var(--fg) 22%, transparent);
+  --sto-backdrop: rgba(6, 8, 12, .55);
+  --sto-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a909b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  --sto-x: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+  --sto-min: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E");
+}
+html.ui-studio[data-theme-mode="light"] {
+  --sto-field: var(--panel);
+  --sto-backdrop: rgba(16, 22, 34, .28);
+}
+
+/* ==========================================================================
+   1. Modal shell
+   ========================================================================== */
+html.ui-studio .modal-content {
+  font-family: var(--st-font);
+  letter-spacing: -0.006em;
+  color: var(--st-text);
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r-lg);
+  box-shadow: var(--st-shadow-lg);
+}
+/* Tool windows set background:var(--bg) inline; Studio floats every window
+   on the raised surface so it separates from the page behind it. */
+html.ui-studio body:not(.theme-frosted) .modal:not(.modal-right-docked):not(.modal-left-docked) > .modal-content:not(.fill-chat-area) {
+  background-color: var(--st-surface) !important;
+}
+html[data-theme-mode="light"].ui-studio .modal-content { border-color: color-mix(in srgb, var(--fg) 11%, transparent); }
+
+/* Header: title left, quiet icon buttons right */
+html.ui-studio .modal-header {
+  min-height: 32px;
+  gap: 6px;
+}
+html.ui-studio .modal-header h4 {
+  font-family: var(--st-font);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+  color: var(--st-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+html.ui-studio .modal-header h4 > svg,
+html.ui-studio .modal-header h4 > span:first-child:not(:only-child) {
+  color: var(--st-text-3);
+  opacity: 1;
+  margin-right: 0 !important;
+  flex-shrink: 0;
+}
+
+/* Close / minimize: 28px ghost icon buttons with a drawn glyph */
+html.ui-studio .close-btn,
+html.ui-studio .modal-close,
+html.ui-studio .modal-minimize-btn,
+html.ui-studio .minimize-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-top: 0;
+  border: none;
+  border-radius: var(--st-r-sm);
+  background: transparent;
+  color: var(--st-text-3);
+  font-size: 0;
+  line-height: 0;
+  box-shadow: none;
+  transition: background .12s, color .12s;
+}
+html.ui-studio .close-btn::before,
+html.ui-studio .modal-close::before,
+html.ui-studio .minimize-btn::before {
+  content: '';
+  display: block;
+  width: 15px;
+  height: 15px;
+  background: currentColor;
+  -webkit-mask: var(--sto-x) center / contain no-repeat;
+          mask: var(--sto-x) center / contain no-repeat;
+}
+html.ui-studio .minimize-btn::before {
+  -webkit-mask-image: var(--sto-min);
+          mask-image: var(--sto-min);
+}
+/* modalManager's minimize button brings its own icon; one that also has
+   .minimize-btn (Compare) would draw a second dash from the rule above. */
+html.ui-studio .modal-minimize-btn::before { content: none; display: none; }
+html.ui-studio .modal-minimize-btn svg { width: 15px; height: 15px; }
+html.ui-studio .modal-minimize-btn svg line { transform: translateY(-6px); }
+html.ui-studio .close-btn:hover,
+html.ui-studio .modal-close:hover,
+html.ui-studio .modal-minimize-btn:hover,
+html.ui-studio .minimize-btn:hover {
+  background: var(--st-hover);
+  color: var(--st-text);
+  border: none;
+}
+html.ui-studio .close-btn:active,
+html.ui-studio .modal-minimize-btn:active { background: var(--st-press); }
+html.ui-studio .modal-header .modal-minimize-btn { margin-right: 0; }
+html.ui-studio .close-btn:focus-visible,
+html.ui-studio .modal-minimize-btn:focus-visible { outline: none; box-shadow: var(--st-ring); }
+
+/* "Peek" toggle in the Settings / Theme headers */
+html.ui-studio .theme-opacity-wrap {
+  height: 26px;
+  padding: 0 10px;
+  gap: 6px;
+  opacity: 1;
+  border: 1px solid var(--st-line-2);
+  border-radius: 999px;
+  color: var(--st-text-3);
+  background: transparent;
+  margin-top: 0;
+}
+html.ui-studio .theme-opacity-wrap.hidden { display: none; }
+html.ui-studio .theme-opacity-wrap:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio .theme-opacity-wrap.active {
+  color: var(--st-accent); border-color: var(--st-accent-line); background: var(--st-accent-soft);
+}
+html.ui-studio .theme-opacity-label { font-size: 11.5px; font-weight: 550; letter-spacing: 0; }
+
+/* Footer row */
+html.ui-studio .modal-footer {
+  border-color: var(--st-line);
+}
+
+/* Minimized-window dock */
+html.ui-studio .modal-dock-item {
+  background: var(--st-surface);
+  border: 1px solid var(--st-line-2);
+  border-bottom: none;
+  border-radius: var(--st-r-sm) var(--st-r-sm) 0 0;
+  box-shadow: var(--st-shadow);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--st-text-2);
+  padding: 5px 4px 5px 12px;
+}
+html.ui-studio .modal-dock-item:hover { background: var(--st-surface-2); color: var(--st-text); }
+html.ui-studio .modal-dock-close { color: var(--st-text-3); opacity: 1; border-radius: var(--st-r-xs); }
+html.ui-studio .modal-dock-close:hover { color: var(--st-text); background: var(--st-hover); }
+
+/* Mobile: modals are bottom sheets (style.css); keep the sheet shape */
+@media (max-width: 768px) {
+  html.ui-studio .modal { background: var(--sto-backdrop); }
+  html.ui-studio .modal-content {
+    border: none;
+    border-top: 1px solid var(--st-line-2);
+    border-radius: var(--st-r-xl) var(--st-r-xl) 0 0;
+  }
+  html.ui-studio .modal-content::before,
+  html.ui-studio #theme-popup::before,
+  html.ui-studio body .settings-modal-content::before,
+  html.ui-studio body .memory-modal-content::before {
+    width: 36px;
+    background-color: var(--st-text-3);
+    opacity: .45;
+  }
+}
+
+/* ==========================================================================
+   2. Shared form controls inside overlays
+   ========================================================================== */
+/* Text fields + selects: surface, hairline, accent focus ring */
+html.ui-studio :where(.modal, .dropdown, .model-picker-menu, .search-popup) :is(
+  input[type="text"], input[type="password"], input[type="email"], input[type="number"],
+  input[type="url"], input[type="search"], input[type="tel"], input:not([type]), textarea, select
+) {
+  font-family: var(--st-font);
+  color: var(--st-text);
+  background-color: var(--sto-field);
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r-sm);
+  box-shadow: none;
+  outline: none;
+  transition: border-color .12s, box-shadow .12s, background-color .12s;
+}
+html.ui-studio :where(.modal, .dropdown, .model-picker-menu) :is(
+  input[type="text"], input[type="password"], input[type="email"], input[type="number"],
+  input[type="url"], input[type="search"], input[type="tel"], input:not([type]), textarea, select
+):hover {
+  border-color: var(--sto-field-hover);
+  background-color: var(--sto-field);
+}
+html.ui-studio :where(.modal, .dropdown, .model-picker-menu) :is(
+  input[type="text"], input[type="password"], input[type="email"], input[type="number"],
+  input[type="url"], input[type="search"], input[type="tel"], input:not([type]), textarea, select
+):focus {
+  border-color: var(--st-accent-line);
+  box-shadow: var(--st-ring);
+  background-color: var(--sto-field);
+  outline: none;
+}
+html.ui-studio :where(.modal, .dropdown, .model-picker-menu, .search-popup) :is(input, textarea)::placeholder {
+  color: var(--st-text-3);
+  opacity: 1;
+}
+/* Native selects get a drawn chevron */
+html.ui-studio :where(.modal, .dropdown) select:not([multiple]):not([size]) {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: var(--sto-chevron);
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 12px;
+  padding-right: 28px;
+  cursor: pointer;
+}
+html.ui-studio :where(.modal) select option,
+html.ui-studio :where(.modal) select optgroup {
+  background-color: var(--panel);
+  color: var(--fg);
+}
+html.ui-studio[data-theme-mode="light"] :where(.modal) select { color-scheme: light; }
+
+/* Settings-style fields: full sizing (they carry no icons) */
+html.ui-studio .modal .settings-select,
+html.ui-studio .modal .settings-input,
+html.ui-studio .modal .styled-prompt-input,
+html.ui-studio #settings-modal .admin-card :is(input[type="text"], input[type="password"], input[type="email"], input[type="number"], input[type="url"], input:not([type])),
+html.ui-studio #settings-modal .admin-card select,
+html.ui-studio #rename-session-modal input[type="text"],
+html.ui-studio .theme-save-row input {
+  height: 34px;
+  min-height: 34px;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 10px;
+  font-size: 13px;
+  line-height: 32px;
+  box-sizing: border-box;
+}
+html.ui-studio .modal .settings-select:is(select),
+html.ui-studio #settings-modal .admin-card select { padding-right: 28px; }
+html.ui-studio #settings-modal .admin-card :is(input, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(.settings-select):not(.settings-input) {
+  padding-right: 10px;
+}
+html.ui-studio #settings-modal .admin-card select { padding-right: 28px; }
+html.ui-studio .modal textarea { font-size: 13px; line-height: 1.5; }
+html.ui-studio #settings-modal .admin-card textarea { padding: 8px 10px; }
+
+/* Labels */
+html.ui-studio .modal .settings-label,
+html.ui-studio #settings-modal .admin-card label:not(.admin-switch):not(.vis-row):not(.admin-switch-inline) {
+  font-size: 13px;
+  color: var(--st-text-2);
+}
+html.ui-studio .modal .settings-label { min-width: 78px; font-weight: 500; }
+
+/* Checkboxes + radios: native, tinted to the accent */
+html.ui-studio :where(.modal, .dropdown) :is(input[type="checkbox"], input[type="radio"]) {
+  accent-color: var(--st-accent);
+}
+
+/* Range sliders */
+html.ui-studio :where(.modal) input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 16%, transparent);
+  accent-color: var(--st-accent);
+  box-shadow: none;
+  cursor: pointer;
+}
+html.ui-studio :where(.modal) input[type="range"]:hover { background: color-mix(in srgb, var(--fg) 22%, transparent); border: none; }
+html.ui-studio :where(.modal) input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff;
+  border: 1px solid color-mix(in srgb, #000 12%, transparent);
+  box-shadow: 0 1px 3px rgba(0,0,0,.3), 0 0 0 3px color-mix(in srgb, var(--st-accent) 0%, transparent);
+  transition: box-shadow .12s;
+}
+html.ui-studio :where(.modal) input[type="range"]::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; border: 1px solid color-mix(in srgb, #000 12%, transparent);
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
+html.ui-studio :where(.modal) input[type="range"]:focus-visible { outline: none; }
+html.ui-studio :where(.modal) input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 1px 3px rgba(0,0,0,.3), var(--st-ring); }
+html.ui-studio :where(.modal) input[type="range"]::-moz-range-progress { background: var(--st-accent); height: 4px; border-radius: 999px; }
+
+/* Switches: .admin-switch / .vis-switch */
+html.ui-studio .admin-switch { width: 32px; height: 18px; }
+html.ui-studio .admin-slider {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 20%, transparent);
+  transition: background .15s var(--st-ease);
+}
+html.ui-studio .admin-slider::before {
+  width: 14px; height: 14px; left: 2px; top: 2px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 0 0 .5px rgba(0,0,0,.06);
+  transition: transform .15s var(--st-ease);
+}
+html.ui-studio .admin-switch input:checked + .admin-slider { background: var(--st-accent); }
+html.ui-studio .admin-switch input:checked + .admin-slider::before { transform: translateX(14px); }
+html.ui-studio .admin-switch input:focus-visible + .admin-slider { box-shadow: var(--st-ring); }
+html.ui-studio .admin-switch input:disabled + .admin-slider { opacity: .45; cursor: not-allowed; }
+
+html.ui-studio .vis-switch {
+  width: 32px; height: 18px; border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 20%, transparent);
+  transition: background .15s var(--st-ease);
+}
+html.ui-studio .vis-switch::after {
+  width: 14px; height: 14px; top: 2px; left: 2px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 0 0 .5px rgba(0,0,0,.06);
+  transition: transform .15s var(--st-ease);
+}
+html.ui-studio .vis-row input:checked + .vis-switch { background: var(--st-accent); }
+html.ui-studio .vis-row input:checked + .vis-switch::after { transform: translateX(14px); }
+
+/* Visibility toggle rows (Settings > Appearance) */
+html.ui-studio .vis-row {
+  min-height: 34px;
+  padding: 6px 8px;
+  gap: 10px;
+  border-radius: var(--st-r-sm);
+}
+html.ui-studio .vis-row:hover { background: var(--st-hover); }
+html.ui-studio .vis-icon { color: var(--st-text-3); width: 18px; }
+html.ui-studio .vis-row:has(input:checked) .vis-icon { color: var(--st-text-2); }
+html.ui-studio .vis-label { font-size: 13px; color: var(--st-text); }
+html.ui-studio .vis-hint { font-size: 12px; color: var(--st-text-3); opacity: 1; margin-left: 4px; }
+
+/* ==========================================================================
+   3. Buttons inside overlays
+   ========================================================================== */
+html.ui-studio .confirm-btn,
+html.ui-studio .admin-btn-add,
+html.ui-studio .admin-btn-sm,
+html.ui-studio .admin-btn-delete,
+html.ui-studio .theme-io-btn,
+html.ui-studio .settings-fallback-add,
+html.ui-studio .theme-save-row button,
+html.ui-studio #settings-modal .settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--st-r-sm);
+  font-family: var(--st-font);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1;
+  letter-spacing: -0.005em;
+  opacity: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: none;
+  transition: background .12s, border-color .12s, color .12s, box-shadow .12s;
+}
+html.ui-studio .confirm-btn:focus-visible,
+html.ui-studio .admin-btn-add:focus-visible,
+html.ui-studio .admin-btn-sm:focus-visible,
+html.ui-studio .admin-btn-delete:focus-visible,
+html.ui-studio .theme-io-btn:focus-visible,
+html.ui-studio .settings-fallback-add:focus-visible {
+  outline: none;
+  box-shadow: var(--st-ring);
+}
+
+/* Primary */
+html.ui-studio .confirm-btn-primary,
+html.ui-studio .admin-btn-add,
+html.ui-studio .theme-save-row button {
+  background: var(--st-accent);
+  color: var(--st-accent-fg);
+  border: 1px solid transparent;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.18);
+}
+html.ui-studio .confirm-btn-primary:hover,
+html.ui-studio .admin-btn-add:hover,
+html.ui-studio .theme-save-row button:hover {
+  background: color-mix(in srgb, var(--st-accent) 88%, #fff);
+  color: var(--st-accent-fg);
+  border-color: transparent;
+  filter: none;
+}
+html.ui-studio .confirm-btn-primary:active,
+html.ui-studio .admin-btn-add:active { background: color-mix(in srgb, var(--st-accent) 88%, #000); }
+html.ui-studio .admin-btn-add:disabled { opacity: .5; }
+
+/* Secondary */
+html.ui-studio .confirm-btn-secondary,
+html.ui-studio .admin-btn-sm,
+html.ui-studio .theme-io-btn,
+html.ui-studio .settings-fallback-add,
+html.ui-studio #settings-modal .settings-btn {
+  background: var(--st-surface-2);
+  color: var(--st-text);
+  border: 1px solid var(--st-line-2);
+}
+html.ui-studio .confirm-btn-secondary:hover,
+html.ui-studio .admin-btn-sm:hover,
+html.ui-studio .theme-io-btn:hover,
+html.ui-studio .settings-fallback-add:hover,
+html.ui-studio #settings-modal .settings-btn:hover {
+  background: color-mix(in srgb, var(--fg) 7%, var(--panel));
+  color: var(--st-text);
+  border-color: color-mix(in srgb, var(--fg) 20%, transparent);
+}
+html.ui-studio #settings-modal .settings-btn { height: 30px; font-size: 12.5px !important; }
+html.ui-studio #settings-modal .settings-btn:focus-visible { outline: none; box-shadow: var(--st-ring); }
+/* Small ghost icon buttons in settings rows (copy URL, remove fallback) */
+html.ui-studio #settings-modal :is(.admin-ep-copy-btn, .search-fb-remove) {
+  width: 26px; height: 26px; padding: 0; border: none; border-radius: var(--st-r-xs);
+  background: transparent; color: var(--st-text-3);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+html.ui-studio #settings-modal :is(.admin-ep-copy-btn, .search-fb-remove):hover { background: var(--st-hover); color: var(--st-text); border: none; }
+html.ui-studio .admin-btn-sm,
+html.ui-studio .settings-fallback-add { height: 30px; padding: 0 12px; font-size: 12.5px; }
+html.ui-studio .settings-fallback-add { align-self: flex-start; color: var(--st-text-2); border-style: dashed; background: transparent; }
+html.ui-studio .settings-fallback-add:hover { color: var(--st-text); }
+
+/* Danger */
+html.ui-studio .confirm-btn-danger {
+  background: var(--sto-danger);
+  color: #fff;
+  border: 1px solid transparent;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.18);
+}
+html.ui-studio .confirm-btn-danger:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--sto-danger) 32%, transparent); }
+html.ui-studio .confirm-btn-danger:hover { background: color-mix(in srgb, var(--sto-danger) 88%, #fff); color: #fff; border-color: transparent; }
+html.ui-studio .admin-btn-delete {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  background: transparent;
+  color: var(--sto-danger);
+  border: 1px solid var(--sto-danger-line);
+}
+html.ui-studio .admin-btn-delete:hover {
+  background: var(--sto-danger-soft);
+  color: var(--sto-danger);
+  border-color: color-mix(in srgb, var(--sto-danger) 60%, transparent);
+}
+html.ui-studio .admin-danger-card { border-color: var(--sto-danger-line); }
+
+/* .modal-body button { margin-top:6px } nudges every footer button down */
+html.ui-studio .modal-body :is(.confirm-btn, .admin-btn-add, .admin-btn-sm, .admin-btn-delete, .theme-io-btn) { margin-top: 0; }
+
+/* ==========================================================================
+   4. Tabs (theme panel, memory, admin)
+   ========================================================================== */
+html.ui-studio .admin-tabs {
+  gap: 2px;
+  border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio .admin-tab {
+  height: 34px;
+  padding: 0 10px;
+  margin-bottom: -1px;
+  font-family: var(--st-font);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--st-text-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+html.ui-studio .admin-tab:hover { color: var(--st-text); background: none; border-color: transparent; border-bottom-color: var(--st-line-2); }
+html.ui-studio .admin-tab.active,
+html.ui-studio .admin-tab.active:hover {
+  color: var(--st-text);
+  border-bottom-color: var(--st-accent);
+}
+html.ui-studio .admin-tab svg { opacity: .8; margin-right: 0 !important; vertical-align: 0 !important; }
+html.ui-studio .admin-tab:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--st-accent-line); border-radius: var(--st-r-xs); }
+
+/* ==========================================================================
+   5. Cards inside overlays
+   ========================================================================== */
+html.ui-studio .modal .admin-card {
+  border: 1px solid var(--st-line);
+  border-radius: var(--st-r);
+}
+html.ui-studio .modal .admin-card h2 {
+  font-family: var(--st-font);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--st-text);
+  border-bottom: none;
+  padding-bottom: 0;
+  margin: 0 0 6px;
+}
+html.ui-studio .modal .admin-card h2 > svg { color: var(--st-text-3); opacity: 1 !important; }
+html.ui-studio .modal .admin-toggle-sub {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--st-text-3);
+}
+html.ui-studio .modal .admin-toggle-label { font-size: 13px; font-weight: 500; color: var(--st-text); }
+
+/* ==========================================================================
+   6. Settings modal
+   ========================================================================== */
+html.ui-studio #settings-modal .settings-modal-content {
+  padding: 0;
+}
+html.ui-studio #settings-modal .settings-modal-content > .modal-header {
+  padding: 14px 16px 14px 20px;
+  margin: 0;
+  border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio #settings-modal .settings-modal-content > .modal-header h4 > span:first-child { display: none; }
+/* The stray "Toggle on/off visibility..." line under the title only applies
+   to Appearance; Studio drops it so the header reads cleanly. */
+html.ui-studio #settings-modal .settings-modal-content > .admin-toggle-sub { display: none; }
+
+html.ui-studio #settings-modal .settings-sidebar {
+  width: 196px;
+  padding: 12px 10px;
+  gap: 1px;
+  border-right: 1px solid var(--st-line);
+  background: color-mix(in srgb, var(--fg) 1.8%, transparent);
+  overflow-y: auto;
+}
+html.ui-studio #settings-modal .settings-nav-item {
+  min-height: 32px;
+  padding: 6px 10px;
+  gap: 10px;
+  border-radius: var(--st-r-sm);
+  font-family: var(--st-font);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--st-text-2);
+  transition: background .12s, color .12s;
+}
+html.ui-studio #settings-modal .settings-nav-item svg { color: var(--st-text-3); opacity: 1; }
+html.ui-studio #settings-modal .settings-nav-item:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #settings-modal .settings-nav-item:hover svg { color: var(--st-text-2); }
+html.ui-studio #settings-modal .settings-nav-item.active {
+  background: var(--st-accent-soft);
+  color: var(--st-text);
+}
+html.ui-studio #settings-modal .settings-nav-item.active svg { color: var(--st-accent); }
+html.ui-studio #settings-modal .settings-nav-item:focus-visible { outline: none; box-shadow: var(--st-ring); }
+html.ui-studio #settings-modal .settings-sidebar-divider {
+  background: var(--st-line);
+  margin: 7px 10px;
+}
+html.ui-studio #settings-modal .settings-sidebar-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--st-text-3);
+  opacity: 1;
+  padding: 4px 10px 4px;
+}
+
+html.ui-studio #settings-modal .settings-panels { padding: 20px 24px 24px; }
+html.ui-studio #settings-modal .settings-panels .admin-card {
+  background: transparent;
+  border: 1px solid var(--st-line);
+  border-radius: var(--st-r);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+html.ui-studio body:not(.theme-frosted) #settings-modal .settings-panels .admin-card {
+  background: color-mix(in srgb, var(--fg) 1.5%, transparent);
+}
+html.ui-studio #settings-modal .settings-panels .admin-card h2 {
+  margin-bottom: 4px;
+}
+html.ui-studio #settings-modal .settings-panels .admin-card h2 + .admin-toggle-sub,
+html.ui-studio #settings-modal .settings-panels .admin-card h2 + p { margin-bottom: 12px !important; }
+html.ui-studio #settings-modal .settings-panels .admin-card .admin-card {
+  background: var(--st-surface-2);
+  padding: 12px 14px;
+}
+html.ui-studio #settings-modal .settings-col { gap: 8px; }
+html.ui-studio #settings-modal .settings-row { gap: 10px; }
+
+/* Appearance: Interface first, then Chat Area, Chat Bar, Sidebar (the
+   nth-of-type order in style.css predates the Interface card). */
+html.ui-studio .settings-appearance-panel > .ui-design-card { order: 0; }
+html.ui-studio .settings-appearance-panel > .admin-card:nth-of-type(2) { order: 3; }
+html.ui-studio .settings-appearance-panel > .admin-card:nth-of-type(3) { order: 1; }
+html.ui-studio .settings-appearance-panel > .admin-card:nth-of-type(4) { order: 2; }
+
+/* Interface picker card */
+html.ui-studio .ui-design-card .ui-design-hint { font-size: 12.5px; color: var(--st-text-3); opacity: 1; margin: 0 0 14px; }
+html.ui-studio .ui-design-choices { gap: 12px; }
+html.ui-studio .ui-design-choice {
+  padding: 10px 10px 12px;
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r);
+  gap: 2px;
+}
+html.ui-studio .ui-design-choice:hover { background: var(--st-hover); }
+html.ui-studio .ui-design-choice:focus-visible { box-shadow: var(--st-ring); }
+html.ui-studio .ui-design-choice.active {
+  border-color: var(--st-accent);
+  background: var(--st-accent-soft);
+  box-shadow: 0 0 0 1px var(--st-accent) inset;
+}
+html.ui-studio .ui-design-name { font-size: 13px; font-weight: 600; color: var(--st-text); }
+html.ui-studio .ui-design-desc { font-size: 12px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .ui-design-thumb { border-radius: var(--st-r-sm); margin-bottom: 8px; border-color: var(--st-line); }
+
+/* Keyboard shortcuts list */
+html.ui-studio #settings-modal .shortcut-category {
+  font-size: 11.5px; font-weight: 600; text-transform: none; letter-spacing: 0;
+  color: var(--st-text-3); opacity: 1; padding: 14px 0 6px;
+}
+html.ui-studio #settings-modal .shortcut-category:first-child { padding-top: 0; }
+html.ui-studio #settings-modal .shortcut-row { min-height: 36px; padding: 4px 0; border-bottom-color: var(--st-line); }
+html.ui-studio #settings-modal .shortcut-label { font-size: 13px; color: var(--st-text); gap: 8px; }
+html.ui-studio #settings-modal .shortcut-icon { color: var(--st-text-3); opacity: 1; }
+html.ui-studio #settings-modal .shortcut-key { border-radius: var(--st-r-xs); padding: 2px; }
+html.ui-studio #settings-modal .shortcut-key:hover { background: var(--st-hover); }
+html.ui-studio #settings-modal .shortcut-key kbd {
+  font-family: var(--st-font);
+  font-size: 11.5px;
+  font-weight: 550;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  line-height: 20px;
+  box-sizing: border-box;
+  color: var(--st-text-2);
+  background: var(--st-surface-2);
+  border: 1px solid var(--st-line-2);
+  border-bottom-width: 2px;
+  border-radius: var(--st-r-xs);
+  box-shadow: none;
+}
+html.ui-studio #settings-modal .shortcut-action-btn {
+  width: 26px; height: 26px; border-radius: var(--st-r-xs);
+  border: 1px solid var(--st-line-2); color: var(--st-text-3); background: transparent;
+}
+html.ui-studio #settings-modal .shortcut-action-btn:hover { color: var(--st-text); background: var(--st-hover); border-color: var(--st-line-2); }
+
+/* Narrow Settings (mobile, or snapped half-width): tab rail on top */
+@container settings-modal (max-width: 620px) {
+  html.ui-studio #settings-modal .settings-sidebar {
+    width: auto;
+    padding: 8px 10px;
+    gap: 2px;
+    border-right: none;
+    border-bottom: 1px solid var(--st-line);
+    overflow-y: hidden;
+  }
+  html.ui-studio #settings-modal .settings-nav-item { flex: 0 0 auto; min-height: 30px; padding: 5px 10px; font-size: 12.5px; gap: 7px; }
+  html.ui-studio #settings-modal .settings-panels { padding: 14px 14px 20px; }
+  html.ui-studio #settings-modal .settings-panels .admin-card { padding: 14px; }
+}
+@media (max-width: 600px) {
+  html.ui-studio #settings-modal .settings-sidebar {
+    width: auto; padding: 8px 10px; border-right: none; border-bottom: 1px solid var(--st-line);
+  }
+  html.ui-studio #settings-modal .settings-nav-item { flex: 0 0 auto; min-height: 30px; padding: 5px 10px; font-size: 12.5px; }
+  html.ui-studio #settings-modal .settings-panels { padding: 14px 14px 20px; }
+}
+@media (max-width: 768px) {
+  html.ui-studio #settings-modal .settings-modal-content > .modal-header { padding: 4px 16px 12px; }
+  /* The sheet is full height, but the layout kept its desktop 85vh cap and
+     left a dead band at the bottom; let it fill the sheet instead. */
+  html.ui-studio #settings-modal .settings-layout { flex: 1 1 0; min-height: 0; max-height: none; }
+  html.ui-studio #settings-modal .settings-panels { min-height: 0; }
+}
+/* Narrow: card headers with actions (Added Models: Probe, Clear offline)
+   and endpoint rows wrap instead of squeezing the title into a column. */
+@container settings-modal (max-width: 560px) {
+  html.ui-studio #settings-modal .admin-card h2 { flex-wrap: wrap; row-gap: 8px; }
+  html.ui-studio #settings-modal .admin-user-row > div:first-child { flex-wrap: wrap; gap: 8px; }
+  html.ui-studio #settings-modal .admin-user-row > div:first-child > .admin-user-info { flex: 1 1 200px !important; min-width: 0; }
+}
+/* Touch: settings checkboxes and inline text links get a 24px+ hit area
+   (links grow via padding offset by negative margin, so text flow is
+   unchanged). */
+@media (max-width: 768px), (pointer: coarse) {
+  html.ui-studio #settings-modal .settings-panels input[type="checkbox"]:not(.admin-switch input):not(.vis-row input) {
+    width: 22px; height: 24px; min-width: 22px; margin: 0 2px;
+  }
+  html.ui-studio #settings-modal .settings-panels a:not([class*="btn"]) {
+    display: inline-block;
+    padding: 5px 2px;
+    margin: -5px -2px;
+    min-height: 24px;
+    box-sizing: border-box;
+  }
+}
+html.ui-studio #settings-modal a.admin-btn-add,
+html.ui-studio #settings-modal a.admin-btn-sm,
+html.ui-studio #settings-modal a.confirm-btn { text-decoration: none; }
+
+/* ==========================================================================
+   7. Theme panel
+   ========================================================================== */
+html.ui-studio #theme-popup { padding: 14px 16px 12px; }
+html.ui-studio #theme-popup > .modal-header { margin-bottom: 4px; }
+html.ui-studio #theme-popup .admin-tabs { margin: 0 -16px 14px; padding: 0 12px; }
+html.ui-studio #theme-popup .admin-card {
+  border: none;
+  padding: 0;
+  margin-bottom: 18px;
+  background: transparent;
+}
+html.ui-studio body:not(.theme-frosted) #theme-popup .admin-card { background: transparent; }
+html.ui-studio #theme-popup .admin-card h2 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--st-text-3);
+  margin-bottom: 10px;
+}
+html.ui-studio .theme-grid { gap: 8px; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
+html.ui-studio .theme-swatch {
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r);
+  padding: 9px 6px 8px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--st-text-2);
+  background: transparent;
+  transition: border-color .12s, background .12s, box-shadow .12s;
+}
+html.ui-studio .theme-swatch:hover { transform: none; background: var(--st-hover); border-color: color-mix(in srgb, var(--fg) 22%, transparent); color: var(--st-text); }
+html.ui-studio .theme-swatch.active {
+  border-color: var(--st-accent);
+  box-shadow: 0 0 0 1px var(--st-accent) inset;
+  background: var(--st-accent-soft);
+  color: var(--st-text);
+}
+html.ui-studio .theme-swatch-colors { margin-bottom: 6px; }
+html.ui-studio .theme-swatch-colors span { width: 16px; height: 16px; border: 1.5px solid var(--st-surface); box-shadow: 0 0 0 1px var(--st-line-2); }
+html.ui-studio .color-row { gap: 8px; min-height: 34px; padding: 0 2px; border-radius: var(--st-r-sm); }
+html.ui-studio .color-row label { font-size: 13px; color: var(--st-text-2); opacity: 1; }
+html.ui-studio .color-row input[type="color"],
+html.ui-studio .color-row input.cp-swatch-input {
+  width: 22px; height: 22px; border: 1px solid var(--st-line-2); box-shadow: var(--st-shadow-sm);
+}
+html.ui-studio .color-reset-btn.changed { color: var(--st-text-3); opacity: 1; }
+html.ui-studio .color-reset-btn.changed:hover { color: var(--st-text); }
+html.ui-studio .theme-custom { gap: 2px 18px; }
+html.ui-studio .theme-custom-label,
+html.ui-studio .theme-adv-group-label {
+  font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--st-text-3); opacity: 1;
+}
+html.ui-studio .theme-custom-divider {
+  font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--st-text-3); opacity: 1; border-top-color: var(--st-line);
+}
+html.ui-studio .theme-adv-toggle { font-size: 13px; font-weight: 500; color: var(--st-text-2); border-radius: var(--st-r-sm); }
+html.ui-studio .theme-adv-toggle:hover { color: var(--st-text); }
+html.ui-studio .theme-io-row { gap: 8px; margin-top: 8px; }
+html.ui-studio .theme-save-row { gap: 8px; }
+html.ui-studio .theme-import-area { border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); background: var(--sto-field); color: var(--st-text); font-family: var(--st-mono); font-size: 12px; }
+html.ui-studio .theme-delete-btn { background: var(--st-text-2); color: var(--st-surface); width: 18px; height: 18px; top: -6px; right: -6px; box-shadow: var(--st-shadow-sm); }
+html.ui-studio .theme-delete-btn:hover { background: var(--sto-danger); color: #fff; transform: none; }
+@media (max-width: 768px) {
+  html.ui-studio #theme-popup {
+    border-radius: var(--st-r-xl) var(--st-r-xl) 0 0;
+    border: none;
+    border-top: 1px solid var(--st-line-2);
+    padding: 6px 14px 12px;
+  }
+  html.ui-studio #theme-popup .admin-tabs { margin: 0 -14px 12px; padding: 0 10px; }
+}
+
+/* ==========================================================================
+   8. Dialogs: styled confirm / prompt, rename, preset
+   ========================================================================== */
+html.ui-studio #styled-confirm-overlay,
+html.ui-studio #styled-prompt-overlay {
+  background: var(--sto-backdrop);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+html.ui-studio .styled-confirm-box {
+  width: min(420px, calc(100vw - 32px));
+  padding: 20px 20px 16px;
+  border-radius: var(--st-r-lg);
+}
+html.ui-studio .styled-confirm-box .modal-header { min-height: 0; margin-bottom: 0; cursor: default; }
+html.ui-studio .styled-confirm-box .modal-header h4 { font-size: 15px; }
+html.ui-studio .styled-confirm-box .modal-body p {
+  margin: 6px 0 18px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--st-text-2);
+}
+html.ui-studio .styled-prompt-box .modal-body p { margin-bottom: 12px; }
+html.ui-studio .styled-prompt-box .styled-prompt-input { margin: 0 0 18px; width: 100%; }
+html.ui-studio .styled-confirm-box .modal-footer {
+  gap: 8px;
+  margin: 0 -20px;
+  padding: 14px 20px 0;
+  border-top: 1px solid var(--st-line);
+}
+@media (max-width: 768px) {
+  html.ui-studio #styled-prompt-overlay { align-items: center; }
+  html.ui-studio .styled-confirm-box {
+    width: calc(100vw - 32px);
+    padding: 18px 18px 16px !important;
+    border-radius: var(--st-r-lg) !important;
+    border: 1px solid var(--st-line-2) !important;
+  }
+  html.ui-studio .styled-confirm-box .modal-header h4 { font-size: 15px; }
+  html.ui-studio .styled-confirm-box .modal-body p { font-size: 14px; margin: 6px 0 16px; }
+  html.ui-studio .styled-confirm-box .modal-footer { margin: 0 -18px; padding: 14px 18px 0; gap: 10px; }
+  html.ui-studio .styled-confirm-box .confirm-btn {
+    flex: 1; height: 40px; padding: 0 14px; font-size: 14px; border-radius: var(--st-r-sm);
+  }
+}
+
+/* Rename session */
+html.ui-studio #rename-session-modal .modal-content { padding: 18px 20px 16px; }
+html.ui-studio #rename-session-modal .modal-header { margin-bottom: 12px; }
+
+/* ==========================================================================
+   9. Menus and dropdowns
+   ========================================================================== */
+html.ui-studio .dropdown,
+html.ui-studio .export-dropdown-menu,
+html.ui-studio .overflow-menu,
+html.ui-studio .model-picker-menu {
+  background: var(--st-surface);
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r);
+  box-shadow: var(--st-shadow);
+  padding: 6px;
+  color: var(--st-text);
+  font-family: var(--st-font);
+  backdrop-filter: none;
+}
+html[data-theme-mode="dark"].ui-studio :is(.dropdown, .export-dropdown-menu, .overflow-menu, .model-picker-menu) {
+  box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 8px 28px rgba(0,0,0,.4);
+}
+html.ui-studio body.theme-frosted :is(.dropdown, .overflow-menu) { backdrop-filter: blur(24px) saturate(170%); }
+
+/* Rows */
+html.ui-studio .dropdown-item-compact,
+html.ui-studio .export-dropdown-item,
+html.ui-studio .overflow-menu-item {
+  min-height: 32px;
+  padding: 6px 10px;
+  gap: 10px;
+  border-radius: var(--st-r-sm);
+  font-size: 13px;
+  font-weight: 450;
+  line-height: 1.3;
+  color: var(--st-text);
+  opacity: 1;
+  box-sizing: border-box;
+  transition: background .08s, color .08s;
+}
+html.ui-studio .dropdown-item-compact:hover,
+html.ui-studio .export-dropdown-item:hover,
+html.ui-studio .overflow-menu-item:hover {
+  background: var(--st-hover);
+  color: var(--st-text);
+  opacity: 1;
+}
+html.ui-studio .dropdown-item-compact .dropdown-icon,
+html.ui-studio .export-dropdown-item .dropdown-icon {
+  width: 16px; height: 16px; opacity: 1; color: var(--st-text-3);
+}
+html.ui-studio .dropdown-item-compact:hover .dropdown-icon,
+html.ui-studio .export-dropdown-item:hover .dropdown-icon { color: var(--st-text-2); }
+html.ui-studio .dropdown-item-compact .dropdown-shortcut {
+  font-size: 11.5px; color: var(--st-text-3); opacity: 1; padding-left: 16px; letter-spacing: 0;
+}
+html.ui-studio .dropdown-item-danger,
+html.ui-studio .dropdown-item-danger .dropdown-icon { color: var(--sto-danger) !important; }
+html.ui-studio .dropdown-item-danger:hover { background: var(--sto-danger-soft); }
+html.ui-studio .dropdown-divider { background: var(--st-line); margin: 5px -6px; }
+
+/* style.css has a shared (0,4,0) hover for every menu row that tints with
+   the accent and nudges the row 1px; Studio hovers are neutral and still. */
+html.ui-studio body :is(.overflow-menu-item, .dropdown-item, .dropdown-item-compact, .export-dropdown-item, .sort-dropdown-item):hover:not(:disabled) {
+  background-color: var(--st-hover);
+  color: var(--st-text);
+  transform: none;
+}
+html.ui-studio body .dropdown-item-danger:hover:not(:disabled) { background-color: var(--sto-danger-soft); color: var(--sto-danger); }
+
+/* Sort menus (Chats sort, ...): style.css pins these with !important */
+html.ui-studio .sort-dropdown {
+  min-width: 180px !important;
+  padding: 6px !important;
+  background: var(--st-surface) !important;
+  border: 1px solid var(--st-line-2) !important;
+  border-radius: var(--st-r) !important;
+  box-shadow: var(--st-shadow) !important;
+}
+html[data-theme-mode="dark"].ui-studio .sort-dropdown { box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 8px 28px rgba(0,0,0,.4) !important; }
+html.ui-studio .sort-dropdown-item {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 6px 10px !important;
+  font-size: 13px !important;
+  color: var(--st-text);
+  border-radius: var(--st-r-sm) !important;
+  box-sizing: border-box;
+}
+html.ui-studio .sort-dropdown-item.active,
+html.ui-studio .sort-dropdown-item.selected { background: var(--st-accent-soft); }
+html.ui-studio .sort-dropdown-sep { border-top-color: var(--st-line); margin-top: 5px; padding-top: 6px; }
+html.ui-studio .sort-dropdown #auto-sort-sessions-more { border-left-color: var(--st-line) !important; color: var(--st-text-3) !important; }
+@media (max-width: 768px) {
+  html.ui-studio #session-sort-dropdown .sort-dropdown-item { min-height: 44px; font-size: 14px !important; padding: 10px 12px !important; }
+}
+
+/* Slash-command autocomplete above the composer */
+html.ui-studio .slash-autocomplete-popup {
+  background: var(--st-surface);
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r);
+  box-shadow: var(--st-shadow);
+  padding: 6px;
+  font-family: var(--st-font);
+}
+html.ui-studio .slash-ac-cat {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none;
+  color: var(--st-text-3); opacity: 1; padding: 8px 10px 4px;
+}
+html.ui-studio .slash-ac-row { min-height: 32px; align-items: center; padding: 6px 10px; border-radius: var(--st-r-sm); font-size: 13px; }
+html.ui-studio .slash-ac-row:hover { background-color: var(--st-hover); }
+html.ui-studio .slash-ac-row-sel { background-color: var(--st-accent-soft); }
+html.ui-studio .slash-ac-token { font-family: var(--st-mono); font-size: 12.5px; color: var(--st-text); font-weight: 550; }
+html.ui-studio .slash-ac-help { color: var(--st-text-2); opacity: 1; }
+html.ui-studio .slash-ac-usage { color: var(--st-text-3); opacity: 1; font-family: var(--st-mono); }
+html.ui-studio .slash-ac-empty { color: var(--st-text-3); font-style: normal; font-size: 13px; }
+
+/* Big two-line items */
+html.ui-studio .dropdown-item {
+  border-bottom: none;
+  border-radius: var(--st-r-sm);
+  padding: 7px 8px;
+}
+html.ui-studio .dropdown-item:hover { background: var(--st-hover); }
+html.ui-studio .dropdown-item .menu-icon {
+  border-radius: var(--st-r-sm);
+  background: var(--st-surface-2);
+  box-shadow: inset 0 0 0 1px var(--st-line);
+  color: var(--st-text-2);
+}
+html.ui-studio .dropdown-item:hover .menu-icon { background: var(--st-surface-2); color: var(--st-text); }
+html.ui-studio .dropdown-item .menu-text h4 { font-size: 13px; font-weight: 500; color: var(--st-text); }
+html.ui-studio .dropdown-item .menu-text p { font-size: 12px; color: var(--st-text-3); }
+
+/* Session actions + folder submenu */
+html.ui-studio .session-dropdown-menu,
+html.ui-studio .session-folder-submenu { padding: 6px; min-width: 188px; }
+
+/* Composer overflow (+) menu: quiet, quick fade instead of the domino */
+html.ui-studio .overflow-menu {
+  min-width: 200px;
+  animation: sto-menu-up .14s var(--st-ease);
+}
+html.ui-studio .overflow-menu:not(.hidden):not(.closing) .overflow-menu-item,
+html.ui-studio .overflow-menu .overflow-menu-item { animation: none; }
+html.ui-studio .overflow-menu.closing { animation: sto-menu-out .12s ease-in forwards; animation-delay: 0s; }
+html.ui-studio .overflow-menu.closing .overflow-menu-item { animation: none; }
+html.ui-studio .overflow-menu-item svg { color: var(--st-text-3); flex-shrink: 0; }
+html.ui-studio .overflow-menu-item:hover svg { color: var(--st-text-2); }
+html.ui-studio #overflow-attach-btn { font-weight: 450; }
+html.ui-studio .overflow-menu-item.active { color: var(--st-text); }
+html.ui-studio .overflow-menu-item.active svg { color: var(--st-accent); }
+html.ui-studio .overflow-active-dot { background: var(--st-accent); }
+html.ui-studio #overflow-doc-btn.has-docs,
+html.ui-studio #overflow-doc-btn.active { color: var(--st-text); }
+html.ui-studio #overflow-doc-btn.has-docs svg,
+html.ui-studio #overflow-doc-btn.active svg { color: var(--st-accent); }
+html.ui-studio #overflow-doc-btn.has-docs.active { background: var(--st-accent-soft); }
+@keyframes sto-menu-up {
+  from { opacity: 0; transform: translateY(4px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes sto-menu-down {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes sto-menu-out {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(3px) scale(.98); }
+}
+html.ui-studio .dropdown.show { animation: sto-menu-down .12s var(--st-ease); }
+
+/* Model picker */
+html.ui-studio .model-picker-menu {
+  min-width: 290px;
+  border-radius: var(--st-r-lg);
+  animation: sto-menu-up .14s var(--st-ease);
+}
+html.ui-studio .model-picker-menu.closing { animation: sto-menu-out .12s ease-in forwards; }
+html.ui-studio .model-picker-search-row { gap: 6px; grid-template-columns: minmax(0, 1fr) 32px; margin-bottom: 6px; }
+html.ui-studio .model-picker-search-row.searching { grid-template-columns: minmax(0, 1fr) 0px; gap: 0; }
+html.ui-studio .model-picker-menu input[type="text"] {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+  border-radius: var(--st-r-sm);
+}
+html.ui-studio .model-picker-action-btn {
+  width: 32px; height: 32px; border-radius: var(--st-r-sm);
+  border: 1px solid var(--st-line-2); background: var(--st-surface-2); color: var(--st-text-2);
+}
+html.ui-studio .model-picker-action-btn:hover,
+html.ui-studio .model-picker-action-btn:focus-visible {
+  border-color: var(--st-line-2); background: var(--st-press); color: var(--st-text);
+}
+html.ui-studio .model-picker-action-btn:hover svg,
+html.ui-studio .model-picker-action-btn:focus-visible svg { transform: none; }
+html.ui-studio .model-picker-action-btn.primary { color: var(--st-accent); background: var(--st-accent-soft); border-color: transparent; }
+html.ui-studio .model-picker-list .model-switch-item {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: var(--st-r-sm);
+  font-size: 13px;
+  gap: 8px;
+  color: var(--st-text);
+}
+html.ui-studio .model-picker-list .model-switch-item:hover,
+html.ui-studio .model-picker-list .model-switch-item.kb-active { background: var(--st-hover); }
+html.ui-studio .model-picker-list .model-switch-item.active,
+html.ui-studio .model-picker-list .model-switch-item.selected,
+html.ui-studio .model-picker-list .model-switch-item[aria-selected="true"] { background: var(--st-accent-soft); }
+html.ui-studio .model-picker-list .model-switch-item .model-switch-ep { color: var(--st-text-3); opacity: 1; font-size: 11.5px; }
+html.ui-studio .model-picker-list .mp-section-label,
+html.ui-studio .model-picker-list .mp-provider-header {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--st-text-3); opacity: 1;
+  border-radius: var(--st-r-sm);
+}
+html.ui-studio .model-picker-list .mp-provider-header:hover { background: var(--st-hover); color: var(--st-text-2); }
+html.ui-studio .model-picker-list .mp-provider-count { color: var(--st-text-3); opacity: .8; }
+
+/* ==========================================================================
+   10. Command palette (sidebar Search / Ctrl+K)
+   ========================================================================== */
+html.ui-studio .search-overlay {
+  background: var(--sto-backdrop);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  padding-top: 14vh;
+}
+html.ui-studio .search-popup {
+  width: 600px;
+  max-width: calc(100vw - 32px);
+  background: var(--st-surface);
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r-lg);
+  box-shadow: var(--st-shadow-lg);
+  animation: sto-pop .14s var(--st-ease);
+}
+@keyframes sto-pop {
+  from { opacity: 0; transform: translateY(-6px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+html.ui-studio .search-popup input#search-input {
+  height: 52px;
+  padding: 0 18px 0 46px;
+  font-family: var(--st-font);
+  font-size: 15px;
+  color: var(--st-text);
+  border: none;
+  border-bottom: 1px solid var(--st-line);
+  border-radius: 0;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238a909b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") no-repeat 18px center;
+  box-shadow: none;
+}
+html.ui-studio .search-popup input#search-input:hover,
+html.ui-studio .search-popup input#search-input:focus { border-color: var(--st-line); background-color: transparent; box-shadow: none; }
+html.ui-studio .search-results { padding: 6px; }
+html.ui-studio .search-group-header {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--st-text-3);
+  padding: 10px 10px 4px;
+}
+html.ui-studio .search-result-item {
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: var(--st-r-sm);
+  font-size: 13px;
+  align-items: center;
+}
+html.ui-studio .search-result-item:hover { background: var(--st-hover); }
+html.ui-studio .search-result-item.selected { background: var(--st-accent-soft); }
+html.ui-studio .search-result-role { font-size: 11px; color: var(--st-text-3); }
+html.ui-studio .search-empty { color: var(--st-text-3); font-size: 13px; }
+
+/* ==========================================================================
+   11. Toasts, tour hints
+   ========================================================================== */
+html.ui-studio .toast {
+  font-family: var(--st-font);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--st-text);
+  background: var(--st-surface);
+  border: 1px solid var(--st-line-2);
+  border-left: 1px solid var(--st-line-2);
+  border-radius: var(--st-r);
+  padding: 9px 14px;
+  min-height: 40px;
+  box-shadow: var(--st-shadow-lg);
+  backdrop-filter: none;
+}
+html.ui-studio .toast .toast-checkmark { color: #30a46c; margin-right: 8px; }
+html.ui-studio .toast button {
+  height: 26px !important;
+  padding: 0 10px !important;
+  border: 1px solid var(--st-line-2) !important;
+  border-radius: var(--st-r-xs) !important;
+  background: var(--st-surface-2) !important;
+  color: var(--st-text) !important;
+  font-family: var(--st-font);
+  font-size: 12.5px !important;
+  font-weight: 550;
+}
+html.ui-studio .toast button:hover { background: var(--st-press) !important; }
+html.ui-studio .toast.error {
+  color: var(--st-text);
+  border-color: var(--sto-danger-line);
+  border-left-color: var(--sto-danger-line);
+  box-shadow: var(--st-shadow-lg), inset 3px 0 0 var(--sto-danger);
+}
+
+html.ui-studio .tour-hint {
+  background: var(--st-surface);
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r);
+  box-shadow: var(--st-shadow-lg);
+  font-family: var(--st-font);
+  font-size: 12.5px;
+  color: var(--st-text-2);
+  padding: 14px 14px 12px;
+}
+html.ui-studio .tour-hint-text b { color: var(--st-text); }
+html.ui-studio .tour-hint-dismiss {
+  height: 28px; padding: 0 12px; font-size: 12.5px; font-weight: 550; opacity: 1;
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+  background: var(--st-surface-2); color: var(--st-text);
+}
+html.ui-studio .tour-hint-dismiss:hover { background: var(--st-press); border-color: var(--st-line-2); }

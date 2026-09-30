@@ -360,6 +360,51 @@ function createThinkingSection(thinkingContent, index = 0, thinkingTime = null) 
   `;
 }
 
+// List lines: indent, marker (a number for ordered), and the item text.
+const _LIST_LINE = /^( {0,12})(?:(\d{1,9})\.|[-*]) (.*)$/;
+
+// Render each run of consecutive list lines as nested <ol>/<ul> (one line
+// of HTML per run). A deeper indent opens a list inside the current item,
+// a shallower one closes back out, and a change of kind at the same depth
+// starts a new list. An ordered list keeps its first number (start=).
+export function renderListBlocks(s) {
+  const lines = s.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (!_LIST_LINE.test(lines[i])) { out.push(lines[i]); i++; continue; }
+    const stack = [];            // { indent, tag }
+    let html = '';
+    const close = () => { const top = stack.pop(); html += `</li></${top.tag}>`; };
+    for (; i < lines.length; i++) {
+      const m = _LIST_LINE.exec(lines[i]);
+      if (!m) break;
+      const indent = m[1].length, num = m[2], tag = num !== undefined ? 'ol' : 'ul';
+      let text = m[3], attrs = '';
+      const task = tag === 'ul' && /^\[([ xX])\] (.*)$/.exec(text);
+      if (task) {
+        attrs = ` class="task-item${task[1].toLowerCase() === 'x' ? ' task-done' : ''}"`;
+        text = `<span class="task-check" aria-hidden="true"></span><span class="task-text">${task[2]}</span>`;
+      }
+      while (stack.length && stack[stack.length - 1].indent > indent) close();
+      const top = stack[stack.length - 1];
+      if (top && top.indent === indent && top.tag !== tag) close();
+      const cur = stack[stack.length - 1];
+      if (cur && cur.indent >= indent) {
+        html += '</li>';                              // next item, same list
+      } else {
+        const start = tag === 'ol' && num !== '1' ? ` start="${parseInt(num, 10)}"` : '';
+        html += `<${tag}${start}>`;
+        stack.push({ indent, tag });
+      }
+      html += `<li${attrs}>${text}`;
+    }
+    while (stack.length) close();
+    out.push(html);
+  }
+  return out.join('\n');
+}
+
 function createTaskCompletedMarker() {
   return `
     <div class="task-completed-marker" role="status" aria-label="Task completed">
@@ -702,24 +747,13 @@ export function mdToHtml(src, opts) {
        .replace(/^## (.*)$/gm, '<h2>$1</h2>')
        .replace(/^# (.*)$/gm, '<h1>$1</h1>');
 
-  // Ordered lists (1. 2. 3. etc.)
-  s = s.replace(/^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
-  s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
-
-  // GitHub-style task lists (- [ ] / - [x]) → checkbox items. Must run before
-  // the generic unordered-list rule so the "- " prefix isn't consumed first.
-  // Emits <uli> (with a class) so the unordered-list wrapper below treats it
-  // as a list item. Used by plan mode: plan + progress render as a checklist.
-  s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
-    const done = mark.toLowerCase() === 'x';
-    return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
-  });
-
-  // Unordered lists. <uli> may carry attributes (task-item class), so the
-  // wrapper preserves them when converting <uli ...> → <li ...>.
-  s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
-  s = s.replace(/(^|\n)((?:<uli\b[^>]*>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
-    `${prefix}<ul>${block.trim().replace(/<uli\b([^>]*)>/g, '<li$1>').replace(/<\/uli>/g, '</li>')}</ul>`);
+  // Lists: ordered (1. 2.), unordered (- / *) and GitHub task items
+  // (- [ ] / - [x], used by plan mode for its checklist), nested by
+  // indentation. A run of list lines becomes one line of HTML, which the
+  // paragraph pass below leaves alone. Nesting and an ordered list's start
+  // number were lost before: "1. a / 2. b /    - sub / 3. c" rendered the sub
+  // item as literal "- sub" and restarted the numbering at 1.
+  s = renderListBlocks(s);
 
   // Blockquotes
   s = s.replace(/^&gt; (.*)$/gm, '<bq>$1</bq>');

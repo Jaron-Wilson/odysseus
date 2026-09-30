@@ -185,3 +185,41 @@ def test_dotted_python_import_paths_are_not_autolinked(node_available):
     assert 'href="https://imblearn.com' not in html
     assert 'href="https://sklearn.me' not in html
     assert 'href="https://example.com/docs"' in html
+
+
+def test_a_list_nested_in_a_numbered_item_renders_as_a_sublist(node_available):
+    """Seen in the UI crawl: the sub-items came out as literal "- pad ..."
+    text and the numbering restarted at 1 for the item after them."""
+    html = _run_markdown_case(
+        "1. Time zones: store everything as UTC.\n"
+        "2. Clock skew between devices:\n"
+        "   - pad the window by a few seconds\n"
+        "   - or use server receive time\n"
+        "3. Empty windows return an empty dict."
+    )
+    assert html.count("<ol>") == 1 and html.count("</ol>") == 1
+    assert html.count("<ul>") == 1
+    assert "<li>Clock skew between devices:<ul><li>pad the window by a few seconds</li>" \
+           "<li>or use server receive time</li></ul></li><li>Empty windows" in html
+    assert "- pad" not in html and 'start=' not in html
+
+
+def test_a_numbered_list_split_by_text_keeps_counting(node_available):
+    html = _run_markdown_case("1. one\n2. two\n\nA note.\n\n3. three\n4. four")
+    assert html.count("<ol") == 2
+    assert '<ol start="3"><li>three</li><li>four</li></ol>' in html
+
+
+def test_task_items_and_mixed_list_kinds(node_available):
+    html = _run_markdown_case(
+        "- [x] read the code\n"
+        "- [ ] write the plan\n"
+        "  1. first step\n"
+        "  2. second step\n"
+        "* plain item"
+    )
+    assert '<li class="task-item task-done"><span class="task-check"' in html
+    assert '<li class="task-item"><span class="task-check"' in html
+    assert "<ol><li>first step</li><li>second step</li></ol></li>" in html
+    assert html.count("<ul>") == 1                        # "* plain item" joins the same list
+    assert "<p>" not in html

@@ -6128,8 +6128,11 @@ import * as Modals from './modalManager.js';
 
     try {
       const res = await fetch(`${API_BASE}/api/documents/${sessionId}`);
-      const allDocs = await res.json();
+      const body = await res.json();
       _hideLoadingOverlay();
+      // A refused or failed request (e.g. 403 for a chat you don't own)
+      // returns an error object, not a list: treat it as no documents.
+      const allDocs = Array.isArray(body) ? body : [];
       // Only load active docs
       const activeDocs = allDocs.filter(d => d.is_active);
       if (activeDocs.length === 0) {
