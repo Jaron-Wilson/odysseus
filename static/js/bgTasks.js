@@ -335,6 +335,12 @@ function _statusHtml(st) {
   return `<span class="agent-status agent-status-${_esc(st.state)}">\u25CF ${_esc(_STATE_LABEL[st.state] || st.state)} \u00b7 ${_esc(st.detail)}</span>`;
 }
 
+// "Open in editor": the Code tool at the job's folder (codePanel.js), for admins.
+function _editorLink(cwd) {
+  if (!cwd || !window.codePanel?.isAvailable?.()) return '';
+  return `<a href="#" data-open-editor="${_esc(cwd)}" title="Open ${_esc(cwd)} in the Code tool">Open in editor</a>`;
+}
+
 function _jobRow(j) {
   const cls = j.status === 'running' ? 'running' : (j.status === 'done' ? 'ok' : 'bad');
   const where = j.background ? 'background' : 'in chat';
@@ -356,6 +362,7 @@ function _jobRow(j) {
         ${j.status === 'running' && j.background ? `<button type="button" data-watch="${_esc(j.id)}" data-watch-chat="${_esc(j.chat_session_id || '')}">Watch in chat</button>` : ''}
         ${j.status === 'running' ? `<button type="button" class="danger" data-stop="${_esc(j.id)}">Stop</button>` : ''}
         ${j.chat_session_id ? `<a href="#${_esc(j.chat_session_id)}" data-chat="${_esc(j.chat_session_id)}">Open chat</a>` : ''}
+        ${_editorLink(j.cwd)}
       </div>
     </div>`;
 }
@@ -391,7 +398,7 @@ async function _render() {
           <span class="bg-job-title">${_esc(a.chat_name || 'Untitled chat')}</span>
           <span class="bg-job-meta">${a.busy ? 'busy · ' : ''}${_esc(a.engine)} ${_esc(a.model)} · ${_dur(Date.now() / 1000 - (a.last_used || 0))} ago</span></div>
         <div class="bg-job-sub"><code>${_esc(a.cwd)}</code> · chat ${_esc(String(a.chat_id).slice(0, 8))} · last: ${_esc(a.last_prompt || '')}</div>
-        <div class="bg-job-actions"><a href="#${_esc(a.chat_id)}" data-chat="${_esc(a.chat_id)}">Open chat</a>
+        <div class="bg-job-actions"><a href="#${_esc(a.chat_id)}" data-chat="${_esc(a.chat_id)}">Open chat</a>${_editorLink(a.cwd)}
           <span class="bg-hint">Another chat can carry this agent on: "use the Claude agent from chat ${_esc(String(a.chat_id).slice(0, 8))}"</span></div>
       </div>`).join('') : '<div class="bg-empty">No chat has a coding agent yet.</div>'}
     <div class="bg-section">Claude Code background sessions on this host</div>
