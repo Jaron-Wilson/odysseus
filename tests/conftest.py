@@ -17,6 +17,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # file-backed DB across processes - tests needing that must set DATABASE_URL.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
+# Coding-agent tests run fake claude CLIs and check the calls they recorded;
+# parking each chat's agent in Claude's agent view (src/claude_agent_view.py)
+# would add real `claude agents` / `claude --bg` calls after every run. Off
+# for the suite; tests/test_claude_chat_agents.py switches it on per test.
+os.environ.setdefault("ODYSSEUS_CLAUDE_AGENTS", "0")
+
 # Pre-import real heavy modules BEFORE any test file's module-level stubs can
 # replace them with MagicMock. Some test files (e.g. test_llm_core_sanitize_*)
 # stub sqlalchemy/core.database at module scope with `if mod not in sys.modules`,

@@ -498,16 +498,27 @@ class ClaudeCodeTool:
         if not agents:
             return {"output": "No chat has a Claude Code agent yet.", "agents": [], "exit_code": 0}
         busy = {j.cli_session_id for j in claude_code_jobs.list_jobs() if j.status == "running"}
+        # Parked Claude agents (src/claude_agent_view.py), by session id.
+        try:
+            from src import claude_agent_view
+            view = {r.get("sessionId"): r for r in claude_agent_view.list_agents()}
+        except Exception:
+            view = {}
         lines = []
         for a in agents[:25]:
             ago = int(time.time() - a.get("last_used", 0))
             ago_s = f"{ago // 60}m ago" if ago < 3600 else f"{ago // 3600}h ago" if ago < 86400 else f"{ago // 86400}d ago"
             mine = " (this chat)" if a["chat_id"] == chat_id else ""
             state = " · busy" if a["session_id"] in busy else ""
+            parked = view.get(a["session_id"])
+            if parked:
+                a["claude_agent"] = parked.get("id")
             lines.append(
                 f"- chat \"{a.get('chat_name') or '?'}\" `{a['chat_id'][:8]}`{mine}{state}: "
                 f"{a.get('engine')} {a.get('model')} in {a.get('cwd')}, {ago_s}. "
-                f"Last: {a.get('last_prompt') or '?'}")
+                f"Last: {a.get('last_prompt') or '?'}"
+                + (f" · in `claude agents` as {parked.get('id')} (claude attach {parked.get('id')})"
+                   if parked else ""))
         lines.append("Carry one on with {\"action\": \"ask\" or \"plan\", \"from_chat\": \"<chat id>\", ...}.")
         return {"output": "\n".join(lines), "agents": agents[:25], "exit_code": 0}
 
@@ -771,6 +782,7 @@ class ClaudeCodeTool:
         chat_id = (ctx or {}).get("session_id") or ""
         agent_note = ""
         agent_from = ""
+        extra_dir = ""                               # a folder added to a carried-on Claude agent
         if action in ("ask", "plan") and not resume_id:
             from_chat = str(args.get("from_chat") or "").strip()
             if from_chat:
@@ -797,11 +809,23 @@ class ClaudeCodeTool:
                               f"\"{claude_code_agents._chat_name(agent_from) or agent_from[:8]}\".")
             elif chat_id and args.get("cwd") and not args.get("new_agent"):
                 agent = claude_code_agents.for_chat(chat_id, cwd=str(args["cwd"]), engine=engine)
+                if not agent and engine == "claude":
+                    # The chat's agent from another folder carries on too: Claude
+                    # keeps a session under the folder it began in, so it runs
+                    # there with the new folder added (--add-dir). Asked for: "a
+                    # chat can keep going cause it just opens that chats agents".
+                    other = claude_code_agents.for_chat(chat_id, cwd="", engine=engine)
+                    if other and Path(other["cwd"]).is_dir():
+                        extra_dir = str(Path(str(args["cwd"])).expanduser().resolve())
+                        args["cwd"] = other["cwd"]
+                        agent = other
                 if agent:
                     resume_id = agent["session_id"]
                     agent_from = chat_id
                     agent_note = ("Carrying on this chat's Claude Code agent, which keeps what it "
-                                  "already read. Pass new_agent:true for a fresh one.")
+                                  "already read. Pass new_agent:true for a fresh one."
+                                  + (f" It began in {agent['cwd']}, so it runs there with {extra_dir} "
+                                     "added." if extra_dir else ""))
 
         # One run at a time per agent: two chats driving the same CLI session
         # at once would interleave their turns in one transcript. And never a
@@ -809,6 +833,13 @@ class ClaudeCodeTool:
         # second Approve started another CLI doing the same work beside the
         # first. Runs that outlived a restart are back in the registry
         # (reattach_runs); the process check catches anything untracked.
+        if resume_id and engine == "claude":
+            # Parked in Claude's agent view between turns (src/claude_agent_view.py):
+            # stopped so this turn can run on it, and parked again afterwards.
+            from src import claude_agent_view
+            why = await asyncio.to_thread(claude_agent_view.unpark, resume_id)
+            if why:
+                return {"error": why, "exit_code": 1}
         if resume_id:
             busy = claude_code_jobs.running_for(
                 cli_session_id=resume_id,
@@ -874,6 +905,18 @@ class ClaudeCodeTool:
                 "and open a PR against dev with gh; the user merges it. Never edit the live "
                 "install."), "exit_code": 1}
         workspaces = Path(WORKSPACES_DIR).resolve()
+        if extra_dir:
+            # The folder asked for, added to an agent carried on from another
+            # folder: bound by the same rule as cwd.
+            extra = Path(extra_dir)
+            if extra == odysseus_root or odysseus_root in extra.parents:
+                return {"error": (f"refusing {extra}: that is the running Odysseus install on this "
+                                  "server, not a project. Work in its own copy under "
+                                  f"{Path(WORKSPACES_DIR) / 'odysseus'} instead."), "exit_code": 1}
+            if not extra.exists() and workspaces in extra.parents:
+                extra.mkdir(parents=True, exist_ok=True)
+            if not extra.is_dir():
+                return {"error": f"cwd is not a directory: {extra}", "exit_code": 1}
         if not cwd_path.exists() and workspaces in cwd_path.parents:
             cwd_path.mkdir(parents=True, exist_ok=True)
         if not cwd_path.is_dir():
@@ -960,6 +1003,12 @@ class ClaudeCodeTool:
             prompt_via_stdin = False
         else:
             cmd = [cli, "-p", "--output-format", "stream-json", "--verbose"]
+            if chat_id:
+                # Its name in `claude agents` once parked (src/claude_agent_view.py).
+                from src import claude_agent_view
+                cmd += ["-n", claude_agent_view.agent_name(chat_id)]
+            if extra_dir:
+                cmd += ["--add-dir", extra_dir]
 
         if engine in ("opencode", "antigravity"):
             pass
@@ -1769,6 +1818,17 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
                 model=model_label, action=action, prompt=spec.get("prompt", ""), summary=body)
         except Exception:
             pass
+    if chat_id and session_id and spec.get("engine", job.engine) == "claude":
+        # Park the chat's agent in Claude's agent view between turns: it shows
+        # in `claude agents` under the chat's name and `claude attach` opens it.
+        try:
+            from src import claude_agent_view
+            aid = await asyncio.to_thread(claude_agent_view.park, session_id, cwd)
+            if aid:
+                result["claude_agent"] = {"id": aid, "name": claude_agent_view.agent_name(chat_id),
+                                          "attach": f"claude attach {aid}"}
+        except Exception as e:
+            logger.debug("Parking the Claude agent failed: %s", e)
     plan_ref = session_id
     if action == "plan":
         try:
