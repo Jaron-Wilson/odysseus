@@ -1,1 +1,1415 @@
-/* studio-pages-b: see the header of studio.css. Scoped to html.ui-studio. */
+/* studio-pages-b: see the header of studio.css. Scoped to html.ui-studio.
+
+   The content of the "power" tool views and the in-chat agent UI:
+   Brain (memories, skills), Compare, Cookbook, Deep Research, Background,
+   DevOps, Browser, Devices, and in the chat: agent threads, tool-call rows,
+   tool output, Claude Code / OpenCode run consoles, approval cards, the
+   background chip, the message queue, the music bar and the attach strip.
+
+   Modal chrome (the frame, header bar, min/close buttons) lives in
+   studio-overlays.css; this file styles what sits inside it plus the
+   .bg-panel windows those tools draw themselves.
+
+   Every rule is scoped by the view's own id or class, so shared names
+   (.admin-card, .memory-item, .memory-toolbar-btn) used by other tools are
+   left alone. No sizes the tiling / snapping / fill-chat-area JS measures
+   (modal widths, positions) are changed. */
+
+/* --- Local tokens: calm status tints ---------------------------------------- */
+html.ui-studio {
+  --stb-ok: #3fb97a;
+  --stb-warn: #d9a23a;
+  --stb-err: #ec5b5f;
+  --stb-info: #6b9cf0;
+  --stb-ok-soft: color-mix(in srgb, var(--stb-ok) 14%, transparent);
+  --stb-warn-soft: color-mix(in srgb, var(--stb-warn) 15%, transparent);
+  --stb-err-soft: color-mix(in srgb, var(--stb-err) 13%, transparent);
+  --stb-info-soft: color-mix(in srgb, var(--stb-info) 14%, transparent);
+  --stb-field: color-mix(in srgb, var(--bg) 60%, var(--panel));
+  --stb-row: 36px;
+  --stb-btn: 32px;
+}
+html.ui-studio[data-theme-mode="light"] {
+  --stb-ok: #1f8a55;
+  --stb-warn: #a86b00;
+  --stb-err: #d1343a;
+  --stb-info: #2f6bd8;
+  --stb-field: var(--panel);
+}
+
+/* ==========================================================================
+   Shared view primitives (Brain, Cookbook, Research)
+   ========================================================================== */
+
+/* Tab strips: quiet labels, the active one carries an accent underline */
+html.ui-studio #memory-modal .memory-tabs,
+html.ui-studio #cookbook-modal .cookbook-tabs {
+  gap: 2px; margin: 0 0 4px; padding: 0; border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio #memory-modal .memory-tab,
+html.ui-studio #cookbook-modal .cookbook-tab {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  height: 36px; padding: 0 10px; margin-bottom: -1px;
+  font-family: var(--st-font); font-size: 13px; font-weight: 500; line-height: 1;
+  color: var(--st-text-3); opacity: 1; background: transparent;
+  border: none; border-bottom: 2px solid transparent; border-radius: var(--st-r-sm) var(--st-r-sm) 0 0;
+  transition: color .12s, border-color .12s, background .12s;
+}
+html.ui-studio #memory-modal .memory-tab:hover,
+html.ui-studio #cookbook-modal .cookbook-tab:hover { color: var(--st-text); background: var(--st-hover); opacity: 1; }
+html.ui-studio #memory-modal .memory-tab.active,
+html.ui-studio #cookbook-modal .cookbook-tab.active {
+  color: var(--st-text); border-bottom-color: var(--st-accent); background: transparent;
+}
+html.ui-studio #memory-modal .memory-tab svg,
+html.ui-studio #cookbook-modal .cookbook-tab svg { width: 14px; height: 14px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #memory-modal .memory-tab.active svg,
+html.ui-studio #cookbook-modal .cookbook-tab.active svg { color: var(--st-accent); }
+html.ui-studio #memory-modal .memory-tab .memory-count {
+  font-size: 11px; font-weight: 550; min-width: 18px; height: 18px; padding: 0 5px; line-height: 18px;
+  text-align: center; border-radius: 999px; color: var(--st-text-3); background: var(--st-press);
+}
+html.ui-studio #memory-modal .memory-tab.active .memory-count { color: var(--st-text-2); }
+
+/* Section cards */
+html.ui-studio :is(#memory-modal, #cookbook-modal) .admin-card {
+  background: transparent; border: 1px solid var(--st-line); border-radius: var(--st-r);
+  padding: 16px; box-shadow: none;
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .admin-card h2,
+html.ui-studio #research-overlay .research-new-job h2 {
+  font-family: var(--st-font); font-size: 15px; font-weight: 650; letter-spacing: -0.015em;
+  color: var(--st-text); margin: 0 0 2px; padding: 0; border: none;
+  display: flex; align-items: center; gap: 8px; line-height: 1.3;
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) h2 .memory-count {
+  font-size: 12px !important; font-weight: 450 !important; letter-spacing: 0; color: var(--st-text-3); opacity: 1 !important;
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-desc {
+  font-size: 12.5px; line-height: 1.5; color: var(--st-text-3); margin: 0;
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-desc a {
+  color: var(--st-accent); text-decoration: none;
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-desc a:hover { text-decoration: underline; }
+
+/* Toolbar buttons: hairline, 32px, muted until hovered */
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-toolbar-btn,
+html.ui-studio #cookbook-modal .cookbook-btn:not(.cookbook-dl-btn):not(.cookbook-run-btn):not(.cookbook-stop-btn),
+html.ui-studio #cookbook-modal .hwfit-gpu-btn {
+  height: var(--stb-btn); min-width: 0; padding: 0 12px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; line-height: 1;
+  letter-spacing: 0; text-transform: none;
+  color: var(--st-text-2); background: transparent;
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); box-shadow: none;
+  transition: background .12s, color .12s, border-color .12s;
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-toolbar-btn:hover:not(:disabled),
+html.ui-studio #cookbook-modal .cookbook-btn:not(.cookbook-dl-btn):not(.cookbook-run-btn):not(.cookbook-stop-btn):hover:not(:disabled),
+html.ui-studio #cookbook-modal .hwfit-gpu-btn:hover {
+  background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2);
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-toolbar-btn.active,
+html.ui-studio #cookbook-modal .hwfit-gpu-btn.active {
+  background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line);
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-toolbar-btn.danger {
+  color: var(--stb-err); border-color: color-mix(in srgb, var(--stb-err) 40%, transparent);
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-toolbar-btn.danger:hover:not(:disabled) {
+  background: var(--stb-err-soft); color: var(--stb-err);
+}
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-toolbar-btn:disabled { opacity: .45; }
+html.ui-studio :is(#memory-modal, #cookbook-modal, #research-overlay) .memory-toolbar-btn:focus-visible,
+html.ui-studio #cookbook-modal .cookbook-btn:focus-visible,
+html.ui-studio #cookbook-modal .hwfit-gpu-btn:focus-visible { outline: none; box-shadow: var(--st-ring); }
+
+/* Fields owned by these views */
+html.ui-studio #memory-modal :is(.memory-search-input, .memory-sort-select, .memory-add-input, .memory-edit-cat-select, .memory-item-edit-input),
+html.ui-studio #cookbook-modal :is(.cookbook-field-input, .cookbook-dl-repo, .hwfit-toolbar select, .hwfit-toolbar input:not([type="range"]):not([type="checkbox"])),
+html.ui-studio #research-overlay :is(.research-query, .research-setting select),
+html.ui-studio #compare-model-overlay :is(.cmp-form-control, input[type="number"]) {
+  font-family: var(--st-font); font-size: 13px; color: var(--st-text);
+  background-color: var(--stb-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+  box-shadow: none; outline: none; transition: border-color .12s, box-shadow .12s;
+}
+html.ui-studio #memory-modal :is(.memory-search-input, .memory-sort-select, .memory-add-input):focus,
+html.ui-studio #cookbook-modal :is(.cookbook-field-input, .cookbook-dl-repo, .hwfit-toolbar select, .hwfit-toolbar input):focus,
+html.ui-studio #research-overlay :is(.research-query, .research-setting select):focus,
+html.ui-studio #compare-model-overlay :is(.cmp-form-control, input[type="number"]):focus {
+  border-color: var(--st-accent-line); box-shadow: var(--st-ring);
+}
+html.ui-studio #memory-modal :is(.memory-search-input, .memory-add-input)::placeholder,
+html.ui-studio #cookbook-modal :is(.cookbook-dl-repo, .hwfit-search)::placeholder,
+html.ui-studio #research-overlay .research-query::placeholder { color: var(--st-text-3); opacity: 1; }
+
+/* Primary actions: the one accent button per view */
+html.ui-studio #cookbook-modal .cookbook-dl-btn,
+html.ui-studio #cookbook-modal .cookbook-run-btn,
+html.ui-studio #research-overlay .research-start-btn,
+html.ui-studio #compare-model-overlay .research-start-btn {
+  height: var(--stb-btn); padding: 0 14px; margin: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-family: var(--st-font); font-size: 13px; font-weight: 550; line-height: 1;
+  color: var(--st-accent-fg); background: var(--st-accent);
+  border: 1px solid transparent; border-radius: var(--st-r-sm); opacity: 1;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.18);
+  transition: background .12s;
+}
+html.ui-studio #cookbook-modal .cookbook-dl-btn:hover,
+html.ui-studio #cookbook-modal .cookbook-run-btn:hover,
+html.ui-studio #research-overlay .research-start-btn:hover,
+html.ui-studio #compare-model-overlay .research-start-btn:hover {
+  background: color-mix(in srgb, var(--st-accent) 88%, #fff); opacity: 1;
+}
+html.ui-studio :is(#cookbook-modal, #research-overlay, #compare-model-overlay) :is(.cookbook-dl-btn, .cookbook-run-btn, .research-start-btn):focus-visible {
+  outline: none; box-shadow: var(--st-ring);
+}
+html.ui-studio :is(#cookbook-modal, #research-overlay, #compare-model-overlay) :is(.cookbook-dl-btn, .research-start-btn):disabled {
+  opacity: .5; cursor: default;
+}
+
+/* ==========================================================================
+   Brain  (#memory-modal: memories, skills, add, settings; memory.js, skills.js)
+   ========================================================================== */
+html.ui-studio #memory-modal .memory-modal-content { font-size: 13px; }
+html.ui-studio #memory-modal .memory-modal-body { gap: 12px; }
+html.ui-studio #memory-modal .memory-tab-panel { gap: 12px; }
+
+/* Browse + Skills: the card frame is dropped, the list is the page */
+html.ui-studio #memory-modal .memory-tab-panel[data-memory-panel="browse"] > .admin-card,
+html.ui-studio #memory-modal .memory-tab-panel[data-memory-panel="skills"] > .admin-card:first-of-type {
+  border: none; padding: 4px 2px 2px; background: transparent;
+}
+html.ui-studio #memory-modal .memory-tab-panel > .admin-card > div:first-child { align-items: center; }
+
+/* Toolbar: sort, select, tidy on one row, search full width, chips below */
+html.ui-studio #memory-modal .memory-toolbar { gap: 8px; padding: 12px 0 10px; }
+html.ui-studio #memory-modal .memory-toolbar-row { gap: 6px; flex-wrap: wrap; }
+html.ui-studio #memory-modal .memory-sort-select {
+  top: 0; height: var(--stb-btn); padding: 0 28px 0 10px; font-size: 12.5px; font-weight: 500; cursor: pointer;
+}
+html.ui-studio #memory-modal .memory-search-input {
+  height: var(--stb-btn); min-height: var(--stb-btn); margin-top: 0; padding: 0 12px 0 32px; font-size: 13px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238b909a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='20' y1='20' x2='16.2' y2='16.2'/></svg>");
+  background-repeat: no-repeat; background-position: 11px center;
+}
+html.ui-studio #memory-modal .memory-toolbar-row > * { margin-top: 0; margin-bottom: 0; vertical-align: middle; }
+html.ui-studio #memory-modal .memory-toolbar-toggle { height: var(--stb-btn); font-size: 12.5px; color: var(--st-text-2); }
+html.ui-studio #memory-modal .memory-category-filters { gap: 6px; }
+html.ui-studio #memory-modal .memory-cat-chip {
+  height: 26px; padding: 0 10px; font-family: var(--st-font); font-size: 12px; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: 999px;
+  text-transform: capitalize; transition: background .12s, color .12s, border-color .12s;
+}
+html.ui-studio #memory-modal .memory-cat-chip:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio #memory-modal .memory-cat-chip.active {
+  background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line);
+}
+
+/* Memory rows */
+html.ui-studio #memory-modal .memory-list { gap: 0; border-top: 1px solid var(--st-line); }
+html.ui-studio #memory-modal .memory-item {
+  align-items: center; gap: 10px; padding: 10px 8px 10px 10px; min-height: 52px;
+  background: transparent; border: none; border-bottom: 1px solid var(--st-line); border-radius: 0;
+  transition: background .12s;
+}
+html.ui-studio #memory-modal .memory-item:hover { background: var(--st-hover); border-color: var(--st-line); }
+html.ui-studio #memory-modal #memory-list .memory-item::after { content: none; animation: none; }
+html.ui-studio #memory-modal .memory-item-content { gap: 5px; }
+html.ui-studio #memory-modal .memory-item-text { font-size: 13.5px; line-height: 1.45; color: var(--st-text); }
+html.ui-studio #memory-modal .memory-item-title { font-size: 13.5px; font-weight: 550; color: var(--st-text); }
+html.ui-studio #memory-modal .memory-item-meta { gap: 6px; }
+html.ui-studio #memory-modal :is(.memory-item-source, .memory-item-time, .memory-item-uses) {
+  font-size: 12px; color: var(--st-text-3);
+}
+html.ui-studio #memory-modal .memory-item-uses { font-family: var(--st-mono); font-size: 11.5px; }
+html.ui-studio #memory-modal .memory-cat-badge {
+  font-size: 11.5px; font-weight: 500; line-height: 18px; height: 20px; padding: 0 7px;
+  border-radius: var(--st-r-xs); text-transform: capitalize;
+  color: var(--st-text-2); background: var(--st-press);
+}
+/* Category tints, calm: a colored dot-like text on a faint wash */
+html.ui-studio #memory-modal .memory-cat-preference { color: color-mix(in srgb, #a78bfa 80%, var(--fg)); background: color-mix(in srgb, #a78bfa 14%, transparent); }
+html.ui-studio #memory-modal .memory-cat-project { color: color-mix(in srgb, var(--stb-ok) 85%, var(--fg)); background: var(--stb-ok-soft); }
+html.ui-studio #memory-modal .memory-cat-goal { color: color-mix(in srgb, var(--stb-info) 85%, var(--fg)); background: var(--stb-info-soft); }
+html.ui-studio #memory-modal .memory-cat-task { color: color-mix(in srgb, var(--stb-warn) 85%, var(--fg)); background: var(--stb-warn-soft); }
+html.ui-studio #memory-modal .memory-cat-identity,
+html.ui-studio #memory-modal .memory-cat-contact { color: color-mix(in srgb, #2ab3c0 85%, var(--fg)); background: color-mix(in srgb, #2ab3c0 14%, transparent); }
+html.ui-studio #memory-modal .memory-cat-pinned { color: var(--st-accent); background: var(--st-accent-soft); }
+html.ui-studio[data-theme-mode="light"] #memory-modal .memory-cat-preference { color: #6d4fd6; }
+html.ui-studio[data-theme-mode="light"] #memory-modal :is(.memory-cat-identity, .memory-cat-contact) { color: #0f7f8a; }
+
+html.ui-studio #memory-modal .memory-menu-btn {
+  width: 28px; height: 28px; font-size: 16px; color: var(--st-text-3);
+  border: none; border-radius: var(--st-r-sm);
+}
+html.ui-studio #memory-modal .memory-menu-btn:hover { background: var(--st-press); color: var(--st-text); border: none; }
+html.ui-studio #memory-modal .memory-menu-btn:focus-visible { opacity: 1; outline: none; box-shadow: var(--st-ring); }
+html.ui-studio #memory-modal .memory-item-btn {
+  height: 28px; padding: 0 8px; font-size: 12px; color: var(--st-text-3); border-radius: var(--st-r-sm);
+}
+html.ui-studio #memory-modal .memory-item-btn:hover { color: var(--st-text); background: var(--st-press); border-color: transparent; }
+html.ui-studio #memory-modal .memory-item-btn.delete:hover { color: var(--stb-err); background: var(--stb-err-soft); }
+html.ui-studio #memory-modal .memory-pinned {
+  border-left: 2px solid var(--st-accent); background: color-mix(in srgb, var(--st-accent) 5%, transparent);
+}
+html.ui-studio #memory-modal .memory-item-editing { background: var(--st-accent-soft); }
+html.ui-studio #memory-modal .memory-empty {
+  padding: 40px 16px; font-size: 13px; font-style: normal; color: var(--st-text-3); text-align: center;
+}
+html.ui-studio #memory-modal .memory-bulk-bar {
+  border-radius: var(--st-r); border: 1px solid var(--st-line-2); background: var(--st-surface-2);
+}
+html.ui-studio #memory-modal .memory-bulk-check-all { font-size: 12.5px; color: var(--st-text-2); }
+html.ui-studio #memory-modal #memory-selected-count { font-size: 12.5px; color: var(--st-text-2); }
+html.ui-studio #memory-modal .memory-select-cb,
+html.ui-studio #memory-modal .memory-bulk-check-all input { accent-color: var(--st-accent); }
+
+/* Add tab */
+html.ui-studio #memory-modal .memory-add-row { height: auto; gap: 8px; }
+html.ui-studio #memory-modal .memory-add-input { height: var(--stb-btn); padding: 0 12px; }
+html.ui-studio #memory-modal textarea.memory-add-input { height: auto; padding: 8px 12px; line-height: 1.5; }
+html.ui-studio #memory-modal .memory-add-btn {
+  width: var(--stb-btn); height: var(--stb-btn); border-radius: var(--st-r-sm);
+  border: 1px solid var(--st-line-2); background: transparent; color: var(--st-text-2);
+}
+html.ui-studio #memory-modal .memory-add-btn:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+
+/* Scope bar + character chips (Settings / Add) */
+html.ui-studio #memory-modal .memory-scope-bar { border-color: var(--st-line-2); border-radius: var(--st-r-sm); }
+html.ui-studio #memory-modal .memory-scope-btn { font-size: 12.5px; color: var(--st-text-2); }
+html.ui-studio #memory-modal .memory-scope-btn.active { background: var(--st-accent-soft); color: var(--st-text); }
+html.ui-studio #memory-modal .memory-char-chip { border-color: var(--st-line-2); color: var(--st-text-2); font-size: 12px; }
+html.ui-studio #memory-modal .memory-char-chip.active { background: var(--st-accent-soft); border-color: var(--st-accent-line); color: var(--st-text); }
+
+/* ==========================================================================
+   In-chat agent UI: threads, tool rows, tool output
+   ========================================================================== */
+html.ui-studio .agent-thread {
+  margin: 4px 0 4px 4px; padding: 2px 0 2px 22px; max-width: 100%;
+}
+html.ui-studio .agent-thread::before { left: 6px; width: 1px; background: var(--st-line-2); }
+html.ui-studio .agent-thread-node { padding: 1px 0; }
+html.ui-studio .agent-thread-node + .agent-thread-node { margin-top: 0; }
+html.ui-studio .agent-thread-dot {
+  left: -20px; top: 10px; width: 9px; height: 9px;
+  background: var(--st-text-3); border: 2px solid var(--bg);
+}
+html.ui-studio .agent-thread-node:not(.running):not(.error) .agent-thread-dot {
+  background: color-mix(in srgb, var(--stb-ok) 75%, var(--bg));
+}
+html.ui-studio .agent-thread-node.running .agent-thread-dot { background: var(--st-accent); }
+html.ui-studio .agent-thread-node.error .agent-thread-dot { background: var(--stb-err); }
+html.ui-studio .agent-thread:not(.has-bottom) .agent-thread-node.open:last-child::after {
+  left: -18px; width: 5px; height: 5px; background: var(--st-text-3); box-shadow: none;
+}
+html.ui-studio .agent-thread::after { left: 5px; width: 3px; height: 3px; box-shadow: none; background: var(--st-accent); }
+
+html.ui-studio .agent-thread-header {
+  display: flex; align-items: center; gap: 8px; min-height: 28px;
+  margin-left: -8px; padding: 3px 8px; width: fit-content; max-width: calc(100% + 8px);
+  font-size: 13px; color: var(--st-text-2); border-radius: var(--st-r-sm);
+  transition: background .12s, color .12s;
+}
+html.ui-studio .agent-thread-header:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .agent-thread-icon { font-size: 11px; color: var(--stb-ok); width: 12px; text-align: center; flex-shrink: 0; }
+html.ui-studio .agent-thread-node.error .agent-thread-icon { color: var(--stb-err); }
+html.ui-studio .agent-thread-node.running .agent-thread-icon { color: var(--st-accent); }
+html.ui-studio .agent-thread-tool {
+  font-family: var(--st-font); font-size: 13px; font-weight: 550; letter-spacing: -0.005em;
+  text-transform: none; color: var(--st-text);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+html.ui-studio .agent-thread-status { font-size: 12px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .agent-thread-node.error .agent-thread-status { color: var(--stb-err); }
+html.ui-studio .agent-thread-chevron { font-size: 8px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .agent-thread-wave { color: var(--st-accent); font-family: var(--st-mono); }
+html.ui-studio .agent-thread-elapsed { color: var(--st-text-2); font-size: 12px; font-weight: 500; font-family: var(--st-mono); }
+html.ui-studio .agent-thread-node.supervisor-step .agent-thread-tool { color: var(--st-text-2); }
+html.ui-studio .agent-thread-node.supervisor-step[data-rung="stop"] .agent-thread-tool { color: var(--stb-err); }
+
+html.ui-studio .agent-thread-content { padding: 4px 0 6px; }
+html.ui-studio .agent-thread-cmd {
+  margin: 2px 0 0; padding: 8px 12px;
+  font-family: var(--st-mono); font-size: 12.25px; line-height: 1.55; color: var(--st-text);
+  background: var(--st-sunken); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+html.ui-studio .agent-tool-output {
+  margin-top: 6px; background: var(--st-sunken);
+  border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+html.ui-studio .agent-tool-output[open] { background: var(--st-sunken); }
+html.ui-studio .agent-tool-output summary {
+  min-height: 30px; padding: 0 10px; font-size: 12px; font-weight: 550;
+  color: var(--st-text-2); background: transparent; border-bottom: 1px solid transparent;
+}
+html.ui-studio .agent-tool-output[open] > summary { border-bottom-color: var(--st-line); }
+html.ui-studio .agent-tool-output summary:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .agent-tool-output summary::after { content: '\25BE'; color: var(--st-text-3); font-size: 11px; transition: transform .15s var(--st-ease); }
+html.ui-studio .agent-tool-output[open] > summary::after { transform: rotate(180deg); }
+html.ui-studio .agent-tool-output pre {
+  margin: 0; background: transparent; border: none; border-radius: 0;
+  padding: 10px 12px; font-family: var(--st-mono); font-size: 12px; line-height: 1.55;
+  color: var(--st-text-2); opacity: 1; word-break: break-word; overflow-wrap: anywhere;
+}
+html.ui-studio .agent-tool-output img { border-color: var(--st-line) !important; border-radius: var(--st-r-sm) !important; }
+html.ui-studio .agent-tool-diff { background: var(--st-sunken); border-color: var(--st-line); }
+html.ui-studio .agent-tool-diff summary { color: var(--st-text); background: transparent; }
+html.ui-studio .agent-tool-diff .diff-file { font-family: var(--st-mono); font-size: 12px; font-weight: 500; }
+html.ui-studio .agent-tool-diff .diff-summary-stats { font-family: var(--st-mono); font-size: 12px; }
+html.ui-studio .agent-tool-diff .diff-summary-stats .diff-stat-add { color: var(--stb-ok); }
+html.ui-studio .agent-tool-diff .diff-summary-stats .diff-stat-del { color: var(--stb-err); }
+html.ui-studio .agent-tool-diff .diff-summary-stats .diff-stat-new { color: var(--st-text-2); }
+html.ui-studio .diff-pre { font-family: var(--st-mono); font-size: 12px; line-height: 1.55; padding: 8px 0; }
+html.ui-studio .diff-pre span { padding: 0 12px; }
+html.ui-studio .diff-pre .diff-add { background: color-mix(in srgb, var(--stb-ok) 14%, transparent); color: var(--st-text); }
+html.ui-studio .diff-pre .diff-del { background: color-mix(in srgb, var(--stb-err) 13%, transparent); color: var(--st-text); }
+html.ui-studio .diff-pre .diff-hunk { color: var(--stb-info); opacity: 1; }
+html.ui-studio .diff-pre .diff-meta { color: var(--st-text-3); opacity: 1; }
+html.ui-studio .diff-pre .diff-ctx { color: var(--st-text-2); opacity: 1; }
+
+/* "Used bash" line in a tool-only reply */
+html.ui-studio .msg-tool-status { font-size: 13px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .agent-status { font-size: 12.5px; margin-left: 22px; color: var(--st-text-2); opacity: 1; }
+html.ui-studio .agent-status-working { color: var(--st-text-2); }
+html.ui-studio .agent-status-needs_input { color: var(--stb-warn); }
+html.ui-studio .agent-status-done { color: var(--stb-ok); }
+html.ui-studio .agent-status-failed { color: var(--stb-err); }
+html.ui-studio .run-usage { font-size: 12px; color: var(--st-text-3); opacity: 1; margin-left: 22px; font-family: var(--st-mono); }
+html.ui-studio .ask-user-relaunch {
+  margin: 6px 0 6px 0; height: 28px; padding: 0 12px; font-size: 12.5px; font-weight: 500;
+  color: var(--st-text-2); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); background: transparent;
+}
+html.ui-studio .ask-user-relaunch:hover { background: var(--st-hover); color: var(--st-text); }
+
+@media (max-width: 768px) {
+  html.ui-studio .agent-thread { margin-left: 2px; padding-left: 20px; max-width: 100%; }
+  html.ui-studio .agent-thread-header { font-size: 13px; }
+  html.ui-studio .agent-thread-dot { left: -18px; }
+  html.ui-studio .agent-thread-content { max-width: calc(100vw - 56px); }
+  html.ui-studio .agent-thread-cmd, html.ui-studio .agent-tool-output pre { font-size: 11.75px; }
+}
+@media (max-width: 768px) {
+  html.ui-studio .agent-thread:not(.has-bottom) .agent-thread-node.open:last-child::after { left: -16px; }
+}
+
+/* Brain: inline-styled empty / loading lines (skills.js) read as a calm empty state */
+html.ui-studio #memory-modal .memory-list > div[style*="text-align:center"] {
+  font-size: 13px !important; opacity: 1 !important; color: var(--st-text-3); padding: 40px 16px !important;
+}
+
+/* ==========================================================================
+   Cookbook  (#cookbook-modal: download, hardware fit, serve, deps, settings;
+   cookbook*.js)
+   ========================================================================== */
+html.ui-studio #cookbook-modal .cookbook-body { font-size: 13px; }
+html.ui-studio #cookbook-modal .cookbook-group { gap: 12px; }
+html.ui-studio #cookbook-modal .cookbook-group > .admin-card { margin-bottom: 0; }
+html.ui-studio #cookbook-modal .admin-card > div:first-child > h2 { width: 100%; }
+html.ui-studio #cookbook-modal #cookbook-dl-tab-chevron { margin-left: auto; font-size: 12px !important; color: var(--st-text-3); }
+html.ui-studio #cookbook-modal .admin-card > .memory-desc { margin: 2px 0 12px; }
+html.ui-studio #cookbook-modal .hwfit-container { gap: 8px; }
+
+/* Download row: repo field + the primary button, one height */
+html.ui-studio #cookbook-modal .cookbook-dl-input { gap: 8px; margin: 8px 0; align-items: center; }
+html.ui-studio #cookbook-modal .cookbook-dl-repo {
+  height: var(--stb-btn); padding: 0 12px; font-family: var(--st-mono); font-size: 12.5px;
+}
+html.ui-studio #cookbook-modal .cookbook-dl-repo::placeholder { font-family: var(--st-font); font-size: 13px; }
+html.ui-studio #cookbook-modal .cookbook-dl-btn { margin-top: 0; }
+/* Disclosure rows (Browse Ollama library, Trending) */
+html.ui-studio #cookbook-modal #cookbook-ollama-toggle,
+html.ui-studio #cookbook-modal #cookbook-hf-latest-toggle {
+  justify-content: flex-start; padding: 0 12px; font-size: 13px; color: var(--st-text-2);
+}
+html.ui-studio #cookbook-modal #cookbook-ollama-refresh,
+html.ui-studio #cookbook-modal #cookbook-hf-latest-refresh { width: var(--stb-btn); padding: 0; flex-shrink: 0; }
+html.ui-studio #cookbook-modal .cookbook-dl-add-server { height: 28px; padding: 0 10px; font-size: 12px; }
+
+/* Hardware-fit toolbar */
+html.ui-studio #cookbook-modal .hwfit-toolbar { gap: 6px; margin-bottom: 8px; }
+html.ui-studio #cookbook-modal .hwfit-toolbar select,
+html.ui-studio #cookbook-modal .hwfit-toolbar input:not([type="range"]):not([type="checkbox"]) {
+  height: var(--stb-btn); padding: 0 10px; font-size: 12.5px;
+}
+html.ui-studio #cookbook-modal .hwfit-toolbar select { padding-right: 26px; }
+html.ui-studio #cookbook-modal #hwfit-usecase,
+html.ui-studio #cookbook-modal #hwfit-server-select { height: var(--stb-btn); width: auto; min-width: 96px; }
+html.ui-studio #cookbook-modal .hwfit-ctx-control {
+  height: var(--stb-btn); padding: 0 10px; gap: 8px; font-size: 12.5px; color: var(--st-text-2);
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); background-color: var(--stb-field);
+}
+html.ui-studio #cookbook-modal .hwfit-ctx-control input[type="range"] { accent-color: var(--st-accent); }
+html.ui-studio #cookbook-modal .hwfit-ctx-control output { font-family: var(--st-mono); font-size: 12px; color: var(--st-text); }
+html.ui-studio #cookbook-modal .hwfit-help-chip {
+  width: 16px; height: 16px; font-size: 10px; line-height: 14px; color: var(--st-text-3);
+  border: 1px solid var(--st-line-2); background: transparent; border-radius: 50%;
+}
+html.ui-studio #cookbook-modal .hwfit-gpu-btn { height: var(--stb-btn); font-size: 12px; text-transform: none; letter-spacing: 0; }
+
+/* Detected hardware: quiet chips */
+html.ui-studio #cookbook-modal #hwfit-hw-row { gap: 6px; align-items: center; margin: 2px 0 10px; }
+html.ui-studio #cookbook-modal #hwfit-hw-row > span:first-child {
+  font-size: 12px !important; color: var(--st-text-3); background: transparent !important; padding: 0 2px 0 0 !important;
+}
+html.ui-studio #cookbook-modal .hwfit-hw { gap: 6px; }
+html.ui-studio #cookbook-modal .hwfit-hw-chip {
+  height: 24px; padding: 0 4px 0 9px; gap: 4px; font-size: 12px; opacity: 1; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: 999px;
+}
+html.ui-studio #cookbook-modal .hwfit-hw-chip-toggle { font-size: 12px !important; line-height: 22px !important; transform: none; height: 22px; }
+html.ui-studio #cookbook-modal .hwfit-hw-chip-x {
+  width: 18px; height: 18px; font-size: 13px !important; line-height: 18px !important; transform: none;
+  border-radius: 50%; color: var(--st-text-3); text-align: center;
+}
+html.ui-studio #cookbook-modal .hwfit-hw-chip-x:hover { background: var(--st-press); color: var(--st-text); }
+html.ui-studio #cookbook-modal .hwfit-hw-chip-off { opacity: .5; border-style: dashed; }
+
+/* The model table */
+html.ui-studio #cookbook-modal .hwfit-list { gap: 0; border: 1px solid var(--st-line); border-radius: var(--st-r); }
+html.ui-studio #cookbook-modal .hwfit-row {
+  min-height: var(--stb-row); padding: 0 12px; gap: 8px; font-size: 13px;
+  border-radius: 0; border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio #cookbook-modal .hwfit-row:last-child { border-bottom: none; }
+html.ui-studio #cookbook-modal .hwfit-row:hover { background: var(--st-hover); }
+html.ui-studio #cookbook-modal .hwfit-row-active { background: var(--st-accent-soft); }
+html.ui-studio #cookbook-modal .hwfit-header,
+html.ui-studio #cookbook-modal .hwfit-header:hover {
+  min-height: 32px; padding: 0 12px; background: var(--st-surface-2);
+  border-bottom: 1px solid var(--st-line); border-radius: var(--st-r) var(--st-r) 0 0;
+}
+html.ui-studio #cookbook-modal .hwfit-header .hwfit-col,
+html.ui-studio #cookbook-modal .hwfit-header .hwfit-name {
+  font-size: 11.5px; font-weight: 550; letter-spacing: 0; text-transform: none; color: var(--st-text-3);
+}
+html.ui-studio #cookbook-modal .hwfit-sort-active { color: var(--st-text) !important; }
+html.ui-studio #cookbook-modal .hwfit-col { font-size: 12px; color: var(--st-text-2); font-variant-numeric: tabular-nums; }
+html.ui-studio #cookbook-modal .hwfit-name { font-size: 13px; font-weight: 500; color: var(--st-text); }
+html.ui-studio #cookbook-modal .hwfit-name-quant { font-size: 11.5px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #cookbook-modal .hwfit-c-score { font-size: 12.5px; font-weight: 600; color: var(--st-text); }
+html.ui-studio #cookbook-modal .hwfit-c-params { width: 50px; }
+html.ui-studio #cookbook-modal .hwfit-c-quant { width: 60px; }
+html.ui-studio #cookbook-modal .hwfit-c-vram { width: 50px; }
+html.ui-studio #cookbook-modal .hwfit-c-ctx { width: 36px; }
+html.ui-studio #cookbook-modal .hwfit-c-speed { width: 60px; }
+html.ui-studio #cookbook-modal .hwfit-c-score { width: 40px; }
+html.ui-studio #cookbook-modal .hwfit-c-mode { width: 72px; color: var(--st-text-3); }
+/* Fit column: a calm status label */
+html.ui-studio #cookbook-modal .hwfit-row:not(.hwfit-header) .hwfit-fit {
+  width: 68px; font-size: 11.5px; font-weight: 600; text-transform: capitalize; letter-spacing: 0;
+}
+html.ui-studio #cookbook-modal .hwfit-header .hwfit-fit { width: 68px; }
+html.ui-studio #cookbook-modal .hwfit-badge,
+html.ui-studio #cookbook-modal .hwfit-moe {
+  font-size: 10.5px; font-weight: 550; padding: 1px 6px; border-radius: var(--st-r-xs);
+  color: var(--st-text-2); background: var(--st-press);
+}
+
+/* Inline action panel under a row */
+html.ui-studio #cookbook-modal .hwfit-action-panel {
+  margin: 0; padding: 14px 16px; gap: 10px; font-size: 13px;
+  background: var(--st-surface-2); border: none; border-bottom: 1px solid var(--st-line);
+  border-left: 2px solid var(--st-accent); border-radius: 0;
+}
+html.ui-studio #cookbook-modal .hwfit-panel-model { font-size: 13.5px; font-weight: 600; }
+html.ui-studio #cookbook-modal .hwfit-panel-badge {
+  font-size: 11.5px; font-weight: 550; padding: 2px 8px; color: var(--st-text-2); background: var(--st-press);
+}
+html.ui-studio #cookbook-modal :is(.hwfit-panel-fields, .hwfit-adv-grid) label { font-size: 12px; color: var(--st-text-2); gap: 6px; }
+html.ui-studio #cookbook-modal :is(.hwfit-panel-fields, .hwfit-adv-grid) :is(input, select) {
+  height: 28px; padding: 0 8px; font-size: 12.5px; font-family: var(--st-font); color: var(--st-text);
+  background-color: var(--stb-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal :is(.hwfit-panel-fields, .hwfit-adv-grid) :is(input, select):focus { border-color: var(--st-accent-line); box-shadow: var(--st-ring); }
+html.ui-studio #cookbook-modal :is(.hwfit-panel-fields, .hwfit-adv-grid) input[type="checkbox"] { height: auto; accent-color: var(--st-accent); }
+html.ui-studio #cookbook-modal :is(.hwfit-panel-advanced, .hwfit-panel-settings) summary { font-size: 12.5px; color: var(--st-text-2); }
+html.ui-studio #cookbook-modal :is(.hwfit-panel-cmd, .cookbook-cmd-preview) {
+  font-family: var(--st-mono); font-size: 12px; line-height: 1.55; padding: 8px 10px; max-height: 96px;
+  color: var(--st-text-2); background: var(--st-sunken); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal .hwfit-panel-note {
+  font-size: 12px; line-height: 1.5; padding: 8px 10px; color: var(--st-text-2);
+  background: var(--stb-warn-soft); border: 1px solid color-mix(in srgb, var(--stb-warn) 30%, transparent); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal .hwfit-panel-actions { gap: 6px; }
+html.ui-studio #cookbook-modal .hwfit-loading { font-size: 13px; color: var(--st-text-3); padding: 28px 0; }
+
+/* Presets, serve list, cards */
+html.ui-studio #cookbook-modal .hwfit-preset {
+  min-height: 40px; padding: 0 12px; gap: 10px; font-size: 13px;
+  border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal .hwfit-preset:hover { border-color: var(--st-line-2); background: var(--st-hover); }
+html.ui-studio #cookbook-modal .hwfit-preset-name { font-weight: 550; }
+html.ui-studio #cookbook-modal .hwfit-preset-model { font-size: 12px; color: var(--st-text-3); }
+html.ui-studio #cookbook-modal .hwfit-preset-backend { font-size: 11.5px; padding: 1px 7px; color: var(--st-text-2); background: var(--st-press); }
+html.ui-studio #cookbook-modal .cookbook-card {
+  background: transparent; border: 1px solid var(--st-line); border-radius: var(--st-r); padding: 14px 16px; gap: 8px;
+}
+html.ui-studio #cookbook-modal .cookbook-card-title { font-size: 14px; font-weight: 600; }
+html.ui-studio #cookbook-modal .cookbook-card-desc { font-size: 12.5px; color: var(--st-text-3); }
+html.ui-studio #cookbook-modal .cookbook-field-label { font-size: 12px; color: var(--st-text-2); gap: 5px; }
+html.ui-studio #cookbook-modal .cookbook-field-input { height: var(--stb-btn); padding: 0 10px; font-size: 12.5px; }
+html.ui-studio #cookbook-modal .cookbook-stop-btn {
+  height: var(--stb-btn); padding: 0 12px; font-size: 12.5px; font-weight: 550; border-radius: var(--st-r-sm);
+  color: var(--stb-err); background: var(--stb-err-soft); border: 1px solid color-mix(in srgb, var(--stb-err) 35%, transparent);
+}
+html.ui-studio #cookbook-modal .cookbook-output-pre {
+  font-family: var(--st-mono); font-size: 12px; line-height: 1.55; color: var(--st-text-2);
+  background: var(--st-sunken); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+@media (max-width: 640px) {
+  html.ui-studio #cookbook-modal .admin-card { padding: 14px 12px; }
+  html.ui-studio #cookbook-modal .hwfit-row { padding: 0 8px; gap: 6px; }
+  html.ui-studio #cookbook-modal .hwfit-row:not(.hwfit-header) .hwfit-fit,
+  html.ui-studio #cookbook-modal .hwfit-header .hwfit-fit { width: 62px; }
+}
+/* Cookbook fixes: inline-styled disclosure rows, nudged primary button,
+   selects that carry a "?" help chip inside */
+html.ui-studio #cookbook-modal #cookbook-dl-btn { top: 0; }
+html.ui-studio #cookbook-modal #cookbook-ollama-toggle,
+html.ui-studio #cookbook-modal #cookbook-hf-latest-toggle,
+html.ui-studio #cookbook-modal #cookbook-ollama-refresh,
+html.ui-studio #cookbook-modal #cookbook-hf-latest-refresh {
+  height: var(--stb-btn) !important; border-radius: var(--st-r-sm) !important; margin-top: 0 !important;
+}
+html.ui-studio #cookbook-modal #cookbook-ollama-toggle + #cookbook-ollama-refresh,
+html.ui-studio #cookbook-modal #cookbook-hf-latest-toggle + #cookbook-hf-latest-refresh { margin-left: 6px !important; }
+html.ui-studio #cookbook-modal :is(.hwfit-engine-wrap, .hwfit-quant-wrap) select { padding-right: 46px; }
+html.ui-studio #cookbook-modal .hwfit-gpu-btn { font-variant-caps: all-small-caps; font-size: 13px; letter-spacing: .02em; }
+
+/* Cookbook > Serve: shared list pieces, scoped here */
+html.ui-studio #cookbook-modal :is(.memory-sort-select, .memory-search-input, .hwfit-sf) {
+  height: var(--stb-btn); min-height: var(--stb-btn); padding: 0 10px; top: 0;
+  font-family: var(--st-font); font-size: 12.5px; color: var(--st-text);
+  background-color: var(--stb-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal .memory-sort-select { padding-right: 28px; width: auto; min-width: 96px; font-weight: 500; }
+html.ui-studio #cookbook-modal :is(.memory-sort-select, .memory-search-input, .hwfit-sf):focus { outline: none; border-color: var(--st-accent-line); box-shadow: var(--st-ring); }
+html.ui-studio #cookbook-modal :is(.memory-search-input, .hwfit-sf)::placeholder { color: var(--st-text-3); opacity: 1; }
+html.ui-studio #cookbook-modal #serve-search { padding-left: 32px; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238b909a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='20' y1='20' x2='16.2' y2='16.2'/></svg>"); background-repeat: no-repeat; background-position: 11px center; }
+html.ui-studio #cookbook-modal .memory-toolbar { max-height: none; gap: 8px; }
+html.ui-studio #cookbook-modal .memory-category-filters { gap: 6px; }
+html.ui-studio #cookbook-modal .memory-cat-chip {
+  height: 26px; padding: 0 10px; font-family: var(--st-font); font-size: 12px; font-weight: 500; text-transform: none;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: 999px;
+}
+html.ui-studio #cookbook-modal .memory-cat-chip:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio #cookbook-modal .memory-cat-chip.active { background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line); }
+html.ui-studio #cookbook-modal .cookbook-serve-dirs { gap: 8px; align-items: center; margin: 4px 0 10px; }
+html.ui-studio #cookbook-modal .cookbook-serve-dir-pill {
+  font-family: var(--st-mono); font-size: 11.5px; padding: 3px 8px; color: var(--st-text-2);
+  background: var(--st-press); border: none; border-radius: var(--st-r-xs);
+}
+html.ui-studio #cookbook-modal .cookbook-serve-dir-edit { font-size: 12px; color: var(--st-accent); opacity: 1; cursor: pointer; }
+html.ui-studio #cookbook-modal .hwfit-cached-list { gap: 0; border-top: 1px solid var(--st-line); }
+html.ui-studio #cookbook-modal .hwfit-cached-list > .memory-item:not(.doclib-card-expanded) {
+  min-height: 52px; padding: 8px 6px 8px 10px; align-items: center;
+  background: transparent; border: none; border-bottom: 1px solid var(--st-line); border-radius: 0;
+}
+html.ui-studio #cookbook-modal .hwfit-cached-list > .memory-item:not(.doclib-card-expanded):hover { background: var(--st-hover); }
+html.ui-studio #cookbook-modal .hwfit-cached-list .memory-item-title { font-size: 13.5px; font-weight: 550; display: flex; align-items: center; gap: 6px; }
+html.ui-studio #cookbook-modal .hwfit-cached-list .memory-item-meta { font-size: 12px !important; color: var(--st-text-3); }
+@media (max-width: 640px) {
+  html.ui-studio #cookbook-modal .cookbook-server-row .hwfit-sf { flex: 1 1 130px; min-width: 0; width: auto; }
+  html.ui-studio #cookbook-modal .cookbook-server-row .cookbook-srv-port { flex: 0 1 72px; }
+}
+html.ui-studio #cookbook-modal .hwfit-cached-list .memory-item-meta span { font-family: var(--st-mono); font-size: 11.5px; }
+html.ui-studio #cookbook-modal .cookbook-hf-link {
+  font-size: 11px; font-weight: 550; padding: 1px 6px; color: var(--st-text-2); background: var(--st-press);
+  border: none; border-radius: var(--st-r-xs); text-decoration: none;
+}
+html.ui-studio #cookbook-modal .memory-item-btn {
+  width: 28px; height: 28px; padding: 0; justify-content: center; color: var(--st-text-3); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal .memory-item-btn:hover { background: var(--st-press); color: var(--st-text); border-color: transparent; }
+/* Cookbook > Settings */
+html.ui-studio #cookbook-modal #hwfit-hftoken { font-family: var(--st-mono); }
+html.ui-studio #cookbook-modal #cookbook-server-add {
+  height: 28px; padding: 0 10px 0 8px; gap: 4px; display: inline-flex; align-items: center;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal #cookbook-server-add:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #cookbook-modal #cookbook-server-add .cal-add-plus { font-size: 15px; color: inherit; }
+html.ui-studio #cookbook-modal #cookbook-server-add .cal-add-label { font-size: 12.5px; font-weight: 500; opacity: 1; }
+html.ui-studio #cookbook-modal .cookbook-server-entry {
+  padding: 14px; gap: 10px; background: transparent; border: 1px solid var(--st-line); border-left: 1px solid var(--st-line);
+  border-radius: var(--st-r);
+}
+html.ui-studio #cookbook-modal .cookbook-server-title { font-size: 13.5px; font-weight: 600; gap: 8px; }
+html.ui-studio #cookbook-modal .cookbook-srv-status.ok { background: var(--stb-ok); }
+html.ui-studio #cookbook-modal .cookbook-srv-default-label { font-size: 12px; color: var(--st-text-3); }
+html.ui-studio #cookbook-modal .cookbook-server-row { gap: 6px; flex-wrap: wrap; }
+html.ui-studio #cookbook-modal .cookbook-server-row .hwfit-sf { height: 30px; min-height: 30px; }
+html.ui-studio #cookbook-modal .cookbook-modeldirs { gap: 6px; font-size: 13px; }
+html.ui-studio #cookbook-modal .cookbook-modeldirs > span:first-child { font-weight: 600; }
+html.ui-studio #cookbook-modal .cookbook-modeldirs > span:first-child > span { font-size: 12px !important; font-weight: 400; color: var(--st-text-3); }
+html.ui-studio #cookbook-modal .cookbook-modeldir-tag {
+  height: 28px; padding: 0 10px; gap: 6px; font-family: var(--st-mono); font-size: 12px; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal .cookbook-modeldir-tag.cookbook-modeldir-target { color: var(--st-text); background: var(--st-accent-soft); border-color: var(--st-accent-line); }
+html.ui-studio #cookbook-modal .cookbook-modeldir-add {
+  height: 28px; padding: 0 10px; font-size: 12px; color: var(--st-text-2);
+  background: transparent; border: 1px dashed var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal .cookbook-modeldir-add:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #cookbook-modal .cookbook-dep-tag { font-size: 11px; }
+/* Dependencies: empty state + server picker */
+html.ui-studio #cookbook-modal .cookbook-group :is(.hwfit-loading, .cookbook-empty, .memory-empty) { font-size: 13px; color: var(--st-text-3); }
+
+/* Brain > Skills rows (collapsed); the expanded card keeps its frame */
+html.ui-studio #memory-modal #skills-list { gap: 0; }
+html.ui-studio #memory-modal #skills-list .skill-card:not(.doclib-card-expanded) {
+  background: transparent; border: none; border-bottom: 1px solid var(--st-line); border-radius: 0;
+  box-shadow: none; transition: background .12s;
+}
+html.ui-studio #memory-modal #skills-list .skill-card:not(.doclib-card-expanded):hover { background: var(--st-hover); }
+html.ui-studio #memory-modal #skills-list .doclib-card-expanded {
+  background: var(--st-surface-2); border: 1px solid var(--st-line-2); border-radius: var(--st-r);
+}
+html.ui-studio #memory-modal .skill-card > .skill-card-header { min-height: 52px; padding: 8px 6px 8px 10px; gap: 10px; }
+html.ui-studio #memory-modal .skill-card-name {
+  font-family: var(--st-mono); font-size: 12.5px; font-weight: 500; color: var(--st-text);
+  background: none; border: none; padding: 0;
+}
+html.ui-studio #memory-modal .skill-card-desc { font-size: 12.5px; color: var(--st-text-3); opacity: 1; margin-top: 3px; }
+html.ui-studio #memory-modal .skill-card-right { gap: 8px; }
+html.ui-studio #memory-modal .skill-stats { font-family: var(--st-mono); font-size: 11.5px; color: var(--st-text-3); }
+html.ui-studio #memory-modal .skill-kebab-btn {
+  width: 28px; height: 28px; top: 0; padding: 0; color: var(--st-text-3); opacity: 1; border-radius: var(--st-r-sm);
+}
+html.ui-studio #memory-modal .skill-kebab-btn:hover { background: var(--st-press); color: var(--st-text); }
+html.ui-studio #memory-modal .skills-section-label {
+  font-size: 12px; font-weight: 600; color: var(--st-text-3); letter-spacing: 0; text-transform: none; opacity: 1;
+}
+/* The toolbar was capped at 120px (style.css); Studio's 32px controls need more */
+html.ui-studio #memory-modal .memory-toolbar { max-height: none; }
+
+@media (max-width: 640px) {
+  /* All four Brain tabs fit a phone without sideways scrolling */
+  html.ui-studio #memory-modal .memory-tabs { gap: 0; }
+  html.ui-studio #memory-modal .memory-tab { padding: 0 9px; gap: 5px; }
+  html.ui-studio #memory-modal .memory-tab svg { display: none; }
+  /* Cookbook table: fewer, narrower columns so the model name has room */
+  html.ui-studio #cookbook-modal #hwfit-hw-row { flex-wrap: wrap; }
+  html.ui-studio #cookbook-modal #hwfit-hw-row > span:first-child { flex-basis: 100%; }
+  html.ui-studio #cookbook-modal .hwfit-c-quant { display: none; }
+  html.ui-studio #cookbook-modal .hwfit-c-params { width: 44px; }
+  html.ui-studio #cookbook-modal .hwfit-c-vram { width: 44px; }
+  html.ui-studio #cookbook-modal .hwfit-c-score { width: 36px; }
+  html.ui-studio #cookbook-modal .hwfit-name-quant,
+  html.ui-studio #cookbook-modal .hwfit-row .hwfit-moe { display: none; }
+}
+/* ==========================================================================
+   Compare  (#compare-model-overlay setup, and the compare panes; compare/*.js)
+   ========================================================================== */
+html.ui-studio #compare-model-overlay .modal-body > p {
+  font-size: 13px !important; line-height: 1.5; color: var(--st-text-3) !important; opacity: 1 !important; margin: 0 0 14px !important;
+}
+html.ui-studio #compare-model-overlay .compare-section { margin-bottom: 14px; }
+html.ui-studio #compare-model-overlay .compare-section-label {
+  font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; opacity: 1;
+  color: var(--st-text-3); margin-bottom: 6px;
+}
+/* Mode toggles + type tabs: one tile language, accent only when on */
+html.ui-studio #compare-model-overlay :is(.compare-blind-toggle, .compare-parallel-toggle, .compare-dice-toggle, .compare-save-toggle, .compare-reset-toggle, .compare-mode-tab) {
+  height: 52px; padding: 7px 4px 6px; gap: 5px;
+  color: var(--st-text-3); opacity: 1; background: transparent;
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+  transition: background .12s, color .12s, border-color .12s;
+}
+html.ui-studio #compare-model-overlay :is(.compare-blind-toggle, .compare-parallel-toggle, .compare-dice-toggle, .compare-save-toggle, .compare-reset-toggle, .compare-mode-tab):hover {
+  background: var(--st-hover); color: var(--st-text); opacity: 1;
+}
+html.ui-studio #compare-model-overlay :is(.compare-blind-toggle, .compare-parallel-toggle, .compare-dice-toggle, .compare-save-toggle, .compare-mode-tab).active {
+  color: var(--st-text); background: var(--st-accent-soft); border-color: var(--st-accent-line);
+}
+html.ui-studio #compare-model-overlay :is(.compare-blind-toggle, .compare-parallel-toggle, .compare-dice-toggle, .compare-save-toggle, .compare-mode-tab).active svg { color: var(--st-accent); }
+html.ui-studio #compare-model-overlay :is(.compare-blind-toggle, .compare-parallel-toggle, .compare-dice-toggle, .compare-save-toggle, .compare-reset-toggle, .compare-mode-tab) svg { width: 17px; height: 17px; }
+html.ui-studio #compare-model-overlay :is(.compare-blind-toggle, .compare-parallel-toggle, .compare-dice-toggle, .compare-save-toggle, .compare-reset-toggle, .compare-mode-tab):focus-visible { outline: none; box-shadow: var(--st-ring); }
+html.ui-studio #compare-model-overlay .compare-toggle-label {
+  font-size: 11.5px; font-weight: 500; margin-top: 0; line-height: 1; color: inherit;
+}
+html.ui-studio #compare-model-overlay .compare-mode-tabs,
+html.ui-studio #compare-model-overlay .compare-section > div { gap: 6px; }
+html.ui-studio #compare-model-overlay .compare-mode-hint { font-size: 12.5px; color: var(--st-text-3); opacity: 1; margin-top: 8px; }
+html.ui-studio #compare-model-overlay .compare-mode-current,
+html.ui-studio #compare-model-overlay .compare-type-current { color: var(--st-text-2); font-weight: 550; }
+/* Model rows */
+html.ui-studio #compare-model-overlay .cmp-model-row { gap: 8px; margin-bottom: 8px; }
+html.ui-studio #compare-model-overlay .cmp-row-label { color: var(--st-text-3); opacity: 1; font-size: 12px; }
+html.ui-studio #compare-model-overlay .cmp-form-control { height: var(--stb-btn); padding: 0 10px; font-size: 13px; }
+html.ui-studio #compare-model-overlay .cmp-rm-btn { color: var(--st-text-3); opacity: 1; width: 24px; height: 24px; border-radius: var(--st-r-xs); }
+html.ui-studio #compare-model-overlay .cmp-rm-btn:hover { color: var(--stb-err); background: var(--stb-err-soft); }
+html.ui-studio #compare-model-overlay .modal-body > button,
+html.ui-studio #compare-model-overlay .modal-body > div > button,
+html.ui-studio #compare-model-overlay .cmp-btn-secondary {
+  height: var(--stb-btn); font-family: var(--st-font); font-size: 12.5px !important; font-weight: 500;
+  color: var(--st-text-2) !important; background: transparent !important;
+  border: 1px solid var(--st-line-2) !important; border-radius: var(--st-r-sm) !important; opacity: 1 !important;
+}
+html.ui-studio #compare-model-overlay .modal-body > button { border-style: dashed !important; }
+html.ui-studio #compare-model-overlay .modal-body > button:hover,
+html.ui-studio #compare-model-overlay .modal-body > div > button:hover,
+html.ui-studio #compare-model-overlay .cmp-btn-secondary:hover { background: var(--st-hover) !important; color: var(--st-text) !important; }
+html.ui-studio #compare-model-overlay .modal-body > div > span { font-size: 13px !important; color: var(--st-text-2); opacity: 1 !important; }
+html.ui-studio #compare-model-overlay input[type="number"] { height: var(--stb-btn); width: 72px !important; padding: 0 8px !important; text-align: center; }
+html.ui-studio #compare-model-overlay .modal-footer { gap: 8px; }
+html.ui-studio #compare-model-overlay .research-start-btn { margin-left: auto; }
+
+/* Compare mode: the panes that stream side by side */
+html.ui-studio .compare-header-bar { border-bottom: 1px solid var(--st-line); }
+html.ui-studio .compare-header-bar button {
+  height: 30px; font-family: var(--st-font); font-size: 12.5px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); opacity: 1;
+}
+html.ui-studio .compare-header-bar button:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .compare-pane { border-color: var(--st-line); border-radius: var(--st-r); background: var(--st-surface); }
+html.ui-studio .compare-pane .pane-header { border-bottom-color: var(--st-line); padding: 8px 12px; }
+html.ui-studio .compare-pane .pane-header :is(.pane-title, .pane-model-name) { font-size: 13px; font-weight: 600; color: var(--st-text); }
+html.ui-studio .compare-pane .pane-title-btn { font-family: var(--st-font); font-size: 13px; font-weight: 600; color: var(--st-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
+html.ui-studio .compare-pane .pane-title-caret { color: var(--st-text-3); }
+html.ui-studio .compare-pane .pane-timer { font-family: var(--st-mono); font-size: 11.5px; color: var(--st-text-3); flex-shrink: 0; }
+html.ui-studio .compare-pane .pane-action-btn { color: var(--st-text-3); border-radius: var(--st-r-xs); }
+html.ui-studio .compare-pane .pane-action-btn:hover { color: var(--st-text); background: var(--st-hover); }
+@media (max-width: 520px) {
+  /* Two panes on a phone: the model name keeps its room, the timer yields */
+  html.ui-studio .compare-pane .pane-header { padding: 6px 6px 6px 10px; gap: 4px; }
+  html.ui-studio .compare-pane .pane-timer { display: none; }
+  html.ui-studio .compare-pane .pane-actions { gap: 0; flex-shrink: 0; }
+}
+html.ui-studio .compare-vote-bar { border-top-color: var(--st-line); gap: 8px; padding: 10px; }
+html.ui-studio .compare-vote-btn {
+  height: var(--stb-btn); padding: 0 14px; font-family: var(--st-font); font-size: 12.5px; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .compare-vote-btn:hover { color: var(--st-text); background: var(--st-accent-soft); border-color: var(--st-accent-line); }
+html.ui-studio .compare-sources-box {
+  font-size: 12.5px; color: var(--st-text-2); background: var(--st-surface-2);
+  border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+
+/* ==========================================================================
+   Deep Research  (#research-overlay; static/js/research/*)
+   ========================================================================== */
+html.ui-studio #research-overlay .research-pane-body { font-size: 13px; }
+html.ui-studio #research-overlay .research-new-job {
+  padding: 4px 2px 8px; margin-bottom: 4px; background: transparent; border: none; border-radius: 0;
+}
+html.ui-studio #research-overlay .research-new-job > .memory-desc { display: flex; align-items: center; gap: 6px; margin-top: 4px !important; }
+html.ui-studio #research-overlay .research-new-job > .memory-desc svg { color: var(--st-text-3); flex-shrink: 0; }
+html.ui-studio #research-overlay #research-no-past-hint { display: block; }
+html.ui-studio #research-overlay .research-library-link {
+  display: inline; height: auto; min-height: 0; padding: 0; margin: 0; border: none; background: none;
+  font: inherit; color: var(--st-accent); text-decoration: none; cursor: pointer;
+}
+html.ui-studio #research-overlay .research-library-link:hover { text-decoration: underline; }
+html.ui-studio #research-overlay .research-query {
+  min-height: 88px; margin-top: 12px; padding: 10px 12px; font-size: 14px; line-height: 1.5;
+}
+html.ui-studio #research-overlay .research-category-row { gap: 6px; margin-top: 10px; }
+html.ui-studio #research-overlay .research-cat {
+  top: 0; height: 28px; padding: 0 12px; display: inline-flex; align-items: center;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: 999px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+html.ui-studio #research-overlay .research-cat:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio #research-overlay .research-cat.active { background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line); }
+html.ui-studio #research-overlay .research-settings-toggle {
+  height: var(--stb-btn); margin-top: 12px; padding: 0 12px;
+  font-family: var(--st-font); font-size: 13px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #research-overlay .research-settings-toggle:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio #research-overlay .research-settings-toggle:not(.collapsed) { border-radius: var(--st-r-sm) var(--st-r-sm) 0 0; border-bottom-color: transparent; }
+html.ui-studio #research-overlay .research-settings-chevron { color: var(--st-text-3); }
+html.ui-studio #research-overlay .research-settings-row {
+  gap: 10px; margin-top: 0; padding: 12px; background: transparent;
+  border: 1px solid var(--st-line-2); border-top: 1px solid var(--st-line); border-radius: 0 0 var(--st-r-sm) var(--st-r-sm);
+}
+html.ui-studio #research-overlay .research-setting { gap: 5px; }
+html.ui-studio #research-overlay .research-setting-label {
+  font-size: 12px; font-weight: 550; letter-spacing: 0; text-transform: none; opacity: 1; color: var(--st-text-3); margin: 0;
+}
+html.ui-studio #research-overlay .research-setting select { height: var(--stb-btn); padding: 0 26px 0 10px; font-size: 12.5px; }
+html.ui-studio #research-overlay .research-controls-row { margin-top: 14px; gap: 8px; }
+html.ui-studio #research-overlay .research-add-btn {
+  height: var(--stb-btn); padding: 0 12px; display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #research-overlay .research-add-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #research-overlay .research-add-plus { font-size: 15px; line-height: 1; }
+
+/* Job list */
+html.ui-studio #research-overlay .research-jobs-list { gap: 6px; padding: 4px 0; }
+html.ui-studio #research-overlay .research-empty { font-size: 13px; color: var(--st-text-3); opacity: 1; padding: 36px 16px; }
+html.ui-studio #research-overlay .research-job-card {
+  padding: 10px 12px; background: transparent; border: 1px solid var(--st-line); border-radius: var(--st-r);
+}
+html.ui-studio #research-overlay .research-job-card:hover { background: var(--st-hover); border-color: var(--st-line-2); }
+html.ui-studio #research-overlay .research-job-card.done[data-category] { background: transparent; }
+html.ui-studio #research-overlay .research-job-card.done[data-category]:hover { background: var(--st-hover); }
+html.ui-studio #research-overlay .research-job-card.running { border-left: 2px solid var(--st-accent); }
+html.ui-studio #research-overlay .research-job-card.queued { border-left: 2px solid var(--st-line-2); }
+html.ui-studio #research-overlay .research-job-card:is(.error, .cancelled) { border-left: 2px solid var(--stb-err); }
+html.ui-studio #research-overlay .research-job-query { font-size: 13.5px; font-weight: 550; }
+html.ui-studio #research-overlay :is(.research-job-time, .research-job-meta) { font-family: var(--st-mono); font-size: 11.5px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #research-overlay .research-job-status { font-size: 11.5px; font-weight: 550; letter-spacing: 0; text-transform: capitalize; opacity: 1; color: var(--st-text-2); }
+html.ui-studio #research-overlay .research-job-model { font-size: 11.5px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #research-overlay .research-cat-badge { font-size: 11.5px; opacity: 1; top: 0; text-transform: capitalize; }
+html.ui-studio #research-overlay :is(.research-job-cancel, .research-job-remove, .research-job-report-link, .research-synapse-toggle) {
+  width: 28px; height: 28px; align-items: center; justify-content: center; padding: 0;
+  color: var(--st-text-3); opacity: 1; border-radius: var(--st-r-sm);
+}
+html.ui-studio #research-overlay :is(.research-job-cancel, .research-job-remove, .research-job-report-link, .research-synapse-toggle):hover {
+  color: var(--st-text); background: var(--st-press);
+}
+html.ui-studio .research-timer { font-family: var(--st-mono); font-size: 12px; color: var(--st-text-2); }
+/* Job sections (Active / Past): a header row over flat cards */
+html.ui-studio #research-overlay .research-section {
+  background: transparent; border: 1px solid var(--st-line); border-radius: var(--st-r); overflow: hidden;
+}
+html.ui-studio #research-overlay .research-section-header {
+  min-height: 44px; padding: 0 10px 0 14px; gap: 8px; background: var(--st-surface-2); border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio #research-overlay .research-section-title { font-size: 13.5px; font-weight: 600; color: var(--st-text); }
+html.ui-studio #research-overlay .research-section-count { font-size: 12px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #research-overlay .research-section-clear {
+  height: 26px; padding: 0 9px; gap: 4px; display: inline-flex; align-items: center;
+  font-family: var(--st-font); font-size: 12px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #research-overlay .research-section-clear:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #research-overlay .research-section-dot { background: var(--st-accent); }
+html.ui-studio #research-overlay .research-section-chevron { color: var(--st-text-3); }
+html.ui-studio #research-overlay .research-section-body { padding: 8px; gap: 6px; }
+html.ui-studio #research-overlay .research-section-body .research-job-card { background: var(--st-surface); }
+html.ui-studio #research-overlay .research-job-queued-meta { font-size: 12px; color: var(--st-text-3); opacity: 1; margin-top: 2px; }
+html.ui-studio #research-overlay .research-job-actions { gap: 6px; margin-top: 10px; }
+html.ui-studio #research-overlay .research-job-action {
+  height: 28px; padding: 0 10px; gap: 5px; display: inline-flex; align-items: center;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; color: var(--st-text-2); opacity: 1;
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #research-overlay .research-job-action:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #research-overlay .research-job-action-dim { border-color: transparent; color: var(--st-text-3); }
+html.ui-studio #research-overlay .research-job-action-dim:hover { color: var(--stb-err); background: var(--stb-err-soft); }
+/* Research controls: style.css nudges these with top/margin offsets */
+html.ui-studio #research-overlay #research-add-btn,
+html.ui-studio #research-overlay #research-start-btn { top: 0; margin-top: 0; }
+html.ui-studio #research-overlay #research-start-btn { margin-left: auto; }
+html.ui-studio #research-overlay .research-start-btn svg { top: 0; }
+html.ui-studio #research-overlay #research-no-past-hint { font-size: 12.5px; opacity: 1; margin-top: 2px; }
+@media (max-width: 600px) {
+  html.ui-studio #research-overlay .research-category-row { flex-wrap: wrap; overflow: visible; }
+}
+/* Cookbook: comfortable tap targets (range thumb row, chip buttons, inline link) */
+/* The context slider: a 24px hit area with a thin rail drawn inside it */
+html.ui-studio #cookbook-modal .hwfit-ctx-control input[type="range"],
+html.ui-studio #cookbook-modal .hwfit-ctx-control input[type="range"]:is(:hover, :focus, :active) {
+  height: 24px; margin: 0; border-radius: 0;
+  background: linear-gradient(var(--st-line-2), var(--st-line-2)) center / 100% 4px no-repeat !important;
+}
+html.ui-studio #cookbook-modal .hwfit-ctx-control input[type="range"]:is(:hover, :focus-visible) {
+  background-image: linear-gradient(color-mix(in srgb, var(--fg) 30%, transparent), color-mix(in srgb, var(--fg) 30%, transparent)) !important;
+}
+html.ui-studio #cookbook-modal .hwfit-ctx-control input[type="range"]::-webkit-slider-thumb {
+  width: 14px; height: 14px; background: var(--st-accent); box-shadow: 0 0 0 3px var(--st-accent-soft);
+}
+html.ui-studio #cookbook-modal .hwfit-ctx-control input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px; background: var(--st-accent); box-shadow: 0 0 0 3px var(--st-accent-soft);
+}
+html.ui-studio #cookbook-modal .hwfit-ctx-control input[type="range"]:is(:hover, :focus, :active)::-webkit-slider-thumb { width: 16px; height: 16px; }
+html.ui-studio #cookbook-modal .hwfit-ctx-control input[type="range"]:is(:hover, :focus, :active)::-moz-range-thumb { width: 16px; height: 16px; }
+/* Action panel buttons share one baseline */
+html.ui-studio #cookbook-modal .hwfit-panel-actions { align-items: center; }
+html.ui-studio #cookbook-modal .hwfit-panel-actions > button { margin: 0 !important; top: 0 !important; }
+/* Brain > expanded skill: footer actions */
+html.ui-studio #memory-modal .doclib-card-expanded .skill-card-preview { font-size: 13px; }
+html.ui-studio #memory-modal .doclib-card-expanded :is(.doclib-card-text-btn, .doclib-card-action-btn, .doclib-action-btn-row button) {
+  height: 28px; padding: 0 10px; gap: 5px; display: inline-flex; align-items: center;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #memory-modal .doclib-card-expanded :is(.doclib-card-text-btn, .doclib-card-action-btn, .doclib-action-btn-row button):hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #memory-modal .doclib-card-expanded .doclib-card-expanded-actions { gap: 6px; align-items: center; }
+html.ui-studio #memory-modal .doclib-card-expanded .doclib-action-btn-row { gap: 6px; }
+html.ui-studio #memory-modal .doclib-card-expanded .doclib-card-text-btn-danger { color: var(--stb-err); border-color: color-mix(in srgb, var(--stb-err) 40%, transparent); }
+html.ui-studio #memory-modal .doclib-card-expanded .doclib-card-text-btn-danger:hover { color: var(--stb-err); background: var(--stb-err-soft); }
+html.ui-studio #memory-modal .doclib-card-expanded pre {
+  font-family: var(--st-mono); font-size: 12px; line-height: 1.6; color: var(--st-text-2);
+  background: var(--st-sunken); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+html.ui-studio #cookbook-modal .memory-desc a { display: inline-block; padding: 5px 0; margin: -5px 0; }
+@media (max-width: 768px) {
+  html.ui-studio #cookbook-modal .hwfit-hw-chip { height: 30px; padding: 0 2px 0 11px; }
+  html.ui-studio #cookbook-modal .hwfit-hw-chip-toggle { height: 28px; line-height: 28px !important; }
+  html.ui-studio #cookbook-modal .hwfit-hw-chip-x { width: 26px; height: 26px; line-height: 26px !important; }
+}
+html.ui-studio #research-overlay .research-library-link { display: inline-block; padding: 4px 0; margin: -4px 0; }
+/* Compare setup on a phone: the model pickers shrink to the row */
+html.ui-studio #compare-model-overlay .cmp-model-row { min-width: 0; max-width: 100%; }
+html.ui-studio #compare-model-overlay .cmp-model-row .cmp-form-control { flex: 1 1 auto; min-width: 0; width: auto; max-width: 100%; }
+/* ==========================================================================
+   The .bg-panel windows: Background, DevOps, Browser, Devices
+   (bgTasks.js, devopsPage.js, cloudBrowser.js, devicesPanel.js).
+   Inbound mail (.im-panel) also uses .bg-panel; it is styled with Email in
+   studio-pages-a.css, so it is left out here.
+   ========================================================================== */
+html.ui-studio .bg-panel-backdrop:not(:has(> .fill-chat-area)) {
+  background: color-mix(in srgb, #000 42%, transparent);
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+}
+html.ui-studio[data-theme-mode="light"] .bg-panel-backdrop:not(:has(> .fill-chat-area)) { background: rgba(16, 24, 40, .28); }
+html.ui-studio .bg-panel:not(.im-panel) {
+  font-family: var(--st-font); font-size: 13px; color: var(--st-text);
+  background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r-lg);
+  box-shadow: var(--st-shadow-lg);
+}
+html.ui-studio .bg-panel.fill-chat-area:not(.im-panel) {
+  border-radius: 0; border-top: 0; border-bottom: 0; box-shadow: none; background: var(--bg);
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-panel-head {
+  min-height: 52px; padding: 0 12px 0 20px; gap: 8px;
+  font-size: 15px; font-weight: 650; letter-spacing: -0.015em; color: var(--st-text);
+  border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-close {
+  width: 32px; height: 32px; display: inline-grid; place-items: center; padding: 0;
+  font-size: 20px; font-weight: 300; line-height: 1; color: var(--st-text-3);
+  border-radius: var(--st-r-sm); transition: background .12s, color .12s;
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-close:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .bg-panel:not(.im-panel) .fill-chat-area-btn {
+  width: 32px; height: 32px; padding: 0; color: var(--st-text-3); opacity: 1; border-radius: var(--st-r-sm);
+}
+html.ui-studio .bg-panel:not(.im-panel) .fill-chat-area-btn:hover,
+html.ui-studio .bg-panel:not(.im-panel) .fill-chat-area-btn[aria-pressed="true"] { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .bg-panel:not(.im-panel) :is(.bg-close, .fill-chat-area-btn):focus-visible { outline: none; box-shadow: var(--st-ring); }
+html.ui-studio .bg-panel:not(.im-panel) .bg-body { padding: 4px 20px 20px; }
+
+/* Section labels + empty states */
+html.ui-studio .bg-panel:not(.im-panel) .bg-section {
+  margin: 20px 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--st-text-3);
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-section-approvals { color: var(--stb-info); }
+html.ui-studio .bg-panel:not(.im-panel) .bg-empty {
+  padding: 14px 16px; font-size: 13px; line-height: 1.5; color: var(--st-text-3);
+  border: 1px dashed var(--st-line-2); border-radius: var(--st-r);
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-hint { font-size: 12.5px; color: var(--st-text-3); }
+
+/* Job cards */
+html.ui-studio .bg-panel:not(.im-panel) .bg-job {
+  padding: 12px 14px; margin-bottom: 8px; font-size: 13px;
+  border: 1px solid var(--st-line); border-radius: var(--st-r); background: transparent;
+  transition: background .12s, border-color .12s;
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-job:hover { background: var(--st-hover); border-color: var(--st-line-2); }
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-head { gap: 10px; min-height: 22px; }
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-title { font-size: 13.5px; font-weight: 600; color: var(--st-text); }
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-meta {
+  font-size: 11.5px; font-weight: 550; padding: 2px 8px; border-radius: 999px;
+  color: var(--st-text-2); background: var(--st-press);
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-sub {
+  margin-top: 6px; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: var(--st-text-3);
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-sub code,
+html.ui-studio .bg-panel:not(.im-panel) .dv-sub code {
+  font-family: var(--st-mono); font-size: 11.75px; color: var(--st-text-2);
+  padding: 1px 5px; border-radius: var(--st-r-xs); background: var(--st-press); border: none;
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-log {
+  margin-top: 10px; padding: 10px 12px; font-family: var(--st-mono); font-size: 12px; line-height: 1.55;
+  color: var(--st-text-2); background: var(--st-sunken); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-actions { gap: 6px; margin-top: 10px; padding-left: 18px; }
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-actions :is(button, a) {
+  height: 28px; padding: 0 12px; display: inline-flex; align-items: center;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-actions :is(button, a):hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-actions .bg-approve {
+  font-weight: 550; color: var(--st-accent-fg); background: var(--st-accent); border-color: transparent;
+}
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-actions .bg-approve:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); color: var(--st-accent-fg); }
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-actions .danger { color: var(--stb-err); border-color: color-mix(in srgb, var(--stb-err) 40%, transparent); }
+html.ui-studio .bg-panel:not(.im-panel) .bg-job-actions .danger:hover { background: var(--stb-err-soft); color: var(--stb-err); }
+html.ui-studio .bg-panel:not(.im-panel) .bg-approval { border-left: 2px solid var(--stb-info); }
+html.ui-studio .bg-panel:not(.im-panel) .bg-plan-text { font-size: 13px; }
+html.ui-studio .bg-panel:not(.im-panel) .bg-plan-body { background: var(--st-sunken); border: 1px solid var(--st-line); border-radius: var(--st-r-sm); padding: 10px 12px; }
+
+/* Status dots, shared by the panels, the chat chip and DevOps rows */
+html.ui-studio .bg-dot { width: 8px; height: 8px; flex-basis: 8px; background: var(--st-text-3); }
+html.ui-studio .bg-dot.ok { background: var(--stb-ok); }
+html.ui-studio .bg-dot.running { background: var(--stb-warn); }
+html.ui-studio .bg-dot.bad { background: var(--stb-err); }
+html.ui-studio .bg-dot.waiting { background: var(--stb-info); }
+html.ui-studio .bg-tasks-count { background: var(--st-accent); color: var(--st-accent-fg); font-weight: 600; }
+html.ui-studio #bg-tasks-count.bg-count-approvals { background: var(--stb-info); }
+
+/* --- DevOps ---------------------------------------------------------------- */
+html.ui-studio .dv-panel .dv-window {
+  height: var(--stb-btn); padding: 0 28px 0 10px; font-family: var(--st-font); font-size: 12.5px; font-weight: 500;
+  color: var(--st-text-2); background-color: var(--stb-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .dv-panel .dv-window:focus { border-color: var(--st-accent-line); box-shadow: var(--st-ring); outline: none; }
+html.ui-studio .dv-panel .dv-tiles { gap: 10px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); margin: 4px 0 12px; }
+html.ui-studio .dv-panel .dv-tile {
+  padding: 14px 16px; background: transparent; border: 1px solid var(--st-line); border-radius: var(--st-r);
+}
+html.ui-studio .dv-panel .dv-tile-v {
+  font-size: 22px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; color: var(--st-text);
+  font-variant-numeric: tabular-nums;
+}
+html.ui-studio .dv-panel .dv-tile-v small { font-size: 12.5px; font-weight: 500; letter-spacing: 0; color: var(--st-text-3); opacity: 1; margin-left: 2px; }
+html.ui-studio .dv-panel .dv-tile-l { margin-top: 6px; font-size: 12.5px; font-weight: 500; color: var(--st-text-2); opacity: 1; }
+html.ui-studio .dv-panel .dv-tile-s { margin-top: 2px; font-size: 12px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .dv-panel .dv-chart {
+  margin: 4px 0 12px; padding: 14px 16px 10px; border: 1px solid var(--st-line); border-radius: var(--st-r);
+}
+html.ui-studio .dv-panel .dv-chart rect { fill: color-mix(in srgb, var(--st-accent) 65%, transparent); }
+html.ui-studio .dv-panel .dv-chart rect:hover { fill: var(--st-accent); }
+html.ui-studio .dv-panel :is(.dv-chart-top, .dv-ticks) { font-size: 11.5px; color: var(--st-text-3); opacity: 1; font-variant-numeric: tabular-nums; }
+html.ui-studio .dv-panel .dv-chart-top { margin-bottom: 6px; }
+html.ui-studio .dv-panel :is(.dv-live, .dv-run) {
+  min-height: var(--stb-row); padding: 8px 4px; font-size: 13px; border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio .dv-panel :is(.dv-live, .dv-run) a { color: var(--st-text-2); text-decoration-color: var(--st-line-2); }
+html.ui-studio .dv-panel .dv-sub { font-size: 12.5px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .dv-panel .dv-meta { font-size: 12px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .dv-panel .dv-chip {
+  font-size: 11.5px; font-weight: 550; padding: 1px 7px; border-radius: 999px; color: var(--st-text-2); background: var(--st-press);
+}
+html.ui-studio .dv-panel .dv-chip.dv-good { color: var(--stb-ok); background: var(--stb-ok-soft); }
+html.ui-studio .dv-panel .dv-table { font-size: 13px; border: 1px solid var(--st-line); border-radius: var(--st-r); border-collapse: separate; border-spacing: 0; overflow: hidden; }
+html.ui-studio .dv-panel .dv-table th {
+  padding: 8px 12px; font-size: 12px; font-weight: 550; color: var(--st-text-3); opacity: 1; background: var(--st-surface-2);
+  border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio .dv-panel .dv-table td { padding: 9px 12px; border-top: none; border-bottom: 1px solid var(--st-line); font-variant-numeric: tabular-nums; }
+html.ui-studio .dv-panel .dv-table tr:last-child td { border-bottom: none; }
+html.ui-studio .dv-panel .dv-table tr:hover td { background: var(--st-hover); }
+html.ui-studio .dv-panel .dv-foot { font-size: 12px; color: var(--st-text-3); opacity: 1; margin-top: 18px; }
+
+/* --- Cloud browser ----------------------------------------------------------- */
+html.ui-studio .cb-panel .cb-head { min-height: 48px; padding: 0 10px 0 16px; }
+html.ui-studio .cb-panel .cb-status { font-size: 12.5px; font-weight: 450; color: var(--st-text-3); opacity: 1; letter-spacing: 0; }
+html.ui-studio .cb-panel .cb-bar { gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--st-line); }
+html.ui-studio .cb-panel .cb-bar button {
+  height: var(--stb-btn); min-width: var(--stb-btn); padding: 0 10px; display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--st-font); font-size: 13px; font-weight: 500; line-height: 1; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .cb-panel .cb-bar button:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .cb-panel .cb-bar button:focus-visible { outline: none; box-shadow: var(--st-ring); }
+html.ui-studio .cb-panel .cb-url {
+  height: var(--stb-btn); padding: 0 12px; font-family: var(--st-font); font-size: 13px; color: var(--st-text);
+  background-color: var(--stb-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .cb-panel .cb-url::placeholder { color: var(--st-text-3); }
+html.ui-studio .cb-panel .cb-url:focus { outline: none; border-color: var(--st-accent-line); box-shadow: var(--st-ring); }
+html.ui-studio .cb-panel .cb-tabs {
+  height: var(--stb-btn); padding: 0 26px 0 10px; font-family: var(--st-font); font-size: 12.5px; color: var(--st-text-2);
+  background-color: var(--stb-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .cb-panel .cb-take { font-weight: 550; color: var(--st-text); }
+html.ui-studio .cb-panel.cb-control .cb-take {
+  background: var(--st-accent) !important; color: var(--st-accent-fg); border-color: transparent;
+}
+html.ui-studio .cb-panel.cb-control .cb-screen { box-shadow: inset 0 0 0 2px var(--st-accent-line); }
+html.ui-studio .cb-panel .cb-foot {
+  min-height: 34px; align-items: center; padding: 0 16px; font-size: 12.5px; color: var(--st-text-3); opacity: 1;
+  border-top: 1px solid var(--st-line);
+}
+html.ui-studio .cb-panel .cb-note { color: var(--stb-err); }
+html.ui-studio .cb-watch {
+  height: 24px; padding: 0 9px; font-size: 12px; font-weight: 500; color: var(--st-text-2);
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); background: transparent;
+}
+html.ui-studio .cb-watch:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* --- Devices + MCP servers -------------------------------------------------- */
+html.ui-studio .dp-panel .dp-tabs {
+  gap: 2px; padding: 2px; border-radius: var(--st-r-sm); background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+html.ui-studio .dp-panel .dp-tabs button {
+  height: 28px; padding: 0 12px; font-family: var(--st-font); font-size: 13px; font-weight: 550;
+  color: var(--st-text-3); opacity: 1; background: transparent; border: none; border-radius: var(--st-r-xs);
+}
+html.ui-studio .dp-panel .dp-tabs button:hover { color: var(--st-text); }
+html.ui-studio .dp-panel .dp-tabs button.active {
+  color: var(--st-text); background: var(--st-surface-2); box-shadow: var(--st-shadow-sm), inset 0 0 0 1px var(--st-line-2);
+}
+html.ui-studio .dp-panel .dp-mcp-bar { gap: 8px; margin: 14px 0 12px; }
+html.ui-studio .dp-panel .dp-mcp-search {
+  height: var(--stb-btn); min-width: 260px; padding: 0 12px; font-family: var(--st-font); font-size: 13px; color: var(--st-text);
+  background-color: var(--stb-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .dp-panel .dp-mcp-search:focus { outline: none; border-color: var(--st-accent-line); box-shadow: var(--st-ring); }
+html.ui-studio .dp-panel :is(.dp-mcp-bar, .dp-tools-head) button {
+  height: 30px; padding: 0 12px; font-family: var(--st-font); font-size: 12.5px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .dp-panel :is(.dp-mcp-bar, .dp-tools-head) button:hover:not(:disabled) { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .dp-panel .dp-tools-wrap { border-top-color: var(--st-line); }
+html.ui-studio .dp-panel .dp-tools-head { font-size: 12.5px; }
+html.ui-studio .dp-panel .dp-tools-head span { color: var(--st-text-3); opacity: 1; }
+html.ui-studio .dp-panel .dp-tools label { font-size: 13px; min-height: 28px; color: var(--st-text-2); }
+html.ui-studio .dp-panel .dp-tools input[type="checkbox"] { accent-color: var(--st-accent); }
+
+/* Devices tab content (devicesSettings.js, drawn with inline styles):
+   cards, quiet secondary text, one button size */
+html.ui-studio .dp-panel .dp-devices .admin-card {
+  padding: 16px 18px; margin-bottom: 12px; background: transparent; border: 1px solid var(--st-line); border-radius: var(--st-r);
+}
+html.ui-studio .dp-panel .dp-devices .admin-card:first-child {
+  background: var(--st-surface-2); border-color: var(--st-line);
+}
+html.ui-studio .dp-panel .dp-devices .admin-card:first-child a { display: inline-block; padding: 5px 0; margin: -5px 0; }
+html.ui-studio .dp-panel .dp-devices .admin-card h2 {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 0; border: none;
+  font-size: 15px; font-weight: 650; letter-spacing: -0.015em; color: var(--st-text);
+}
+html.ui-studio .dp-panel .dp-devices .admin-card h2 svg { color: var(--st-text-3); }
+html.ui-studio .dp-panel .dp-devices .admin-toggle-sub { font-size: 12.5px; line-height: 1.6; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .dp-panel .dp-devices .admin-toggle-sub strong { color: var(--st-text-2); font-weight: 600; }
+html.ui-studio .dp-panel .dp-devices .admin-toggle-sub a { color: var(--st-accent); text-decoration: none; }
+html.ui-studio .dp-panel .dp-devices .admin-toggle-sub a:hover { text-decoration: underline; }
+html.ui-studio .dp-panel .dp-devices [style*="border-top:1px solid"] { border-top-color: var(--st-line) !important; padding: 14px 0 !important; }
+html.ui-studio .dp-panel .dp-devices #devices-machines > div > div:first-child > strong { font-size: 14px; font-weight: 600; color: var(--st-text); }
+html.ui-studio .dp-panel .dp-devices code {
+  font-family: var(--st-mono); font-size: 12px; color: var(--st-text-2);
+  padding: 2px 6px; border-radius: var(--st-r-xs); background: var(--st-press);
+}
+html.ui-studio .dp-panel .dp-devices .settings-btn {
+  height: 30px; padding: 0 12px !important; font-family: var(--st-font); font-size: 12.5px !important; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .dp-panel .dp-devices .settings-btn:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio .dp-panel .dp-devices details > summary { cursor: pointer; padding: 4px 0; }
+html.ui-studio .dp-panel .dp-devices details > summary:hover { color: var(--st-text-2); }
+
+@media (max-width: 640px) {
+  html.ui-studio .bg-panel:not(.im-panel) .bg-panel-head { padding: 0 8px 0 16px; }
+  html.ui-studio .bg-panel:not(.im-panel) .bg-body { padding: 4px 14px 16px; }
+  html.ui-studio .bg-panel:not(.im-panel) :is(.bg-job-sub, .bg-job-actions) { padding-left: 0; }
+  html.ui-studio .dv-panel .dv-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  html.ui-studio .dv-panel .dv-tile { padding: 12px; }
+  html.ui-studio .dv-panel .dv-tile-v { font-size: 20px; }
+  html.ui-studio .dp-panel .dp-mcp-search { min-width: 0; flex: 1 1 100%; }
+  html.ui-studio .dp-panel .dp-devices .admin-card { padding: 14px; }
+  /* Browser bar on a phone: buttons + tab picker on one row, the address on its own */
+  html.ui-studio .cb-panel .cb-bar { flex-wrap: wrap; }
+  html.ui-studio .cb-panel .cb-go { order: 1; flex: 1 1 100%; }
+  html.ui-studio .cb-panel .cb-tabs { flex: 1 1 0; min-width: 104px; max-width: none; }
+}
+html.ui-studio .cb-panel .cb-screen { background: var(--st-sunken); }
+/* ==========================================================================
+   Above the composer: background chip, message queue, music bar, attachments
+   (bgTasks.js, chat.js renderQueue, musicBar.js, fileHandler.js)
+   ========================================================================== */
+html.ui-studio :is(.bg-chip, .chat-queue) {
+  gap: 6px; padding: 8px 10px 8px 12px; font-size: 13px; color: var(--st-text-2);
+  background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r);
+  box-shadow: var(--st-shadow-sm);
+}
+html.ui-studio .bg-chip-head { gap: 8px; min-height: 28px; font-weight: 550; color: var(--st-text); }
+html.ui-studio .bg-chip-more { font-weight: 450; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .bg-chip-row { gap: 8px; min-height: 28px; }
+html.ui-studio .bg-chip-engine { font-size: 12.5px; color: var(--st-text-2); opacity: 1; font-variant-numeric: tabular-nums; }
+html.ui-studio .bg-chip-what { font-size: 12.5px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio :is(.bg-chip, .bg-watch-head, .chat-queue-actions) button {
+  height: 26px; padding: 0 10px; display: inline-flex; align-items: center; white-space: nowrap;
+  font-family: var(--st-font); font-size: 12px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+  transition: background .12s, color .12s;
+}
+html.ui-studio :is(.bg-chip, .bg-watch-head, .chat-queue-actions) button:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio :is(.bg-chip, .bg-watch-head, .chat-queue-actions) button:focus-visible { outline: none; box-shadow: var(--st-ring); }
+html.ui-studio .bg-watch {
+  padding: 10px 12px; border: 1px solid var(--st-line-2); border-radius: var(--st-r); background: var(--st-surface);
+}
+html.ui-studio .bg-watch-title { font-size: 13px; font-weight: 600; }
+html.ui-studio .bg-watch-meta { font-size: 12px; color: var(--st-text-3); opacity: 1; font-variant-numeric: tabular-nums; }
+html.ui-studio .bg-watch-head .bg-watch-close { border: 0 !important; width: 26px; padding: 0; justify-content: center; font-size: 16px !important; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .bg-watch-log {
+  margin-top: 10px; padding: 10px 12px; font-family: var(--st-mono); font-size: 12px; line-height: 1.55;
+  color: var(--st-text-2); background: var(--st-sunken); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+
+/* Queue: your queued messages as ghost bubbles */
+html.ui-studio .chat-queue-head { min-height: 26px; margin-bottom: 4px; font-size: 12.5px; color: var(--st-text-3); }
+html.ui-studio .chat-queue-item { padding: 3px 0; gap: 4px; }
+html.ui-studio .chat-queue-item .chat-queue-text {
+  padding: 7px 12px; font-size: 13.5px; color: var(--st-text-2);
+  background: var(--st-surface-2); border: 1px dashed var(--st-line-2);
+  border-radius: var(--st-r-lg) var(--st-r-lg) var(--st-r-xs) var(--st-r-lg);
+}
+html.ui-studio .chat-queue-x {
+  width: 26px; height: 26px; display: inline-grid; place-items: center; padding: 0;
+  font-size: 15px; color: var(--st-text-3); opacity: 1; border-radius: var(--st-r-sm);
+}
+html.ui-studio .chat-queue-x:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .chat-queue-note { font-size: 11.5px; color: var(--st-text-3); margin-top: 4px; }
+
+/* Music bar */
+html.ui-studio .music-bar {
+  gap: 10px; padding: 5px 6px 5px 5px; font-size: 13px; opacity: 1;
+  background: color-mix(in srgb, var(--st-surface) 88%, transparent);
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-lg); box-shadow: var(--st-shadow);
+}
+html.ui-studio .music-bar .mb-art { width: 36px; height: 36px; flex-basis: 36px; border-radius: var(--st-r-sm); background: var(--st-press); color: var(--st-text-3); }
+html.ui-studio .music-bar .mb-title { font-weight: 600; color: var(--st-text); }
+html.ui-studio .music-bar .mb-artist { font-size: 12px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .music-bar .mb-status { font-size: 12.5px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio :is(.music-bar, .music-panel) .mb-btn {
+  width: 30px; height: 30px; padding: 0; color: var(--st-text-2); opacity: 1; border-radius: var(--st-r-sm);
+}
+html.ui-studio :is(.music-bar, .music-panel) .mb-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio :is(.music-bar, .music-panel) .mb-btn:focus-visible { outline: none; box-shadow: var(--st-ring); }
+html.ui-studio :is(.music-bar, .music-panel) .mb-main {
+  width: 32px; height: 32px; border-radius: 50%; color: var(--st-text); background: var(--st-press);
+}
+html.ui-studio :is(.music-bar, .music-panel) .mb-main:hover { background: color-mix(in srgb, var(--fg) 14%, transparent); }
+html.ui-studio :is(.music-bar, .music-panel) .mb-btn.mb-on { color: var(--stb-err); }
+html.ui-studio .music-bar .mb-voltarget,
+html.ui-studio :is(.music-bar, .music-panel) .mb-handoff {
+  height: 24px; padding: 0 8px; font-size: 11.5px; font-weight: 500; color: var(--st-text-2); opacity: 1;
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); background: transparent;
+}
+html.ui-studio .music-bar .mb-voltarget:hover,
+html.ui-studio :is(.music-bar, .music-panel) .mb-handoff:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio .music-bar .mb-vol-badge { font-size: 11.5px; color: var(--st-text-2); background: var(--st-press); border-radius: var(--st-r-xs); }
+html.ui-studio .music-bar .mb-time { font-size: 11.5px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .music-bar .mb-prog { background: var(--st-line); }
+html.ui-studio :is(.music-bar, .music-panel) :is(.mb-prog-fill, .mp-prog-track > *) { background: var(--st-accent); }
+html.ui-studio .music-bar .mb-elsewhere { border-top-color: var(--st-line); font-size: 12.5px; color: var(--st-text-2); }
+html.ui-studio .music-panel {
+  padding: 14px; font-size: 13px; color: var(--st-text);
+  background: color-mix(in srgb, var(--st-surface) 94%, transparent);
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-xl); box-shadow: var(--st-shadow-lg);
+}
+html.ui-studio .music-panel :is(.mp-head, .mp-section) { font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .music-panel .mp-art { border-radius: var(--st-r-lg); background: var(--st-press); }
+html.ui-studio .music-panel .mp-title { font-size: 16px; font-weight: 650; letter-spacing: -0.015em; }
+html.ui-studio .music-panel .mp-artist { color: var(--st-text-3); opacity: 1; }
+html.ui-studio .music-panel .mp-vol input { accent-color: var(--st-accent); }
+html.ui-studio .music-panel :is(.mp-vol span, .mp-vollabel, .mp-note, .mp-hint, .mp-prog-times) { color: var(--st-text-3); opacity: 1; }
+html.ui-studio .music-panel .mp-device {
+  height: var(--stb-btn); font-family: var(--st-font); font-size: 13px; color: var(--st-text);
+  background-color: var(--stb-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .music-panel :is(.mp-pair, .mp-receiving) { background: var(--stb-info-soft); border-color: color-mix(in srgb, var(--stb-info) 30%, transparent); border-radius: var(--st-r-sm); }
+html.ui-studio .mb-listen { background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r-lg); box-shadow: var(--st-shadow-sm); }
+html.ui-studio .mb-listen-note { color: var(--st-text-3); opacity: 1; }
+
+/* Attachments waiting to send */
+html.ui-studio .attach-strip { gap: 6px; padding: 2px 4px 6px; }
+html.ui-studio .attach-strip .thumb {
+  height: 32px; max-width: 220px; padding: 0 4px 0 10px; gap: 6px; font-size: 12.5px; color: var(--st-text);
+  background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); box-shadow: var(--st-shadow-sm);
+}
+html.ui-studio .attach-strip .thumb:hover { border-color: color-mix(in srgb, var(--fg) 22%, transparent); background: var(--st-surface-2); }
+html.ui-studio .attach-strip .thumb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.ui-studio .attach-strip .thumb:not(.thumb-image) button,
+html.ui-studio .attach-strip .thumb-collapsed-x {
+  width: 22px; height: 22px; padding: 0; display: inline-grid; place-items: center; flex-shrink: 0;
+  font-size: 14px; line-height: 1; color: var(--st-text-3); opacity: 1; background: transparent; border: none; border-radius: var(--st-r-xs);
+}
+html.ui-studio .attach-strip .thumb:not(.thumb-image) button:hover,
+html.ui-studio .attach-strip .thumb-collapsed-x:hover { background: var(--st-press); color: var(--st-text); }
+html.ui-studio .attach-strip .thumb.thumb-image { height: auto; padding: 3px; }
+html.ui-studio .attach-strip .thumb-img { border-radius: var(--st-r-xs); }
+html.ui-studio .attach-strip .thumb-collapsed { color: var(--st-text-2); }
+
+/* ==========================================================================
+   In-chat coding-agent runs (Claude Code / OpenCode): live console, send to
+   background, plan approval, the Approve dialog
+   ========================================================================== */
+/* The live output tail is drawn with inline styles (chat.js); give it the console look */
+html.ui-studio .agent-thread-tail {
+  margin: 6px 0 0 !important; padding: 10px 12px !important;
+  font-family: var(--st-mono) !important; font-size: 12px !important; line-height: 1.55;
+  color: var(--st-text-2); opacity: 1 !important;
+  background: var(--st-sunken) !important; border: 1px solid var(--st-line); border-radius: var(--st-r-sm) !important;
+}
+html.ui-studio .cc-bg-btn {
+  height: 24px; padding: 0 9px; font-family: var(--st-font); font-size: 12px; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .cc-bg-btn:hover:not(:disabled) { background: var(--st-hover); color: var(--st-text); }
+/* Approve / Deny links in a plan reply read as buttons */
+html.ui-studio .msg .body a[href^="#claudecode-approve-"],
+html.ui-studio .msg .body a[href^="#claudecode-deny-"] {
+  display: inline-flex; align-items: center; height: 30px; padding: 0 14px; margin: 4px 6px 4px 0;
+  font-size: 13px; font-weight: 550; text-decoration: none; border-radius: var(--st-r-sm);
+  transition: background .12s, color .12s;
+}
+html.ui-studio .msg .body a[href^="#claudecode-approve-"] {
+  color: var(--st-accent-fg); background: var(--st-accent);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.18);
+}
+html.ui-studio .msg .body a[href^="#claudecode-approve-"]:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); text-decoration: none; }
+html.ui-studio .msg .body a[href^="#claudecode-deny-"] { color: var(--st-text-2); border: 1px solid var(--st-line-2); }
+html.ui-studio .msg .body a[href^="#claudecode-deny-"]:hover { background: var(--st-hover); color: var(--st-text); text-decoration: none; }
+
+/* The Approve dialog (chatRenderer.showRunLimits) */
+html.ui-studio .run-dialog-backdrop { background: color-mix(in srgb, #000 45%, transparent); }
+html.ui-studio .run-dialog {
+  padding: 18px 20px 16px; font-family: var(--st-font); font-size: 13px; color: var(--st-text);
+  background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r-lg); box-shadow: var(--st-shadow-lg);
+}
+html.ui-studio .run-dialog-head { font-size: 16px; font-weight: 650; letter-spacing: -0.015em; }
+html.ui-studio .run-dialog-x { width: 30px; height: 30px; border-radius: var(--st-r-sm); color: var(--st-text-3); opacity: 1; font-size: 18px; }
+html.ui-studio .run-dialog-x:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .run-dialog-sub { font-size: 13px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .run-dialog-label { font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .run-dialog .run-engine {
+  padding: 10px 12px; border-radius: var(--st-r); background: transparent; border: 1px solid var(--st-line-2);
+}
+html.ui-studio .run-dialog .run-engine:hover:not(:disabled) { background: var(--st-hover); border-color: var(--st-line-2); }
+html.ui-studio .run-dialog .run-engine.on { background: var(--st-accent-soft); border-color: var(--st-accent-line); }
+html.ui-studio .run-dialog .run-engine-name { font-size: 13.5px; font-weight: 600; }
+html.ui-studio .run-dialog .run-engine-hint { font-size: 12px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .run-dialog :is(.run-model, .run-limits-row input[type="number"]) {
+  height: var(--stb-btn); padding: 0 10px; font-family: var(--st-font); font-size: 13px; color: var(--st-text);
+  background-color: var(--stb-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .run-dialog :is(.run-model, .run-limits-row input):focus { outline: none; border-color: var(--st-accent-line); box-shadow: var(--st-ring); }
+html.ui-studio .run-dialog .run-dialog-note { font-size: 12.5px; background: var(--stb-info-soft); border-color: color-mix(in srgb, var(--stb-info) 30%, transparent); border-radius: var(--st-r-sm); }
+html.ui-studio .run-dialog .run-dialog-hint { font-size: 12px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio .run-dialog .run-dialog-actions button { min-height: var(--stb-btn); padding: 0 14px; font-size: 13px; font-weight: 550; border-radius: var(--st-r-sm); }
+html.ui-studio .run-dialog .run-cancel { color: var(--st-text-2); border: 1px solid var(--st-line-2); background: transparent; }
+html.ui-studio .run-dialog .run-cancel:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .run-dialog .run-approve { color: var(--st-accent-fg); background: var(--st-accent); border: 1px solid transparent; }
+html.ui-studio .run-dialog .run-approve:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); filter: none; }
+
+/* Stall watchdog + Needs to know suggestion inside a thread */
+html.ui-studio .stall-banner {
+  padding: 8px 12px; font-size: 13px; color: var(--st-text-2);
+  background: var(--stb-warn-soft); border: 1px solid color-mix(in srgb, var(--stb-warn) 32%, transparent); border-radius: var(--st-r);
+}
+html.ui-studio .stall-banner-btn { height: 28px; padding: 0 12px; font-size: 12.5px; font-weight: 550; border-radius: var(--st-r-sm); background: var(--st-accent); color: var(--st-accent-fg); }
+html.ui-studio .stall-banner-stop { background: transparent; color: var(--st-text-2); border: 1px solid var(--st-line-2); }
+html.ui-studio .cm-suggest {
+  margin-left: 0; padding: 10px 12px; font-size: 13px; border: 1px dashed var(--st-accent-line); border-radius: var(--st-r);
+  background: color-mix(in srgb, var(--st-accent) 5%, transparent);
+}
+html.ui-studio .cm-done { color: var(--st-text-3); opacity: 1; }
+html.ui-studio .cm-suggest .cn-btn {
+  height: 28px; padding: 0 12px; font-size: 12.5px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .cm-suggest .cn-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .cm-suggest .cn-accept { color: var(--st-accent-fg); background: var(--st-accent); border-color: transparent; }
+html.ui-studio .cm-suggest .cn-accept:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); color: var(--st-accent-fg); }
+/* @end */
