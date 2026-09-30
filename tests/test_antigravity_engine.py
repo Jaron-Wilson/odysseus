@@ -242,12 +242,54 @@ def test_an_agy_that_cannot_run_on_this_cpu_is_explained_not_offered(tmp_path, m
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setitem(cct._AGY_CHECK, "at", 0.0)
     monkeypatch.setitem(cct._AGY_MODELS, "at", 0.0)
+    real_which = cct.shutil.which
+    monkeypatch.setattr(cct.shutil, "which", lambda n: None if n == "qemu-x86_64" else real_which(n))
     work = tmp_path / "work"
     work.mkdir()
-    assert "pclmul" in cct.antigravity_problem() and "CPU type to 'host'" in cct.antigravity_problem()
+    problem = cct.antigravity_problem()
+    assert "pclmul" in problem and "sudo apt install qemu-user" in problem and "CPU type to 'host'" in problem
     out = _run({"action": "ask", "engine": "antigravity", "cwd": str(work), "prompt": "hi"})
     assert out["exit_code"] == 1 and "cannot run on this host" in out["error"]
     import routes.claude_code_routes as r
     monkeypatch.setattr("src.opencode_providers.models", lambda: ([], ""))
     monkeypatch.setattr("src.opencode_providers.in_use", lambda ids: {})
     assert "antigravity" not in [e["id"] for e in r.run_options("", {})["engines"]]
+
+
+def test_under_qemu_when_the_cpu_lacks_pclmul(tmp_path, monkeypatch):
+    # The fix that needed no VM restart: QEMU user mode with a full CPU model.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "calls.jsonl"
+    agy = bindir / "agy"
+    agy.write_text(f"""#!{sys.executable}
+import json, os, sys
+if not os.environ.get("UNDER_QEMU"):
+    sys.stderr.write("FATAL ERROR: This binary was compiled with pclmul enabled, but this feature is "
+                     "not available on this processor (go/sigill-fail-fast).\\n"); sys.exit(132)
+open({str(log)!r}, "a").write(json.dumps({{"argv": sys.argv[1:]}}) + "\\n")
+if sys.argv[1:2] == ["--version"]: print("1.2.14"); sys.exit(0)
+print(json.dumps({{"event": "init", "conversation_id": "q-1"}}))
+print(json.dumps({{"event": "result", "result": {{"status": "SUCCESS", "response": "emulated ok"}}}}))
+""")
+    agy.chmod(0o755)
+    qemu = bindir / "qemu-x86_64"
+    qemu.write_text(f"""#!/bin/sh
+[ "$1" = "-cpu" ] && [ "$2" = "max" ] || exit 9
+shift 2
+UNDER_QEMU=1 exec "$@"
+""")
+    qemu.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setitem(cct._AGY_CHECK, "at", 0.0)
+    monkeypatch.setattr(jobs, "RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setattr(jobs, "JOBS_FILE", str(tmp_path / "jobs.json"))
+    work = tmp_path / "work"
+    work.mkdir()
+    assert cct.antigravity_problem() == ""
+    assert cct.agy_argv() == [str(qemu), "-cpu", "max", str(agy)]
+    out = _run({"action": "ask", "engine": "antigravity", "cwd": str(work), "prompt": "hi"})
+    assert out["exit_code"] == 0, out
+    assert "emulated ok" in out["output"] and out["session_id"] == "q-1"
+    runs = [json.loads(l) for l in open(log) if '"-p"' in l]
+    assert runs and runs[-1]["argv"][0] == "-p"

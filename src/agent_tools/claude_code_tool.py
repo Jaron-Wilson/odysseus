@@ -85,34 +85,61 @@ def engine_cli(engine: str) -> Optional[str]:
     return found
 
 
-_AGY_CHECK: Dict[str, object] = {"at": 0.0, "path": "", "problem": ""}
+_AGY_CHECK: Dict[str, object] = {"at": 0.0, "path": "", "problem": "", "argv": []}
+# Seen 2026-09-30 on this server: a KVM guest on QEMU's generic CPU model
+# hides PCLMUL, and agy dies at start ("compiled with pclmul enabled, but
+# this feature is not available on this processor", exit 132). The user
+# would not stop the VM to change its CPU type, so agy runs under QEMU user
+# mode (`qemu-x86_64 -cpu max`, apt package qemu-user) instead: it starts in
+# about 2s, and the programs it runs (git, shells) run natively.
+QEMU_CPU = ["-cpu", "max"]
+
+
+def _agy_starts(argv: list) -> tuple:
+    """(started, stderr) for `<argv> --version`."""
+    try:
+        r = subprocess.run([*argv, "--version"], capture_output=True, text=True, timeout=20,
+                           stdin=subprocess.DEVNULL, env=_cli_env())
+        return r.returncode == 0, _strip_ansi(r.stderr or "")
+    except Exception as e:
+        return False, str(e)
+
+
+def _agy_launch() -> tuple:
+    """How to start agy here, as (argv prefix, problem): [agy] when it runs
+    natively, [qemu-x86_64, -cpu, max, agy] when only under emulation, or
+    ([], why) when it cannot run. Checked once an hour."""
+    cli = engine_cli("antigravity")
+    if not cli:
+        return [], ""
+    if _AGY_CHECK["path"] == cli and time.time() - float(_AGY_CHECK["at"]) < 3600:
+        return list(_AGY_CHECK["argv"]), str(_AGY_CHECK["problem"])
+    argv, problem = [cli], ""
+    ok, err = _agy_starts([cli])
+    if not ok and ("not available on this processor" in err or "llegal instruction" in err or not err.strip()):
+        qemu = shutil.which("qemu-x86_64")
+        if qemu and _agy_starts([qemu, *QEMU_CPU, cli])[0]:
+            argv = [qemu, *QEMU_CPU, cli]
+        else:
+            argv = []
+            problem = ("agy is installed but cannot run on this server's CPU: "
+                       + (err.strip().splitlines()[0][:200] if err.strip() else "illegal instruction")
+                       + ". The fix needing no restart: the user installs QEMU user mode "
+                       "(sudo apt install qemu-user) and agy then runs under it. Or set the VM's "
+                       "CPU type to 'host' and restart the VM.")
+    _AGY_CHECK.update(at=time.time(), path=cli, problem=problem, argv=argv)
+    return argv, problem
 
 
 def antigravity_problem() -> str:
-    """Why an installed agy cannot run here, or "" when it can (checked once
-    an hour). Seen 2026-09-30 on this server: a KVM guest on QEMU's generic
-    CPU model hides PCLMUL, and agy dies at start with "compiled with pclmul
-    enabled, but this feature is not available on this processor" (exit 132)."""
-    cli = engine_cli("antigravity")
-    if not cli:
-        return ""
-    if _AGY_CHECK["path"] == cli and time.time() - float(_AGY_CHECK["at"]) < 3600:
-        return str(_AGY_CHECK["problem"])
-    problem = ""
-    try:
-        r = subprocess.run([cli, "--version"], capture_output=True, text=True, timeout=15,
-                           stdin=subprocess.DEVNULL, env=_cli_env())
-        err = _strip_ansi(r.stderr or "")
-        if r.returncode in (-4, 132) or "not available on this processor" in err:
-            problem = ("agy is installed but cannot run on this server's CPU: "
-                       + (err.strip().splitlines()[0][:200] if err.strip() else "illegal instruction")
-                       + ". This server is a virtual machine whose CPU model hides that feature; the "
-                       "user can fix it by setting the VM's CPU type to 'host' (CPU passthrough) and "
-                       "restarting the VM.")
-    except Exception as e:
-        logger.debug("agy check failed: %s", e)
-    _AGY_CHECK.update(at=time.time(), path=cli, problem=problem)
-    return problem
+    """Why an installed agy cannot run here, or "" when it can."""
+    return _agy_launch()[1]
+
+
+def agy_argv(cli: str = "") -> list:
+    """The command that starts agy on this host (maybe under QEMU)."""
+    argv = _agy_launch()[0]
+    return argv or ([cli] if cli else [])
 
 
 _AGY_MODELS: Dict[str, object] = {"at": 0.0, "ids": []}
@@ -128,7 +155,7 @@ def antigravity_model_ids() -> list:
     cli = engine_cli("antigravity")
     if cli and not antigravity_problem():
         try:
-            out = subprocess.run([cli, "models"], capture_output=True, text=True, timeout=8,
+            out = subprocess.run([*agy_argv(cli), "models"], capture_output=True, text=True, timeout=15,
                                  env=_cli_env(), stdin=subprocess.DEVNULL).stdout
             for line in out.splitlines():
                 word = _strip_ansi(line).strip().lstrip("*-• ").split()
@@ -888,7 +915,7 @@ class ClaudeCodeTool:
             # commands) is soft-denied, and --sandbox restricts the terminal:
             # plans and asks stay read-only. An approved execute may write.
             session_id = "" if run_fresh else (resume_id or "")
-            cmd = [cli, "-p", prompt, "--output-format", "stream-json"]
+            cmd = [*agy_argv(cli), "-p", prompt, "--output-format", "stream-json"]
             if args.get("model"):
                 cmd += ["--model", str(args["model"])]
             if resume_id and not run_fresh:
@@ -1533,7 +1560,7 @@ async def _wrap_up(job, reason: str) -> str:
         return ""
     prompt = WRAP_UP_PROMPT.format(reason=reason)
     if engine == "antigravity":
-        cmd = [cli, "-p", prompt, "--output-format", "stream-json", "--conversation", sid,
+        cmd = [*agy_argv(cli), "-p", prompt, "--output-format", "stream-json", "--conversation", sid,
                "--sandbox", "--print-timeout", "170s"]
         if spec.get("args_model"):
             cmd += ["--model", spec["args_model"]]
@@ -1957,7 +1984,8 @@ def _os_process_for(session_id: str) -> Optional[int]:
             continue
         if not args:
             continue
-        head = " ".join(os.path.basename(a) for a in args[:2]).lower()
+        # args[:4]: agy may run under `qemu-x86_64 -cpu max agy ...`.
+        head = " ".join(os.path.basename(a) for a in args[:4]).lower()
         if "claude" not in head and "opencode" not in head and "agy" not in head:
             continue
         if any(a == session_id or a.endswith(f"/{session_id}.jsonl") for a in args):
