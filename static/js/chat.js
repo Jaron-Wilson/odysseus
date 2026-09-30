@@ -202,6 +202,21 @@ import './chatThreads.js';
     _submitText(item.text);
   }
 
+  // Each reply in the chat on screen, announced for the voice call
+  // (voiceCall.js): 'start', then 'delta' with the text so far, then 'done'
+  // (also after an error or Stop). Background streams are not announced.
+  function _emitReply(phase, sessionId, text) {
+    try {
+      window.dispatchEvent(new CustomEvent('odysseus:reply', { detail: { phase, sessionId, text: text || '' } }));
+    } catch (_) { /* no listener, no harm */ }
+  }
+
+  function _currentSessionName() {
+    const sid = sessionModule.getCurrentSessionId();
+    const s = sid ? sessionModule.getSessions().find(x => x.id === sid) : null;
+    return (s && (s.name || s.title)) || '';
+  }
+
   function _submitText(text) {
     const ta = document.getElementById('message');
     if (!ta) return;
@@ -1077,6 +1092,7 @@ import './chatThreads.js';
 
     // Declare accumulated outside try block so it's accessible in catch
     let accumulated = '';
+    let _voiceText = '';
     // Are we currently inside an unclosed <think> block? Toggled per think/answer
     // cycle so a multi-round agent response (one reasoning phase PER round) wraps each
     // round's reasoning in its own <think>…</think> instead of leaking rounds 2+ as text.
@@ -1596,6 +1612,10 @@ import './chatThreads.js';
       // Streaming TTS: synthesize sentence-by-sentence during streaming
       streamingTTS = !!(window.aiTTSManager && window.aiTTSManager.autoPlay && window.aiTTSManager.available);
       if (streamingTTS) window.aiTTSManager.streamingStart();
+      _emitReply('start', streamSessionId, '');
+      // The reply as the voice call reads it: rounds split by a line break,
+      // so a round's last sentence is spoken before the tools run.
+      _voiceText = '';
       // Multi-bubble agent tracking
       let roundHolder = holder;       // Current AI text bubble (changes per round)
       let roundText = '';             // Text accumulated for current round
@@ -1984,6 +2004,7 @@ import './chatThreads.js';
                 const wasEmpty = !accumulated;
                 accumulated += _delta;
                 roundText += _delta;
+                _voiceText += _delta;
                 currentAccumulated = accumulated; // Update global tracker
                 // First token arrived — switch stop button from processing to streaming
                 if (wasEmpty && submitBtn && !_isBg) {
@@ -1996,6 +2017,7 @@ import './chatThreads.js';
                   if (bgEntry) bgEntry.accumulated = accumulated;
                   continue; // Skip all DOM writes
                 }
+                _emitReply('delta', streamSessionId, _voiceText);
 
                 // --- Text-fence doc streaming (for models that don't use native tool calls) ---
                 if (!_docFenceOpened && documentModule && roundText.includes('```create_document\n')) {
@@ -3001,6 +3023,7 @@ import './chatThreads.js';
                 box.appendChild(newWrap);
                 roundHolder = newWrap;
                 roundText = '';
+                if (_voiceText) { _voiceText += '\n'; _emitReply('delta', streamSessionId, _voiceText); }
                 // Destroy any previous spinner before creating new one
                 if (spinner && spinner.element) spinner.destroy();
                 // Show spinner while waiting for text (skip for research — has its own progress)
@@ -3534,6 +3557,7 @@ import './chatThreads.js';
     } finally {
       clearResponseTimeout();
       clearProcessingProbe();
+      _emitReply('done', streamSessionId, _voiceText || accumulated);
       // Streaming done — let screen readers announce the settled response.
       const _chatLogDone = document.getElementById('chat-history');
       if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
@@ -5734,6 +5758,10 @@ import './chatThreads.js';
     addMessage: chatRenderer.addMessage,
     displayMetrics: chatRenderer.displayMetrics,
     handleChatSubmit,
+    // Send text as if typed and submitted (queued if a reply is running);
+    // what is half-typed in the composer is kept. Used by the voice call.
+    sendText: _submitText,
+    currentSessionName: _currentSessionName,
     abortCurrentRequest,
     detachCurrentStream,
     checkBackgroundStream,

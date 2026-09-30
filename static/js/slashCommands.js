@@ -1746,6 +1746,16 @@ function _parseTimeSpec(input) {
   return null;
 }
 
+// /call: the voice call overlay (voiceCall.js), in the chat that is open.
+async function _cmdCall() {
+  if (window.voiceCall && typeof window.voiceCall.open === 'function') {
+    window.voiceCall.open();
+  } else {
+    slashReply('Voice call is not available on this page.');
+  }
+  return true;
+}
+
 async function _cmdTodo(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
   if (sub === 'list' || sub === 'ls') {
@@ -5768,6 +5778,14 @@ const COMMANDS = {
       'add':    { handler: _cmdRagAdd,    alias: [],           help: 'Add directory',         usage: '/rag add /path' },
       'remove': { handler: _cmdRagRemove, alias: ['rm'],       help: 'Remove directory',      usage: '/rag remove /path' }
     }
+  },
+  call: {
+    alias: ['voice'],
+    category: 'Chats',
+    help: 'Start a voice call with the agent in this chat',
+    handler: _cmdCall,
+    noUserBubble: true,
+    usage: '/call',
   },
   todo: {
     alias: ['td'],

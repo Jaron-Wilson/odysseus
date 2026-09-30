@@ -106,11 +106,12 @@ function stopBrowserSTT() {
 }
 
 /**
- * Send audio to server for transcription
+ * Send audio to server for transcription. Also used by the voice call
+ * (voiceCall.js), which sends WAV.
  */
-async function transcribeOnServer(audioBlob) {
+export async function transcribeOnServer(audioBlob, filename = 'audio.webm') {
   const formData = new FormData();
-  formData.append('file', audioBlob, 'audio.webm');
+  formData.append('file', audioBlob, filename);
 
   const res = await fetch('/api/stt/transcribe', {
     method: 'POST',
