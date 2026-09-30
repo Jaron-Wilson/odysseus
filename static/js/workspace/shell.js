@@ -43,6 +43,7 @@ const ICONS = {
   devops: svg('<path d="M3 12h4l3-8 4 16 3-8h4"/>'),
   devices: svg('<rect x="2" y="4" width="14" height="10" rx="1"/><rect x="17" y="8" width="5" height="12" rx="1"/><path d="M6 18h6"/>'),
   browser: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+  terminal: svg('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 9l4 3-4 3M12 15h5"/>'),
   split: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
 };
@@ -69,6 +70,7 @@ const TOOLS = [
   { key: 'settings', label: 'Settings', icon: 'settings', id: 'settings-modal', open: '#user-bar-settings' },
   { key: 'devices', label: 'Devices', icon: 'devices', sel: '.dp-backdrop', win: '.bg-panel', open: '#tool-devices-btn' },
   { key: 'browser', label: 'Browser', icon: 'browser', sel: '.cb-backdrop', win: '.bg-panel', open: '#tool-browser-btn' },
+  { key: 'terminal', label: 'Terminal', icon: 'terminal', sel: '.term-backdrop', win: '.bg-panel', open: '#tool-terminal-btn' },
   { key: 'devops', label: 'DevOps', icon: 'devops', sel: '.bg-panel-backdrop:has(> .dv-panel)', win: '.bg-panel', open: '#tool-devops-btn' },
   { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(:has(> .dv-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
 ];
@@ -570,7 +572,7 @@ export function newChat() {
 
 function _launcher(anchor) {
   const r = anchor.getBoundingClientRect();
-  const keys = ['email', 'calendar', 'notes', 'tasks', 'library', 'gallery', 'memory', 'research', 'cookbook', 'agents', 'devices', 'settings'];
+  const keys = ['email', 'calendar', 'notes', 'tasks', 'library', 'gallery', 'memory', 'research', 'cookbook', 'agents', 'devices', 'terminal', 'settings'];
   const items = [{ label: 'New chat', icon: ICONS.chat, run: newChat }, '-',
     ...keys.filter(k => TOOL_BY_KEY[k].open && document.querySelector(TOOL_BY_KEY[k].open))
       .map(k => ({ label: TOOL_BY_KEY[k].label, icon: ICONS[TOOL_BY_KEY[k].icon], run: () => openTool(k) }))];

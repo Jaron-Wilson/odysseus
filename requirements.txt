@@ -1,5 +1,9 @@
 fastapi
 uvicorn
+# uvicorn only serves WebSockets with a WebSocket library installed; the
+# Terminal (routes/terminal_routes.py) is one. Without it the socket is
+# refused with "Unsupported upgrade request".
+websockets
 python-multipart
 python-dotenv
 httpx

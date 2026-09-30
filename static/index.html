@@ -237,6 +237,7 @@
   <link rel="stylesheet" href="/static/css/studio-pages-a.css">
   <link rel="stylesheet" href="/static/css/studio-pages-b.css">
   <link rel="stylesheet" href="/static/css/workspace.css">
+  <link rel="stylesheet" href="/static/css/terminal.css">
   <link rel="stylesheet" href="/static/css/voiceCall.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
@@ -1012,6 +1013,18 @@
             <rect x="17" y="8" width="5" height="12" rx="1"/>
           </svg>
           <span class="grow">Devices</span>
+        </div>
+
+        <!-- A live shell on the server, admin only (terminal.js) -->
+        <div class="list-item" id="tool-terminal-btn" title="A live command line on the server: run commands, ssh to other machines">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <rect x="2" y="4" width="20" height="16" rx="2"/>
+            <polyline points="6 9 10 12 6 15"/>
+            <line x1="12" y1="15" x2="17" y2="15"/>
+          </svg>
+          <span class="grow">Terminal</span>
         </div>
 
         <!-- One chat for changes to Odysseus itself (specialChats.js) -->
@@ -2676,6 +2689,13 @@
         <!-- ═══ SYSTEM TAB ═══ -->
         <div data-settings-panel="system" class="hidden">
 
+          <!-- The Terminal (terminal.js fills this in; removed for non-admins) -->
+          <div class="admin-card" id="terminal-settings-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="6 9 10 12 6 15"/><line x1="12" y1="15" x2="17" y2="15"/></svg>Terminal</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:6px">A full shell on this server, as the user Odysseus runs as, for admins only (Tools, Terminal).</div>
+            <div class="admin-toggle-sub" id="terminal-settings-info">Loading…</div>
+          </div>
+
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Data Backup</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Export or import your user data (memories, presets, settings, skills, preferences) as a JSON file.</div>
@@ -2785,6 +2805,7 @@
 <script type="module" src="/static/js/inboundMail.js"></script>
 <script type="module" src="/static/js/devopsPage.js"></script>
 <script type="module" src="/static/js/cloudBrowser.js"></script>
+<script type="module" src="/static/js/terminal.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
 <script type="module" src="/static/js/sessions.js"></script>
