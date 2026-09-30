@@ -379,6 +379,11 @@ html.ui-studio .msg .body table {
   border-collapse: separate; border-spacing: 0; width: auto; max-width: 100%;
   border: 1px solid var(--st-line-2); border-radius: var(--st-r); overflow: hidden; font-size: 13.5px;
 }
+/* Wide tables scroll inside their frame instead of running off a phone */
+html.ui-studio .msg .body table {
+  display: block; width: max-content; max-width: 100%; overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
 html.ui-studio .msg .body th {
   background: var(--st-surface-2); font-weight: 600; text-align: left; color: var(--st-text);
 }
@@ -460,6 +465,9 @@ html.ui-studio .model-picker-btn {
   color: var(--st-text-2); border: 1px solid var(--st-line); background: transparent;
 }
 html.ui-studio .model-picker-btn:hover { background: var(--st-hover); color: var(--st-text); }
+@media (pointer: coarse) {
+  html.ui-studio .model-picker-btn { min-height: 28px; padding: 5px 11px; }
+}
 html.ui-studio .chat-input-bar {
   margin-bottom: 14px;
   padding: 10px 12px 10px 14px;
