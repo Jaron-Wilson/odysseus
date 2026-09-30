@@ -38,9 +38,9 @@ def test_the_switch_is_per_chat_and_defaults_on():
 
 def test_the_old_single_switch_still_means_both_off():
     chat_prefs._save({"chat-old": {"claude_code": False}})
-    assert chat_prefs.get("chat-old") == {"claude": False, "opencode": False, "tidy": False}
+    assert chat_prefs.get("chat-old") == {"claude": False, "opencode": False, "tidy": False, "bash_limit": 12}
     chat_prefs.set_pref("chat-old", "opencode", True)
-    assert chat_prefs.get("chat-old") == {"claude": False, "opencode": True, "tidy": False}
+    assert chat_prefs.get("chat-old") == {"claude": False, "opencode": True, "tidy": False, "bash_limit": 12}
 
 
 def _off(chat, *engines):
@@ -150,8 +150,8 @@ def test_routes_and_button(monkeypatch):
     app = FastAPI()
     app.include_router(r.setup_chat_prefs_routes())
     c = TestClient(app)
-    assert c.get("/api/chat-prefs/chat-1").json() == {"claude": True, "opencode": True, "tidy": False}
-    assert c.put("/api/chat-prefs/chat-1", json={"claude": False}).json() == {"claude": False, "opencode": True, "tidy": False}
+    assert c.get("/api/chat-prefs/chat-1").json() == {"claude": True, "opencode": True, "tidy": False, "bash_limit": 12}
+    assert c.put("/api/chat-prefs/chat-1", json={"claude": False}).json() == {"claude": False, "opencode": True, "tidy": False, "bash_limit": 12}
     assert c.put("/api/chat-prefs/chat-1", json={"bogus": 1}).status_code == 400
     html = open(os.path.join(HERE, "static", "index.html"), encoding="utf-8").read()
     assert 'id="claude-toggle-btn"' in html
