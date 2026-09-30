@@ -109,6 +109,9 @@ html.ui-studio .minimize-btn::before {
   -webkit-mask-image: var(--sto-min);
           mask-image: var(--sto-min);
 }
+/* modalManager's minimize button brings its own icon; one that also has
+   .minimize-btn (Compare) would draw a second dash from the rule above. */
+html.ui-studio .modal-minimize-btn::before { content: none; display: none; }
 html.ui-studio .modal-minimize-btn svg { width: 15px; height: 15px; }
 html.ui-studio .modal-minimize-btn svg line { transform: translateY(-6px); }
 html.ui-studio .close-btn:hover,
