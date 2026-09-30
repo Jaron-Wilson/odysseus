@@ -400,6 +400,14 @@ html.ui-studio .msg .body table {
    width:100% needs the !important) and a wide one still scrolls in it. */
 html.ui-studio .msg .body table {
   width: max-content !important; min-width: 0; max-width: 100%;
+  /* Scroll shadows: a soft edge shows only on a side with more columns
+     beyond it (the bg-colored covers scroll with the content and hide the
+     shadow once that edge is reached). */
+  background:
+    linear-gradient(to right, var(--bg) 40%, transparent) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--bg) 40%, transparent) right / 32px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--fg) 22%, transparent), transparent) left / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--fg) 22%, transparent), transparent) right / 10px 100% no-repeat scroll;
 }
 html.ui-studio .msg .body th {
   background: var(--st-surface-2); font-weight: 600; text-align: left; color: var(--st-text);
