@@ -33,8 +33,12 @@ if sys.argv[1:2] == ["models"]:
 conv = sys.argv[sys.argv.index("--conversation") + 1] if "--conversation" in sys.argv else {conv!r}
 emit = lambda e: print(json.dumps(e), flush=True)
 emit({{"event": "init", "conversation_id": conv, "init": {{"cwd": "/w", "permission_mode": "request-review"}}}})
+# Shapes as seen from agy 1.2.14 (2026-09-30).
+emit({{"event": "step_update", "step_update": {{"conversation_id": conv, "step_index": 0, "state": "DONE",
+      "step_type": "user_input"}}}})
 emit({{"event": "step_update", "step_update": {{"conversation_id": conv, "step_index": 1, "state": "DONE",
-      "step_type": "run_command", "command": "ls src"}}}})
+      "step_type": "tool", "tool_name": "run_command",
+      "tool_info": {{"name": "run_command", "parameters": {{"CommandLine": "ls src"}}, "output": "2 files"}}}}}})
 emit({{"event": "step_update", "step_update": {{"conversation_id": conv, "step_index": 2, "state": "RUNNING",
       "step_type": "agent_response", "text_delta": "The app has "}}}})
 emit({{"event": "step_update", "step_update": {{"conversation_id": conv, "step_index": 2, "state": "DONE",
@@ -105,12 +109,13 @@ def test_an_ask_is_read_only_and_reads_the_stream(env):
     assert out["exit_code"] == 0, out
     argv = _calls(log)[-1]["argv"]
     assert argv[0] == "-p" and argv[1].startswith("What does this app do?")
+    assert "view_file, list_dir, find_by_name" in argv[1]     # read-only: its own file tools
     assert argv[argv.index("--output-format") + 1] == "stream-json"
     assert "--sandbox" in argv and "--dangerously-skip-permissions" not in argv   # nothing it may write
     assert "--print-timeout" in argv                          # not agy's own 5 minutes
     assert out["session_id"] == CONV                          # from the init event
     assert "The app has two modules." in out["output"]
-    assert "● run_command(ls src)" in out["console"]
+    assert "● run_command(ls src) → 2 files" in out["console"]
     assert out["engine_label"] == "Antigravity"
 
 
@@ -293,3 +298,25 @@ UNDER_QEMU=1 exec "$@"
     assert "emulated ok" in out["output"] and out["session_id"] == "q-1"
     runs = [json.loads(l) for l in open(log) if '"-p"' in l]
     assert runs and runs[-1]["argv"][0] == "-p"
+
+
+def test_a_denied_tool_is_shown_and_an_empty_answer_says_why(env, monkeypatch):
+    # Seen live 2026-09-30: asked what a file does, agy tried `find` (a shell
+    # command), the read-only run denied it, and it ended with no answer. The
+    # card showed only the banner, as if that were the reply.
+    line = cct._summarize_antigravity({"event": "step_update", "step_update": {
+        "step_index": 3, "state": "ERROR", "step_type": "tool", "tool_name": "run_command",
+        "tool_info": {"name": "run_command", "parameters": {"CommandLine": 'find . -name "calc.py"'},
+                      "error": {"type": "TOOL_ERROR", "message": "permission check failed for command"}}}})
+    assert line.startswith('✗ run_command(find . -name "calc.py")') and "permission check failed" in line
+    tmp, work, log = env
+    agy = tmp / "bin" / "agy"
+    agy.write_text(f"""#!{sys.executable}
+import json, sys
+if sys.argv[1:2] in (["--version"], ["models"]): sys.exit(0)
+print(json.dumps({{"event": "init", "conversation_id": "e-1"}}))
+print(json.dumps({{"event": "result", "result": {{"status": "SUCCESS", "response": ""}}}}))
+sys.stderr.write("jetski: no output produced — a tool required the \\\\"command\\\\" permission that headless mode cannot prompt for, so it was auto-denied.\\\\n")
+""")
+    out = _run({"action": "ask", "engine": "antigravity", "cwd": str(work), "prompt": "What is in calc.py?"})
+    assert out["output"].startswith("Antigravity finished without an answer.") and "auto-denied" in out["output"]

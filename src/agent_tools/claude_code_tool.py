@@ -142,6 +142,10 @@ def agy_argv(cli: str = "") -> list:
     return argv or ([cli] if cli else [])
 
 
+AGY_READ_ONLY_NOTE = ("\n\nThis run is read-only. Read the project with view_file, list_dir, find_by_name "
+                      "and grep_search. Shell commands (run_command) and edits are denied here, so do "
+                      "not use them.")
+
 _AGY_MODELS: Dict[str, object] = {"at": 0.0, "ids": []}
 _MODEL_SLUG = re.compile(r"^[a-z0-9][a-z0-9.\-_/:]*[a-z0-9]$")
 
@@ -250,16 +254,32 @@ def _summarize_antigravity(event: dict) -> Optional[str]:
     if event.get("event") != "step_update":
         return None
     step = event.get("step_update") or {}
-    if str(step.get("state") or "").upper() != "DONE":
+    state = str(step.get("state") or "").upper()
+    if state not in ("DONE", "ERROR"):
         return None
     kind = str(step.get("step_type") or "")
-    if kind == "agent_response":
+    if kind in ("agent_response", "user_input"):
         return None                                  # the text itself: _Stream collects it
+    # Seen live (agy 1.2.14): {"step_type": "tool", "tool_name": "view_file",
+    # "tool_info": {"parameters": {"AbsolutePath": "..."}, "output": "3 lines, 32 bytes"}}
+    info = step.get("tool_info") if isinstance(step.get("tool_info"), dict) else {}
+    params = info.get("parameters") if isinstance(info.get("parameters"), dict) else {}
+    name = str(step.get("tool_name") or info.get("name") or kind or "step")
     hint = ""
-    for key in ("command", "path", "file_path", "target", "query", "url", "title"):
-        if step.get(key):
-            hint = str(step[key]); break
-    return f"● {kind or 'step'}({hint.replace(chr(10), ' ')[:70]})"
+    for key in ("CommandLine", "Command", "AbsolutePath", "TargetFile", "Path", "SearchPath",
+                "DirectoryPath", "Query", "Pattern", "Url", "command", "path", "query", "url"):
+        if params.get(key) or step.get(key):
+            hint = str(params.get(key) or step.get(key)); break
+    if not hint:
+        hint = next((str(v) for v in params.values() if isinstance(v, str) and v), "")
+    if state == "ERROR":
+        err = info.get("error") if isinstance(info.get("error"), dict) else {}
+        why = str(err.get("message") or "failed").splitlines()[0]
+        return f"✗ {name}({hint.replace(chr(10), ' ')[:70]}) {why[:120]}"
+    line = f"● {name}({hint.replace(chr(10), ' ')[:70]})"
+    if info.get("output") and isinstance(info["output"], str) and len(info["output"]) <= 80:
+        line += f" → {info['output']}"
+    return line
 
 
 def _clip(text, n: int) -> str:
@@ -915,6 +935,11 @@ class ClaudeCodeTool:
             # commands) is soft-denied, and --sandbox restricts the terminal:
             # plans and asks stay read-only. An approved execute may write.
             session_id = "" if run_fresh else (resume_id or "")
+            if action != "execute":
+                # Seen live: asked what a file does, agy reached for `find` (a
+                # shell command), which a read-only run denies, and it stopped
+                # with no answer. Its own file tools need no permission.
+                prompt = prompt.rstrip() + AGY_READ_ONLY_NOTE
             cmd = [*agy_argv(cli), "-p", prompt, "--output-format", "stream-json"]
             if args.get("model"):
                 cmd += ["--model", str(args["model"])]
@@ -1270,7 +1295,9 @@ class _Stream:
                 self.session_id = str(event.get("conversation_id") or body.get("conversation_id") or "")
             if kind == "step_update":
                 idx = body.get("step_index")
-                if idx is not None and idx not in self._agy_steps:
+                # A turn is one agent response; user input and tool steps are not.
+                if (body.get("step_type") == "agent_response" and idx is not None
+                        and idx not in self._agy_steps):
                     self._agy_steps.add(idx)
                     self.turns += 1
                 if body.get("step_type") == "agent_response" and body.get("text_delta"):
@@ -1292,8 +1319,8 @@ class _Stream:
                 if body.get("error"):
                     # Kept even after partial text: a quota or sign-in failure is the news.
                     self.final_text = (self.final_text + f"\n\nAntigravity error: {body['error']}").strip()
-                if isinstance(body.get("num_turns"), int):
-                    self.turns = max(self.turns, body["num_turns"])
+                if isinstance(body.get("num_turns"), int) and body["num_turns"]:
+                    self.turns = body["num_turns"]          # agy's own count wins at the end
                 return [f"Antigravity error: {body['error']}"] if body.get("error") else []
             summary = _summarize_antigravity(event)
             return summary.splitlines() if summary else []
@@ -1642,6 +1669,12 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
     body_lines = "\n".join(job.lines)
     console = head + ("\n" + body_lines if body_lines else "")
     final_text = stream.final_text
+    if not final_text and spec.get("engine", job.engine) == "antigravity":
+        # agy says on stderr why it stopped empty (most often a tool a
+        # read-only run denied); the banner alone would read as the answer.
+        why = " ".join(_stderr_tail(job)).strip()
+        final_text = ("Antigravity finished without an answer."
+                      + (f" {why[:600]}" if why else " See the console for the steps it took."))
 
     limits = spec.get("limits") or {}
     reason = spec.get("limit_hit") or ""
