@@ -93,6 +93,25 @@ function _wireControls() {
   _syncControls(getDesign());
 }
 
+// Quick starts under an empty chat's composer (Studio shows them): a click
+// puts the prompt in the composer and focuses it; nothing is sent.
+function _wireStarters() {
+  const box = document.getElementById('welcome-starters');
+  if (!box || box._wired) return;
+  box._wired = true;
+  // It keeps its `hidden` attribute; only studio.css shows it (Studio, the
+  // welcome state, a wide screen), so Classic never does.
+  box.addEventListener('click', e => {
+    const btn = e.target.closest('[data-starter]');
+    const ta = document.getElementById('message');
+    if (!btn || !ta) return;
+    ta.value = btn.dataset.starter;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  });
+}
+
 // A design chosen on another device wins when this one has never chosen.
 async function _loadFromServer() {
   let local = null;
@@ -126,6 +145,7 @@ function init() {
   new MutationObserver(_syncThemeMode).observe(document.documentElement,
     { attributes: true, attributeFilter: ['style'] });
   _wireControls();
+  _wireStarters();
   _loadFromServer();
   // First run of Studio on a stock theme: bring in the Studio palette once.
   try {

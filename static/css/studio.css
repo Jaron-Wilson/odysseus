@@ -296,6 +296,39 @@ html.ui-studio .incognito-btn {
 }
 html.ui-studio .incognito-btn:hover { color: var(--st-text); background: var(--st-hover); }
 
+/* Quick starts: under the composer of an empty chat, in the 30vh that
+   style.css leaves below it in the welcome state (desktop only). */
+@media (min-width: 769px) and (min-height: 620px) {
+  html.ui-studio .chat-container.welcome-active > #welcome-starters {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+    position: absolute; left: 50%; transform: translateX(-50%);
+    top: calc(100% - 30vh + 14px);     /* 14px below the composer */
+    width: min(800px, calc(100% - 32px));
+    animation: st-starters-in .4s ease-out both;
+  }
+}
+@keyframes st-starters-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+html.ui-studio .welcome-starter {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left;
+  height: auto; min-height: 0; box-sizing: border-box;
+  padding: 12px 14px; border-radius: var(--st-r); cursor: pointer; font: inherit;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line);
+  transition: background .15s, border-color .15s, color .15s;
+}
+html.ui-studio .welcome-starter:hover {
+  background: var(--st-hover); border-color: var(--st-line-2); color: var(--st-text);
+}
+html.ui-studio .welcome-starter:focus-visible { outline: none; box-shadow: var(--st-ring); }
+html.ui-studio .welcome-starter svg {
+  display: block; flex-shrink: 0; width: 16px; height: 16px; color: var(--st-text-3); margin-bottom: 6px;
+}
+html.ui-studio .welcome-starter:hover svg { color: var(--st-accent); }
+html.ui-studio .welcome-starter-title { font-size: 13px; font-weight: 600; color: var(--st-text); }
+html.ui-studio .welcome-starter-sub { font-size: 12px; color: var(--st-text-3); }
+
 /* Messages */
 html.ui-studio .msg { border-radius: var(--st-r-lg); line-height: 1.6; }
 html.ui-studio .msg .body { font-size: 14.5px; line-height: 1.65; }

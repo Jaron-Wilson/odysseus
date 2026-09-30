@@ -1271,6 +1271,30 @@
       <input type="checkbox" id="bash-toggle" style="display:none;">
     </div>
     <form id="chat-form" autocomplete="off" action="javascript:void(0);" style="display:none;"></form>
+    <!-- Studio's quick starts under an empty chat's composer: a click fills
+         the composer, nothing is sent (static/js/uiDesign.js). -->
+    <div id="welcome-starters" class="welcome-starters" hidden>
+      <button type="button" class="welcome-starter" data-starter="Plan this coding task, then wait for my go-ahead: ">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span class="welcome-starter-title">Plan a coding task</span>
+        <span class="welcome-starter-sub">An agent reads the code first</span>
+      </button>
+      <button type="button" class="welcome-starter" data-starter="Research this and cite your sources: ">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <span class="welcome-starter-title">Research a topic</span>
+        <span class="welcome-starter-sub">Searched and cited</span>
+      </button>
+      <button type="button" class="welcome-starter" data-starter="Summarize my unread email from today and tell me what needs a reply.">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
+        <span class="welcome-starter-title">Catch up on email</span>
+        <span class="welcome-starter-sub">What needs a reply</span>
+      </button>
+      <button type="button" class="welcome-starter" data-starter="What's on my calendar today, and what should I focus on?">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <span class="welcome-starter-title">Plan my day</span>
+        <span class="welcome-starter-sub">Calendar and priorities</span>
+      </button>
+    </div>
 
     <!-- Character (custom preset) modal -->
     <div id="custom-preset-modal" class="modal hidden">

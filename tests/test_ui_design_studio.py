@@ -71,6 +71,15 @@ def test_the_studio_stylesheets_are_linked_and_precached():
     assert html.index('href="/static/style.css"') < html.index('href="/static/css/studio.css"')
 
 
+def test_studios_quick_starts_ship_hidden_so_classic_never_shows_them():
+    html = (_STATIC / "index.html").read_text()
+    m = re.search(r'<div id="welcome-starters"[^>]*>', html)
+    assert m and " hidden" in m.group(0)
+    # Only a Studio-scoped rule shows them; nothing unhides them in JS.
+    assert "welcome-starters" not in (_STATIC / "style.css").read_text()
+    assert ".hidden = false" not in (_STATIC / "js" / "uiDesign.js").read_text()
+
+
 @pytest.mark.parametrize("path", _STUDIO_CSS, ids=lambda p: p.name)
 def test_every_studio_rule_is_scoped_so_classic_is_untouched(path):
     bad = []
