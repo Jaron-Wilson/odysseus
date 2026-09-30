@@ -27,10 +27,13 @@ def test_the_switch_is_per_chat_and_defaults_on():
     assert not chat_prefs.engine_allowed("chat-a", "claude")
     assert chat_prefs.engine_allowed("chat-a", "opencode") and chat_prefs.claude_code_allowed("chat-a")
     chat_prefs.set_pref("chat-a", "opencode", False)
-    assert not chat_prefs.claude_code_allowed("chat-a")    # both off: no coding agent at all
+    assert chat_prefs.claude_code_allowed("chat-a")        # Antigravity is still on
+    chat_prefs.set_pref("chat-a", "antigravity", False)
+    assert not chat_prefs.claude_code_allowed("chat-a")    # all off: no coding agent at all
     assert chat_prefs.claude_code_allowed("chat-b")
     chat_prefs.set_pref("chat-a", "claude", True)
     chat_prefs.set_pref("chat-a", "opencode", True)
+    chat_prefs.set_pref("chat-a", "antigravity", True)
     assert chat_prefs._load() == {}                        # back to default: nothing stored
     with pytest.raises(ValueError):
         chat_prefs.set_pref("chat-a", "nope", 1)
@@ -38,9 +41,19 @@ def test_the_switch_is_per_chat_and_defaults_on():
 
 def test_the_old_single_switch_still_means_both_off():
     chat_prefs._save({"chat-old": {"claude_code": False}})
-    assert chat_prefs.get("chat-old") == {"claude": False, "opencode": False, "tidy": False, "bash_limit": 12}
+    assert chat_prefs.get("chat-old") == {"claude": False, "opencode": False, "antigravity": False,
+                                          "tidy": False, "bash_limit": 12}
     chat_prefs.set_pref("chat-old", "opencode", True)
-    assert chat_prefs.get("chat-old") == {"claude": False, "opencode": True, "tidy": False, "bash_limit": 12}
+    assert chat_prefs.get("chat-old") == {"claude": False, "opencode": True, "antigravity": False,
+                                          "tidy": False, "bash_limit": 12}
+
+
+def test_a_chat_switched_off_before_antigravity_stays_off():
+    # Saved as both off before Antigravity was an engine: it must not come on.
+    chat_prefs._save({"chat-was-off": {"claude": False, "opencode": False, "tidy": False, "bash_limit": 12},
+                      "chat-no-claude": {"claude": False, "opencode": True, "tidy": False, "bash_limit": 12}})
+    assert not chat_prefs.claude_code_allowed("chat-was-off")
+    assert chat_prefs.engine_allowed("chat-no-claude", "antigravity")
 
 
 def _off(chat, *engines):
@@ -50,10 +63,10 @@ def _off(chat, *engines):
 
 def test_the_tool_refuses_in_a_chat_with_both_off():
     from src.agent_tools import claude_code_tool as cct
-    _off("chat-off", "claude", "opencode")
+    _off("chat-off", "claude", "opencode", "antigravity")
     out = asyncio.run(cct.ClaudeCodeTool().execute(
         json.dumps({"prompt": "x", "cwd": "/tmp"}), {"session_id": "chat-off"}))
-    assert out["disabled"] and "both switched off" in out["error"]
+    assert out["disabled"] and "all switched off" in out["error"]
 
 
 def test_one_engine_off_moves_a_plan_to_the_other(monkeypatch, tmp_path):
@@ -124,7 +137,7 @@ def test_the_agent_is_not_offered_it(monkeypatch):
         seen["disabled"] = set(disabled_tools or ())
         return orig(tool_names, disabled_tools, compact)
     monkeypatch.setattr(al, "_assemble_prompt", spy)
-    _off("chat-off", "claude", "opencode")
+    _off("chat-off", "claude", "opencode", "antigravity")
 
     async def run():
         return [c async for c in al.stream_agent_loop(
@@ -150,11 +163,14 @@ def test_routes_and_button(monkeypatch):
     app = FastAPI()
     app.include_router(r.setup_chat_prefs_routes())
     c = TestClient(app)
-    assert c.get("/api/chat-prefs/chat-1").json() == {"claude": True, "opencode": True, "tidy": False, "bash_limit": 12}
-    assert c.put("/api/chat-prefs/chat-1", json={"claude": False}).json() == {"claude": False, "opencode": True, "tidy": False, "bash_limit": 12}
+    assert c.get("/api/chat-prefs/chat-1").json() == {"claude": True, "opencode": True, "antigravity": True,
+                                                      "tidy": False, "bash_limit": 12}
+    assert c.put("/api/chat-prefs/chat-1", json={"claude": False}).json() == {
+        "claude": False, "opencode": True, "antigravity": True, "tidy": False, "bash_limit": 12}
     assert c.put("/api/chat-prefs/chat-1", json={"bogus": 1}).status_code == 400
     html = open(os.path.join(HERE, "static", "index.html"), encoding="utf-8").read()
     assert 'id="claude-toggle-btn"' in html
     assert "import './chatClaudeToggle.js';" in open(os.path.join(HERE, "static", "js", "chat.js")).read()
     js = open(os.path.join(HERE, "static", "js", "chatClaudeToggle.js")).read()
     assert "tag: 'no Claude'" in js and "tag: 'no OpenCode'" in js and "tag: 'off'" in js
+    assert "tag: 'no Antigravity'" in js and "antigravity: next.antigravity" in js

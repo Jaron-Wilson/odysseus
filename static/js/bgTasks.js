@@ -13,6 +13,9 @@ function _esc(s) {
 }
 
 function _toast(msg) { if (window.showToast) window.showToast(msg); }
+// The coding-agent engine a job ran on, by name.
+const ENGINE_NAMES = { opencode: 'OpenCode', claude: 'Claude Code', antigravity: 'Antigravity' };
+function engineName(engine) { return ENGINE_NAMES[engine] || 'Claude Code'; }
 
 function _dur(s) {
   s = Math.round(s || 0);
@@ -97,7 +100,7 @@ export async function watchInChat(jobId, chatId, { into = null, reloadWhenDone =
     log.textContent = [j.banner, ...(j.lines || [])].filter(Boolean).join('\n');
     if (atBottom) log.scrollTop = log.scrollHeight;
     card.querySelector('.bg-watch-title').textContent =
-      `${j.engine === 'opencode' ? 'OpenCode' : 'Claude Code'} ${j.action} · ${j.model}`;
+      `${engineName(j.engine)} ${j.action} · ${j.model}`;
     card.querySelector('.bg-watch-meta').textContent = `${j.status} · ${_dur(j.elapsed_s)}`;
     if (j.status !== 'running') {
       clearInterval(_watching.get(jobId)); _watching.delete(jobId);
@@ -124,7 +127,7 @@ function _chipRow(j, here) {
   const what = j.agent_status && j.agent_status.detail ? _statusHtml(j.agent_status) : _esc(j.prompt || j.action);
   return `<div class="bg-chip-row" data-job="${_esc(j.id)}">
     <span class="bg-dot running"></span>
-    <span class="bg-chip-engine">${j.engine === 'opencode' ? 'OpenCode' : 'Claude Code'} ${_esc(j.action)} \u00b7 ${followed ? 'following in chat' : 'background'} \u00b7 ${_dur(j.elapsed_s)}</span>
+    <span class="bg-chip-engine">${engineName(j.engine)} ${_esc(j.action)} \u00b7 ${followed ? 'following in chat' : 'background'} \u00b7 ${_dur(j.elapsed_s)}</span>
     <span class="bg-chip-what">${what}</span>
     ${followed ? '' : `<button type="button" data-chip-watch="${_esc(j.id)}" data-chip-chat="${_esc(j.chat_session_id || '')}">${here ? 'Watch here' : 'Go to chat'}</button>`}
     ${!followed && j.chat_session_id ? `<button type="button" data-bring-back="${_esc(j.id)}" data-chat="${_esc(j.chat_session_id)}" title="Follow it in its chat again and carry on the conversation from its result">Bring back to chat</button>` : ''}
@@ -343,7 +346,7 @@ function _jobRow(j) {
         <span class="bg-job-meta">${_esc(j.status)} · ${_esc(where)} · ${_dur(j.elapsed_s)}</span>
       </div>
       ${j.agent_status ? `<div class="bg-job-status">${_statusHtml(j.agent_status)}</div>` : ''}
-      <div class="bg-job-sub">${j.engine === 'opencode' ? 'OpenCode' : 'Claude Code'} ${_esc(j.action)} · <b>${_esc(j.model)}</b> · <code>${_esc(j.cwd)}</code> · job ${_esc(j.id)}</div>
+      <div class="bg-job-sub">${engineName(j.engine)} ${_esc(j.action)} · <b>${_esc(j.model)}</b> · <code>${_esc(j.cwd)}</code> · job ${_esc(j.id)}</div>
       ${j.id === _open ? `<pre class="bg-job-log" data-log="${_esc(j.id)}">Loading…</pre>` : ''}
       <div class="bg-job-actions">
         <button type="button" data-toggle="${_esc(j.id)}">${j.id === _open ? 'Hide output' : 'Show output'}</button>

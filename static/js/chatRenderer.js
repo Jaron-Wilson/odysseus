@@ -2785,7 +2785,7 @@ export function settleToolStatus(root = document) {
 
 // The name shown on a tool card. claude_code runs name the engine that ran
 // them (most are OpenCode): the server sends it as `label`, and older saved
-// runs show it in the console's first line ("$ opencode ..." / "$ claude ...").
+// runs show it in the console's first line ("$ opencode ..." / "$ claude ..." / "$ agy ...").
 export function toolDisplayName(ev) {
   if (!ev) return '';
   if (ev.label) return ev.label;
@@ -2793,10 +2793,12 @@ export function toolDisplayName(ev) {
   const out = String(ev.output || ev.tail || '');
   if (/^\$ opencode\b/m.test(out)) return 'OpenCode';
   if (/^\$ claude\b/m.test(out)) return 'Claude Code';
+  if (/^\$ agy\b/m.test(out)) return 'Antigravity';
   try {
     const a = JSON.parse(ev.command || '{}');
     if (a.engine === 'claude') return 'Claude Code';
     if (a.engine === 'opencode') return 'OpenCode';
+    if (a.engine === 'antigravity') return 'Antigravity';
   } catch (_) { /* not JSON */ }
   return 'Coding agent';
 }
@@ -2873,8 +2875,10 @@ export function showRunLimits(anchor, onApprove, planId) {
     // one thats going to b available to use" (2026-09-29).
     const tag = (m) => ((m.busy || []).length ? '\u25CF in use \u00b7 '
       : (m.server_busy || []).length ? '\u25D0 server busy \u00b7 ' : '');
-    modelSel.innerHTML = models.map((m) => `<option value="${esc(m.id)}">${esc(tag(m) + m.label)}</option>`).join('')
-      || '<option value="">Default</option>';
+    // An engine whose default is left to its CLI (Antigravity) offers that first.
+    modelSel.innerHTML = ((e && e.default_label) ? `<option value="">${esc(e.default_label)}</option>` : '')
+      + (models.map((m) => `<option value="${esc(m.id)}">${esc(tag(m) + m.label)}</option>`).join('')
+      || ((e && e.default_label) ? '' : '<option value="">Default</option>'));
     if (want && !models.some((m) => m.id === want) && models.length) {
       modelSel.insertAdjacentHTML('afterbegin', `<option value="${esc(want)}">${esc(want)}</option>`);
     }

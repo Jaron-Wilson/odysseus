@@ -22,7 +22,10 @@ PREFS_FILE = os.path.join(DATA_DIR, "chat_prefs.json")
 # report (agent_loop.py); 0 is no limit. Asked for: "in the chat let me be able
 # to change tool bash calls, current limit is 12 but i want to in the chat
 # bypass that limit".
-DEFAULTS = {"claude": True, "opencode": True, "tidy": False, "bash_limit": 12}
+# "claude" / "opencode" / "antigravity": which coding-agent engines this chat
+# may use (src/agent_tools/claude_code_tool.py ENGINES).
+DEFAULTS = {"claude": True, "opencode": True, "antigravity": True, "tidy": False, "bash_limit": 12}
+ENGINE_KEYS = ("opencode", "claude", "antigravity")
 BASH_LIMIT_MAX = 1000
 
 
@@ -55,7 +58,10 @@ def get(session_id: str) -> dict:
     stored = dict(_load().get(session_id or "") or {})
     # Before the two were separate, one "claude_code" switch covered both.
     legacy = stored.pop("claude_code", None)
-    out = {**DEFAULTS, **({"claude": False, "opencode": False} if legacy is False else {}), **stored}
+    # A chat switched fully off before Antigravity existed stays fully off.
+    if stored.get("claude") is False and stored.get("opencode") is False and "antigravity" not in stored:
+        stored["antigravity"] = False
+    out = {**DEFAULTS, **({k: False for k in ENGINE_KEYS} if legacy is False else {}), **stored}
     return {k: out[k] for k in DEFAULTS}
 
 
@@ -81,16 +87,16 @@ def set_pref(session_id: str, key: str, value) -> dict:
 
 
 def engine_allowed(session_id: str, engine: str) -> bool:
-    """Whether this chat allows the coding agent `engine` ("claude" or
-    "opencode")."""
+    """Whether this chat allows the coding agent `engine` ("opencode",
+    "claude" or "antigravity"; anything else counts as OpenCode)."""
     if not session_id:
         return True
-    return bool(get(session_id).get("claude" if engine == "claude" else "opencode", True))
+    return bool(get(session_id).get(engine if engine in ENGINE_KEYS else "opencode", True))
 
 
 def claude_code_allowed(session_id: str) -> bool:
     """Whether any coding agent is allowed in this chat (the tool at all)."""
-    return engine_allowed(session_id, "claude") or engine_allowed(session_id, "opencode")
+    return any(engine_allowed(session_id, e) for e in ENGINE_KEYS)
 
 
 def bash_limit(session_id: str) -> int:

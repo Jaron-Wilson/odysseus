@@ -105,7 +105,7 @@ function paintCoders(k) {
     <td>${c.done} / ${c.failed} / ${c.cut_off}</td><td>${c.avg_minutes == null ? '–' : `${c.avg_minutes}m`}</td>
     <td>${fmtN(c.output_tokens)}</td><td>${fmtTps(c.tokens_per_s)}</td><td>${c.cost_usd ? `$${c.cost_usd.toFixed(2)}` : '–'}</td></tr>`).join('');
   const recent = (k.recent || []).map((r) => `<div class="dv-run"><span class="bg-dot ${r.status === 'running' ? 'running' : r.status === 'done' ? 'ok' : 'bad'}"></span>
-    <b>${esc(r.engine === 'claude' ? 'Claude Code' : r.engine === 'opencode' ? 'OpenCode' : r.engine)}</b> ${esc(r.action)}
+    <b>${esc(r.engine === 'claude' ? 'Claude Code' : r.engine === 'opencode' ? 'OpenCode' : r.engine === 'antigravity' ? 'Antigravity' : r.engine)}</b> ${esc(r.action)}
     ${r.model ? `<span class="dv-chip">${esc(r.model)}</span>` : ''} <span class="dv-meta">${esc(r.status)} · ${fmtS(r.seconds)} · ${esc(when(r.started))}${r.output_tokens ? ` · ${fmtN(r.output_tokens)} tokens` : ''}</span>
     ${r.chat_session_id ? `<a href="#" data-chat="${esc(r.chat_session_id)}">open chat</a>` : ''}</div>`).join('');
   return `<div class="dv-tiles">
