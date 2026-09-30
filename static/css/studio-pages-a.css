@@ -1,1 +1,1128 @@
-/* studio-pages-a: see the header of studio.css. Scoped to html.ui-studio. */
+/* studio-pages-a: see the header of studio.css. Scoped to html.ui-studio.
+
+   The content of the tool views: Calendar, Notes, Tasks, Email (inbox,
+   reading pane, inbound mail), Library / documents, Gallery. Modal chrome
+   (the window frame, header bar, min/close buttons) lives in
+   studio-overlays.css; this file styles what sits inside it.
+
+   Every rule is scoped by the view's own id so shared class names
+   (.doclib-*, .memory-toolbar, ...) used by other tools are left alone.
+   Sizes the tiling / snapping JS measures (modal widths, splitter heights)
+   are not changed here. */
+
+/* ==========================================================================
+   Calendar  (#calendar-modal, static/js/calendar.js)
+   ========================================================================== */
+html.ui-studio #calendar-modal { --cal-row-h: 30px; }
+html.ui-studio #cal-body { gap: 10px; }
+
+/* Toolbar: nav cluster left, view switch + actions right */
+html.ui-studio #calendar-modal .cal-toolbar { gap: 8px; row-gap: 8px; margin-bottom: 0; }
+html.ui-studio #calendar-modal .cal-toolbar-nav { gap: 4px; }
+html.ui-studio #calendar-modal .cal-toolbar-right { gap: 6px; margin-top: 0; align-items: center; }
+html.ui-studio #calendar-modal .cal-toolbar-right > *,
+html.ui-studio #calendar-modal .cal-toolbar-nav > * { margin-top: 0; margin-bottom: 0; top: 0; white-space: nowrap; flex-shrink: 0; }
+html.ui-studio #calendar-modal .cal-title {
+  font-size: 16px; font-weight: 650; letter-spacing: -0.015em; color: var(--st-text);
+  height: var(--cal-row-h); line-height: var(--cal-row-h); padding: 0 8px;
+}
+html.ui-studio #calendar-modal button.cal-nav,
+html.ui-studio #calendar-modal .cal-filter-toggle,
+html.ui-studio #calendar-modal button.cal-add-btn.cal-add-btn-text:not(.cal-add-btn-sm) {
+  height: var(--cal-row-h); min-width: var(--cal-row-h); padding: 0 10px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; line-height: 1;
+  color: var(--st-text-2); opacity: 1;
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+  top: 0; box-shadow: none;
+  transition: background .12s, color .12s, border-color .12s;
+}
+html.ui-studio #calendar-modal button.cal-nav:hover,
+html.ui-studio #calendar-modal .cal-filter-toggle:hover {
+  background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2);
+}
+html.ui-studio #calendar-modal button.cal-nav:active { background: var(--st-press); }
+html.ui-studio #calendar-modal #cal-prev,
+html.ui-studio #calendar-modal #cal-next,
+html.ui-studio #calendar-modal #cal-settings,
+html.ui-studio #calendar-modal #cal-sync { padding: 0; width: var(--cal-row-h); font-size: 13px; }
+html.ui-studio #calendar-modal button.cal-today-btn { font-size: 12.5px; color: var(--st-text); }
+/* Primary action: the one accent button */
+html.ui-studio #calendar-modal button.cal-add-btn.cal-add-btn-text:not(.cal-add-btn-sm) {
+  background: var(--st-accent); border-color: transparent; color: var(--st-accent-fg);
+  padding: 0 12px 0 9px; gap: 5px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.18);
+}
+html.ui-studio #calendar-modal button.cal-add-btn.cal-add-btn-text:not(.cal-add-btn-sm):hover {
+  background: color-mix(in srgb, var(--st-accent) 88%, #fff); border-color: transparent; opacity: 1;
+}
+html.ui-studio #calendar-modal button.cal-add-btn:not(.cal-add-btn-sm) .cal-add-plus { color: inherit; font-size: 16px; font-weight: 400; }
+html.ui-studio #calendar-modal button.cal-add-btn:not(.cal-add-btn-sm) .cal-add-label { font-size: 12.5px; font-weight: 550; opacity: 1; }
+
+/* Segmented view switch */
+html.ui-studio #calendar-modal .cal-view-toggle {
+  height: var(--cal-row-h); padding: 2px; gap: 2px; align-items: stretch;
+  background: color-mix(in srgb, var(--fg) 5%, transparent); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+}
+html.ui-studio #calendar-modal button.cal-view-btn {
+  height: auto; padding: 0 11px; border: none; border-radius: var(--st-r-xs);
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; color: var(--st-text-3); opacity: 1;
+  transition: background .12s, color .12s;
+}
+html.ui-studio #calendar-modal .cal-view-btn + .cal-view-btn { border-left: none; }
+html.ui-studio #calendar-modal button.cal-view-btn:hover { color: var(--st-text); background: var(--st-hover); }
+html.ui-studio #calendar-modal button.cal-view-btn.active {
+  background: var(--st-surface-2); color: var(--st-text); font-weight: 550;
+  box-shadow: var(--st-shadow-sm), inset 0 0 0 1px var(--st-line-2);
+}
+
+/* Quick add: a quiet input row */
+html.ui-studio #calendar-modal .cal-quickadd-row {
+  min-height: 36px; margin: 0; padding: 0 12px;
+  background: var(--sto-field, var(--st-surface-2)); border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #calendar-modal .cal-quickadd-row:hover { border-color: var(--sto-field-hover, var(--st-line-2)); }
+html.ui-studio #calendar-modal .cal-quickadd-row:focus-within {
+  border-color: var(--st-accent-line); background: var(--sto-field, var(--st-surface-2)); box-shadow: var(--st-ring);
+}
+html.ui-studio #calendar-modal .cal-quickadd-input,
+html.ui-studio #calendar-modal .cal-quickadd-input:hover,
+html.ui-studio #calendar-modal .cal-quickadd-input:focus {
+  font-size: 13px; height: 34px; padding: 0; color: var(--st-text);
+  background: transparent; border: none; border-radius: 0; box-shadow: none; outline: none;
+}
+html.ui-studio #calendar-modal .cal-quickadd-hint { left: 12px; font-size: 13px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #calendar-modal .cal-quickadd-hint .qa-hint-accent { color: var(--st-text-2); font-weight: 550; }
+html.ui-studio #calendar-modal .cal-quickadd-hint .qa-hint-enter { color: var(--st-text-3); }
+html.ui-studio #calendar-modal .cal-quickadd-status { font-size: 11.5px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #calendar-modal .cal-quickadd-wrap { margin: 0; }
+
+/* Tag filters: tidy chips */
+html.ui-studio #calendar-modal .cal-filters { gap: 6px; margin: 0; }
+html.ui-studio #calendar-modal .cal-filter-item {
+  height: 24px; padding: 0 9px; gap: 6px; font-size: 12px; font-weight: 500; line-height: 1;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: 999px;
+}
+html.ui-studio #calendar-modal .cal-filter-item:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #calendar-modal .cal-filter-item.cal-filter-off { opacity: .45; }
+html.ui-studio #calendar-modal .cal-filter-dot { width: 7px; height: 7px; }
+
+/* Month grid: hairline cells, sticky weekday header, accent "today" */
+html.ui-studio #calendar-modal .cal-grid {
+  gap: 0; background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r);
+}
+html.ui-studio #calendar-modal .cal-week-headers {
+  gap: 0; position: sticky; top: 0; z-index: 5; background: var(--st-surface);
+  border-bottom: 1px solid var(--st-line-2);
+}
+html.ui-studio #calendar-modal .cal-weekday {
+  background: transparent; opacity: 1; color: var(--st-text-3);
+  font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; padding: 8px 0 7px;
+}
+html.ui-studio #calendar-modal .cal-week-row { gap: 0; }
+html.ui-studio #calendar-modal .cal-week-row + .cal-week-row { border-top: 1px solid var(--st-line); }
+html.ui-studio #calendar-modal .cal-day {
+  background: transparent; padding: 5px 5px 4px; min-height: 84px;
+  border-left: 1px solid var(--st-line); border-radius: 0;
+}
+html.ui-studio #calendar-modal .cal-week-row > .cal-day { padding-top: calc(5px + var(--bars, 0) * 14px); }
+html.ui-studio #calendar-modal .cal-week-row > .cal-day:first-child { border-left: none; }
+html.ui-studio #calendar-modal .cal-day:hover { background: var(--st-hover); }
+html.ui-studio #calendar-modal .cal-day.cal-other { opacity: 1; background: color-mix(in srgb, var(--fg) 1.5%, transparent); }
+html.ui-studio #calendar-modal .cal-day.cal-other .cal-day-num { color: var(--st-text-3); opacity: .6; }
+html.ui-studio #calendar-modal .cal-day.cal-other .cal-event-row,
+html.ui-studio #calendar-modal .cal-day.cal-other .cal-dots { opacity: .55; }
+html.ui-studio #calendar-modal .cal-day-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 22px; padding: 0 5px; margin: 0 0 3px; border-radius: 999px;
+  font-size: 12px; font-weight: 550; line-height: 1; opacity: 1; color: var(--st-text-2);
+  font-variant-numeric: tabular-nums;
+}
+html.ui-studio #calendar-modal .cal-day.cal-today,
+html.ui-studio #calendar-modal .cal-day.cal-selected:not(.cal-today) {
+  box-shadow: none; border-radius: 0; background: transparent;
+}
+html.ui-studio #calendar-modal .cal-day.cal-today .cal-day-num {
+  background: var(--st-accent); color: var(--st-accent-fg); font-weight: 650; padding: 0 5px; line-height: 1;
+}
+html.ui-studio #calendar-modal .cal-day.cal-selected {
+  background: var(--st-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--st-accent-line);
+}
+html.ui-studio #calendar-modal .cal-day.cal-selected:not(.cal-today) .cal-day-num { color: var(--st-accent); font-weight: 650; }
+html.ui-studio #calendar-modal .cal-day.cal-drag-over,
+html.ui-studio #calendar-modal .cal-day.cal-range-select {
+  background: var(--st-accent-soft); box-shadow: inset 0 0 0 1px var(--st-accent-line);
+}
+html.ui-studio #calendar-modal .cal-event-row { gap: 5px; padding: 2px 4px; border-radius: var(--st-r-xs); margin-bottom: 1px; }
+html.ui-studio #calendar-modal .cal-event-row:hover { background: var(--st-press); }
+html.ui-studio #calendar-modal .cal-event-row-dot { width: 6px; height: 6px; }
+html.ui-studio #calendar-modal .cal-event-row-time { font-size: 10.5px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #calendar-modal .cal-event-row-name { font-size: 11.5px; color: var(--st-text); opacity: 1; font-weight: 500; }
+html.ui-studio #calendar-modal .cal-day .cal-event-more { font-size: 10.5px; color: var(--st-text-3); opacity: 1; padding-left: 4px; }
+html.ui-studio #calendar-modal .cal-multiday {
+  top: calc(4px + var(--slot, 0) * 14px); height: 13px; line-height: 13px;
+  font-size: 10px; font-weight: 550; border-radius: var(--st-r-xs); padding: 0 6px;
+}
+
+/* Splitter + day detail */
+html.ui-studio #calendar-modal .cal-splitter { margin-top: 0; }
+html.ui-studio #calendar-modal .cal-splitter-grip { width: 36px; height: 4px; background: var(--st-line-2); }
+html.ui-studio #calendar-modal .cal-splitter:hover .cal-splitter-grip,
+html.ui-studio #calendar-modal .cal-splitter-dragging .cal-splitter-grip { background: var(--st-accent-line); }
+html.ui-studio #calendar-modal .cal-day-detail { margin-top: 0; padding-top: 10px; border-top: 1px solid var(--st-line); }
+html.ui-studio #calendar-modal .cal-detail-header {
+  font-size: 14px; font-weight: 650; letter-spacing: -0.01em; color: var(--st-text);
+  margin-bottom: 8px; padding-right: 0; min-height: 28px;
+}
+html.ui-studio #calendar-modal .cal-detail-header span[style*="accent"],
+html.ui-studio #calendar-modal .cal-detail-header .cal-today-label { color: var(--st-accent); font-weight: 550; }
+html.ui-studio #calendar-modal .cal-search-wrap { margin-bottom: 10px; }
+html.ui-studio #calendar-modal .cal-search-input,
+html.ui-studio #calendar-modal .cal-search-input.cal-day-search {
+  height: 32px; font-size: 13px; border-radius: var(--st-r-sm);
+}
+html.ui-studio #calendar-modal .cal-search-input.cal-day-search { padding-left: 30px; }
+html.ui-studio #calendar-modal .cal-search-wrap .cal-search-icon { left: 10px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #calendar-modal .cal-day-search-meta,
+html.ui-studio #calendar-modal .cal-search-count { font-size: 12px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #calendar-modal .cal-empty,
+html.ui-studio #calendar-modal .cal-agenda-empty {
+  font-size: 13px; color: var(--st-text-3); opacity: 1; font-style: normal; padding: 10px 2px;
+}
+html.ui-studio #calendar-modal .cal-event-item,
+html.ui-studio #calendar-modal .cal-agenda-event {
+  gap: 10px; padding: 8px 10px; border-radius: var(--st-r-sm); align-items: flex-start;
+  transition: background .12s;
+}
+html.ui-studio #calendar-modal .cal-event-item:hover,
+html.ui-studio #calendar-modal .cal-agenda-event:hover { background: var(--st-hover); }
+html.ui-studio #calendar-modal .cal-event-dot { width: 8px; height: 8px; margin-top: 5px; }
+html.ui-studio #calendar-modal .cal-event-name { font-size: 13.5px; font-weight: 550; color: var(--st-text); line-height: 1.4; }
+html.ui-studio #calendar-modal .cal-event-time,
+html.ui-studio #calendar-modal .cal-event-loc { font-size: 12px; color: var(--st-text-3); opacity: 1; line-height: 1.45; }
+html.ui-studio #calendar-modal :is(.cal-event-loc, .cal-event-time) a {
+  display: inline-block; padding: 5px 2px; margin: -5px -2px; border-radius: var(--st-r-xs);
+}
+html.ui-studio #calendar-modal :is(.cal-event-loc, .cal-event-time) a:hover { background: var(--st-hover); }
+html.ui-studio #calendar-modal .cal-event-tag {
+  font-size: 11px; padding: 1px 7px; border-radius: 999px; opacity: 1; vertical-align: 1px;
+}
+html.ui-studio #calendar-modal button.cal-event-more { color: var(--st-text-3); border-radius: var(--st-r-xs); width: 26px; height: 26px; transform: none; }
+html.ui-studio #calendar-modal button.cal-event-more:hover { background: var(--st-press); color: var(--st-text); }
+/* Day-detail "+" (small add) */
+html.ui-studio #calendar-modal button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm {
+  height: 26px; min-width: 26px; background: transparent; color: var(--st-text-2);
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #calendar-modal button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover {
+  background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2);
+}
+html.ui-studio #calendar-modal .cal-add-btn-sm .cal-add-plus { color: var(--st-text-2); }
+
+/* Agenda */
+html.ui-studio #calendar-modal .cal-agenda { gap: 14px; }
+html.ui-studio #calendar-modal .cal-agenda-date {
+  font-size: 12px; font-weight: 600; color: var(--st-text-2); opacity: 1;
+  padding: 4px 2px 6px; border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio #calendar-modal .cal-agenda-day.is-today .cal-agenda-date { color: var(--st-accent); border-bottom-color: var(--st-accent-line); }
+html.ui-studio #calendar-modal .cal-agenda-today-badge { background: var(--st-accent-soft); color: var(--st-accent); border-radius: 999px; font-size: 10px; }
+
+/* Year */
+html.ui-studio #calendar-modal .cal-year { gap: 10px; }
+html.ui-studio #calendar-modal .cal-year-month {
+  background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r); padding: 10px 8px 8px;
+}
+html.ui-studio #calendar-modal .cal-year-month:hover { background: var(--st-surface-2); border-color: var(--st-line-2); transform: none; box-shadow: var(--st-shadow-sm); }
+html.ui-studio #calendar-modal .cal-year-month-title { font-size: 12.5px; font-weight: 600; color: var(--st-text); opacity: 1; margin-bottom: 6px; }
+html.ui-studio #calendar-modal .cal-year-month:hover .cal-year-month-title { color: var(--st-text); }
+html.ui-studio #calendar-modal .cal-year-wd { font-size: 9px; color: var(--st-text-3); opacity: 1; font-weight: 600; }
+html.ui-studio #calendar-modal .cal-year-cell { font-size: 10px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+html.ui-studio #calendar-modal .cal-year-day { color: var(--st-text-2); opacity: 1; }
+html.ui-studio #calendar-modal .cal-year-day:hover { background: var(--st-hover); color: var(--st-text); transform: none; font-weight: 600; }
+html.ui-studio #calendar-modal .cal-year-has { background: var(--st-accent-soft); color: var(--st-text); }
+html.ui-studio #calendar-modal .cal-year-today { background: var(--st-accent); color: var(--st-accent-fg); font-weight: 650; }
+
+/* Week */
+html.ui-studio #calendar-modal .cal-wk-wrap { background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r); }
+html.ui-studio #calendar-modal .cal-wk-rail,
+html.ui-studio #calendar-modal .cal-wk-rail-spacer { background: var(--st-surface); border-color: var(--st-line); }
+html.ui-studio #calendar-modal .cal-wk-rail-cell { font-size: 10.5px; color: var(--st-text-3); border-bottom-color: var(--st-line); }
+html.ui-studio #calendar-modal .cal-wk-col { border-left-color: var(--st-line); }
+html.ui-studio #calendar-modal .cal-wk-col-head { background: var(--st-surface); border-bottom-color: var(--st-line); font-size: 12px; }
+html.ui-studio #calendar-modal .cal-wk-dn { color: var(--st-text-3); opacity: 1; font-weight: 600; text-transform: uppercase; font-size: 10.5px; letter-spacing: .02em; }
+html.ui-studio #calendar-modal .cal-wk-dt { color: var(--st-text); opacity: 1; font-weight: 600; }
+html.ui-studio #calendar-modal .cal-wk-col.cal-wk-today .cal-wk-col-head,
+html.ui-studio #calendar-modal .cal-wk-col.cal-wk-today.cal-wk-sun .cal-wk-col-head { background: var(--st-surface); }
+html.ui-studio #calendar-modal .cal-wk-col.cal-wk-today .cal-wk-dt {
+  background: var(--st-accent); color: var(--st-accent-fg); border-radius: 999px; padding: 2px 6px;
+}
+html.ui-studio #calendar-modal .cal-wk-col.cal-wk-today .cal-wk-dn { color: var(--st-accent); }
+html.ui-studio #calendar-modal .cal-wk-col.cal-wk-sun .cal-wk-col-head,
+html.ui-studio #calendar-modal .cal-wk-col.cal-wk-sun .cal-wk-allday { background: var(--st-surface); }
+html.ui-studio #calendar-modal .cal-wk-col.cal-wk-sun .cal-wk-grid { background: color-mix(in srgb, var(--fg) 1.5%, transparent); }
+html.ui-studio #calendar-modal .cal-wk-allday { background: var(--st-surface); border-bottom-color: var(--st-line-2); }
+html.ui-studio #calendar-modal .cal-wk-cell { border-bottom-color: var(--st-line); }
+html.ui-studio #calendar-modal .cal-wk-cell:hover { background: var(--st-hover); }
+html.ui-studio #calendar-modal .cal-wk-block { border-radius: var(--st-r-xs); box-shadow: none; font-size: 11.5px; }
+html.ui-studio #calendar-modal .cal-wk-zoom {
+  border-color: var(--st-line-2); background: transparent; color: var(--st-text-2); opacity: 1; border-radius: var(--st-r-xs);
+}
+html.ui-studio #calendar-modal .cal-wk-zoom:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+
+/* Event form (the bespoke card) */
+html.ui-studio #calendar-modal .cal-form-bespoke {
+  background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r-lg);
+  box-shadow: var(--st-shadow);
+}
+html.ui-studio #calendar-modal .cal-form-today { font-size: 11px; color: var(--st-text-3); opacity: 1; letter-spacing: .06em; }
+html.ui-studio #calendar-modal .cal-hero-time { font-family: var(--st-font); font-weight: 300; letter-spacing: -0.02em; color: var(--st-text); }
+html.ui-studio #calendar-modal .cal-hero-date { font-size: 15px; color: var(--st-text-2); opacity: 1; letter-spacing: 0; }
+html.ui-studio #calendar-modal .cal-input.cal-hero-title { font-size: 18px; font-weight: 550; color: var(--st-text); border-bottom-color: var(--st-line-2); }
+html.ui-studio #calendar-modal .cal-input.cal-hero-title,
+html.ui-studio #calendar-modal .cal-input.cal-hero-title:hover {
+  background: transparent; border-color: transparent; border-bottom-color: var(--st-line-2); border-radius: 0;
+}
+html.ui-studio #calendar-modal .cal-input.cal-hero-title:focus,
+html.ui-studio #calendar-modal .cal-input.cal-hero-title:focus-visible {
+  outline: none; box-shadow: none; background: transparent; border-color: transparent; border-bottom-color: var(--st-accent);
+}
+html.ui-studio #calendar-modal .cal-title-hint { font-size: 18px; color: var(--st-text-3); }
+html.ui-studio #calendar-modal .cal-title-hint .cal-title-enter-ico { color: var(--st-text-3); }
+html.ui-studio #calendar-modal .cal-input:not(.cal-hero-title) {
+  min-height: 34px; padding: 6px 10px; font-size: 13px; border-radius: var(--st-r-sm);
+}
+html.ui-studio #calendar-modal select.cal-input { padding-right: 28px; }
+/* Native date / time fields aren't covered by the shared field style */
+html.ui-studio #calendar-modal input.cal-input:is([type="date"], [type="time"], [type="datetime-local"]) {
+  font-family: var(--st-font); color: var(--st-text); background-color: var(--sta-field);
+  border: 1px solid var(--st-line-2); box-shadow: none; outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+html.ui-studio #calendar-modal input.cal-input:is([type="date"], [type="time"], [type="datetime-local"]):hover { border-color: var(--sto-field-hover, var(--st-line-2)); }
+html.ui-studio #calendar-modal input.cal-input:is([type="date"], [type="time"], [type="datetime-local"]):focus { border-color: var(--st-accent-line); box-shadow: var(--st-ring); }
+html.ui-studio[data-theme-mode="light"] #calendar-modal input.cal-input:is([type="date"], [type="time"]) { color-scheme: light; }
+html.ui-studio[data-theme-mode="dark"] #calendar-modal input.cal-input:is([type="date"], [type="time"]) { color-scheme: dark; }
+html.ui-studio #calendar-modal textarea.cal-input { min-height: 60px; line-height: 1.5; }
+html.ui-studio #calendar-modal .cal-form-row > input.cal-input { flex: 1 1 0; min-width: 0; width: auto; }
+html.ui-studio #calendar-modal .cal-allday-label { font-size: 11px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #calendar-modal .cal-loc-map { width: 34px; border-color: var(--st-line-2); border-radius: var(--st-r-sm); background: var(--st-surface-2); color: var(--st-text-3); }
+html.ui-studio #calendar-modal .cal-loc-map:hover { background: var(--st-hover); border-color: var(--st-line-2); color: var(--st-accent); }
+html.ui-studio #calendar-modal .cal-form-actions { gap: 8px; }
+html.ui-studio #calendar-modal button.cal-btn {
+  height: 32px; padding: 0 14px; gap: 6px; font-family: var(--st-font); font-size: 13px; font-weight: 550;
+  color: var(--st-text); background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #calendar-modal button.cal-btn:hover { background: var(--st-hover); }
+html.ui-studio #calendar-modal button.cal-btn.cal-btn-primary {
+  background: var(--st-accent); border-color: transparent; color: var(--st-accent-fg);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.18);
+}
+html.ui-studio #calendar-modal button.cal-btn.cal-btn-primary:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); opacity: 1; }
+html.ui-studio #calendar-modal .cal-form-bespoke[style*="--ev-color"] button.cal-btn-primary { background: var(--ev-color); }
+html.ui-studio #calendar-modal button.cal-btn.cal-btn-danger { color: var(--st-accent); border-color: var(--st-accent-line); }
+html.ui-studio #calendar-modal button.cal-btn.cal-btn-danger:hover { background: var(--st-accent); color: var(--st-accent-fg); }
+html.ui-studio #calendar-modal .cal-form-close { color: var(--st-text-3); opacity: 1; border-radius: var(--st-r-sm); }
+html.ui-studio #calendar-modal .cal-form-close:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* Empty state */
+html.ui-studio #calendar-modal .cal-empty-title { font-size: 15px; font-weight: 650; color: var(--st-text); opacity: 1; }
+html.ui-studio #calendar-modal .cal-empty-msg { font-size: 13px; color: var(--st-text-3); opacity: 1; }
+
+@media (max-width: 768px) {
+  html.ui-studio #calendar-modal { --cal-row-h: 34px; }
+  html.ui-studio #calendar-modal .cal-quickadd-row { min-height: 38px; }
+  html.ui-studio #calendar-modal .cal-quickadd-wrap > .cal-add-btn-text { height: auto; }
+  html.ui-studio #calendar-modal .cal-day { min-height: 52px; padding: 3px 2px; }
+  html.ui-studio #calendar-modal .cal-day-num { font-size: 11.5px; min-width: 20px; height: 20px; padding: 0 4px; }
+  html.ui-studio #calendar-modal .cal-weekday { font-size: 10px; letter-spacing: 0; }
+  html.ui-studio #calendar-modal button.cal-view-btn { padding: 0 8px; }
+  html.ui-studio #calendar-modal .cal-toolbar-right { gap: 5px; max-width: 100%; }
+  html.ui-studio #calendar-modal .cal-toolbar-right > .cal-filter-toggle { padding: 0 8px; }
+  html.ui-studio #calendar-modal .cal-wk-col-head {
+    flex-direction: column; justify-content: center; align-items: center; gap: 1px; padding: 0 2px;
+  }
+  html.ui-studio #calendar-modal .cal-wk-dn { font-size: 9.5px; letter-spacing: 0; }
+  html.ui-studio #calendar-modal .cal-wk-dt { font-size: 11.5px; line-height: 1.2; }
+  html.ui-studio #calendar-modal .cal-wk-col.cal-wk-today .cal-wk-dt { padding: 0 5px; }
+  html.ui-studio #calendar-modal button.cal-btn { height: 40px; }
+  html.ui-studio #calendar-modal button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm { width: 34px; height: 34px; }
+}
+
+/* ==========================================================================
+   Shared primitives for Tasks, Library, Email, Gallery
+   (same visual language as Brain in studio-pages-b.css)
+   ========================================================================== */
+html.ui-studio {
+  --sta-btn: 32px;
+  --sta-field: var(--sto-field, color-mix(in srgb, var(--bg) 60%, var(--panel)));
+}
+
+/* Tab strips: quiet labels, the active one carries an accent underline */
+html.ui-studio #tasks-modal .memory-tabs,
+html.ui-studio #doclib-modal .lib-tabs,
+html.ui-studio #gallery-modal .gallery-tabs {
+  gap: 2px; margin: 0 0 4px; padding: 0 2px; background: transparent; border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio #tasks-modal .memory-tab,
+html.ui-studio #doclib-modal .lib-tab,
+html.ui-studio #gallery-modal .gallery-tab {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  height: 36px; padding: 0 10px; margin-bottom: -1px;
+  font-family: var(--st-font); font-size: 13px; font-weight: 500; line-height: 1;
+  color: var(--st-text-3); opacity: 1; background: transparent;
+  border: none; border-bottom: 2px solid transparent; border-radius: var(--st-r-sm) var(--st-r-sm) 0 0;
+  transition: color .12s, border-color .12s, background .12s;
+}
+html.ui-studio #tasks-modal .memory-tab:hover,
+html.ui-studio #doclib-modal .lib-tab:hover,
+html.ui-studio #gallery-modal .gallery-tab:hover { color: var(--st-text); background: var(--st-hover); opacity: 1; }
+html.ui-studio #tasks-modal .memory-tab.active,
+html.ui-studio #doclib-modal .lib-tab.active,
+html.ui-studio #gallery-modal .gallery-tab.active {
+  color: var(--st-text); border-bottom-color: var(--st-accent); background: transparent;
+}
+html.ui-studio #tasks-modal .memory-tab svg,
+html.ui-studio #doclib-modal .lib-tab svg,
+html.ui-studio #gallery-modal .gallery-tab svg { width: 14px; height: 14px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #tasks-modal .memory-tab.active svg,
+html.ui-studio #doclib-modal .lib-tab.active svg,
+html.ui-studio #gallery-modal .gallery-tab.active svg { color: var(--st-accent); }
+html.ui-studio #gallery-modal .gallery-tab-icon { color: var(--st-text-3); opacity: 1; }
+html.ui-studio #gallery-modal .gallery-tab.active .gallery-tab-icon { color: var(--st-accent); }
+html.ui-studio #gallery-modal .gallery-tab-label { font-size: 13px; }
+html.ui-studio #tasks-modal .memory-tab .memory-count {
+  font-size: 11px; font-weight: 550; min-width: 18px; height: 18px; padding: 0 5px; line-height: 18px;
+  text-align: center; border-radius: 999px; color: var(--st-text-3); background: var(--st-press); opacity: 1;
+}
+html.ui-studio #tasks-modal .memory-tab.active .memory-count { color: var(--st-text-2); }
+
+/* Section card: the frame is dropped, the list is the page */
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .admin-card {
+  background: transparent; border: none; box-shadow: none; padding: 6px 2px 2px; border-radius: 0;
+}
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .admin-card h2 {
+  font-family: var(--st-font); font-size: 15px; font-weight: 650; letter-spacing: -0.015em;
+  color: var(--st-text); margin: 0 0 2px; padding: 0; border: none;
+  display: flex; align-items: baseline; gap: 8px; line-height: 1.3; opacity: 1;
+}
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .admin-card h2 .memory-count {
+  font-size: 12px; font-weight: 450; letter-spacing: 0; color: var(--st-text-3); opacity: 1;
+}
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #gallery-modal) .memory-desc {
+  font-size: 12.5px; line-height: 1.5; color: var(--st-text-3); opacity: 1; margin: 0;
+}
+html.ui-studio :is(#email-lib-modal, #gallery-modal) .modal-header .memory-count {
+  font-size: 12px; font-weight: 450; color: var(--st-text-3); opacity: 1; letter-spacing: 0;
+}
+
+/* Toolbar buttons: hairline, 32px, muted until hovered */
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #gallery-modal) .memory-toolbar-btn {
+  height: var(--sta-btn); min-width: 0; padding: 0 12px; margin: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; line-height: 1;
+  letter-spacing: 0; text-transform: none; opacity: 1; top: 0;
+  color: var(--st-text-2); background: transparent;
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); box-shadow: none;
+  transition: background .12s, color .12s, border-color .12s;
+}
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #gallery-modal) .memory-toolbar-btn svg { color: currentColor; opacity: .85; flex-shrink: 0; }
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #gallery-modal) .memory-toolbar-btn:hover:not(:disabled) {
+  background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2);
+}
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #gallery-modal) .memory-toolbar-btn.active {
+  background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line);
+}
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #gallery-modal) .memory-toolbar-btn.danger {
+  color: var(--stb-err, #ec5b5f); border-color: color-mix(in srgb, var(--stb-err, #ec5b5f) 40%, transparent);
+}
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #gallery-modal) .memory-toolbar-btn:disabled { opacity: .45; }
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #gallery-modal) .memory-toolbar-btn:focus-visible { outline: none; box-shadow: var(--st-ring); }
+
+/* Toolbar layout + fields */
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .memory-toolbar { gap: 8px; padding: 12px 0 10px; }
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .memory-category-filters { gap: 6px; align-items: center; }
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .memory-sort-select {
+  top: 0; height: var(--sta-btn); padding: 0 28px 0 10px; font-size: 12.5px; font-weight: 500; cursor: pointer;
+}
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #notes-pane) .memory-search-input {
+  height: var(--sta-btn); margin-top: 0; font-size: 13px; border-radius: var(--st-r-sm);
+}
+
+/* List rows */
+html.ui-studio :is(#tasks-modal, #email-lib-modal) .memory-list,
+html.ui-studio #email-lib-modal #email-lib-grid { gap: 0; }
+html.ui-studio :is(#tasks-modal, #email-lib-modal) .memory-item {
+  align-items: center; gap: 10px; padding: 9px 8px 9px 12px; min-height: 52px; margin: 0;
+  background: transparent; border: none; border-bottom: 1px solid var(--st-line); border-radius: 0;
+  box-shadow: none; transition: background .12s;
+}
+html.ui-studio :is(#tasks-modal, #email-lib-modal) .memory-item:first-child { border-top: 1px solid var(--st-line); }
+html.ui-studio :is(#tasks-modal, #email-lib-modal) .memory-item:hover { background: var(--st-hover); border-color: var(--st-line); transform: none; }
+html.ui-studio :is(#tasks-modal, #email-lib-modal) .memory-item-title {
+  font-size: 13.5px; font-weight: 550; color: var(--st-text); opacity: 1; letter-spacing: -0.005em;
+}
+html.ui-studio :is(#tasks-modal, #email-lib-modal) .memory-item-meta { font-size: 12px; color: var(--st-text-3); opacity: 1; gap: 6px; }
+html.ui-studio :is(#tasks-modal, #email-lib-modal) .memory-item-btn {
+  height: 28px; min-width: 28px; padding: 0 6px; font-size: 12px; color: var(--st-text-3);
+  background: transparent; border: none; border-radius: var(--st-r-sm); opacity: 1;
+}
+html.ui-studio :is(#tasks-modal, #email-lib-modal) .memory-item-btn:hover { color: var(--st-text); background: var(--st-press); }
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .memory-empty,
+html.ui-studio #doclib-modal .doclib-empty {
+  padding: 40px 16px; font-size: 13px; font-style: normal; color: var(--st-text-3); opacity: 1; text-align: center;
+}
+
+/* Counts rendered with inline font-size (0.6em) next to titles */
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal, #gallery-modal) :is(h2, h4) .memory-count {
+  font-size: 12px !important; font-weight: 450 !important; opacity: 1 !important;
+  color: var(--st-text-3); letter-spacing: 0;
+}
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .memory-category-filters .memory-toolbar-btn,
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .admin-card h2 ~ .memory-toolbar-btn,
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .admin-card > div:first-child .memory-toolbar-btn { top: 0; }
+html.ui-studio :is(#tasks-modal, #doclib-modal, #email-lib-modal) .admin-card > div:first-child { align-items: center; }
+
+/* ==========================================================================
+   Tasks  (#tasks-modal, static/js/tasks.js)
+   ========================================================================== */
+html.ui-studio #tasks-modal .tasks-modal-content { font-size: 13px; }
+html.ui-studio #tasks-modal .memory-item.task-card { min-height: 56px; }
+/* Paused: calm, not striped and ghosted. The status pill carries the state. */
+html.ui-studio #tasks-modal .memory-item.task-paused {
+  opacity: 1 !important; filter: none; background: transparent !important;
+}
+html.ui-studio #tasks-modal .memory-item.task-paused:hover { background: var(--st-hover) !important; }
+html.ui-studio #tasks-modal .memory-item.task-paused .memory-item-title { color: var(--st-text-2); }
+html.ui-studio #tasks-modal .task-card .memory-item-title { font-size: 13.5px; }
+html.ui-studio #tasks-modal .task-card .memory-item-meta { font-size: 12px; margin-top: 2px; }
+html.ui-studio #tasks-modal .task-ai-mark { color: var(--st-text-3); opacity: .8; }
+html.ui-studio #tasks-modal .task-card svg:not(.task-ai-mark) { color: var(--st-text-3); }
+/* Status pills: sentence case, 22px, calm tints */
+html.ui-studio #tasks-modal .task-status-badge {
+  top: 0 !important; height: 24px; padding: 0 9px; gap: 5px; border-radius: 999px;
+  font-family: var(--st-font); font-size: 11.5px; font-weight: 550; letter-spacing: 0;
+  text-transform: none; line-height: 1;
+}
+html.ui-studio #tasks-modal .task-status-badge svg { width: 9px; height: 9px; top: 0; }
+html.ui-studio #tasks-modal .task-status-badge:hover { filter: none; }
+html.ui-studio #tasks-modal .task-paused-badge {
+  color: var(--stb-warn, #d9a23a); background: var(--stb-warn-soft, rgba(217,162,58,.15)); border-color: transparent;
+}
+html.ui-studio #tasks-modal .task-paused-badge:hover { background: color-mix(in srgb, var(--stb-warn, #d9a23a) 24%, transparent); border-color: transparent; }
+html.ui-studio #tasks-modal .task-active-badge {
+  color: var(--stb-ok, #3fb97a); background: var(--stb-ok-soft, rgba(63,185,122,.14)); border-color: transparent; opacity: 1;
+}
+html.ui-studio #tasks-modal .task-active-badge:hover { background: color-mix(in srgb, var(--stb-ok, #3fb97a) 22%, transparent); border-color: transparent; }
+html.ui-studio #tasks-modal .task-run-now-badge,
+html.ui-studio #tasks-modal .task-card-run-btn {
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2);
+}
+html.ui-studio #tasks-modal .task-run-now-badge:hover,
+html.ui-studio #tasks-modal .task-card-run-btn:hover { color: var(--st-text); background: var(--st-hover); }
+html.ui-studio #tasks-modal .task-card-run-btn { height: 24px; top: 0; }
+html.ui-studio #tasks-modal .memory-item-actions { gap: 4px; align-items: center; }
+html.ui-studio #tasks-modal .tasks-clock {
+  font-size: 12px; color: var(--st-text-3); opacity: 1; font-variant-numeric: tabular-nums;
+  border-top: 1px solid var(--st-line); padding-top: 8px; margin-top: 4px;
+}
+
+/* ==========================================================================
+   Email  (#email-lib-modal, static/js/emailLibrary.js)
+   ========================================================================== */
+html.ui-studio #email-lib-modal .email-lib-unread-badge {
+  font-size: 11px; font-weight: 600; line-height: 18px; height: 18px; padding: 0 7px; margin-left: 8px;
+  vertical-align: 2px; border-radius: 999px; letter-spacing: 0;
+  background: var(--st-accent-soft); color: var(--st-accent);
+}
+html.ui-studio #email-lib-modal .email-lib-unread-badge:hover { filter: none; background: color-mix(in srgb, var(--st-accent) 22%, transparent); }
+html.ui-studio #email-lib-modal .admin-card > .memory-desc { margin-bottom: 6px; }
+
+/* Account chips */
+html.ui-studio #email-lib-modal .email-accounts-row { align-items: center; gap: 8px; }
+html.ui-studio #email-lib-modal #email-lib-accounts { gap: 6px; align-items: center; }
+html.ui-studio #email-lib-modal #email-lib-accounts .gallery-chip {
+  height: 28px; padding: 0 11px; border-radius: 999px; font-size: 12.5px; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2);
+}
+html.ui-studio #email-lib-modal #email-lib-accounts .gallery-chip:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #email-lib-modal #email-lib-accounts .gallery-chip.active {
+  background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line);
+}
+html.ui-studio #email-lib-modal .email-inbound-chip-count {
+  min-width: 16px; height: 16px; line-height: 16px; padding: 0 4px; border-radius: 999px;
+  font-size: 10px; font-weight: 650; background: var(--st-accent); color: var(--st-accent-fg);
+}
+/* Compose: the view's primary action */
+html.ui-studio #email-lib-modal #email-lib-compose-btn {
+  color: var(--st-accent-fg); background: var(--st-accent); border-color: transparent; font-weight: 550;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.18);
+}
+html.ui-studio #email-lib-modal #email-lib-compose-btn:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); color: var(--st-accent-fg); }
+
+/* Folder / filter / select / refresh row */
+html.ui-studio #email-lib-modal .memory-category-filters .memory-sort-select { min-width: 0; }
+html.ui-studio #email-lib-modal .email-filter-refresh-btn { width: var(--sta-btn); padding: 0; }
+
+/* Search with inline toggles (bell / done / attachments) */
+html.ui-studio #email-lib-modal .email-search-row { margin-top: 0; }
+html.ui-studio #email-lib-modal .email-search-wrap { position: relative; }
+html.ui-studio #email-lib-modal .email-search-row .memory-search-input { height: 34px; min-height: 34px; margin-top: 0; }
+html.ui-studio #email-lib-modal :is(.email-attach-toggle-inline, .email-undone-toggle-inline, .email-reminder-toggle-inline) {
+  top: 50%; transform: translateY(-50%); color: var(--st-text-3);
+  border-radius: var(--st-r-xs) !important;
+}
+html.ui-studio #email-lib-modal :is(.email-attach-toggle-inline, .email-undone-toggle-inline, .email-reminder-toggle-inline):hover {
+  color: var(--st-text); background: var(--st-press) !important;
+}
+html.ui-studio #email-lib-modal :is(.email-attach-toggle-inline, .email-undone-toggle-inline, .email-reminder-toggle-inline).active {
+  color: var(--st-accent) !important; background: var(--st-accent-soft) !important;
+}
+
+/* Message rows */
+html.ui-studio #email-lib-modal #email-lib-grid > .doclib-card.memory-item:not(.email-card-expanded) { min-height: 58px; padding: 9px 8px 9px 14px; }
+html.ui-studio #email-lib-modal .email-card-titlerow { gap: 6px; align-items: center; }
+html.ui-studio #email-lib-modal .email-card-titlerow .memory-item-title { font-weight: 500; color: var(--st-text-2); }
+html.ui-studio #email-lib-modal .email-card-unread .email-card-titlerow .memory-item-title { font-weight: 650; color: var(--st-text); }
+html.ui-studio #email-lib-modal .email-card-unread { box-shadow: inset 2px 0 0 var(--st-accent); }
+html.ui-studio #email-lib-modal .email-card-unread-dot { width: 7px; height: 7px; background: var(--st-accent) !important; }
+html.ui-studio #email-lib-modal .email-card-done,
+html.ui-studio #email-lib-modal .email-card-titlerow > span > svg { color: var(--st-text-3); opacity: .8; }
+html.ui-studio #email-lib-modal .memory-item-meta { font-size: 12px; margin-top: 3px; }
+html.ui-studio #email-lib-modal .email-meta-sender { font-weight: 550; }
+html.ui-studio #email-lib-modal .email-meta-date,
+html.ui-studio #email-lib-modal .email-meta-sep { color: var(--st-text-3); font-variant-numeric: tabular-nums; }
+
+/* Reading pane (a card expanded in place) */
+html.ui-studio #email-lib-modal .doclib-card.email-card-expanded.memory-item {
+  background: var(--st-surface) !important; border: 1px solid var(--st-line-2) !important;
+  border-radius: var(--st-r) !important; box-shadow: none;
+}
+html.ui-studio #email-lib-modal .doclib-card.email-card-expanded.memory-item:hover { background: var(--st-surface) !important; }
+html.ui-studio #email-lib-modal .doclib-card.email-card-expanded.memory-item > div:first-child {
+  margin-top: 0 !important; padding: 6px 10px 12px 16px !important; border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio #email-lib-modal .doclib-card.email-card-expanded .email-card-titlerow { min-height: 32px; padding-top: 0; margin-top: 0; }
+html.ui-studio #email-lib-modal .doclib-card.email-card-expanded .memory-item-title {
+  font-size: 16px; font-weight: 650; letter-spacing: -0.015em; color: var(--st-text);
+  white-space: normal; line-height: 1.3;
+}
+html.ui-studio #email-lib-modal .doclib-card.email-card-expanded .memory-item-meta { margin-top: 2px !important; }
+html.ui-studio #email-lib-modal .doclib-card.email-card-expanded .email-meta-date { margin-left: 0; font-size: 12px; }
+html.ui-studio #email-lib-modal :is(.email-card-header-menu, .email-card-nav-btn) {
+  width: 30px; height: 30px; top: 0; color: var(--st-text-3); opacity: 1; border-radius: var(--st-r-sm);
+}
+html.ui-studio #email-lib-modal :is(.email-card-header-menu, .email-card-nav-btn):hover { color: var(--st-text); background: var(--st-hover); }
+html.ui-studio #email-lib-modal .email-card-nav-arrows { gap: 2px; align-items: center; }
+
+html.ui-studio #email-lib-modal .email-card-reader { font-size: 13px; }
+html.ui-studio #email-lib-modal .email-reader-header {
+  padding: 12px 14px 12px 16px; gap: 12px; background: transparent; border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio #email-lib-modal .email-reader-meta { font-size: 12.5px; opacity: 1; color: var(--st-text-2); line-height: 1.5; gap: 6px; }
+html.ui-studio #email-lib-modal .email-reader-meta-row strong {
+  color: var(--st-text-3); opacity: 1; font-weight: 500; min-width: 38px;
+}
+html.ui-studio #email-lib-modal .recipient-chip {
+  height: 24px; padding: 0 9px; font-size: 12px; font-weight: 500; border-radius: 999px;
+  color: var(--st-text); background: var(--st-press); border: 1px solid transparent;
+}
+html.ui-studio #email-lib-modal .recipient-chip:hover { background: var(--st-hover); border-color: var(--st-line-2); }
+html.ui-studio #email-lib-modal .recipient-chip.from-chip { background: var(--st-accent-soft); }
+/* Reader actions: ghost icon buttons with a small label */
+html.ui-studio #email-lib-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn {
+  width: auto; min-width: 50px; height: 46px; padding: 5px 6px 4px; top: 0; gap: 4px;
+  border-color: transparent; background: transparent; color: var(--st-text-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #email-lib-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn:hover:not(:disabled) {
+  background: var(--st-hover); color: var(--st-text); border-color: transparent;
+}
+html.ui-studio #email-lib-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn svg { width: 17px; height: 17px; opacity: 1; }
+html.ui-studio #email-lib-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn[data-act="more"] { color: var(--st-text-2); }
+html.ui-studio #email-lib-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn.reader-more-active,
+html.ui-studio #email-lib-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn.active {
+  background: var(--st-accent-soft); color: var(--st-accent); border-color: transparent;
+}
+html.ui-studio #email-lib-modal .reader-btn-label { font-size: 10.5px; font-weight: 500; color: inherit; letter-spacing: 0; line-height: 1; }
+html.ui-studio #email-lib-modal .email-reader-atts-header {
+  font-size: 12px; font-weight: 550; letter-spacing: 0; text-transform: none; color: var(--st-text-2);
+  padding-left: 16px; padding-right: 14px; min-height: 36px; border-bottom-color: var(--st-line);
+}
+html.ui-studio #email-lib-modal .email-reader-atts-header:hover { background: var(--st-hover); }
+html.ui-studio #email-lib-modal .email-reader-body {
+  font-size: 14px; line-height: 1.65; color: var(--st-text); padding: 18px 20px 24px;
+}
+
+/* ==========================================================================
+   Library  (#doclib-modal: Chats, Documents, Research, Archive;
+   static/js/documentLibrary.js)
+   ========================================================================== */
+/* Tab strip: fits a 390px phone; if a narrow window can't fit it, it scrolls
+   sideways with no scrollbar instead of clipping. */
+html.ui-studio #doclib-modal .lib-tabs {
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+html.ui-studio #doclib-modal .lib-tabs::-webkit-scrollbar { display: none; }
+html.ui-studio #doclib-modal .lib-tab { flex-shrink: 0; white-space: nowrap; }
+
+html.ui-studio #doclib-modal .doclib-lang-chips { flex: 0 0 auto; gap: 6px; padding: 0; max-height: none; }
+html.ui-studio #doclib-modal .memory-cat-chip {
+  height: 26px; padding: 0 10px; top: 0; margin: 0; font-family: var(--st-font); font-size: 12px; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: 999px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+html.ui-studio #doclib-modal .memory-cat-chip:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #doclib-modal .memory-cat-chip.active {
+  background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line);
+}
+html.ui-studio #doclib-modal #doclib-tidy-btn,
+html.ui-studio #doclib-modal #doclib-select-btn,
+html.ui-studio #doclib-modal #doclib-chats-tidy-btn { top: 0; }
+/* Search fields: a neutral magnifier instead of the hard-coded red one */
+html.ui-studio :is(#doclib-modal, #tasks-modal) .memory-search-input {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-repeat: no-repeat; background-position: 11px center; background-size: 14px;
+  padding-left: 32px;
+}
+
+/* Rows (documents, chats, research, archive) */
+html.ui-studio #doclib-modal .doclib-grid { gap: 0; }
+html.ui-studio #doclib-modal .doclib-grid > .memory-item,
+html.ui-studio #doclib-modal .doclib-grid > .doclib-card {
+  align-items: center; gap: 10px; padding: 9px 8px 9px 12px; min-height: 54px; margin: 0;
+  background: transparent; border: none; border-bottom: 1px solid var(--st-line); border-radius: 0;
+  box-shadow: none; transition: background .12s;
+}
+html.ui-studio #doclib-modal .doclib-grid > :is(.memory-item, .doclib-card):first-child { border-top: 1px solid var(--st-line); }
+html.ui-studio #doclib-modal .doclib-grid > :is(.memory-item, .doclib-card):hover { background: var(--st-hover); border-color: var(--st-line); }
+html.ui-studio #doclib-modal .doclib-grid > :is(.memory-item, .doclib-card):has(.memory-select-cb:checked) {
+  background: var(--st-accent-soft); outline: none; box-shadow: inset 2px 0 0 var(--st-accent);
+}
+html.ui-studio #doclib-modal .memory-item-title {
+  font-size: 13.5px; font-weight: 550; color: var(--st-text); opacity: 1; letter-spacing: -0.005em;
+}
+html.ui-studio #doclib-modal .memory-item-title > span { font-size: 12px !important; font-weight: 450; color: var(--st-text-3); opacity: 1 !important; }
+html.ui-studio #doclib-modal .memory-item-title svg { color: var(--st-text-3); opacity: 1 !important; }
+html.ui-studio #doclib-modal .memory-item-meta {
+  font-size: 12px !important; opacity: 1 !important; color: var(--st-text-3); gap: 6px; margin-top: 3px !important;
+}
+/* Version badge (inline-styled in the accent): a quiet neutral tag */
+html.ui-studio #doclib-modal .memory-item-title ~ span {
+  font-size: 11px !important; font-weight: 550; line-height: 18px; height: 18px; padding: 0 6px !important;
+  border-radius: var(--st-r-xs) !important; border: none !important;
+  color: var(--st-text-3) !important; background: var(--st-press) !important;
+}
+html.ui-studio #doclib-modal .memory-item-btn,
+html.ui-studio #doclib-modal .doclib-card-menu-wrap > button {
+  height: 28px; min-width: 28px; padding: 0 6px; color: var(--st-text-3);
+  background: transparent; border: none; border-radius: var(--st-r-sm); opacity: 1;
+}
+html.ui-studio #doclib-modal .memory-item-btn:hover,
+html.ui-studio #doclib-modal .doclib-card-menu-wrap > button:hover { color: var(--st-text); background: var(--st-press); }
+html.ui-studio #doclib-modal .doclib-card-chevron { color: var(--st-text-3); }
+
+/* Empty state: one calm centered block; the Import link gets a real tap area */
+html.ui-studio #doclib-modal .doclib-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px !important; padding: 44px 16px 36px; font-size: 13px; color: var(--st-text-3);
+}
+html.ui-studio #doclib-modal .doclib-empty > span:first-child { font-size: 14px !important; font-weight: 600; color: var(--st-text-2); opacity: 1 !important; }
+html.ui-studio #doclib-modal .doclib-empty > span { font-size: 12.5px !important; opacity: 1 !important; }
+html.ui-studio #doclib-modal .doclib-empty a {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 10px; margin: 0 2px;
+  font-size: 12.5px !important; font-weight: 550; color: var(--st-accent) !important; text-decoration: none !important;
+  border: 1px solid var(--st-accent-line); border-radius: var(--st-r-sm); opacity: 1 !important;
+}
+html.ui-studio #doclib-modal .doclib-empty a:hover { background: var(--st-accent-soft); }
+html.ui-studio #doclib-modal .doclib-empty svg { opacity: .8; }
+
+@media (max-width: 768px) {
+  html.ui-studio #doclib-modal .lib-tab { padding: 0 6px; gap: 5px; }
+  html.ui-studio #doclib-modal .lib-tabs { gap: 0; }
+}
+
+/* ==========================================================================
+   Notes  (#notes-pane, a docked side pane; static/js/notes.js)
+   ========================================================================== */
+html.ui-studio #notes-pane { font-family: var(--st-font); letter-spacing: -0.006em; background: var(--st-surface); }
+html.ui-studio #notes-pane.modal-right-docked { border-left-color: var(--st-line-2); box-shadow: -1px 0 0 var(--st-line), -12px 0 32px rgba(0,0,0,.14); }
+html.ui-studio #notes-pane.modal-left-docked { border-right-color: var(--st-line-2); box-shadow: 1px 0 0 var(--st-line), 12px 0 32px rgba(0,0,0,.14); }
+html.ui-studio #notes-pane:not(.modal-right-docked):not(.modal-left-docked) {
+  border-color: var(--st-line-2); border-radius: var(--st-r-lg); box-shadow: var(--st-shadow-lg);
+}
+/* Header: 16px title, quiet text buttons */
+html.ui-studio #notes-pane .notes-pane-header {
+  margin: 0; padding: 10px 10px 10px 16px; min-height: 52px; gap: 6px;
+  border-bottom: 1px solid var(--st-line); background: transparent;
+}
+html.ui-studio #notes-pane .notes-pane-title {
+  font-size: 16px; font-weight: 650; letter-spacing: -0.015em; color: var(--st-text);
+  display: inline-flex; align-items: center; gap: 8px;
+}
+html.ui-studio #notes-pane .notes-pane-title svg { color: var(--st-text-3); }
+html.ui-studio #notes-pane .notes-pane-header .doc-action-icon-btn {
+  height: 30px; min-width: 30px; border-radius: var(--st-r-sm); color: var(--st-text-2); opacity: 1;
+  background: transparent; border: 1px solid transparent;
+}
+html.ui-studio #notes-pane .notes-pane-header .doc-action-icon-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #notes-pane .notes-pane-header .doc-action-icon-btn.active { background: var(--st-accent-soft); color: var(--st-text); }
+html.ui-studio #notes-pane .notes-header-btn-label { font-size: 12.5px; font-weight: 500; }
+html.ui-studio #notes-pane .notes-pane-header .modal-minimize-btn { color: var(--st-text-3); border-radius: var(--st-r-sm); }
+html.ui-studio #notes-pane .notes-pane-header .modal-minimize-btn:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* Search + Select */
+html.ui-studio #notes-pane .notes-search-bar { padding: 12px 12px 4px; gap: 8px; }
+html.ui-studio #notes-pane .notes-search-bar .memory-search-input { flex: 1; min-width: 0; }
+html.ui-studio #notes-pane .notes-select-trigger {
+  top: 0; height: var(--sta-btn); padding: 0 12px; font-family: var(--st-font); font-size: 12.5px; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #notes-pane .notes-select-trigger:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* Body + label chips */
+html.ui-studio #notes-pane .notes-pane-body { padding: 8px 12px 16px; gap: 8px; }
+html.ui-studio #notes-pane .notes-labels-bar { gap: 6px; padding: 0; }
+html.ui-studio #notes-pane .notes-label-chip {
+  height: 26px; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--st-font); font-size: 12px; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: 999px;
+}
+html.ui-studio #notes-pane .notes-label-chip:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio #notes-pane .notes-label-chip.active {
+  background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line); font-weight: 550;
+}
+html.ui-studio #notes-pane .notes-label-chip-count {
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; font-size: 10.5px; font-weight: 600;
+  background: var(--st-press); color: var(--st-text-3);
+}
+html.ui-studio #notes-pane .notes-label-chip.active .notes-label-chip-count { color: var(--st-text-2); }
+
+/* Quick add: a calm field, no pulsing glow */
+html.ui-studio #notes-pane .notes-quick-add {
+  animation: none; min-height: 40px; padding: 4px 6px 4px 4px; margin: 2px 0 6px; gap: 6px;
+  background: var(--sta-field); border: 1px solid var(--st-line-2); border-radius: var(--st-r);
+  box-shadow: none;
+}
+html.ui-studio #notes-pane .notes-quick-add:hover { border-color: var(--sto-field-hover, var(--st-line-2)); box-shadow: none; }
+html.ui-studio #notes-pane .notes-quick-add:focus-within { border-color: var(--st-accent-line); box-shadow: var(--st-ring); background: var(--sta-field); }
+html.ui-studio #notes-pane .notes-quick-add::before { color: var(--st-text-3); }
+html.ui-studio #notes-pane .notes-quick-input,
+html.ui-studio #notes-pane .notes-quick-input:hover,
+html.ui-studio #notes-pane .notes-quick-input:focus {
+  font-family: var(--st-font); font-size: 13.5px; color: var(--st-text); caret-color: var(--st-accent);
+  background: transparent; border: none; box-shadow: none; outline: none; padding: 6px 0; height: auto;
+}
+html.ui-studio #notes-pane .notes-quick-input::placeholder { color: var(--st-text-3); }
+html.ui-studio #notes-pane .notes-quick-type-seg {
+  height: 30px; border: 1px solid var(--st-line); border-radius: var(--st-r-sm); background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+html.ui-studio #notes-pane .notes-quick-type-seg::before {
+  top: 2px; bottom: 2px; height: auto; left: 2px; width: calc(50% - 2px);
+  background: var(--st-surface-2); border-radius: var(--st-r-xs);
+  box-shadow: var(--st-shadow-sm), inset 0 0 0 1px var(--st-line-2);
+}
+html.ui-studio #notes-pane .notes-quick-type-seg.is-todo::before { transform: translateX(100%); }
+html.ui-studio #notes-pane .notes-quick-type-pill { color: var(--st-text-3); }
+html.ui-studio #notes-pane .notes-quick-type-pill.active { color: var(--st-text); }
+html.ui-studio #notes-pane .notes-quick-icon { color: var(--st-text-3); border-radius: var(--st-r-sm); }
+html.ui-studio #notes-pane .notes-quick-icon:hover { color: var(--st-text); background: var(--st-hover); }
+
+/* Note cards */
+html.ui-studio #notes-pane .note-card {
+  padding: 12px 40px 12px 14px; min-height: 60px; gap: 5px;
+  background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: var(--st-r);
+  box-shadow: var(--st-shadow-sm);
+  transition: background .12s, border-color .12s, box-shadow .12s;
+}
+html.ui-studio #notes-pane .note-card:hover:not([class*="note-color-"]) { background: var(--st-surface-2); }
+html.ui-studio #notes-pane .note-card:hover { border-color: color-mix(in srgb, var(--fg) 20%, transparent); }
+html.ui-studio #notes-pane .note-card-pinned { border-top-width: 1px; }
+html.ui-studio #notes-pane .note-card-title { font-size: 14px; font-weight: 600; color: var(--st-text); letter-spacing: -0.01em; }
+html.ui-studio #notes-pane .note-card-title:hover { opacity: 1; color: var(--st-text); text-decoration: underline; text-decoration-color: var(--st-line-2); text-underline-offset: 3px; }
+html.ui-studio #notes-pane .note-content-preview { font-size: 13px; line-height: 1.5; color: var(--st-text-2); opacity: 1; }
+html.ui-studio #notes-pane .note-card-label-chip {
+  height: 22px; padding: 0 8px; font-size: 11.5px; font-weight: 550; line-height: 1;
+  color: var(--st-text-2); background: var(--st-press); border: 1px solid transparent; border-radius: 999px;
+}
+html.ui-studio #notes-pane .note-card-label-chip:hover { background: var(--st-hover); border-color: var(--st-line-2); color: var(--st-text); }
+/* Colored notes: a faint wash + a colored edge instead of a heavy fill */
+html.ui-studio #notes-pane .note-card[class*="note-color-"] { box-shadow: var(--st-shadow-sm); }
+html.ui-studio #notes-pane .note-card.note-color-yellow { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--hl-string, #d9a23a) 70%, transparent), var(--st-shadow-sm); }
+
+/* Corner controls: 24px targets */
+html.ui-studio #notes-pane .note-card-pin,
+html.ui-studio #notes-pane .note-card-select {
+  width: 24px; height: 24px; top: -9px; opacity: 1;
+  background: var(--st-surface); border: 1px solid var(--st-line-2); color: var(--st-text-3);
+  box-shadow: var(--st-shadow-sm);
+}
+html.ui-studio #notes-pane .note-card-pin { right: -6px; }
+html.ui-studio #notes-pane .note-card-select { left: -6px; }
+html.ui-studio #notes-pane .note-card-pin svg { width: 13px; height: 13px; }
+html.ui-studio #notes-pane .note-card-select:hover,
+html.ui-studio #notes-pane .note-card-pin:hover { transform: none; background: var(--st-surface-2); color: var(--st-text); }
+html.ui-studio #notes-pane .note-card-pin.active {
+  background: var(--st-surface); border-color: var(--st-accent-line); color: var(--st-accent);
+}
+html.ui-studio #notes-pane .note-card-done { color: var(--stb-ok, #3fb97a); }
+html.ui-studio #notes-pane .note-card-done:hover { background: var(--stb-ok-soft, rgba(63,185,122,.14)); }
+
+/* Tasks: values that tasks.js writes inline */
+html.ui-studio #tasks-modal #tasks-sort { height: var(--sta-btn) !important; top: 0 !important; font-size: 12.5px !important; width: auto !important; min-width: 96px; }
+html.ui-studio #tasks-modal .task-card .memory-item-meta { font-size: 12px !important; opacity: 1 !important; margin-top: 2px !important; color: var(--st-text-3); }
+html.ui-studio #tasks-modal .task-card .task-status-badge { top: 0 !important; }
+html.ui-studio #tasks-modal .task-card .task-card-run-btn { top: 0 !important; margin-right: 2px !important; }
+html.ui-studio #tasks-modal .task-card .memory-item-actions { align-self: center; }
+@media (max-width: 768px) {
+  html.ui-studio #tasks-modal .task-card .task-state-badge {
+    width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; justify-content: center;
+  }
+  html.ui-studio #tasks-modal .task-card .task-state-badge svg { width: 10px; height: 10px; }
+  html.ui-studio #tasks-modal .task-card .task-card-run-btn { height: 28px; padding: 0 10px; }
+  html.ui-studio #tasks-modal .memory-item-btn { min-width: 32px; height: 32px; }
+}
+
+/* ==========================================================================
+   Inbound mail (the Inbound chip inside #email-lib-modal; inboundMail.js)
+   ========================================================================== */
+html.ui-studio #email-lib-modal .email-inbound-card {
+  min-height: 56px; padding: 9px 12px 9px 14px;
+}
+html.ui-studio #email-lib-modal .email-inbound-card .memory-item-title { font-size: 13.5px; }
+html.ui-studio #email-lib-modal .email-inbound-card .memory-item-meta,
+html.ui-studio #email-lib-modal .email-inbound-card .memory-item-meta * { font-size: 12px; color: var(--st-text-3); }
+
+/* ==========================================================================
+   Gallery  (#gallery-modal: photos, albums, editor landing, settings,
+   detail view; static/js/gallery.js, galleryEditor.js)
+   ========================================================================== */
+html.ui-studio #gallery-modal .gallery-tabs { padding: 0 2px; }
+html.ui-studio #gallery-modal .gallery-toolbar { gap: 8px; align-items: center; }
+html.ui-studio #gallery-modal .gallery-search,
+html.ui-studio #gallery-modal .gallery-model-filter,
+html.ui-studio #gallery-modal .gallery-sort { height: var(--sta-btn); font-size: 12.5px; border-radius: var(--st-r-sm); }
+html.ui-studio #gallery-modal .gallery-search { font-size: 13px; }
+html.ui-studio #gallery-modal .gallery-search-enter-hint { font-size: 11px; color: var(--st-text-3); opacity: 1; }
+/* Select / New album / editor landing buttons: the standard 32px hairline button */
+html.ui-studio #gallery-modal .gallery-select-btn {
+  height: var(--sta-btn); padding: 0 12px; margin-top: 0 !important;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; line-height: 1; opacity: 1;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+  transition: background .12s, color .12s, border-color .12s;
+}
+html.ui-studio #gallery-modal .gallery-select-btn:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio #gallery-modal .gallery-select-btn.active {
+  background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line); font-weight: 550;
+}
+html.ui-studio #gallery-modal .gallery-select-btn span { font-size: inherit; }
+html.ui-studio #gallery-modal .gallery-editor-landing-actions .gallery-select-btn { height: 34px; padding: 0 14px; font-size: 13px; color: var(--st-text); }
+html.ui-studio #gallery-modal #gallery-editor-new {
+  background: var(--st-accent); color: var(--st-accent-fg); border-color: transparent; font-weight: 550;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.18);
+}
+html.ui-studio #gallery-modal #gallery-editor-new:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); }
+
+/* Filter + album chips */
+html.ui-studio #gallery-modal .gallery-album-chips { gap: 6px; }
+html.ui-studio #gallery-modal .gallery-chip {
+  height: 28px; padding: 0 12px; font-family: var(--st-font); font-size: 12.5px; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: 999px;
+}
+html.ui-studio #gallery-modal .gallery-chip:hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio #gallery-modal .gallery-chip.active {
+  background: var(--st-accent-soft); color: var(--st-text); border-color: var(--st-accent-line);
+}
+html.ui-studio #gallery-modal .gallery-chip-fav { color: var(--st-text-3); }
+html.ui-studio #gallery-modal .gallery-chip-fav.active { color: #e5566b; }
+
+/* Photo cards */
+html.ui-studio #gallery-modal .gallery-grid { gap: 10px; }
+html.ui-studio #gallery-modal .gallery-card {
+  border-radius: var(--st-r); border: 1px solid var(--st-line); overflow: hidden;
+  background: var(--st-sunken); box-shadow: none; transition: border-color .12s, box-shadow .15s;
+}
+html.ui-studio #gallery-modal .gallery-card:hover { border-color: var(--st-line-2); box-shadow: var(--st-shadow); transform: none; }
+html.ui-studio #gallery-modal .gallery-card-upload {
+  background: transparent; border: 1px dashed var(--st-line-2);
+}
+html.ui-studio #gallery-modal .gallery-card-upload:hover { background: var(--st-hover); border-color: var(--st-accent-line); box-shadow: none; }
+html.ui-studio #gallery-modal .gallery-card-upload-inner { color: var(--st-text-3); border: none; }
+html.ui-studio #gallery-modal .gallery-card-upload:hover .gallery-card-upload-inner { color: var(--st-text); }
+html.ui-studio #gallery-modal .gallery-card-upload-label { font-size: 13px; font-weight: 500; }
+html.ui-studio #gallery-modal .gallery-card-info {
+  padding: 18px 10px 8px; background: linear-gradient(transparent, rgba(0,0,0,.72));
+}
+html.ui-studio #gallery-modal .gallery-card-prompt { font-size: 12px; font-weight: 550; line-height: 1.35; }
+html.ui-studio #gallery-modal .gallery-card-meta { font-size: 10.5px; gap: 6px; margin-top: 3px; opacity: .85; }
+html.ui-studio #gallery-modal .gallery-card-model { padding: 1px 6px; border-radius: var(--st-r-xs); background: rgba(255,255,255,.16); }
+html.ui-studio #gallery-modal :is(.gallery-fav-btn, .gallery-dl-btn) {
+  width: 28px; height: 28px; border-radius: var(--st-r-sm);
+  background: rgba(10,12,16,.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,.12); color: #fff;
+}
+html.ui-studio #gallery-modal .gallery-empty,
+html.ui-studio #gallery-modal .gallery-albums-empty { font-size: 13px; font-style: normal; color: var(--st-text-3); }
+html.ui-studio #gallery-modal .gallery-albums-empty p { font-size: 14px; font-weight: 600; color: var(--st-text-2); margin: 0 0 12px; }
+
+/* Detail view */
+html.ui-studio #gallery-modal .gallery-detail-header { border-bottom: 1px solid var(--st-line); gap: 6px; padding-bottom: 6px; }
+html.ui-studio #gallery-modal .gallery-detail-back,
+html.ui-studio #gallery-modal .gallery-detail-menu-btn {
+  height: var(--sta-btn); min-width: var(--sta-btn); padding: 0 10px; font-family: var(--st-font);
+  font-size: 12.5px; font-weight: 500; color: var(--st-text-2); opacity: 1;
+  background: transparent; border: 1px solid transparent; border-radius: var(--st-r-sm);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+html.ui-studio #gallery-modal .gallery-detail-menu-btn { padding: 0; }
+html.ui-studio #gallery-modal .gallery-detail-back:hover,
+html.ui-studio #gallery-modal .gallery-detail-menu-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #gallery-modal .gallery-detail-image { border-radius: var(--st-r); background: var(--st-sunken); }
+html.ui-studio #gallery-modal .gallery-detail-section label {
+  font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--st-text-3); opacity: 1;
+}
+html.ui-studio #gallery-modal .gallery-detail-section > div:not([class]) { font-size: 13px; color: var(--st-text); }
+html.ui-studio #gallery-modal .gallery-tag-input { font-size: 13px; }
+html.ui-studio #gallery-modal .gallery-date-rel { color: var(--st-text-3); }
+html.ui-studio #gallery-modal :is(.gallery-detail-nav, .gallery-detail-rotate) {
+  border-radius: 999px; background: rgba(10,12,16,.55); color: #fff; border: 1px solid rgba(255,255,255,.12);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+
+/* Editor landing + saved projects */
+html.ui-studio #gallery-modal .gallery-editor-landing h3 { font-size: 17px; font-weight: 650; letter-spacing: -0.015em; color: var(--st-text); }
+html.ui-studio #gallery-modal .gallery-editor-landing p { font-size: 13px; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #gallery-modal .ge-alpha-tag {
+  font-size: 10px; font-weight: 600; letter-spacing: .02em; padding: 1px 6px; border-radius: var(--st-r-xs);
+  background: var(--st-accent-soft); color: var(--st-accent);
+}
+html.ui-studio #gallery-modal .gallery-editor-template-label { font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--st-text-3); opacity: 1; }
+html.ui-studio #gallery-modal .gallery-editor-template-select { height: 34px; font-size: 13px; }
+html.ui-studio #gallery-modal .gallery-editor-drafts { border-top-color: var(--st-line); }
+html.ui-studio #gallery-modal .gallery-editor-drafts-header { align-items: center; gap: 10px; }
+html.ui-studio #gallery-modal .gallery-editor-drafts-title { font-size: 13px; font-weight: 650; letter-spacing: -0.01em; text-transform: none; color: var(--st-text); opacity: 1; }
+html.ui-studio #gallery-modal .gallery-editor-drafts-search { height: var(--sta-btn); font-size: 13px; }
+html.ui-studio #gallery-modal #gallery-editor-drafts-select { height: var(--sta-btn); }
+
+/* Settings tab (AI tagging card) */
+html.ui-studio #gallery-modal .admin-card {
+  background: transparent; border: 1px solid var(--st-line); border-radius: var(--st-r); box-shadow: none; padding: 16px;
+}
+html.ui-studio #gallery-modal .admin-card h2,
+html.ui-studio #gallery-modal .admin-card h3 { font-size: 15px; font-weight: 650; letter-spacing: -0.015em; color: var(--st-text); }
+html.ui-studio #gallery-modal .admin-card a { color: var(--st-accent); text-decoration: none; }
+html.ui-studio #gallery-modal .admin-card a:hover { text-decoration: underline; }
+
+/* ==========================================================================
+   Document editor chrome  (#doc-editor-pane: tabs, markdown toolbar,
+   email compose header + actions; static/js/document.js)
+   ========================================================================== */
+html.ui-studio #doc-editor-pane { background: var(--bg); font-family: var(--st-font); }
+html.ui-studio #doc-editor-pane .doc-tab-bar { background: var(--st-sidebar); border-bottom: 1px solid var(--st-line); }
+html.ui-studio #doc-editor-pane .doc-tab {
+  font-size: 12.5px; font-weight: 500; color: var(--st-text-3); opacity: 1; gap: 6px; padding: 0 10px 0 12px;
+  border-right: 1px solid var(--st-line);
+}
+html.ui-studio #doc-editor-pane .doc-tab:hover { color: var(--st-text-2); background: var(--st-hover); opacity: 1; }
+html.ui-studio #doc-editor-pane .doc-tab.active { color: var(--st-text); background: var(--bg); border-radius: 0; }
+html.ui-studio #doc-editor-pane .doc-tab.active::after { height: 2px; background: var(--st-accent); }
+html.ui-studio #doc-editor-pane .doc-tab-version {
+  font-size: 10.5px; font-weight: 600; padding: 0 6px; line-height: 18px; margin-right: 2px;
+  color: var(--st-text-3); background: var(--st-press); border: 1px solid transparent; border-radius: var(--st-r-xs);
+}
+html.ui-studio #doc-editor-pane .doc-tab-version:hover { color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio #doc-editor-pane .doc-tab-close { color: var(--st-text-3); border-radius: var(--st-r-xs); opacity: .8; }
+html.ui-studio #doc-editor-pane .doc-tab-close:hover { color: var(--st-text); background: var(--st-press); opacity: 1; }
+html.ui-studio #doc-editor-pane .doc-tab-new { color: var(--st-text-3); }
+html.ui-studio #doc-editor-pane .doc-tab-new:hover { color: var(--st-text); background: var(--st-hover); }
+
+html.ui-studio #doc-editor-pane .doc-md-toolbar { background: var(--bg); border-bottom: 1px solid var(--st-line); gap: 2px; padding: 2px 10px; }
+html.ui-studio #doc-editor-pane .md-toolbar-items { gap: 2px; align-items: center; }
+html.ui-studio #doc-editor-pane .md-toolbar-items > button,
+html.ui-studio #doc-editor-pane .md-toolbar-items > .doc-action-icon-btn {
+  height: 28px; min-width: 28px; border-radius: var(--st-r-xs); color: var(--st-text-2); opacity: 1;
+  font-size: 12.5px;
+}
+html.ui-studio #doc-editor-pane .md-toolbar-items > button:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #doc-editor-pane .md-toolbar-sep { background: var(--st-line-2); height: 14px; }
+
+/* Email compose */
+html.ui-studio #doc-editor-pane .doc-email-header { background: var(--bg); border-bottom: 1px solid var(--st-line); padding-top: 10px; padding-bottom: 10px; }
+html.ui-studio #doc-editor-pane .email-field { gap: 10px; }
+html.ui-studio #doc-editor-pane .email-field label { font-size: 12.5px; font-weight: 500; color: var(--st-text-3); opacity: 1; min-width: 52px; }
+html.ui-studio #doc-editor-pane .email-field input { height: 32px; font-size: 13.5px; }
+html.ui-studio #doc-editor-pane .email-cc-toggle { font-size: 12px; color: var(--st-text-3); border-radius: var(--st-r-xs); }
+html.ui-studio #doc-editor-pane .email-cc-toggle:hover { color: var(--st-text); background: var(--st-hover); }
+html.ui-studio #doc-editor-pane .doc-email-richbody { font-size: 14px; line-height: 1.65; }
+html.ui-studio #doc-editor-pane .doc-email-actions { border-top: 1px solid var(--st-line); background: var(--bg); }
+html.ui-studio #doc-editor-pane .email-send-btn {
+  height: var(--sta-btn); font-family: var(--st-font); font-size: 13px; font-weight: 550;
+  color: var(--st-accent-fg); background: var(--st-accent); border: 1px solid transparent;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1);
+}
+html.ui-studio #doc-editor-pane .email-send-btn:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); border-color: transparent; }
+html.ui-studio #doc-editor-pane .email-send-split .email-send-main { border-radius: var(--st-r-sm) 0 0 var(--st-r-sm); }
+html.ui-studio #doc-editor-pane .email-send-split .email-send-caret {
+  border-radius: 0 var(--st-r-sm) var(--st-r-sm) 0; border-left: 1px solid rgba(255,255,255,.22);
+}
+html.ui-studio #doc-editor-pane :is(.email-discard-btn, .email-draft-btn, #doc-email-more-btn) {
+  height: var(--sta-btn); padding: 0 12px; display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--st-font); font-size: 12.5px; font-weight: 500; color: var(--st-text-2);
+  background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #doc-editor-pane :is(.email-discard-btn, .email-draft-btn, #doc-email-more-btn):hover { background: var(--st-hover); color: var(--st-text); border-color: var(--st-line-2); }
+html.ui-studio #doc-editor-pane .email-discard-btn svg { color: var(--st-text-3); }
+
+/* Research empty state (rendered as .hwfit-loading inside the Library grid) */
+html.ui-studio #doclib-modal .doclib-grid > .hwfit-loading {
+  flex-direction: column; gap: 6px !important; padding: 44px 16px 36px; font-size: 13px; color: var(--st-text-3);
+}
+html.ui-studio #doclib-modal .doclib-grid > .hwfit-loading > span:first-child { font-size: 14px; font-weight: 600; color: var(--st-text-2); }
+html.ui-studio #doclib-modal .doclib-grid > .hwfit-loading > span { font-size: 12.5px !important; opacity: 1 !important; }
+html.ui-studio #doclib-modal .doclib-grid > .hwfit-loading a {
+  display: inline-block; padding: 5px 2px; margin: -5px 0; color: var(--st-accent) !important; text-decoration: none !important; font-weight: 550;
+}
+html.ui-studio #doclib-modal .doclib-grid > .hwfit-loading a:hover { text-decoration: underline !important; }
+
+/* Gallery on a phone: search gets its own row, filters + Select below */
+@media (max-width: 768px) {
+  html.ui-studio #gallery-modal #gallery-images-container > .gallery-toolbar { flex-wrap: wrap; row-gap: 8px; }
+  html.ui-studio #gallery-modal #gallery-images-container > .gallery-toolbar > .gallery-search-wrap { flex: 1 1 100%; top: 0; }
+  html.ui-studio #gallery-modal #gallery-images-container > .gallery-toolbar > :is(.gallery-model-filter, .gallery-sort) { flex: 1 1 0; min-width: 0; width: auto !important; max-width: none !important; }
+  html.ui-studio #gallery-modal .gallery-card-meta { flex-wrap: wrap; row-gap: 2px; }
+  html.ui-studio #gallery-modal .gallery-card-info { padding: 14px 8px 6px; }
+}
+
+/* Notes: the inline edit form */
+html.ui-studio #notes-pane .note-form {
+  border-radius: var(--st-r); border-color: var(--st-line-2); box-shadow: var(--st-shadow);
+}
+html.ui-studio #notes-pane .note-form:not([class*="note-color-"]) { background: var(--st-surface-2); }
+html.ui-studio #notes-pane .note-form-title,
+html.ui-studio #notes-pane .note-form-title:hover,
+html.ui-studio #notes-pane .note-form-title:focus {
+  font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--st-text);
+  background: transparent; border-color: transparent; box-shadow: none;
+}
+html.ui-studio #notes-pane .note-form-content { font-size: 13.5px; line-height: 1.55; padding: 10px 12px; border-radius: var(--st-r-sm); }
+html.ui-studio #notes-pane .note-form-label { font-size: 12.5px; height: 32px; }
+html.ui-studio #notes-pane .note-form-type-seg { border-color: var(--st-line); border-radius: var(--st-r-sm); background: color-mix(in srgb, var(--fg) 5%, transparent); }
+html.ui-studio #notes-pane .note-form-type-pill { color: var(--st-text-3); font-size: 12.5px; border-radius: var(--st-r-xs); }
+html.ui-studio #notes-pane .note-form-type-pill.active { color: var(--st-text); background: var(--st-surface); box-shadow: var(--st-shadow-sm), inset 0 0 0 1px var(--st-line-2); }
+html.ui-studio #notes-pane :is(.note-form-icon-btn, .note-form-photo-btn) { color: var(--st-text-3); border-radius: var(--st-r-sm); }
+html.ui-studio #notes-pane :is(.note-form-icon-btn, .note-form-photo-btn):hover { color: var(--st-text); background: var(--st-hover); }
+html.ui-studio #notes-pane .note-form-text-btn {
+  height: var(--sta-btn); padding: 0 12px; gap: 6px; font-family: var(--st-font); font-size: 12.5px; font-weight: 500;
+  color: var(--st-text-2); background: transparent; border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio #notes-pane .note-form-text-btn .nft-label { font-size: inherit; }
+html.ui-studio #notes-pane .note-form-text-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio #notes-pane .note-form-text-btn.danger:hover { color: var(--stb-err, #ec5b5f); background: var(--stb-err-soft, rgba(236,91,95,.13)); border-color: transparent; }
+html.ui-studio #notes-pane .note-form-save {
+  color: var(--st-accent-fg); background: var(--st-accent); border-color: transparent; font-weight: 550;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.18);
+}
+html.ui-studio #notes-pane .note-form-save:hover { color: var(--st-accent-fg); background: color-mix(in srgb, var(--st-accent) 88%, #fff); }
+html.ui-studio #notes-pane .note-color-dot { box-shadow: inset 0 0 0 1px var(--st-line-2); }
