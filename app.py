@@ -211,6 +211,10 @@ if AUTH_ENABLED:
         # on a device that is not logged in. The one-time code in the path is
         # the credential; routes/enroll_routes.py checks it and 404s otherwise.
         _re.compile(r"^/enroll/[a-z2-9]{16}/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)?/?$"),
+        # The phone's SMS forwarder posts each text here. The secret in the
+        # path is the credential; routes/sms_routes.py checks it and the
+        # sender's number, and 404s otherwise.
+        _re.compile(r"^/api/sms/inbound/[A-Za-z0-9_-]{32,64}/?$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -633,6 +637,8 @@ from routes.device_routes import setup_device_routes
 app.include_router(setup_device_routes())
 from routes.enroll_routes import setup_enroll_routes
 app.include_router(setup_enroll_routes())
+from routes.sms_routes import setup_sms_routes
+app.include_router(setup_sms_routes(session_manager))
 from routes.special_chat_routes import setup_special_chat_routes
 app.include_router(setup_special_chat_routes(session_manager))
 from routes.mail_listener_routes import setup_mail_listener_routes
