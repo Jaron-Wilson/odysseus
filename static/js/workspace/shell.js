@@ -84,6 +84,8 @@ let _mru = ['home'];
 let _mounted = false;
 let _seenSid;               // last session id the poll saw
 let _openingTool = null;    // a dormant tab reopening its tool, let its click through
+const _asked = new Map();   // tool tab id -> when its button was clicked
+let _frontAt = 0;           // when a tool last came to the front by itself
 const _els = new Map();     // tool tab id -> its element while open
 
 function _save() {
@@ -133,7 +135,7 @@ function show(id, pane) {
   const other = pane === 'left' ? 'right' : 'left';
   if (S[other] === id) S[other] = S[pane];           // swap sides
   else if (t.kind === 'chat' && S[other] && tab(S[other])?.kind === 'chat') {
-    S[other] = _fallback([id, S[pane]]);
+    S[other] = _fallback([id, S[pane]], { noChat: true });
   }
   S[pane] = id;
   if (S.right && S.right === S.left) S.right = null;
@@ -143,8 +145,8 @@ function show(id, pane) {
 }
 
 // Most recently used tab not in `exclude`, else Home.
-function _fallback(exclude) {
-  return _mru.find(x => !exclude.includes(x) && tab(x)) || 'home';
+function _fallback(exclude, { noChat = false } = {}) {
+  return _mru.find(x => !exclude.includes(x) && tab(x) && !(noChat && tab(x).kind === 'chat')) || 'home';
 }
 
 function addTab(t, { after = activeId(), front = true } = {}) {
@@ -217,10 +219,19 @@ function scanTools() {
   for (const tool of TOOLS) {
     const el = _findToolEl(tool);
     const id = 'tool:' + tool.key;
-    if (_isOpenEl(el) && !el.classList.contains('ws-away-pending')) {
+    if (_isOpenEl(el)) {
       seen.add(id);
       if (_els.get(id) !== el) { _els.set(id, el); changed = true; }
-      if (!tab(id)) { addTab({ id, kind: 'tool', key: tool.key }); return; }
+      if (!tab(id)) {
+        // A slow tool (the browser connects first) that shows up after
+        // another tool was opened goes in as a background tab.
+        const late = _asked.has(id) && _frontAt > _asked.get(id);
+        _asked.delete(id);
+        if (!late) _frontAt = Date.now();
+        el._wsKnown = true;
+        addTab({ id, kind: 'tool', key: tool.key }, { front: !late });
+        return;
+      }
       if (_openingTool === id || !el._wsKnown) { el._wsKnown = true; _openingTool = null; if (!paneOf(id)) { show(id); return; } }
     } else if (_els.has(id)) {
       // Closed by the tool itself.
@@ -358,8 +369,11 @@ function layout() {
   if (!main) return;
   const cs = getComputedStyle(main);
   const r = main.getBoundingClientRect();
-  const x = Math.round(r.left - (parseFloat(cs.marginLeft) || 0));
-  const w = Math.round(r.right + (parseFloat(cs.marginRight) || 0)) - x;
+  // Phones: the sidebar is an overlay, so the stage is the whole width (main
+  // itself is squeezed while the sidebar slides over it).
+  const phone = isPhone();
+  const x = phone ? 0 : Math.round(r.left - (parseFloat(cs.marginLeft) || 0));
+  const w = phone ? document.documentElement.clientWidth : Math.round(r.right + (parseFloat(cs.marginRight) || 0)) - x;
   const root = document.documentElement.style;
   const split = !!S.right && !isPhone();
   const lw = split ? Math.round(w * S.ratio) : w;
@@ -432,22 +446,56 @@ function _icon(t) {
   return ICONS[TOOL_BY_KEY[t.key]?.icon] || ICONS.plus;
 }
 
+const _reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Keyed render: tabs keep their elements across updates, so a new tab can
+// grow in (.ws-tab-enter) and a closed one shrink out (.ws-tab-leave), and
+// the active state can transition (workspace.css).
 function renderTabs() {
   if (!_bar) return;
   const list = _bar.querySelector('.ws-tabs');
   const act = activeId();
-  const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  list.innerHTML = S.tabs.map(t => {
+  const first = !list.querySelector('.ws-tab');
+  const live = new Map([...list.querySelectorAll('.ws-tab:not(.ws-tab-leave)')].map(el => [el.dataset.tab, el]));
+  let prev = null;
+  for (const t of S.tabs) {
+    let el = live.get(t.id);
+    live.delete(t.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.setAttribute('role', 'tab');
+      el.dataset.tab = t.id;
+      el.innerHTML = '<span class="ws-tab-ico"></span><span class="ws-tab-label"></span>'
+        + (t.kind === 'home' ? '' : '<span class="ws-tab-x" role="button" title="Close">×</span>');
+      if (!first && !_reducedMotion()) {
+        el._wsEnter = true;
+        el.addEventListener('animationend', () => { el._wsEnter = false; el.classList.remove('ws-tab-enter'); }, { once: true });
+      }
+    }
     const p = paneOf(t.id);
-    const cls = ['ws-tab', t.kind === 'home' ? 'ws-tab-home' : '', t.id === act ? 'active' : '', p ? 'shown' : '',
-      p && S.right ? 'in-' + p : ''].filter(Boolean).join(' ');
-    const lbl = esc(_label(t));
-    return `<div class="${cls}" role="tab" tabindex="${t.id === act ? 0 : -1}" aria-selected="${t.id === act}"
-      data-tab="${esc(t.id)}" draggable="${t.kind !== 'home'}" title="${lbl}">
-      <span class="ws-tab-ico">${_icon(t)}</span><span class="ws-tab-label">${lbl}</span>
-      ${t.kind === 'home' ? '' : `<span class="ws-tab-x" role="button" aria-label="Close ${lbl}" title="Close">×</span>`}
-    </div>`;
-  }).join('');
+    el.className = ['ws-tab', t.kind === 'home' ? 'ws-tab-home' : '', t.id === act ? 'active' : '', p ? 'shown' : '',
+      p && S.right ? 'in-' + p : '', el._wsEnter ? 'ws-tab-enter' : ''].filter(Boolean).join(' ');
+    const lbl = _label(t);
+    const icon = _icon(t);
+    if (el._wsIcon !== icon) { el.querySelector('.ws-tab-ico').innerHTML = icon; el._wsIcon = icon; }
+    const lblEl = el.querySelector('.ws-tab-label');
+    if (lblEl.textContent !== lbl) lblEl.textContent = lbl;
+    el.title = lbl;
+    el.tabIndex = t.id === act ? 0 : -1;
+    el.setAttribute('aria-selected', String(t.id === act));
+    el.setAttribute('draggable', String(t.kind !== 'home'));
+    el.querySelector('.ws-tab-x')?.setAttribute('aria-label', 'Close ' + lbl);
+    const ref = prev ? prev.nextSibling : list.firstChild;
+    if (el !== ref) list.insertBefore(el, ref);
+    prev = el;
+  }
+  for (const el of live.values()) {
+    if (_reducedMotion()) { el.remove(); continue; }
+    el.classList.remove('active', 'ws-tab-enter');
+    el.classList.add('ws-tab-leave');
+    el.removeAttribute('role');
+    setTimeout(() => el.remove(), 180);
+  }
   _bar.querySelector('.ws-split-btn').classList.toggle('active', !!S.right);
   _bar.querySelector('.ws-split-btn').setAttribute('aria-pressed', S.right ? 'true' : 'false');
   const a = list.querySelector('.ws-tab.active');
@@ -509,6 +557,7 @@ export function openTool(key) {
   const btn = tool.open && document.querySelector(tool.open);
   if (!btn) return;
   _openingTool = id;
+  _asked.set(id, Date.now());
   btn.click();
 }
 
@@ -696,6 +745,7 @@ function _interceptToolButtons(e) {
       _closePhoneSidebar();
     } else {
       _openingTool = id;
+      _asked.set(id, Date.now());
       _closePhoneSidebar();
     }
     return;
@@ -708,6 +758,7 @@ function _interceptToolButtons(e) {
     e.stopImmediatePropagation(); e.preventDefault(); show('tool:' + rail);
   } else if (rail) {
     _openingTool = 'tool:' + rail;
+    _asked.set('tool:' + rail, Date.now());
   }
 }
 

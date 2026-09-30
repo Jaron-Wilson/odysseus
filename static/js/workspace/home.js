@@ -227,7 +227,8 @@ function _renderAgents(jobs) {
 
 function _renderRecent() {
   const all = (window.sessionModule?.getSessions?.() || [])
-    .filter(s => !s.archived && !s.parent_session_id)
+    // Not archived, not threads, not Compare's per-model scratch chats.
+    .filter(s => !s.archived && !s.parent_session_id && !String(s.name || '').startsWith('[CMP]'))
     .sort((a, b) => (Date.parse(b.last_message_at || b.updated_at) || 0) - (Date.parse(a.last_message_at || a.updated_at) || 0))
     .slice(0, 6);
   const body = all.length ? `<ul class="ws-list">${all.map(s => `<li><button type="button" class="ws-row" data-chat="${esc(s.id)}">
@@ -268,6 +269,8 @@ export async function load(force = false) {
   ]).then(([cal, plans, mail, jobs, notes]) => {
     if (!_el) return;
     const grid = _el.querySelector('.ws-grid');
+    // Cards stagger in once; later refreshes just swap the content.
+    if (grid.classList.contains('ready')) grid.classList.add('ws-settled');
     grid.innerHTML = _renderToday(cal) + _renderNeeds(plans, mail) + _renderAgents(jobs) + _renderRecent() + _renderNotes(notes);
     grid.classList.add('ready');
   }).finally(() => { _loading = null; });

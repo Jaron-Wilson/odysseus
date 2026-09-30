@@ -48,9 +48,12 @@ html.ui-workspace .ws-bar-btn {
   width: 30px; height: 30px; padding: 0;
 }
 
-/* Pages: Home and docked tools fill a pane below the tab bar. */
+/* Pages: Home and docked tools fill a pane below the tab bar.
+   Tools size their windows with ID rules (#gallery-modal .modal-content, ...),
+   often !important on phones. The :is(..., #ws-boost) below lifts these
+   geometry rules to ID weight so the page wins; nothing has that id. */
 html.ui-workspace .ws-page,
-html.ui-workspace .ws-docked {
+html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost) {
   position: fixed !important;
   top: var(--ws-top) !important; bottom: 0 !important; right: auto !important;
   height: auto !important; max-height: none !important; min-height: 0 !important;
@@ -58,21 +61,21 @@ html.ui-workspace .ws-docked {
   box-sizing: border-box;
 }
 html.ui-workspace .ws-page[data-ws-pane="left"],
-html.ui-workspace .ws-docked[data-ws-pane="left"] { left: var(--ws-x) !important; width: var(--ws-lw) !important; }
+html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost)[data-ws-pane="left"] { left: var(--ws-x) !important; width: var(--ws-lw) !important; }
 html.ui-workspace .ws-page[data-ws-pane="right"],
-html.ui-workspace .ws-docked[data-ws-pane="right"] {
+html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost)[data-ws-pane="right"] {
   left: calc(var(--ws-x) + var(--ws-lw)) !important; width: calc(var(--ws-w) - var(--ws-lw)) !important;
 }
 html.ui-workspace .ws-page[hidden] { display: none !important; }
 html.ui-workspace .ws-page { z-index: 55; overflow: auto; }
 
 /* A docked tool: its backdrop becomes the page, its window fills it. */
-html.ui-workspace .ws-docked {
+html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost) {
   z-index: 60 !important; display: block !important; padding: 0 !important;
   background: transparent !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
   overflow: hidden !important;
 }
-html.ui-workspace .ws-docked .ws-win {
+html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost) .ws-win:is(.ws-win, #ws-boost) {
   position: absolute !important; inset: 0 !important;
   width: auto !important; height: auto !important;
   max-width: none !important; max-height: none !important; min-width: 0 !important; min-height: 0 !important;
@@ -80,16 +83,16 @@ html.ui-workspace .ws-docked .ws-win {
   border-radius: 0 !important; box-shadow: none !important; resize: none !important;
 }
 /* A tool that is its own window (Notes) keeps the page geometry above. */
-html.ui-workspace .ws-docked.ws-win {
+html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost).ws-win:is(.ws-win, #ws-boost) {
   max-width: none !important; min-width: 0 !important;
   border-radius: 0 !important; box-shadow: none !important; resize: none !important; translate: none !important;
 }
 /* Behind another tab: kept alive, not shown. */
-html.ui-workspace .ws-docked.ws-away {
+html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost).ws-away {
   visibility: hidden !important; pointer-events: none !important;
   left: -200vw !important; width: 10px !important;
 }
-html.ui-workspace .ws-docked.ws-away * { visibility: hidden !important; }
+html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost).ws-away * { visibility: hidden !important; }
 /* Window chrome that makes no sense in a page. */
 html.ui-workspace .ws-docked .modal-minimize-btn,
 html.ui-workspace .ws-docked .minimize-btn,
@@ -173,7 +176,7 @@ html.ui-workspace.ws-on .ws-tabbar {
   box-shadow: inset 0 -1px 0 var(--st-line);
   font-family: var(--st-font);
 }
-/* A soft fade where the strip scrolls under the + button */
+/* Keep the focused tab clear of the strip's edges when it scrolls into view */
 html.ui-workspace .ws-tabs { padding: 0 2px; scroll-padding-inline: 8px; }
 
 /* Tabs: quiet pills. Inactive is plain text, hover lifts a tint, the focused
@@ -267,7 +270,7 @@ html.ui-workspace .ws-menu {
 }
 html[data-theme-mode="dark"].ui-workspace .ws-menu { box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 8px 28px rgba(0,0,0,.4); }
 html.ui-workspace .ws-menu button {
-  min-height: 32px; padding: 6px 10px; box-sizing: border-box;
+  height: auto; min-height: 32px; padding: 6px 10px; box-sizing: border-box;
   border: 0; border-radius: var(--st-r-sm); background: transparent; box-shadow: none;
   color: var(--st-text); font: 450 13px/1.3 var(--st-font); text-align: left; cursor: pointer;
   transition: background-color .08s;
@@ -314,16 +317,20 @@ html.ui-workspace .ws-docked.ws-win:not(#ws-x) {
   background: var(--bg) !important;
   border: 0 !important;
 }
-html.ui-workspace .ws-docked .modal-content.ws-win { padding: 0 20px 16px; }
-html.ui-workspace .ws-docked .ws-win > .modal-header {
-  flex: none; box-sizing: border-box; min-height: 48px;
-  margin: 0 -20px 14px; padding: 0 10px 0 20px;
+/* Several tools pin their header metrics with !important (the email and
+   document libraries), so the title bar has to as well. */
+html.ui-workspace .ws-docked .modal-content.ws-win:not(.settings-modal-content) { padding: 0 20px 16px !important; }
+html.ui-workspace .ws-docked .modal-content.ws-win:not(.settings-modal-content) > .modal-header {
+  flex: none; box-sizing: border-box; min-height: 48px !important;
+  margin: 0 -20px 14px !important; padding: 0 10px 0 20px !important;
   border-bottom: 1px solid var(--st-line); background: transparent;
 }
 html.ui-workspace .ws-docked .ws-win > .modal-header h4 { font-size: 14px; font-weight: 600; }
 html.ui-workspace #settings-modal.ws-docked .settings-modal-content > .modal-header:not(#ws-x) {
   min-height: 48px; margin: 0; padding: 0 10px 0 20px;
 }
+/* Settings: the nav column and panels run the full page height */
+html.ui-workspace #settings-modal.ws-docked .settings-layout { flex: 1 1 auto; min-height: 0; max-height: none; }
 html.ui-workspace .ws-docked .ws-win > .bg-panel-head { min-height: 48px; padding: 0 10px 0 20px; font-size: 14px; font-weight: 600; }
 html.ui-workspace #notes-pane.ws-docked .notes-pane-header { min-height: 48px; padding: 0 10px 0 20px; }
 /* The window's own "fill the chat area" toggle has nothing to do in a page */
@@ -407,7 +414,7 @@ html.ui-workspace .ws-quick button:focus-visible { outline: none; box-shadow: va
    pane is narrow (a phone, or half of a split). */
 html.ui-workspace .ws-grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
-  align-items: start; margin-top: 44px; text-align: left;
+  align-items: stretch; margin-top: 44px; text-align: left;
 }
 html.ui-workspace .ws-card-notes { grid-column: 1 / -1; }
 @container wshome (max-width: 700px) {
@@ -415,6 +422,7 @@ html.ui-workspace .ws-card-notes { grid-column: 1 / -1; }
 }
 
 html.ui-workspace .ws-card {
+  display: flex; flex-direction: column;
   min-width: 0; background: var(--st-surface); border: 1px solid var(--st-line);
   border-radius: var(--st-r-lg); box-shadow: var(--st-shadow-sm); overflow: hidden;
 }
@@ -436,13 +444,13 @@ html.ui-workspace .ws-card-link {
 }
 html.ui-workspace .ws-card-link:hover { background: var(--st-hover); color: var(--st-text); }
 html.ui-workspace .ws-card-link:focus-visible { outline: none; box-shadow: var(--st-ring); }
-html.ui-workspace .ws-card-body { padding: 6px; }
+html.ui-workspace .ws-card-body { flex: 1; padding: 6px; }
 
 /* Lists and rows */
 html.ui-workspace .ws-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 html.ui-workspace .ws-list > li { margin: 0; padding: 0; min-width: 0; }
 html.ui-workspace .ws-row {
-  position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px;
+  position: relative; display: flex; align-items: center; gap: 12px; width: 100%; height: auto; min-height: 48px;
   box-sizing: border-box; margin: 0; padding: 7px 10px; border: 0; border-radius: var(--st-r-sm);
   background: transparent; box-shadow: none; color: var(--st-text); text-align: left;
   font: inherit; font-family: var(--st-font);
@@ -510,10 +518,14 @@ html.ui-workspace :is(.ws-status-failed, .ws-status-error) { --ws-s: var(--ws-ba
 html.ui-workspace :is(.ws-status-blocked, .ws-status-waiting, .ws-status-pending) { --ws-s: var(--ws-warn); }
 html.ui-workspace :is(.ws-status-cancelled, .ws-status-canceled, .ws-status-stopped) { --ws-s: var(--st-text-3); }
 
-/* Plan rows: actions wrap under the text when the card is narrow */
-html.ui-workspace .ws-row-plan { flex-wrap: wrap; row-gap: 8px; }
-html.ui-workspace .ws-row-plan .ws-row-main { flex: 1 1 180px; }
-html.ui-workspace .ws-row-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+/* Plan rows: the plan reads in full (two lines of preview), the actions sit
+   on their own line under it, lined up with the text */
+html.ui-workspace .ws-row-plan { flex-wrap: wrap; align-items: flex-start; row-gap: 8px; padding-block: 10px; }
+html.ui-workspace .ws-row-plan .ws-row-main { flex: 1 1 0; }
+html.ui-workspace .ws-row-plan .ws-row-meta {
+  white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+html.ui-workspace .ws-row-actions { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; padding-left: 40px; }
 html.ui-workspace .ws-btn {
   display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0 11px;
   border: 1px solid var(--st-line-2); border-radius: var(--st-r-sm); background: var(--st-surface); box-shadow: none;
@@ -535,12 +547,16 @@ html.ui-workspace .ws-btn:disabled { opacity: .5; cursor: default; transform: no
 html.ui-workspace :is(.ws-btn, .ws-compose-send, .ws-bar-btn, .ws-quick button, .ws-card-link):active:not(:disabled) { transform: scale(.96); }
 
 html.ui-workspace .ws-empty { margin: 0; padding: 14px 10px 16px; font-size: 13px; line-height: 1.5; color: var(--st-text-3); }
+/* A card whose row partner is taller: its empty note sits centered in the
+   space instead of hugging the top */
+html.ui-workspace .ws-card-body:has(> .ws-empty:only-child) { display: flex; align-items: center; justify-content: center; }
+html.ui-workspace .ws-card-body > .ws-empty:only-child { text-align: center; }
 
 /* Pinned notes: a masonry of tinted tiles (CSS columns) */
 html.ui-workspace .ws-notes { columns: 3 190px; column-gap: 10px; padding: 4px; }
 html.ui-workspace .ws-note {
   --ws-nc: var(--st-text-3);
-  display: flex; flex-direction: column; gap: 5px; width: 100%; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 5px; width: 100%; height: auto; box-sizing: border-box;
   margin: 0 0 10px; padding: 12px 14px; break-inside: avoid;
   border: 1px solid var(--st-line); border-radius: var(--st-r);
   background: var(--st-surface-2); box-shadow: none; color: var(--st-text);
@@ -561,7 +577,7 @@ html.ui-workspace .ws-note[data-color="purple"] { --ws-nc: #e2bcee; }
 /* Dark: pastel tints are too pale to read as a hue at 14%, so lean on the
    border and a deeper mix */
 html[data-theme-mode="dark"].ui-workspace .ws-note[data-color] {
-  background: color-mix(in srgb, var(--ws-nc) 10%, var(--st-surface));
+  background: color-mix(in srgb, var(--ws-nc) 12%, var(--st-surface));
   border-color: color-mix(in srgb, var(--ws-nc) 28%, transparent);
 }
 html.ui-workspace .ws-note:hover { border-color: var(--st-line-2); box-shadow: var(--st-shadow); translate: 0 -1px; }
@@ -574,6 +590,9 @@ html.ui-workspace .ws-note-text {
 }
 
 /* Loading skeleton: shimmering bars */
+/* style.css turns any .loading red and italic; a loading card stays plain */
+html.ui-workspace .ws-card.loading { font-style: normal; color: var(--st-text); }
+html.ui-workspace .ws-card.loading .ws-card-head h2 { color: var(--st-text-2); }
 html.ui-workspace .ws-card.loading .ws-card-body { padding: 10px 16px 14px; }
 html.ui-workspace .ws-skel {
   height: 12px; margin: 10px 0 14px; border-radius: 6px;
@@ -611,7 +630,8 @@ html.ui-workspace .ws-grid.ready:not(.ws-settled) > .ws-card:nth-child(5) { anim
   html.ui-workspace .ws-grid > .ws-card,
   html.ui-workspace .ws-status::after,
   html.ui-workspace .ws-skel { animation: none !important; }
-  html.ui-workspace :is(.ws-tab, .ws-tab-x, .ws-bar-btn, .ws-btn, .ws-row, .ws-note, .ws-compose, .ws-compose-send, .ws-quick button, .ws-divider::after) { transition: none !important; }
+  html.ui-workspace :is(.ws-tab, .ws-tab-x, .ws-bar-btn, .ws-btn, .ws-row, .ws-note, .ws-compose, .ws-compose-send, .ws-quick button),
+  html.ui-workspace .ws-divider::after { transition: none !important; }
   html.ui-workspace :is(.ws-btn, .ws-compose-send, .ws-bar-btn, .ws-quick button, .ws-card-link):active { transform: none !important; }
   html.ui-workspace .ws-note:hover { translate: none; }
 }
@@ -634,6 +654,13 @@ html.ui-workspace .ws-grid.ready:not(.ws-settled) > .ws-card:nth-child(5) { anim
   html.ui-workspace .ws-btn { height: 36px; padding: 0 14px; }
   html.ui-workspace .ws-card-link { height: 36px; }
   html.ui-workspace .ws-notes { columns: 2 140px; }
-  html.ui-workspace .ws-docked .modal-content.ws-win { padding: 0 14px 12px; }
-  html.ui-workspace .ws-docked .ws-win > .modal-header { margin: 0 -14px 12px; padding: 0 6px 0 14px; }
+  /* Tool windows are bottom sheets on phones (style.css): as pages they drop
+     the grab pill and the sheet padding, and the header stops sticking. */
+  html.ui-workspace .ws-docked .modal-content.ws-win:not(.settings-modal-content):not(#ws-x) { padding: 0 14px 12px !important; }
+  html.ui-workspace .ws-docked .modal-content.ws-win::before { content: none; display: none; }
+  html.ui-workspace .ws-docked .modal-content.ws-win:not(.settings-modal-content) > .modal-header:not(#ws-x) {
+    position: static; min-height: 48px !important; margin: 0 -14px 12px !important; padding: 0 8px 0 14px !important;
+  }
+  /* The strip scrolls sideways; tabs keep their width instead of squeezing */
+  html.ui-workspace .ws-tab { flex: 0 0 auto; }
 }
