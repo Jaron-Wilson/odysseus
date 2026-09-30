@@ -12,6 +12,7 @@ let _api = null;
 let _lastLoad = 0;
 let _timer = null;
 let _loading = null;
+let _firstLoad = null;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -123,6 +124,7 @@ function _startChat(text) {
     const msg = document.getElementById('message');
     const form = document.getElementById('chat-form');
     const ready = main && main.classList.contains('welcome-active') && !(window.sessionModule?.getCurrentSessionId?.());
+    if (tries > 60 || !_el) return;               // the chat view never came up
     if ((ready || tries > 25) && msg && form) {
       msg.value = text;
       msg.dispatchEvent(new Event('input', { bubbles: true }));
@@ -292,11 +294,13 @@ export function mount(api) {
   // Keep it fresh while it's on screen (agent jobs move on their own).
   _timer = setInterval(() => { if (_el && !_el.hidden && !document.hidden) load(true); }, 60000);
   // Chats load after the shell does; fill Recent once they arrive.
-  setTimeout(() => load(true), 1500);
+  clearTimeout(_firstLoad);
+  _firstLoad = setTimeout(() => load(true), 1500);
 }
 
 export function unmount() {
   clearInterval(_timer);
+  clearTimeout(_firstLoad);
   _el?.remove();
   _el = null;
 }

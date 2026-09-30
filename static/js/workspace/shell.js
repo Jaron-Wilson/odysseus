@@ -133,7 +133,7 @@ function show(id, pane) {
   pane = pane || (S.right ? S.focus : 'left');
   if (pane === 'right' && isPhone()) pane = 'left';
   const other = pane === 'left' ? 'right' : 'left';
-  if (S[other] === id) S[other] = S[pane];           // swap sides
+  if (S[other] === id) S[other] = S[pane] || _fallback([id]);   // swap sides
   else if (t.kind === 'chat' && S[other] && tab(S[other])?.kind === 'chat') {
     S[other] = _fallback([id, S[pane]], { noChat: true });
   }
@@ -529,6 +529,7 @@ function _menu(x, y, items) {
   });
   m.querySelector('button')?.focus();
   setTimeout(() => {
+    if (!m.isConnected) return;                   // closed (or unmounted) already
     document.addEventListener('pointerdown', _menuAway, true);
     document.addEventListener('keydown', _menuKey, true);
   });
