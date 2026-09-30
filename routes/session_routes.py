@@ -171,6 +171,79 @@ def _persist_session_headers(session_id: str, headers: dict | None) -> None:
         db.close()
 
 
+def registered_endpoint(endpoint_id: str, user: str | None) -> tuple[str, str, str]:
+    """(chat URL, base URL, API key) of an enabled endpoint this user may
+    use; 400 when it is gone."""
+    from core.database import ModelEndpoint
+    from src.auth_helpers import owner_filter
+    from src.endpoint_resolver import build_chat_url, normalize_base
+    _db = SessionLocal()
+    try:
+        q = _db.query(ModelEndpoint).filter(
+            ModelEndpoint.id == endpoint_id,
+            ModelEndpoint.is_enabled == True,
+        )
+        if user:
+            q = owner_filter(q, ModelEndpoint, user)
+        ep = q.first()
+        if not ep:
+            raise HTTPException(400, "Model endpoint no longer exists")
+        endpoint_base_url = ep.base_url or ""
+        return build_chat_url(normalize_base(endpoint_base_url)), endpoint_base_url, ep.api_key or ""
+    finally:
+        _db.close()
+
+
+def switch_session_model(session, sid: str, model: str, endpoint_url: str,
+                         endpoint_id: str | None, user: str | None) -> str:
+    """Point a chat at another model/endpoint and persist it (PATCH
+    /api/session/{sid}, and the SMS gateway's "model" and "new"). A
+    registered endpoint id wins over the raw URL. Returns the chat URL now
+    in use."""
+    endpoint_api_key = ""
+    endpoint_base_url = ""
+    if endpoint_id:
+        endpoint_url, endpoint_base_url, endpoint_api_key = registered_endpoint(endpoint_id, user)
+    session.model = model
+    session.endpoint_url = endpoint_url
+    # Update auth headers from the endpoint's stored API key
+    if endpoint_api_key:
+        from src.endpoint_resolver import build_headers
+        session.headers = build_headers(endpoint_api_key, endpoint_base_url)
+    else:
+        session.headers = {}
+    # Persist to DB
+    db = SessionLocal()
+    try:
+        db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+        if db_session:
+            db_session.model = model
+            db_session.endpoint_url = endpoint_url
+            db_session.headers = session.headers or {}
+            db_session.updated_at = datetime.utcnow()
+            db.commit()
+    finally:
+        db.close()
+    return endpoint_url
+
+
+def create_direct_chat(session_manager, owner: str | None, model: str, endpoint_id: str,
+                       name: str = "") -> tuple[str, object]:
+    """A new chat on a registered endpoint, the way the web UI's new chat
+    makes one (POST /api/session with endpoint_id and skip_validation).
+    The endpoint is checked before the chat exists, so a stale one leaves
+    nothing behind."""
+    endpoint_url, _, _ = registered_endpoint(endpoint_id, owner)
+    sid = str(uuid.uuid4())
+    session = session_manager.create_session(
+        session_id=sid, name=name, endpoint_url=endpoint_url, model=model, rag=False, owner=owner,
+    )
+    switch_session_model(session, sid, model, endpoint_url, endpoint_id, owner)
+    from src.event_bus import fire_event
+    fire_event("session_created", owner)
+    return sid, session
+
+
 _HIDDEN_SYSTEM_SESSION_NAMES = {
     "[Task] Chat Sessions Tidy",
     "[Task] Documents Tidy",
@@ -351,25 +424,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         endpoint_base_url = ""
         _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
         if endpoint_id and endpoint_id.strip():
-            from core.database import ModelEndpoint
-            from src.auth_helpers import owner_filter
-            from src.endpoint_resolver import build_chat_url, normalize_base
-            _db = SessionLocal()
-            try:
-                q = _db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == endpoint_id.strip(),
-                    ModelEndpoint.is_enabled == True,
-                )
-                if user:
-                    q = owner_filter(q, ModelEndpoint, user)
-                endpoint_row = q.first()
-                if not endpoint_row:
-                    raise HTTPException(400, "Model endpoint no longer exists")
-                endpoint_base_url = endpoint_row.base_url or ""
-                endpoint_api_key = endpoint_row.api_key or ""
-                endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
-            finally:
-                _db.close()
+            endpoint_url, endpoint_base_url, endpoint_api_key = registered_endpoint(endpoint_id.strip(), user)
 
         if not endpoint_url and not skip_val:
             raise HTTPException(400, "endpoint_url is required (choose from /api/models)")
@@ -497,48 +552,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         if model is not None and endpoint_url is not None:
             user = get_current_user(request)
             _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
-            endpoint_api_key = ""
-            endpoint_base_url = ""
-            if endpoint_id:
-                from core.database import ModelEndpoint
-                from src.auth_helpers import owner_filter
-                from src.endpoint_resolver import build_chat_url, normalize_base
-                _db = SessionLocal()
-                try:
-                    q = _db.query(ModelEndpoint).filter(
-                        ModelEndpoint.id == endpoint_id,
-                        ModelEndpoint.is_enabled == True,
-                    )
-                    if user:
-                        q = owner_filter(q, ModelEndpoint, user)
-                    ep = q.first()
-                    if not ep:
-                        raise HTTPException(400, "Model endpoint no longer exists")
-                    endpoint_base_url = ep.base_url or ""
-                    endpoint_api_key = ep.api_key or ""
-                    endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
-                finally:
-                    _db.close()
-            session.model = model
-            session.endpoint_url = endpoint_url
-            # Update auth headers from the endpoint's stored API key
-            if endpoint_api_key:
-                from src.endpoint_resolver import build_headers
-                session.headers = build_headers(endpoint_api_key, endpoint_base_url)
-            else:
-                session.headers = {}
-            # Persist to DB
-            db = SessionLocal()
-            try:
-                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
-                if db_session:
-                    db_session.model = model
-                    db_session.endpoint_url = endpoint_url
-                    db_session.headers = session.headers or {}
-                    db_session.updated_at = datetime.utcnow()
-                    db.commit()
-            finally:
-                db.close()
+            endpoint_url = switch_session_model(session, sid, model, endpoint_url, endpoint_id, user)
             result["model"] = model
             result["endpoint_url"] = endpoint_url
         return result
