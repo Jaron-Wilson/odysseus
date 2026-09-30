@@ -1,0 +1,283 @@
+"""The Workspace interface's tab shell (static/js/workspace/shell.js).
+
+Asked for 2026-09-30: a redesign of "everything layout of ui how ui interacts
+differnt ui types etc.", with tabs like a browser and a dashboard Home. The
+shell doesn't rewrite the tools; it notices their windows and turns them into
+tab pages. What matters to the user:
+
+  * opening a tool from the sidebar opens it as a tab in front, and Home or
+    another tab can come in front without closing it (its state survives);
+  * the sidebar button of a tool that's already open brings its tab back
+    rather than toggling the tool shut;
+  * a tool's own close button closes its tab, and closing the tab closes
+    the tool;
+  * each chat is a tab, and switching tabs switches the chat;
+  * split view shows two tabs side by side, with the chat narrowed to its
+    half;
+  * tabs survive a reload, and a tool tab reopens its tool when picked;
+  * switching to another Interface design takes the shell away cleanly;
+  * the Home composer starts a new chat with what was typed.
+
+The real shell.js and home.js run in Chromium against a small page with
+stand-in tools and a stand-in session module; only modalSnap.js and
+chatRenderer.js are stubbed.
+"""
+import json
+from pathlib import Path
+
+import pytest
+
+playwright_api = pytest.importorskip("playwright.sync_api", reason="playwright not installed")
+
+_STATIC = Path(__file__).resolve().parent.parent / "static"
+
+_PAGE = """<!doctype html><html class="ui-workspace ui-studio"><head>
+<link rel="stylesheet" href="/static/css/workspace.css"></head><body>
+<nav id="sidebar">
+  <div id="sidebar-new-chat-btn" class="list-item">New chat</div>
+  <div id="session-list">
+    <div class="list-item" data-session-id="s1">Chat one</div>
+    <div class="list-item" data-session-id="s2">Chat two</div>
+  </div>
+  <button id="tool-calendar-btn">Calendar</button>
+  <button id="tool-notes-btn">Notes</button>
+  <span id="user-bar-name">Jaron Wilson</span>
+</nav>
+<button id="rail-new-session">+</button>
+<main id="chat-container" class="chat-container" style="flex:1;min-width:0">
+  <textarea id="message"></textarea>
+  <form id="chat-form"></form>
+</main>
+<script>
+  document.body.style.cssText = 'display:flex;margin:0;height:100vh';
+  document.getElementById('sidebar').style.cssText = 'width:240px;flex:none';
+  // Stand-in session module: the calls the shell makes, recorded.
+  window.calls = [];
+  window.sessionModule = {
+    cur: null,
+    list: [{id: 's1', name: 'Chat one', last_message_at: '2026-09-30T10:00:00Z'},
+           {id: 's2', name: 'Chat two', last_message_at: '2026-09-30T09:00:00Z'}],
+    getCurrentSessionId() { return this.cur; },
+    getSessions() { return this.list; },
+    selectSession(id) { this.cur = id; calls.push(['select', id]); },
+  };
+  document.getElementById('rail-new-session').addEventListener('click', () => {
+    sessionModule.cur = null; calls.push(['new']);
+    document.getElementById('chat-container').classList.add('welcome-active');
+  });
+  document.getElementById('session-list').addEventListener('click', e => {
+    const row = e.target.closest('[data-session-id]');
+    if (row) sessionModule.selectSession(row.dataset.sessionId);
+  });
+  document.getElementById('chat-form').addEventListener('submit', e => {
+    e.preventDefault(); calls.push(['send', document.getElementById('message').value]);
+  });
+  // Calendar: a static modal toggled with .hidden, like the real one.
+  const cal = document.createElement('div');
+  cal.id = 'calendar-modal'; cal.className = 'modal hidden';
+  cal.innerHTML = '<div class="modal-content"><div class="modal-header">Calendar' +
+                  '<button class="close-btn">x</button></div><input id="cal-state"></div>';
+  document.body.appendChild(cal);
+  cal.querySelector('.close-btn').addEventListener('click', () => cal.classList.add('hidden'));
+  document.getElementById('tool-calendar-btn').addEventListener('click', () => {
+    calls.push(['calendar-toggle']);
+    cal.classList.toggle('hidden');
+  });
+  // Notes: created on open and removed on close, like the real pane.
+  document.getElementById('tool-notes-btn').addEventListener('click', () => {
+    const open = document.getElementById('notes-pane');
+    if (open) { open.remove(); return; }
+    const p = document.createElement('div');
+    p.id = 'notes-pane'; p.className = 'notes-pane';
+    p.innerHTML = '<div class="notes-pane-header">Notes<button class="notes-close-btn">x</button></div>';
+    p.querySelector('.notes-close-btn').addEventListener('click', () => p.remove());
+    document.body.appendChild(p);
+  });
+</script></body></html>"""
+
+_MODALSNAP_STUB = "export function clearRightDock() {}"
+_RENDERER_STUB = "export function openEntityHash(h) { (window.calls ||= []).push(['hash', h]); return true; }"
+
+
+@pytest.fixture
+def browser():
+    with playwright_api.sync_playwright() as p:
+        try:
+            b = p.chromium.launch()
+        except Exception as e:                      # no browser binary here
+            pytest.skip(f"chromium unavailable: {e}")
+        yield b
+        b.close()
+
+
+@pytest.fixture
+def page(browser):
+    ctx = browser.new_context(viewport={"width": 1400, "height": 900})
+    pg = ctx.new_page()
+
+    def route(r):
+        url = r.request.url
+        path = url.split("example.test", 1)[-1].split("?", 1)[0]
+        if path in ("", "/"):
+            r.fulfill(body=_PAGE, content_type="text/html")
+        elif path == "/static/js/modalSnap.js":
+            r.fulfill(body=_MODALSNAP_STUB, content_type="text/javascript")
+        elif path == "/static/js/chatRenderer.js":
+            r.fulfill(body=_RENDERER_STUB, content_type="text/javascript")
+        elif path.startswith("/static/"):
+            f = _STATIC / path[len("/static/"):]
+            ctype = "text/css" if f.suffix == ".css" else "text/javascript"
+            r.fulfill(body=f.read_text(), content_type=ctype)
+        elif path.startswith("/api/"):
+            r.fulfill(body=json.dumps({"events": [], "plans": [], "emails": [], "jobs": [], "notes": []}),
+                      content_type="application/json")
+        else:
+            r.fulfill(status=404, body="")
+    ctx.route("**/*", route)
+    pg.boot = lambda: _boot(pg)
+    yield pg
+    ctx.close()
+
+
+def _boot(pg):
+    pg.goto("https://example.test/")
+    pg.evaluate("() => import('/static/js/workspace/shell.js').then(m => { window.__ws = m; })")
+    pg.wait_for_function("() => window.__ws && document.getElementById('ws-tabbar')")
+    pg.wait_for_timeout(700)                       # first session poll
+
+
+def _tabs(pg):
+    return pg.evaluate("""() => [...document.querySelectorAll('.ws-tab')].map(t =>
+        (t.classList.contains('active') ? '*' : '') + t.dataset.tab)""")
+
+
+def _settle(pg):
+    pg.wait_for_timeout(650)
+
+
+def _click(pg, sel):
+    pg.evaluate(f"document.querySelector({json.dumps(sel)}).click()")
+    _settle(pg)
+
+
+def test_home_is_the_first_tab_and_what_you_see_on_first_run(page):
+    page.boot()
+    assert _tabs(page) == ["*home"]
+    assert page.evaluate("!document.getElementById('ws-home').hidden")
+    assert "Jaron" in page.inner_text(".ws-greeting")
+
+
+def test_a_tool_opens_as_a_tab_page_and_keeps_its_state_behind_other_tabs(page):
+    page.boot()
+    _click(page, "#tool-calendar-btn")
+    assert _tabs(page) == ["home", "*tool:calendar"]
+    cal = page.locator("#calendar-modal")
+    assert "ws-docked" in cal.get_attribute("class") and cal.get_attribute("data-ws-pane") == "left"
+    assert page.evaluate("document.getElementById('ws-home').hidden")
+    page.fill("#cal-state", "typed in the calendar")
+
+    _click(page, ".ws-tab[data-tab=home]")
+    assert _tabs(page) == ["*home", "tool:calendar"]
+    assert "hidden" not in cal.get_attribute("class")          # not closed, only behind Home
+    assert "ws-away" in cal.get_attribute("class")
+    assert not cal.is_visible()
+
+    _click(page, ".ws-tab[data-tab='tool:calendar']")
+    assert "ws-away" not in cal.get_attribute("class")
+    assert page.input_value("#cal-state") == "typed in the calendar"
+
+
+def test_the_sidebar_button_of_an_open_tool_brings_its_tab_back(page):
+    page.boot()
+    _click(page, "#tool-calendar-btn")
+    _click(page, ".ws-tab[data-tab=home]")
+    _click(page, "#tool-calendar-btn")
+    assert _tabs(page) == ["home", "*tool:calendar"]
+    assert "hidden" not in page.get_attribute("#calendar-modal", "class")
+    # The tool's own toggle ran once (the open), not a second time (a close).
+    assert page.evaluate("calls.filter(c => c[0] === 'calendar-toggle').length") == 1
+
+
+def test_a_tools_own_close_closes_its_tab_and_closing_the_tab_closes_the_tool(page):
+    page.boot()
+    _click(page, "#tool-calendar-btn")
+    _click(page, "#calendar-modal .close-btn")
+    assert _tabs(page) == ["*home"]
+    assert "ws-docked" not in page.get_attribute("#calendar-modal", "class")
+
+    _click(page, "#tool-notes-btn")
+    assert _tabs(page) == ["home", "*tool:notes"]
+    _click(page, ".ws-tab[data-tab='tool:notes'] .ws-tab-x")
+    assert _tabs(page) == ["*home"]
+    assert page.evaluate("!document.getElementById('notes-pane')")
+
+
+def test_each_chat_is_a_tab_and_switching_tabs_switches_the_chat(page):
+    page.boot()
+    _click(page, "#session-list [data-session-id=s1]")
+    _click(page, "#session-list [data-session-id=s2]")
+    assert _tabs(page) == ["home", "chat:s1", "*chat:s2"]
+    assert page.inner_text(".ws-tab[data-tab='chat:s1'] .ws-tab-label") == "Chat one"
+    assert "ws-no-chat" not in page.evaluate("document.documentElement.className")
+
+    _click(page, ".ws-tab[data-tab='chat:s1']")
+    assert page.evaluate("sessionModule.cur") == "s1"
+    _click(page, ".ws-tab[data-tab=home]")
+    assert "ws-no-chat" in page.evaluate("document.documentElement.className")
+    # Clicking the chat that's still current brings its tab back.
+    _click(page, "#session-list [data-session-id=s1]")
+    assert _tabs(page)[1] == "*chat:s1"
+
+
+def test_split_view_puts_two_tabs_side_by_side_with_the_chat_narrowed(page):
+    page.boot()
+    _click(page, "#session-list [data-session-id=s1]")
+    _click(page, "#tool-calendar-btn")
+    _click(page, ".ws-split-btn")
+    html = page.evaluate("document.documentElement.className")
+    assert "ws-split" in html
+    cal = page.locator("#calendar-modal")
+    assert cal.get_attribute("data-ws-pane") == "left" and "ws-away" not in cal.get_attribute("class")
+    geo = page.evaluate("""() => {
+      const m = document.getElementById('chat-container').getBoundingClientRect();
+      const c = document.getElementById('calendar-modal').getBoundingClientRect();
+      return {chatL: m.left, chatR: m.right, calL: c.left, calR: c.right, w: innerWidth};
+    }""")
+    assert abs(geo["calR"] - geo["chatL"]) <= 2                  # calendar left, chat right, no overlap
+    assert geo["calL"] >= 239 and geo["chatR"] <= geo["w"] + 1
+    _click(page, ".ws-split-btn")
+    assert "ws-split" not in page.evaluate("document.documentElement.className")
+
+
+def test_tabs_survive_a_reload_and_a_tool_tab_reopens_its_tool(page):
+    page.boot()
+    _click(page, "#session-list [data-session-id=s2]")
+    _click(page, "#tool-calendar-btn")
+    page.boot()
+    assert _tabs(page) == ["home", "chat:s2", "*tool:calendar"]
+    _click(page, ".ws-tab[data-tab=home]")
+    _click(page, ".ws-tab[data-tab='tool:calendar']")
+    assert "hidden" not in page.get_attribute("#calendar-modal", "class")
+    assert page.get_attribute("#calendar-modal", "data-ws-pane") == "left"
+
+
+def test_switching_to_another_design_takes_the_shell_away(page):
+    page.boot()
+    _click(page, "#tool-calendar-btn")
+    page.evaluate("""() => { document.documentElement.classList.remove('ui-workspace');
+      window.dispatchEvent(new CustomEvent('odysseus:ui-design', {detail: {design: 'studio'}})); }""")
+    _settle(page)
+    assert page.evaluate("!document.getElementById('ws-tabbar') && !document.getElementById('ws-home')")
+    cls = page.get_attribute("#calendar-modal", "class")
+    assert "ws-docked" not in cls and "hidden" not in cls        # the tool stays open, as a window again
+
+
+def test_the_home_composer_starts_a_new_chat_with_the_text(page):
+    page.boot()
+    page.fill(".ws-compose-input", "plan my week")
+    page.press(".ws-compose-input", "Enter")
+    page.wait_for_function("() => calls.some(c => c[0] === 'send')")
+    calls = page.evaluate("calls")
+    assert ["new"] in calls and ["send", "plan my week"] in calls
+    assert calls.index(["new"]) < calls.index(["send", "plan my week"])
+    assert _tabs(page)[-1] == "*chat:new"

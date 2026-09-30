@@ -1193,6 +1193,9 @@ if (!window._odyEscExpandGuard) {
   const _isVisible = (m) => !m.classList.contains('hidden') && getComputedStyle(m).display !== 'none';
   const _promote = (m) => {
     if (!m?.classList?.contains('modal') || !_isVisible(m)) return;
+    // Workspace tab pages (workspace/shell.js) stack by workspace.css; two
+    // of them promoting each other in turn never settles.
+    if (m.classList.contains('ws-docked')) return;
     // Re-entry guard: setting style.zIndex itself fires the observer that
     // calls us back. Skip if this element is already pinned to the top
     // (matches the current counter) so we don't spin into an infinite loop.

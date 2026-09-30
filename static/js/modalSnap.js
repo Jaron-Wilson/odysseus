@@ -303,6 +303,8 @@ function _anchorLeftDock(content) {
 }
 
 function _collapseSidebarToRail() {
+  // Workspace tab pages sit beside the sidebar; nothing edge-docks there.
+  if (document.documentElement.classList.contains('ui-workspace')) return;
   const sidebar = document.getElementById('sidebar');
   const rail = document.getElementById('icon-rail');
   if (!sidebar || !rail) return;

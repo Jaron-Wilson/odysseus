@@ -17,15 +17,17 @@
   window._odysseusLoadTime = Date.now();
   (function(){
     try {
-      // Interface design (static/js/uiDesign.js): Studio unless Classic was chosen.
+      // Interface design (static/js/uiDesign.js): Workspace unless Studio or
+      // Classic was chosen. Workspace also carries ui-studio (same look).
       var ui = localStorage.getItem('odysseus-ui-design');
-      if (ui !== 'classic') ui = 'studio';
+      if (ui !== 'classic' && ui !== 'studio') ui = 'workspace';
       document.documentElement.classList.add('ui-' + ui);
+      if (ui === 'workspace') document.documentElement.classList.add('ui-studio');
       document.documentElement.dataset.ui = ui;
       var t = JSON.parse(localStorage.getItem('odysseus-theme'));
       // Studio's first run on a stock theme paints its own palette straight
       // away rather than flashing the old one until uiDesign.js swaps it.
-      if (ui === 'studio' && t && (t.name === 'dark' || t.name === 'light')
+      if (ui !== 'classic' && t && (t.name === 'dark' || t.name === 'light')
           && !localStorage.getItem('odysseus-ui-design-palette-done')) {
         t.colors = t.name === 'dark'
           ? {bg:'#0f1115', fg:'#e6e8ec', panel:'#16191e', border:'#262a31', red:'#7c8cff'}
@@ -234,6 +236,7 @@
   <link rel="stylesheet" href="/static/css/studio-overlays.css">
   <link rel="stylesheet" href="/static/css/studio-pages-a.css">
   <link rel="stylesheet" href="/static/css/studio-pages-b.css">
+  <link rel="stylesheet" href="/static/css/workspace.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
@@ -618,6 +621,7 @@
           <div class="theme-fd-group">
             <label class="theme-fd-label" for="theme-design-select">Interface</label>
             <select id="theme-design-select" class="theme-fd-select" aria-label="Interface">
+              <option value="workspace">Workspace</option>
               <option value="studio">Studio</option>
               <option value="classic">Classic</option>
             </select>
@@ -1848,12 +1852,17 @@
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
           <div class="admin-card ui-design-card">
             <h2>Interface</h2>
-            <p class="ui-design-hint">The look of the whole app. Your color theme works with either.</p>
+            <p class="ui-design-hint">How the whole app is laid out. Your color theme works with any of them.</p>
             <div class="ui-design-choices" role="radiogroup" aria-label="Interface design">
+              <div class="ui-design-choice" role="radio" tabindex="0" aria-checked="false" data-ui-design-choice="workspace">
+                <span class="ui-design-thumb ui-design-thumb-workspace" aria-hidden="true"><i></i><b></b><u></u><s></s></span>
+                <span class="ui-design-name">Workspace</span>
+                <span class="ui-design-desc">Tabs, split view and a Home dashboard</span>
+              </div>
               <div class="ui-design-choice" role="radio" tabindex="0" aria-checked="false" data-ui-design-choice="studio">
                 <span class="ui-design-thumb ui-design-thumb-studio" aria-hidden="true"><i></i><b></b><u></u></span>
                 <span class="ui-design-name">Studio</span>
-                <span class="ui-design-desc">Clean and professional</span>
+                <span class="ui-design-desc">One pane, restyled</span>
               </div>
               <div class="ui-design-choice" role="radio" tabindex="0" aria-checked="false" data-ui-design-choice="classic">
                 <span class="ui-design-thumb ui-design-thumb-classic" aria-hidden="true"><i></i><b></b><u></u></span>

@@ -1,4 +1,5 @@
-"""The Interface setting: Studio (the redesign) or Classic (the original look).
+"""The Interface setting: Workspace (tabs + Home), Studio (the restyle) or
+Classic (the original look).
 
 Asked for 2026-09-30: "add a setting to rebrand/redesign everything, im not
 liking the ui very much so im wanting it to be completely redone and more
@@ -9,8 +10,11 @@ what it was:
   * every rule in the Studio stylesheets is scoped to html.ui-studio (the
     Interface picker's own .ui-design-* rules are the one exception, shown
     in both designs);
+  * workspace.css is scoped to html.ui-workspace, so Studio never gets the
+    tab shell's rules either;
   * the head script in index.html sets the design class before first
-    paint, Studio unless Classic was chosen;
+    paint: Workspace (which also carries ui-studio, the same look) unless
+    Studio or Classic was chosen;
   * switching swaps only the stock dark/light palettes for Studio's and
     back, and leaves a theme picked by hand alone.
 
@@ -27,6 +31,8 @@ import pytest
 _REPO = Path(__file__).resolve().parent.parent
 _STATIC = _REPO / "static"
 _STUDIO_CSS = sorted((_STATIC / "css").glob("studio*.css"))
+_WORKSPACE_CSS = _STATIC / "css" / "workspace.css"
+_ALL_CSS = _STUDIO_CSS + [_WORKSPACE_CSS]
 
 
 def _strip_comments(css: str) -> str:
@@ -63,7 +69,7 @@ def test_the_studio_stylesheets_are_linked_and_precached():
     html = (_STATIC / "index.html").read_text()
     sw = (_STATIC / "sw.js").read_text()
     assert _STUDIO_CSS, "no static/css/studio*.css"
-    for f in _STUDIO_CSS:
+    for f in _ALL_CSS:
         href = f"/static/css/{f.name}"
         assert f'href="{href}"' in html, f"{f.name} not linked in index.html"
         assert f"'{href}'" in sw, f"{f.name} not precached in sw.js"
@@ -97,11 +103,11 @@ def _split_list(sel: str):
     return [p for p in parts if p]
 
 
-def _scoped(part: str) -> bool:
-    """The first compound selector is `html` carrying the ui-studio class,
+def _scoped(part: str, cls: str = "ui-studio") -> bool:
+    """The first compound selector is `html` carrying the design class,
     e.g. html.ui-studio or html[data-theme-mode="light"].ui-studio."""
     m = re.match(r"^html((?:\[[^\]]*\]|[.#:][\w-]+(?:\([^)]*\))?)*)", part)
-    return bool(m) and re.search(r"\.ui-studio(?![\w-])", m.group(1)) is not None
+    return bool(m) and re.search(r"\." + cls + r"(?![\w-])", m.group(1)) is not None
 
 
 def test_the_scope_check_catches_a_leak():
@@ -111,17 +117,18 @@ def test_the_scope_check_catches_a_leak():
     assert [p for p in parts if not _scoped(p)] == [".leak", ".leak2", "html .ui-studio-ish"]
 
 
-@pytest.mark.parametrize("path", _STUDIO_CSS, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", _ALL_CSS, ids=lambda p: p.name)
 def test_every_studio_rule_is_scoped_so_classic_is_untouched(path):
+    cls = "ui-workspace" if path == _WORKSPACE_CSS else "ui-studio"
     bad = []
     for sel in _selectors(path.read_text()):
         for part in _split_list(sel):
-            if _scoped(part):
+            if _scoped(part, cls):
                 continue
             if re.match(r"^\.ui-design-[\w-]+", part):
                 continue            # the Interface picker, shown in both designs
             bad.append(part)
-    assert not bad, f"unscoped selectors in {path.name} would change Classic: {bad[:10]}"
+    assert not bad, f"selectors in {path.name} not scoped to html.{cls}: {bad[:10]}"
 
 
 # --- Browser checks ----------------------------------------------------------
@@ -175,8 +182,9 @@ def page():
                 r.fulfill(body=json.dumps({"key": "ui-design", "value": None}), content_type="application/json")
             elif url.rstrip("/").endswith("example.test"):
                 r.fulfill(body="<!doctype html><html><head></head><body>"
-                               "<select id='theme-design-select'><option value='studio'>S</option>"
-                               "<option value='classic'>C</option></select>"
+                               "<select id='theme-design-select'><option value='workspace'>W</option>"
+                               "<option value='studio'>S</option><option value='classic'>C</option></select>"
+                               "<div data-ui-design-choice='workspace'></div>"
                                "<div data-ui-design-choice='studio'></div>"
                                "<div data-ui-design-choice='classic'></div></body></html>",
                           content_type="text/html")
@@ -213,17 +221,27 @@ _DARK = json.dumps({"name": "dark", "colors": {"bg": "#17150f", "fg": "#ede9e0",
                                                "border": "#35322a", "red": "#e06c75"}})
 
 
-def test_studio_is_the_default_and_is_set_before_first_paint(page):
+def test_workspace_is_the_default_and_is_set_before_first_paint(page):
     early = _boot(page, {"odysseus-theme": _DARK})
-    assert "ui-studio" in early                                   # by the head script, before any module
+    assert "ui-workspace" in early and "ui-studio" in early      # by the head script, before any module
     s = _state(page)
     assert s["theme"] == "studio"                                 # stock dark swapped once for Studio's
-    assert s["active"] == ["studio"] and s["sel"] == "studio"
+    assert s["active"] == ["workspace"] and s["sel"] == "workspace"
+
+
+def test_studio_once_chosen_has_the_look_without_the_tab_shell(page):
+    early = _boot(page, {"odysseus-ui-design": "studio", "odysseus-theme": _DARK})
+    assert "ui-studio" in early and "ui-workspace" not in early
+    s = _state(page)
+    assert "ui-workspace" not in s["cls"] and s["active"] == ["studio"]
+    page.evaluate("window.__ui.setDesign('workspace')")
+    s = _state(page)
+    assert "ui-workspace" in s["cls"] and "ui-studio" in s["cls"] and s["stored"] == "workspace"
 
 
 def test_classic_is_kept_once_chosen(page):
     early = _boot(page, {"odysseus-ui-design": "classic", "odysseus-theme": _DARK})
-    assert "ui-classic" in early and "ui-studio" not in early
+    assert "ui-classic" in early and "ui-studio" not in early and "ui-workspace" not in early
     assert _state(page)["theme"] == "dark"                       # Classic never swaps the palette
 
 
@@ -231,7 +249,7 @@ def test_switching_swaps_the_stock_palette_both_ways(page):
     _boot(page, {"odysseus-theme": _DARK})
     page.evaluate("window.__ui.setDesign('classic')")
     s = _state(page)
-    assert "ui-classic" in s["cls"] and "ui-studio" not in s["cls"]
+    assert "ui-classic" in s["cls"] and "ui-studio" not in s["cls"] and "ui-workspace" not in s["cls"]
     assert s["theme"] == "dark" and s["stored"] == "classic" and s["active"] == ["classic"]
     page.evaluate("window.__ui.setDesign('studio')")
     assert _state(page)["theme"] == "studio"
@@ -241,13 +259,13 @@ def test_a_theme_picked_by_hand_is_left_alone(page):
     ocean = json.dumps({"name": "ocean", "colors": {"bg": "#0b1a2c", "fg": "#64d2ff", "panel": "#091422",
                                                     "border": "#1e5074", "red": "#4facfe"}})
     _boot(page, {"odysseus-theme": ocean})
-    for d in ("classic", "studio", "classic"):
+    for d in ("classic", "studio", "workspace", "classic"):
         page.evaluate(f"window.__ui.setDesign('{d}')")
         assert _state(page)["theme"] == "ocean"
 
 
-def test_an_unknown_design_value_falls_back_to_studio(page):
+def test_an_unknown_design_value_falls_back_to_workspace(page):
     early = _boot(page, {"odysseus-ui-design": "neon", "odysseus-theme": _DARK})
-    assert "ui-studio" in early
+    assert "ui-workspace" in early
     page.evaluate("window.__ui.setDesign('neon')")                # ignored
-    assert "ui-studio" in _state(page)["cls"]
+    assert "ui-workspace" in _state(page)["cls"]
