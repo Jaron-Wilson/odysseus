@@ -85,6 +85,36 @@ def engine_cli(engine: str) -> Optional[str]:
     return found
 
 
+_AGY_CHECK: Dict[str, object] = {"at": 0.0, "path": "", "problem": ""}
+
+
+def antigravity_problem() -> str:
+    """Why an installed agy cannot run here, or "" when it can (checked once
+    an hour). Seen 2026-09-30 on this server: a KVM guest on QEMU's generic
+    CPU model hides PCLMUL, and agy dies at start with "compiled with pclmul
+    enabled, but this feature is not available on this processor" (exit 132)."""
+    cli = engine_cli("antigravity")
+    if not cli:
+        return ""
+    if _AGY_CHECK["path"] == cli and time.time() - float(_AGY_CHECK["at"]) < 3600:
+        return str(_AGY_CHECK["problem"])
+    problem = ""
+    try:
+        r = subprocess.run([cli, "--version"], capture_output=True, text=True, timeout=15,
+                           stdin=subprocess.DEVNULL, env=_cli_env())
+        err = _strip_ansi(r.stderr or "")
+        if r.returncode in (-4, 132) or "not available on this processor" in err:
+            problem = ("agy is installed but cannot run on this server's CPU: "
+                       + (err.strip().splitlines()[0][:200] if err.strip() else "illegal instruction")
+                       + ". This server is a virtual machine whose CPU model hides that feature; the "
+                       "user can fix it by setting the VM's CPU type to 'host' (CPU passthrough) and "
+                       "restarting the VM.")
+    except Exception as e:
+        logger.debug("agy check failed: %s", e)
+    _AGY_CHECK.update(at=time.time(), path=cli, problem=problem)
+    return problem
+
+
 _AGY_MODELS: Dict[str, object] = {"at": 0.0, "ids": []}
 _MODEL_SLUG = re.compile(r"^[a-z0-9][a-z0-9.\-_/:]*[a-z0-9]$")
 
@@ -96,7 +126,7 @@ def antigravity_model_ids() -> list:
         return list(_AGY_MODELS["ids"])
     ids: list = []
     cli = engine_cli("antigravity")
-    if cli:
+    if cli and not antigravity_problem():
         try:
             out = subprocess.run([cli, "models"], capture_output=True, text=True, timeout=8,
                                  env=_cli_env(), stdin=subprocess.DEVNULL).stdout
@@ -756,6 +786,11 @@ class ClaudeCodeTool:
                         "pid": pid, "already_running": True, "exit_code": 1}
 
         cli = engine_cli(engine)
+        broken = antigravity_problem() if (cli and engine == "antigravity") else ""
+        if broken:
+            return {"error": f"Antigravity cannot run on this host: {broken} Tell the user; do not retry "
+                             "it or try agy through bash. Offer OpenCode or Claude Code instead.",
+                    "exit_code": 1}
         if not cli:
             return {
                 "error": (f"{engine_label(engine)} CLI not found on PATH ({ENGINE_BINARIES[engine]}). "

@@ -66,6 +66,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(jobs, "JOBS_FILE", str(tmp_path / "jobs.json"))
     monkeypatch.setattr(chat_prefs, "PREFS_FILE", str(tmp_path / "chat_prefs.json"))
     monkeypatch.setitem(cct._AGY_MODELS, "at", 0.0)
+    monkeypatch.setitem(cct._AGY_CHECK, "at", 0.0)
     jobs._JOBS.clear()
     work = tmp_path / "work"
     work.mkdir()
@@ -74,7 +75,9 @@ def env(tmp_path, monkeypatch):
 
 def _calls(log, cli=None):
     rows = [json.loads(l) for l in open(log)] if os.path.exists(log) else []
-    return [r for r in rows if r["argv"][:1] != ["models"] and (cli is None or cli in r.get("cli", "agy"))]
+    # `agy models` and `agy --version` are checks, not runs.
+    return [r for r in rows if r["argv"][:1] not in (["models"], ["--version"])
+            and (cli is None or cli in r.get("cli", "agy"))]
 
 
 def _run(args, chat=""):
@@ -225,3 +228,26 @@ def test_the_ui_knows_it():
     assert "e.default_label" in read("static", "js", "chatRenderer.js")
     schema = read("src", "tool_schemas.py")
     assert '"enum": ["opencode", "claude", "antigravity"]' in schema
+
+
+def test_an_agy_that_cannot_run_on_this_cpu_is_explained_not_offered(tmp_path, monkeypatch):
+    # Seen 2026-09-30: this server is a KVM guest on QEMU's generic CPU, and
+    # agy dies at start (exit 132) for want of PCLMUL.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    agy = bindir / "agy"
+    agy.write_text("#!/bin/sh\necho 'FATAL ERROR: This binary was compiled with pclmul enabled, but this "
+                   "feature is not available on this processor (go/sigill-fail-fast).' >&2\nexit 132\n")
+    agy.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setitem(cct._AGY_CHECK, "at", 0.0)
+    monkeypatch.setitem(cct._AGY_MODELS, "at", 0.0)
+    work = tmp_path / "work"
+    work.mkdir()
+    assert "pclmul" in cct.antigravity_problem() and "CPU type to 'host'" in cct.antigravity_problem()
+    out = _run({"action": "ask", "engine": "antigravity", "cwd": str(work), "prompt": "hi"})
+    assert out["exit_code"] == 1 and "cannot run on this host" in out["error"]
+    import routes.claude_code_routes as r
+    monkeypatch.setattr("src.opencode_providers.models", lambda: ([], ""))
+    monkeypatch.setattr("src.opencode_providers.in_use", lambda ids: {})
+    assert "antigravity" not in [e["id"] for e in r.run_options("", {})["engines"]]
