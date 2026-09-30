@@ -68,7 +68,7 @@ def run_options(chat_id: str = "", plan: dict = None) -> dict:
     """What the Approve dialog offers: each engine with its models, whether
     this chat allows it, and what the plan was written with."""
     from src.agent_tools.claude_code_tool import (DEFAULT_MODEL, ENGINES, ANTIGRAVITY_DEFAULT_LABEL,
-                                                  antigravity_model_ids, engine_cli)
+                                                  antigravity_model_ids, antigravity_problem, engine_cli)
     try:
         from src import chat_prefs
         allowed = {e: chat_prefs.engine_allowed(chat_id, e) for e in ENGINES}
@@ -90,12 +90,12 @@ def run_options(chat_id: str = "", plan: dict = None) -> dict:
             {"id": "claude", "label": "Claude Code", "hint": "uses your Claude plan",
              "allowed": allowed["claude"], "default_model": DEFAULT_MODEL,
              "models": [{"id": i, "label": l} for i, l in CLAUDE_MODELS]},
-            # Only offered once agy is installed on this host.
+            # Only offered once agy is installed on this host and can run on its CPU.
             *([{"id": "antigravity", "label": "Antigravity", "hint": "uses your Google subscription",
                 "allowed": allowed["antigravity"], "default_model": "",
                 "default_label": ANTIGRAVITY_DEFAULT_LABEL,
                 "models": [{"id": i, "label": i} for i in antigravity_model_ids()]}]
-              if engine_cli("antigravity") else []),
+              if engine_cli("antigravity") and not antigravity_problem() else []),
         ],
         "plan_engine": plan.get("engine") or "opencode",
         "plan_model": plan.get("model") or "",

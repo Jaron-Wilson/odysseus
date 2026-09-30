@@ -130,7 +130,8 @@ def test_run_options_list_both_engines_and_their_models(tmp_path, monkeypatch):
         "model": "vllm3090/qwen3.8-27b"}))
     monkeypatch.setenv("HOME", str(tmp_path))
     opts = ccr.run_options("", {"engine": "opencode", "model": ""})
-    oc, cl = opts["engines"]
+    by_id = {e["id"]: e for e in opts["engines"]}      # Antigravity too, when agy runs on this host
+    oc, cl = by_id["opencode"], by_id["claude"]
     assert [m["id"] for m in oc["models"]] == ["vllm3090/qwen3.8-27b", "ollama-desktop/qwen3:8b"]
     assert oc["default_model"] == "vllm3090/qwen3.8-27b" and oc["allowed"] and cl["allowed"]
     assert [m["id"] for m in cl["models"]] == ["opus", "sonnet", "haiku"]

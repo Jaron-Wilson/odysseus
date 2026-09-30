@@ -33,8 +33,12 @@ if sys.argv[1:2] == ["models"]:
 conv = sys.argv[sys.argv.index("--conversation") + 1] if "--conversation" in sys.argv else {conv!r}
 emit = lambda e: print(json.dumps(e), flush=True)
 emit({{"event": "init", "conversation_id": conv, "init": {{"cwd": "/w", "permission_mode": "request-review"}}}})
+# Shapes as seen from agy 1.2.14 (2026-09-30).
+emit({{"event": "step_update", "step_update": {{"conversation_id": conv, "step_index": 0, "state": "DONE",
+      "step_type": "user_input"}}}})
 emit({{"event": "step_update", "step_update": {{"conversation_id": conv, "step_index": 1, "state": "DONE",
-      "step_type": "run_command", "command": "ls src"}}}})
+      "step_type": "tool", "tool_name": "run_command",
+      "tool_info": {{"name": "run_command", "parameters": {{"CommandLine": "ls src"}}, "output": "2 files"}}}}}})
 emit({{"event": "step_update", "step_update": {{"conversation_id": conv, "step_index": 2, "state": "RUNNING",
       "step_type": "agent_response", "text_delta": "The app has "}}}})
 emit({{"event": "step_update", "step_update": {{"conversation_id": conv, "step_index": 2, "state": "DONE",
@@ -66,6 +70,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(jobs, "JOBS_FILE", str(tmp_path / "jobs.json"))
     monkeypatch.setattr(chat_prefs, "PREFS_FILE", str(tmp_path / "chat_prefs.json"))
     monkeypatch.setitem(cct._AGY_MODELS, "at", 0.0)
+    monkeypatch.setitem(cct._AGY_CHECK, "at", 0.0)
     jobs._JOBS.clear()
     work = tmp_path / "work"
     work.mkdir()
@@ -74,7 +79,9 @@ def env(tmp_path, monkeypatch):
 
 def _calls(log, cli=None):
     rows = [json.loads(l) for l in open(log)] if os.path.exists(log) else []
-    return [r for r in rows if r["argv"][:1] != ["models"] and (cli is None or cli in r.get("cli", "agy"))]
+    # `agy models` and `agy --version` are checks, not runs.
+    return [r for r in rows if r["argv"][:1] not in (["models"], ["--version"])
+            and (cli is None or cli in r.get("cli", "agy"))]
 
 
 def _run(args, chat=""):
@@ -102,12 +109,13 @@ def test_an_ask_is_read_only_and_reads_the_stream(env):
     assert out["exit_code"] == 0, out
     argv = _calls(log)[-1]["argv"]
     assert argv[0] == "-p" and argv[1].startswith("What does this app do?")
+    assert "view_file, list_dir, find_by_name" in argv[1]     # read-only: its own file tools
     assert argv[argv.index("--output-format") + 1] == "stream-json"
     assert "--sandbox" in argv and "--dangerously-skip-permissions" not in argv   # nothing it may write
     assert "--print-timeout" in argv                          # not agy's own 5 minutes
     assert out["session_id"] == CONV                          # from the init event
     assert "The app has two modules." in out["output"]
-    assert "● run_command(ls src)" in out["console"]
+    assert "● run_command(ls src) → 2 files" in out["console"]
     assert out["engine_label"] == "Antigravity"
 
 
@@ -225,3 +233,90 @@ def test_the_ui_knows_it():
     assert "e.default_label" in read("static", "js", "chatRenderer.js")
     schema = read("src", "tool_schemas.py")
     assert '"enum": ["opencode", "claude", "antigravity"]' in schema
+
+
+def test_an_agy_that_cannot_run_on_this_cpu_is_explained_not_offered(tmp_path, monkeypatch):
+    # Seen 2026-09-30: this server is a KVM guest on QEMU's generic CPU, and
+    # agy dies at start (exit 132) for want of PCLMUL.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    agy = bindir / "agy"
+    agy.write_text("#!/bin/sh\necho 'FATAL ERROR: This binary was compiled with pclmul enabled, but this "
+                   "feature is not available on this processor (go/sigill-fail-fast).' >&2\nexit 132\n")
+    agy.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setitem(cct._AGY_CHECK, "at", 0.0)
+    monkeypatch.setitem(cct._AGY_MODELS, "at", 0.0)
+    real_which = cct.shutil.which
+    monkeypatch.setattr(cct.shutil, "which", lambda n: None if n == "qemu-x86_64" else real_which(n))
+    work = tmp_path / "work"
+    work.mkdir()
+    problem = cct.antigravity_problem()
+    assert "pclmul" in problem and "sudo apt install qemu-user" in problem and "CPU type to 'host'" in problem
+    out = _run({"action": "ask", "engine": "antigravity", "cwd": str(work), "prompt": "hi"})
+    assert out["exit_code"] == 1 and "cannot run on this host" in out["error"]
+    import routes.claude_code_routes as r
+    monkeypatch.setattr("src.opencode_providers.models", lambda: ([], ""))
+    monkeypatch.setattr("src.opencode_providers.in_use", lambda ids: {})
+    assert "antigravity" not in [e["id"] for e in r.run_options("", {})["engines"]]
+
+
+def test_under_qemu_when_the_cpu_lacks_pclmul(tmp_path, monkeypatch):
+    # The fix that needed no VM restart: QEMU user mode with a full CPU model.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "calls.jsonl"
+    agy = bindir / "agy"
+    agy.write_text(f"""#!{sys.executable}
+import json, os, sys
+if not os.environ.get("UNDER_QEMU"):
+    sys.stderr.write("FATAL ERROR: This binary was compiled with pclmul enabled, but this feature is "
+                     "not available on this processor (go/sigill-fail-fast).\\n"); sys.exit(132)
+open({str(log)!r}, "a").write(json.dumps({{"argv": sys.argv[1:]}}) + "\\n")
+if sys.argv[1:2] == ["--version"]: print("1.2.14"); sys.exit(0)
+print(json.dumps({{"event": "init", "conversation_id": "q-1"}}))
+print(json.dumps({{"event": "result", "result": {{"status": "SUCCESS", "response": "emulated ok"}}}}))
+""")
+    agy.chmod(0o755)
+    qemu = bindir / "qemu-x86_64"
+    qemu.write_text(f"""#!/bin/sh
+[ "$1" = "-cpu" ] && [ "$2" = "max" ] || exit 9
+shift 2
+UNDER_QEMU=1 exec "$@"
+""")
+    qemu.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setitem(cct._AGY_CHECK, "at", 0.0)
+    monkeypatch.setattr(jobs, "RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setattr(jobs, "JOBS_FILE", str(tmp_path / "jobs.json"))
+    work = tmp_path / "work"
+    work.mkdir()
+    assert cct.antigravity_problem() == ""
+    assert cct.agy_argv() == [str(qemu), "-cpu", "max", str(agy)]
+    out = _run({"action": "ask", "engine": "antigravity", "cwd": str(work), "prompt": "hi"})
+    assert out["exit_code"] == 0, out
+    assert "emulated ok" in out["output"] and out["session_id"] == "q-1"
+    runs = [json.loads(l) for l in open(log) if '"-p"' in l]
+    assert runs and runs[-1]["argv"][0] == "-p"
+
+
+def test_a_denied_tool_is_shown_and_an_empty_answer_says_why(env, monkeypatch):
+    # Seen live 2026-09-30: asked what a file does, agy tried `find` (a shell
+    # command), the read-only run denied it, and it ended with no answer. The
+    # card showed only the banner, as if that were the reply.
+    line = cct._summarize_antigravity({"event": "step_update", "step_update": {
+        "step_index": 3, "state": "ERROR", "step_type": "tool", "tool_name": "run_command",
+        "tool_info": {"name": "run_command", "parameters": {"CommandLine": 'find . -name "calc.py"'},
+                      "error": {"type": "TOOL_ERROR", "message": "permission check failed for command"}}}})
+    assert line.startswith('✗ run_command(find . -name "calc.py")') and "permission check failed" in line
+    tmp, work, log = env
+    agy = tmp / "bin" / "agy"
+    agy.write_text(f"""#!{sys.executable}
+import json, sys
+if sys.argv[1:2] in (["--version"], ["models"]): sys.exit(0)
+print(json.dumps({{"event": "init", "conversation_id": "e-1"}}))
+print(json.dumps({{"event": "result", "result": {{"status": "SUCCESS", "response": ""}}}}))
+sys.stderr.write("jetski: no output produced — a tool required the \\\\"command\\\\" permission that headless mode cannot prompt for, so it was auto-denied.\\\\n")
+""")
+    out = _run({"action": "ask", "engine": "antigravity", "cwd": str(work), "prompt": "What is in calc.py?"})
+    assert out["output"].startswith("Antigravity finished without an answer.") and "auto-denied" in out["output"]

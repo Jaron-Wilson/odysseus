@@ -85,6 +85,67 @@ def engine_cli(engine: str) -> Optional[str]:
     return found
 
 
+_AGY_CHECK: Dict[str, object] = {"at": 0.0, "path": "", "problem": "", "argv": []}
+# Seen 2026-09-30 on this server: a KVM guest on QEMU's generic CPU model
+# hides PCLMUL, and agy dies at start ("compiled with pclmul enabled, but
+# this feature is not available on this processor", exit 132). The user
+# would not stop the VM to change its CPU type, so agy runs under QEMU user
+# mode (`qemu-x86_64 -cpu max`, apt package qemu-user) instead: it starts in
+# about 2s, and the programs it runs (git, shells) run natively.
+QEMU_CPU = ["-cpu", "max"]
+
+
+def _agy_starts(argv: list) -> tuple:
+    """(started, stderr) for `<argv> --version`."""
+    try:
+        r = subprocess.run([*argv, "--version"], capture_output=True, text=True, timeout=20,
+                           stdin=subprocess.DEVNULL, env=_cli_env())
+        return r.returncode == 0, _strip_ansi(r.stderr or "")
+    except Exception as e:
+        return False, str(e)
+
+
+def _agy_launch() -> tuple:
+    """How to start agy here, as (argv prefix, problem): [agy] when it runs
+    natively, [qemu-x86_64, -cpu, max, agy] when only under emulation, or
+    ([], why) when it cannot run. Checked once an hour."""
+    cli = engine_cli("antigravity")
+    if not cli:
+        return [], ""
+    if _AGY_CHECK["path"] == cli and time.time() - float(_AGY_CHECK["at"]) < 3600:
+        return list(_AGY_CHECK["argv"]), str(_AGY_CHECK["problem"])
+    argv, problem = [cli], ""
+    ok, err = _agy_starts([cli])
+    if not ok and ("not available on this processor" in err or "llegal instruction" in err or not err.strip()):
+        qemu = shutil.which("qemu-x86_64")
+        if qemu and _agy_starts([qemu, *QEMU_CPU, cli])[0]:
+            argv = [qemu, *QEMU_CPU, cli]
+        else:
+            argv = []
+            problem = ("agy is installed but cannot run on this server's CPU: "
+                       + (err.strip().splitlines()[0][:200] if err.strip() else "illegal instruction")
+                       + ". The fix needing no restart: the user installs QEMU user mode "
+                       "(sudo apt install qemu-user) and agy then runs under it. Or set the VM's "
+                       "CPU type to 'host' and restart the VM.")
+    _AGY_CHECK.update(at=time.time(), path=cli, problem=problem, argv=argv)
+    return argv, problem
+
+
+def antigravity_problem() -> str:
+    """Why an installed agy cannot run here, or "" when it can."""
+    return _agy_launch()[1]
+
+
+def agy_argv(cli: str = "") -> list:
+    """The command that starts agy on this host (maybe under QEMU)."""
+    argv = _agy_launch()[0]
+    return argv or ([cli] if cli else [])
+
+
+AGY_READ_ONLY_NOTE = ("\n\nThis run is read-only. Read the project with view_file, list_dir, find_by_name "
+                      "and grep_search. Shell commands (run_command) and edits are denied here, so do "
+                      "not use them.")
+
 _AGY_MODELS: Dict[str, object] = {"at": 0.0, "ids": []}
 _MODEL_SLUG = re.compile(r"^[a-z0-9][a-z0-9.\-_/:]*[a-z0-9]$")
 
@@ -96,9 +157,9 @@ def antigravity_model_ids() -> list:
         return list(_AGY_MODELS["ids"])
     ids: list = []
     cli = engine_cli("antigravity")
-    if cli:
+    if cli and not antigravity_problem():
         try:
-            out = subprocess.run([cli, "models"], capture_output=True, text=True, timeout=8,
+            out = subprocess.run([*agy_argv(cli), "models"], capture_output=True, text=True, timeout=15,
                                  env=_cli_env(), stdin=subprocess.DEVNULL).stdout
             for line in out.splitlines():
                 word = _strip_ansi(line).strip().lstrip("*-• ").split()
@@ -193,16 +254,32 @@ def _summarize_antigravity(event: dict) -> Optional[str]:
     if event.get("event") != "step_update":
         return None
     step = event.get("step_update") or {}
-    if str(step.get("state") or "").upper() != "DONE":
+    state = str(step.get("state") or "").upper()
+    if state not in ("DONE", "ERROR"):
         return None
     kind = str(step.get("step_type") or "")
-    if kind == "agent_response":
+    if kind in ("agent_response", "user_input"):
         return None                                  # the text itself: _Stream collects it
+    # Seen live (agy 1.2.14): {"step_type": "tool", "tool_name": "view_file",
+    # "tool_info": {"parameters": {"AbsolutePath": "..."}, "output": "3 lines, 32 bytes"}}
+    info = step.get("tool_info") if isinstance(step.get("tool_info"), dict) else {}
+    params = info.get("parameters") if isinstance(info.get("parameters"), dict) else {}
+    name = str(step.get("tool_name") or info.get("name") or kind or "step")
     hint = ""
-    for key in ("command", "path", "file_path", "target", "query", "url", "title"):
-        if step.get(key):
-            hint = str(step[key]); break
-    return f"● {kind or 'step'}({hint.replace(chr(10), ' ')[:70]})"
+    for key in ("CommandLine", "Command", "AbsolutePath", "TargetFile", "Path", "SearchPath",
+                "DirectoryPath", "Query", "Pattern", "Url", "command", "path", "query", "url"):
+        if params.get(key) or step.get(key):
+            hint = str(params.get(key) or step.get(key)); break
+    if not hint:
+        hint = next((str(v) for v in params.values() if isinstance(v, str) and v), "")
+    if state == "ERROR":
+        err = info.get("error") if isinstance(info.get("error"), dict) else {}
+        why = str(err.get("message") or "failed").splitlines()[0]
+        return f"✗ {name}({hint.replace(chr(10), ' ')[:70]}) {why[:120]}"
+    line = f"● {name}({hint.replace(chr(10), ' ')[:70]})"
+    if info.get("output") and isinstance(info["output"], str) and len(info["output"]) <= 80:
+        line += f" → {info['output']}"
+    return line
 
 
 def _clip(text, n: int) -> str:
@@ -756,6 +833,11 @@ class ClaudeCodeTool:
                         "pid": pid, "already_running": True, "exit_code": 1}
 
         cli = engine_cli(engine)
+        broken = antigravity_problem() if (cli and engine == "antigravity") else ""
+        if broken:
+            return {"error": f"Antigravity cannot run on this host: {broken} Tell the user; do not retry "
+                             "it or try agy through bash. Offer OpenCode or Claude Code instead.",
+                    "exit_code": 1}
         if not cli:
             return {
                 "error": (f"{engine_label(engine)} CLI not found on PATH ({ENGINE_BINARIES[engine]}). "
@@ -853,7 +935,12 @@ class ClaudeCodeTool:
             # commands) is soft-denied, and --sandbox restricts the terminal:
             # plans and asks stay read-only. An approved execute may write.
             session_id = "" if run_fresh else (resume_id or "")
-            cmd = [cli, "-p", prompt, "--output-format", "stream-json"]
+            if action != "execute":
+                # Seen live: asked what a file does, agy reached for `find` (a
+                # shell command), which a read-only run denies, and it stopped
+                # with no answer. Its own file tools need no permission.
+                prompt = prompt.rstrip() + AGY_READ_ONLY_NOTE
+            cmd = [*agy_argv(cli), "-p", prompt, "--output-format", "stream-json"]
             if args.get("model"):
                 cmd += ["--model", str(args["model"])]
             if resume_id and not run_fresh:
@@ -1208,7 +1295,9 @@ class _Stream:
                 self.session_id = str(event.get("conversation_id") or body.get("conversation_id") or "")
             if kind == "step_update":
                 idx = body.get("step_index")
-                if idx is not None and idx not in self._agy_steps:
+                # A turn is one agent response; user input and tool steps are not.
+                if (body.get("step_type") == "agent_response" and idx is not None
+                        and idx not in self._agy_steps):
                     self._agy_steps.add(idx)
                     self.turns += 1
                 if body.get("step_type") == "agent_response" and body.get("text_delta"):
@@ -1230,8 +1319,8 @@ class _Stream:
                 if body.get("error"):
                     # Kept even after partial text: a quota or sign-in failure is the news.
                     self.final_text = (self.final_text + f"\n\nAntigravity error: {body['error']}").strip()
-                if isinstance(body.get("num_turns"), int):
-                    self.turns = max(self.turns, body["num_turns"])
+                if isinstance(body.get("num_turns"), int) and body["num_turns"]:
+                    self.turns = body["num_turns"]          # agy's own count wins at the end
                 return [f"Antigravity error: {body['error']}"] if body.get("error") else []
             summary = _summarize_antigravity(event)
             return summary.splitlines() if summary else []
@@ -1498,7 +1587,7 @@ async def _wrap_up(job, reason: str) -> str:
         return ""
     prompt = WRAP_UP_PROMPT.format(reason=reason)
     if engine == "antigravity":
-        cmd = [cli, "-p", prompt, "--output-format", "stream-json", "--conversation", sid,
+        cmd = [*agy_argv(cli), "-p", prompt, "--output-format", "stream-json", "--conversation", sid,
                "--sandbox", "--print-timeout", "170s"]
         if spec.get("args_model"):
             cmd += ["--model", spec["args_model"]]
@@ -1580,6 +1669,12 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
     body_lines = "\n".join(job.lines)
     console = head + ("\n" + body_lines if body_lines else "")
     final_text = stream.final_text
+    if not final_text and spec.get("engine", job.engine) == "antigravity":
+        # agy says on stderr why it stopped empty (most often a tool a
+        # read-only run denied); the banner alone would read as the answer.
+        why = " ".join(_stderr_tail(job)).strip()
+        final_text = ("Antigravity finished without an answer."
+                      + (f" {why[:600]}" if why else " See the console for the steps it took."))
 
     limits = spec.get("limits") or {}
     reason = spec.get("limit_hit") or ""
@@ -1922,7 +2017,8 @@ def _os_process_for(session_id: str) -> Optional[int]:
             continue
         if not args:
             continue
-        head = " ".join(os.path.basename(a) for a in args[:2]).lower()
+        # args[:4]: agy may run under `qemu-x86_64 -cpu max agy ...`.
+        head = " ".join(os.path.basename(a) for a in args[:4]).lower()
         if "claude" not in head and "opencode" not in head and "agy" not in head:
             continue
         if any(a == session_id or a.endswith(f"/{session_id}.jsonl") for a in args):
