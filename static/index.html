@@ -2262,6 +2262,45 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Each browser that turned on notifications (Reminders tab) names itself. Link each one to the device it is, so "notify my phone" reaches it.</div>
             <div id="devices-subs"><div class="admin-toggle-sub">Loading…</div></div>
           </div>
+          <!-- Phone SMS: routes/sms_routes.py, filled in by devicesSettings.js. -->
+          <div class="admin-card" id="sms-card">
+            <h2>Phone SMS</h2>
+            <div class="admin-toggle-sub">Text Odysseus from your number. Your Android phone forwards each text it gets to this server, which answers: <strong>list</strong> (your recent chats, numbered), <strong>say &lt;n&gt; &lt;text&gt;</strong> (send to chat n), <strong>status</strong> (running agents and jobs), <strong>help</strong>. Only texts from your numbers, sent with the secret below, are acted on.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" for="sms-numbers">Your numbers</label>
+                <input id="sms-numbers" class="settings-select" type="text" placeholder="+15550102000 (comma-separated, up to 5)" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="sms-reply-url">Reply URL</label>
+                <input id="sms-reply-url" class="settings-select" type="text" placeholder="http://user:password@phone-tailnet-ip:8080/message (blank: web push)" />
+              </div>
+              <div class="settings-row">
+                <span class="admin-toggle-sub">Replies are texted back through the phone's send endpoint, or sent as a notification when the reply URL is blank.</span>
+                <button class="admin-btn-add" id="sms-save" type="button">Save</button>
+              </div>
+              <div class="settings-row">
+                <span class="admin-toggle-sub" id="sms-secret-state">Loading…</span>
+                <button class="settings-btn" id="sms-generate" type="button">Generate secret</button>
+                <button class="settings-btn" id="sms-test" type="button">Send test reply</button>
+                <button class="settings-btn" id="sms-disable" type="button">Turn off</button>
+              </div>
+              <div id="sms-secret-once" class="settings-col" hidden></div>
+              <div id="sms-msg" class="admin-toggle-sub"></div>
+            </div>
+            <details>
+              <summary class="admin-toggle-sub">Setup guide</summary>
+              <ol class="admin-toggle-sub">
+                <li>Save your number(s) above: the phone(s) you will text from.</li>
+                <li>Click <strong>Generate secret</strong> and copy the forward URL. It is shown once; generating again replaces it.</li>
+                <li>On the Android phone that gets the texts, install <strong>SMS Forwarder</strong> ("SMS to URL Forwarder", <code>tech.bogomolov.incomingsmsgateway</code>) from F-Droid.</li>
+                <li>Add a rule: sender = your number, URL = the forward URL, keep the default JSON template (<code>{"from":"%from%","text":"%text%",...}</code>). Allow SMS permission and turn off battery optimization for it.</li>
+                <li>Texts must arrive as SMS, not RCS: turn off RCS chats in Google Messages on that phone (or on the phone you text from).</li>
+                <li>For texted replies, install <strong>SMS Gateway for Android</strong> (GitHub release, <code>me.capcom.smsgateway</code>), turn on its Local server, and put <code>http://USER:PASSWORD@PHONE_IP:8080/message</code> in Reply URL. Leave it blank for notification replies.</li>
+                <li>Text <strong>help</strong> to the phone. Full steps: docs/sms-gateway.md.</li>
+              </ol>
+            </details>
+          </div>
         </div>
 
         <!-- ═══ ADMIN: USERS TAB ═══ -->

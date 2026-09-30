@@ -232,7 +232,78 @@ function toolsLine(t) {
     <button ${BTN} data-m-update="${esc(t.server_id)}" data-m-host="${esc(t.host || '')}" ${t.online ? '' : 'disabled title="Offline"'}>${toolsButton(t)}</button></div>`;
 }
 
+// ── Phone SMS: text the server from your phone (routes/sms_routes.py) ─────
+//
+// Per user, not admin only, so it loads on its own: the registry calls above
+// fail for a non-admin. The secret is shown once, when it is made; the server
+// keeps only its hash.
+
+function smsSay(text, isError) {
+  const el = $('sms-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('sms-error', !!isError);
+}
+
+function renderSms(cfg) {
+  if (!$('sms-card')) return;
+  $('sms-numbers').value = (cfg.numbers || []).join(', ');
+  $('sms-reply-url').value = cfg.reply_url || '';
+  const when = cfg.secret_created ? new Date(cfg.secret_created * 1000).toLocaleString() : '';
+  $('sms-secret-state').textContent = cfg.has_secret
+    ? `A secret is set${when ? ` (made ${when})` : ''}. Generating a new one stops the old forward URL.`
+    : 'No secret yet: the gateway is off until you generate one.';
+  $('sms-disable').disabled = !cfg.has_secret;
+}
+
+async function loadSms() {
+  if (!$('sms-card')) return;
+  try {
+    renderSms(await api('GET', '/api/sms/config'));
+  } catch (e) {
+    smsSay(`Could not load the SMS settings: ${e.message}`, true);
+  }
+}
+
+async function onSmsClick(ev) {
+  const t = ev.target.closest('#sms-save,#sms-generate,#sms-test,#sms-disable');
+  if (!t) return;
+  ev.preventDefault();
+  try {
+    if (t.id === 'sms-save') {
+      const numbers = $('sms-numbers').value.split(/[,;\n]/).map((n) => n.trim()).filter(Boolean);
+      renderSms(await api('PUT', '/api/sms/config', { numbers, reply_url: $('sms-reply-url').value.trim() }));
+      smsSay('Saved.');
+    } else if (t.id === 'sms-generate') {
+      if (!confirm('Make a new secret? The forward URL on your phone stops working until you paste the new one.')) return;
+      const r = await api('POST', '/api/sms/secret');
+      renderSms(r);
+      const url = `${location.origin}${r.inbound_path}${r.secret}`;
+      const once = $('sms-secret-once');
+      once.innerHTML = `
+        <div class="admin-toggle-sub">Paste this forward URL into the phone app now. It is shown only this once.</div>
+        <div class="settings-row"><code class="sms-url">${esc(url)}</code>${copyBtn(url)}</div>
+        <div class="settings-row"><span class="admin-toggle-sub">Secret alone:</span><code class="sms-url">${esc(r.secret)}</code>${copyBtn(r.secret)}</div>`;
+      once.hidden = false;
+      smsSay('New secret made. The old forward URL no longer works.');
+    } else if (t.id === 'sms-test') {
+      const r = await api('POST', '/api/sms/test');
+      smsSay(r.ok ? `Test reply sent (${r.via === 'push' ? 'web push' : 'reply URL'}).`
+        : 'The test reply did not go through. Check the reply URL, or turn on notifications.', !r.ok);
+    } else if (t.id === 'sms-disable') {
+      if (!confirm('Turn the SMS gateway off? Texts are ignored until you generate a new secret.')) return;
+      renderSms(await api('DELETE', '/api/sms/secret'));
+      $('sms-secret-once').hidden = true;
+      $('sms-secret-once').innerHTML = '';
+      smsSay('Turned off.');
+    }
+  } catch (e) {
+    smsSay(e.message, true);
+  }
+}
+
 async function load(refresh = false) {
+  loadSms();
   try {
     const [base, overview] = await Promise.all([
       api('GET', '/api/devices'),
@@ -536,6 +607,7 @@ function init() {
   panel.addEventListener('click', onComputersClick);
   panel.addEventListener('click', onMachineClick);
   panel.addEventListener('click', onEnrollClick);
+  panel.addEventListener('click', onSmsClick);
   panel.addEventListener('input', onComputersInput);
   panel.dataset.devicesReady = '1';
 }
