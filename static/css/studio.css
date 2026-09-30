@@ -546,6 +546,12 @@ html.ui-studio .mode-toggle-btn {
 html.ui-studio .mode-toggle::before { border-radius: var(--st-r-xs); }
 html.ui-studio .mode-toggle-btn.active,
 html.ui-studio .mode-toggle-btn.active:hover { color: var(--st-text); background: transparent; }
+/* Phones: style.css gives the buttons a 34px min-height; grow the track to
+   match so they are not clipped (and their labels pushed low) in a 28px pill. */
+@media (max-width: 768px) {
+  html.ui-studio .mode-toggle { height: 34px; }
+  html.ui-studio .mode-toggle-btn { min-height: 0; line-height: 30px; }
+}
 
 /* --- Chat top bar ----------------------------------------------------------- */
 html.ui-studio .chat-top-bar #current-meta {

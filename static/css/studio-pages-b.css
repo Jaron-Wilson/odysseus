@@ -336,17 +336,19 @@ html.ui-studio .agent-thread-cmd {
   font-family: var(--st-mono); font-size: 12.25px; line-height: 1.55; color: var(--st-text);
   background: var(--st-sunken); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
 }
+/* Output: a quiet disclosure row (hairline, no fill) rather than a grey bar */
 html.ui-studio .agent-tool-output {
-  margin-top: 6px; background: var(--st-sunken);
+  margin-top: 6px; background: transparent;
   border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
 }
-html.ui-studio .agent-tool-output[open] { background: var(--st-sunken); }
+html.ui-studio .agent-tool-output[open] { background: transparent; }
 html.ui-studio .agent-tool-output summary {
-  min-height: 30px; padding: 0 10px; font-size: 12px; font-weight: 550;
-  color: var(--st-text-2); background: transparent; border-bottom: 1px solid transparent;
+  min-height: 30px; padding: 0 10px; font-size: 12px; font-weight: 500;
+  color: var(--st-text-3); background: transparent; border-bottom: 1px solid transparent;
+  transition: background .12s, color .12s;
 }
 html.ui-studio .agent-tool-output[open] > summary { border-bottom-color: var(--st-line); }
-html.ui-studio .agent-tool-output summary:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .agent-tool-output summary:hover { background: var(--st-hover); color: var(--st-text-2); }
 html.ui-studio .agent-tool-output summary::after { content: '\25BE'; color: var(--st-text-3); font-size: 11px; transition: transform .15s var(--st-ease); }
 html.ui-studio .agent-tool-output[open] > summary::after { transform: rotate(180deg); }
 html.ui-studio .agent-tool-output pre {
@@ -464,6 +466,7 @@ html.ui-studio #cookbook-modal .hwfit-hw-chip-x {
   width: 18px; height: 18px; font-size: 13px !important; line-height: 18px !important; transform: none;
   border-radius: 50%; color: var(--st-text-3); text-align: center;
 }
+html.ui-studio #cookbook-modal .hwfit-hw-chip :is(.hwfit-hw-chip-toggle, .hwfit-hw-chip-x) { margin: 0; } /* drop .modal-body button's 6px top margin */
 html.ui-studio #cookbook-modal .hwfit-hw-chip-x:hover { background: var(--st-press); color: var(--st-text); }
 html.ui-studio #cookbook-modal .hwfit-hw-chip-off { opacity: .5; border-style: dashed; }
 
