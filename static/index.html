@@ -17,7 +17,20 @@
   window._odysseusLoadTime = Date.now();
   (function(){
     try {
+      // Interface design (static/js/uiDesign.js): Studio unless Classic was chosen.
+      var ui = localStorage.getItem('odysseus-ui-design');
+      if (ui !== 'classic') ui = 'studio';
+      document.documentElement.classList.add('ui-' + ui);
+      document.documentElement.dataset.ui = ui;
       var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+      // Studio's first run on a stock theme paints its own palette straight
+      // away rather than flashing the old one until uiDesign.js swaps it.
+      if (ui === 'studio' && t && (t.name === 'dark' || t.name === 'light')
+          && !localStorage.getItem('odysseus-ui-design-palette-done')) {
+        t.colors = t.name === 'dark'
+          ? {bg:'#0f1115', fg:'#e6e8ec', panel:'#16191e', border:'#262a31', red:'#7c8cff'}
+          : {bg:'#f7f8fa', fg:'#15171c', panel:'#ffffff', border:'#e2e5ea', red:'#4f5fd8'};
+      }
       if (t && t.colors) {
         var s = document.documentElement.style;
         var c = t.colors;
@@ -216,6 +229,11 @@
     })();
   </script>
   <link rel="stylesheet" href="/static/style.css">
+  <!-- Studio interface design, scoped to html.ui-studio (static/js/uiDesign.js) -->
+  <link rel="stylesheet" href="/static/css/studio.css">
+  <link rel="stylesheet" href="/static/css/studio-overlays.css">
+  <link rel="stylesheet" href="/static/css/studio-pages-a.css">
+  <link rel="stylesheet" href="/static/css/studio-pages-b.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
@@ -597,6 +615,13 @@
       <div class="admin-card">
         <h2>Font & Layout</h2>
         <div class="theme-fd-row">
+          <div class="theme-fd-group">
+            <label class="theme-fd-label" for="theme-design-select">Interface</label>
+            <select id="theme-design-select" class="theme-fd-select" aria-label="Interface">
+              <option value="studio">Studio</option>
+              <option value="classic">Classic</option>
+            </select>
+          </div>
           <div class="theme-fd-group">
             <label class="theme-fd-label">Font</label>
             <select id="theme-font-select" class="theme-fd-select" aria-label="Font">
@@ -1797,6 +1822,22 @@
 
         <!-- ═══ APPEARANCE TAB ═══ -->
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
+          <div class="admin-card ui-design-card">
+            <h2>Interface</h2>
+            <p class="ui-design-hint">The look of the whole app. Your color theme works with either.</p>
+            <div class="ui-design-choices" role="radiogroup" aria-label="Interface design">
+              <div class="ui-design-choice" role="radio" tabindex="0" aria-checked="false" data-ui-design-choice="studio">
+                <span class="ui-design-thumb ui-design-thumb-studio" aria-hidden="true"><i></i><b></b><u></u></span>
+                <span class="ui-design-name">Studio</span>
+                <span class="ui-design-desc">Clean and professional</span>
+              </div>
+              <div class="ui-design-choice" role="radio" tabindex="0" aria-checked="false" data-ui-design-choice="classic">
+                <span class="ui-design-thumb ui-design-thumb-classic" aria-hidden="true"><i></i><b></b><u></u></span>
+                <span class="ui-design-name">Classic</span>
+                <span class="ui-design-desc">The original Odysseus look</span>
+              </div>
+            </div>
+          </div>
           <div class="admin-card" style="padding-bottom:6px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar</h2>
             <div class="vis-toggles">

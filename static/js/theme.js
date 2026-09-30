@@ -24,6 +24,17 @@ export const THEMES = {
                 hl: { bg:'#ffffff', fg:'#1a1a17', keyword:'#9a5a2e', string:'#7a6a2e',
                       comment:'#8f8a7c', function:'#a8622e', number:'#8a5030',
                       builtin:'#6e5a2e', variable:'#4a4438', params:'#6b6255' } },
+  // Studio: the palettes of the Studio interface (src: static/js/uiDesign.js).
+  // Neutral graphite / cool paper with one indigo accent; switching the
+  // interface to Studio swaps dark/light for these.
+  studio:     { bg:'#0f1115', fg:'#e6e8ec', panel:'#16191e', border:'#262a31', red:'#7c8cff',
+                hl: { bg:'#13161b', fg:'#e6e8ec', keyword:'#c592ff', string:'#9ecb8f',
+                      comment:'#6b7280', function:'#82aaff', number:'#f2a76b',
+                      builtin:'#5fc4d4', variable:'#e6c07b', params:'#cbd1dc' } },
+  'studio-light': { bg:'#f7f8fa', fg:'#15171c', panel:'#ffffff', border:'#e2e5ea', red:'#4f5fd8',
+                hl: { bg:'#f3f4f7', fg:'#15171c', keyword:'#8a3fd1', string:'#2f7d32',
+                      comment:'#8a919c', function:'#2a5bd7', number:'#b35a10',
+                      builtin:'#0f7c8c', variable:'#8a5a00', params:'#3d4452' } },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
   paper:      { bg:'#faf8f5', fg:'#3b3836', panel:'#ffffff', border:'#d5d0c8', red:'#c5ac4a' },
   // Spicy / fun themes

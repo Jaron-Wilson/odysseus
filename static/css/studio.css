@@ -1,0 +1,419 @@
+/* ==========================================================================
+   Studio: the redesigned Odysseus interface.
+
+   A layer over style.css, active only under html.ui-studio (set before first
+   paint by the head script in index.html, switched in Settings > Appearance >
+   Interface or the Theme panel; see static/js/uiDesign.js). Classic is
+   style.css alone, untouched.
+
+   Colors still come from the theme variables (--bg, --fg, --panel, --border,
+   --red as the accent), so every color theme works on Studio. Studio adds
+   structure: one type family, a spacing and radius scale, hairline borders,
+   quiet surfaces, one accent, consistent focus rings.
+
+   This file: tokens, base, sidebar, chat, messages, code, composer.
+   studio-overlays.css: modals, dropdowns, menus, settings, theme panel.
+   studio-pages.css: the tool views (calendar, notes, email, ...).
+   ========================================================================== */
+
+/* --- The Interface picker itself (shown in both designs) ------------------ */
+.ui-design-hint { margin: 2px 0 12px; font-size: 12.5px; opacity: .65; }
+.ui-design-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ui-design-choice {
+  display: flex; flex-direction: column; gap: 3px; padding: 10px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px; background: transparent;
+  transition: border-color .15s, background .15s, box-shadow .15s; outline: none;
+}
+.ui-design-choice:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.ui-design-choice:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 35%, transparent); }
+.ui-design-choice.active {
+  border-color: color-mix(in srgb, var(--red) 70%, var(--border));
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.ui-design-name { font-weight: 600; font-size: 13px; }
+.ui-design-desc { font-size: 11.5px; opacity: .6; }
+.ui-design-thumb {
+  position: relative; display: block; height: 64px; margin-bottom: 6px; border-radius: 7px;
+  overflow: hidden; border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ui-design-thumb i, .ui-design-thumb b, .ui-design-thumb u { position: absolute; display: block; }
+.ui-design-thumb-studio { background: #0f1115; }
+.ui-design-thumb-studio i { left: 0; top: 0; bottom: 0; width: 30%; background: #13161b; border-right: 1px solid #262a31; }
+.ui-design-thumb-studio b { left: 38%; right: 8%; bottom: 8px; height: 14px; border-radius: 5px; background: #16191e; border: 1px solid #2c313a; }
+.ui-design-thumb-studio u { left: 38%; top: 10px; width: 36%; height: 6px; border-radius: 3px; background: #7c8cff; }
+.ui-design-thumb-classic { background: #17150f; }
+.ui-design-thumb-classic i { left: 0; top: 0; bottom: 0; width: 30%; background: #201d16; border-right: 1px solid #35322a; }
+.ui-design-thumb-classic b { left: 38%; right: 8%; bottom: 8px; height: 14px; border-radius: 7px; background: #201d16; border: 1px solid #35322a; }
+.ui-design-thumb-classic u { left: 38%; top: 10px; width: 36%; height: 6px; border-radius: 3px; background: #e06c75; }
+
+/* --- Tokens ---------------------------------------------------------------- */
+html.ui-studio {
+  /* Palette fallbacks for a first visit with no saved theme; a saved theme
+     sets these inline and wins. */
+  --bg: #0f1115; --fg: #e6e8ec; --panel: #16191e; --border: #262a31; --red: #7c8cff;
+
+  --st-accent: var(--red);
+  --st-accent-fg: #fff;
+  --st-accent-soft: color-mix(in srgb, var(--st-accent) 14%, transparent);
+  --st-accent-line: color-mix(in srgb, var(--st-accent) 55%, transparent);
+  --st-text: var(--fg);
+  --st-text-2: color-mix(in srgb, var(--fg) 72%, var(--bg));
+  --st-text-3: color-mix(in srgb, var(--fg) 50%, var(--bg));
+  --st-line: color-mix(in srgb, var(--fg) 9%, transparent);
+  --st-line-2: color-mix(in srgb, var(--fg) 14%, transparent);
+  --st-hover: color-mix(in srgb, var(--fg) 5.5%, transparent);
+  --st-press: color-mix(in srgb, var(--fg) 9%, transparent);
+  --st-surface: var(--panel);
+  --st-surface-2: color-mix(in srgb, var(--fg) 3.5%, var(--panel));
+  --st-sunken: color-mix(in srgb, var(--bg) 70%, #000 0%);
+  --st-sidebar: color-mix(in srgb, var(--panel) 55%, var(--bg));
+  --st-r-xs: 5px; --st-r-sm: 7px; --st-r: 10px; --st-r-lg: 14px; --st-r-xl: 18px;
+  --st-shadow-sm: 0 1px 2px rgba(0,0,0,.18);
+  --st-shadow: 0 1px 2px rgba(0,0,0,.14), 0 4px 14px rgba(0,0,0,.16);
+  --st-shadow-lg: 0 2px 6px rgba(0,0,0,.18), 0 18px 48px rgba(0,0,0,.32);
+  --st-ring: 0 0 0 3px color-mix(in srgb, var(--st-accent) 30%, transparent);
+  --st-ease: cubic-bezier(.2, .7, .2, 1);
+  --st-font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --st-mono: 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Existing variables the rest of style.css reads */
+  --font-family: var(--st-font);
+  --font-display: var(--st-font);
+  --chat-max: 780px;
+  --sidebar-bg: var(--st-sidebar);
+  --accent: var(--st-accent);
+  --bubble-border: var(--st-line);
+}
+/* Light themes: shadows go softer, the accent carries white text */
+html.ui-studio[data-theme-mode="light"] {
+  --st-shadow-sm: 0 1px 2px rgba(16,24,40,.06);
+  --st-shadow: 0 1px 2px rgba(16,24,40,.05), 0 4px 12px rgba(16,24,40,.07);
+  --st-shadow-lg: 0 4px 10px rgba(16,24,40,.06), 0 20px 48px rgba(16,24,40,.14);
+}
+
+/* --- Base ------------------------------------------------------------------- */
+html.ui-studio body {
+  font-family: var(--st-font);
+  font-size: 14px;
+  letter-spacing: -0.006em;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+html.ui-studio h1, html.ui-studio h2, html.ui-studio h3, html.ui-studio h4 {
+  font-family: var(--st-font);
+  letter-spacing: -0.015em;
+  font-variation-settings: normal;
+}
+html.ui-studio ::selection { background: color-mix(in srgb, var(--st-accent) 32%, transparent); }
+html.ui-studio :focus-visible { outline: 2px solid var(--st-accent-line); outline-offset: 2px; }
+html.ui-studio * { scrollbar-width: thin; scrollbar-color: var(--st-line-2) transparent; }
+html.ui-studio ::-webkit-scrollbar { width: 10px; height: 10px; }
+html.ui-studio ::-webkit-scrollbar-thumb {
+  background: var(--st-line-2); border-radius: 10px; border: 3px solid transparent; background-clip: content-box;
+}
+html.ui-studio ::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--fg) 26%, transparent); }
+html.ui-studio ::-webkit-scrollbar-track { background: transparent; }
+
+/* --- Sidebar ---------------------------------------------------------------- */
+html.ui-studio .sidebar {
+  background: var(--st-sidebar);
+  border: none;
+  border-right: 1px solid var(--st-line);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+html.ui-studio .sidebar.right-side { border-right: none; border-left: 1px solid var(--st-line); }
+html.ui-studio .sidebar.hidden { border: none; }
+html.ui-studio .sidebar-header { background: var(--st-sidebar); padding-top: 14px; }
+html.ui-studio .sidebar-inner { padding: 8px 10px 10px; }
+
+/* Wordmark: a square mark in the accent + a sans name */
+html.ui-studio .sidebar-brand-title {
+  font-family: var(--st-font);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--st-text);
+  display: inline-flex; align-items: center; gap: 8px;
+  left: 0;
+}
+html.ui-studio .sidebar-brand-title::before {
+  content: ''; width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--st-accent) 100%, #fff 18%), color-mix(in srgb, var(--st-accent) 78%, #000 22%));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.14), 0 1px 2px rgba(0,0,0,.25);
+  -webkit-mask: none;
+}
+
+/* Rows */
+html.ui-studio .sidebar .list-item {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: var(--st-r-sm);
+  font-size: 13px;
+  font-weight: 450;
+  color: var(--st-text-2);
+  gap: 10px;
+  transition: background .12s, color .12s;
+}
+html.ui-studio .sidebar .list-item:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .sidebar .list-item:active { background: var(--st-press); }
+html.ui-studio .sidebar .list-item svg { color: var(--st-text-3); opacity: 1; flex-shrink: 0; }
+html.ui-studio .sidebar .list-item:hover svg { color: var(--st-text-2); }
+html.ui-studio .sidebar .list-item.active,
+html.ui-studio .sidebar .list-item.selected,
+html.ui-studio .sidebar .list-item[aria-current="true"] {
+  background: var(--st-accent-soft);
+  color: var(--st-text);
+}
+html.ui-studio .sidebar .list-item.active svg,
+html.ui-studio .sidebar .list-item.selected svg { color: var(--st-accent); }
+html.ui-studio #sidebar-new-chat-btn,
+html.ui-studio #sidebar-search-btn { padding: 6px 10px; margin: 0 0 1px; }
+html.ui-studio #tools-section .list-item { padding: 6px 10px; }
+html.ui-studio #sidebar-new-chat-btn {
+  color: var(--st-text);
+  font-weight: 550;
+}
+html.ui-studio #sidebar-new-chat-btn svg { color: var(--st-accent); }
+
+/* Row labels: style.css pins these at 9.75-10px; Studio reads at 13px */
+html.ui-studio .sidebar .list-item .grow,
+html.ui-studio .sidebar .list-item > span:not([class*="dot"]):not([class*="badge"]):not([class*="count"]) {
+  font-size: 13px; line-height: 1.35; color: inherit; font-weight: inherit;
+}
+
+/* Section headers (Chats, Email, Models, Tools): a quiet label row */
+html.ui-studio .sidebar .section-header-flex {
+  height: 30px; padding: 6px 10px; margin: 0; border-radius: var(--st-r-sm);
+}
+html.ui-studio .sidebar .section-header-flex:hover { background: var(--st-hover); }
+html.ui-studio .sidebar .section-header-flex h4,
+html.ui-studio .sidebar .section-header-flex .section-title {
+  font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none;
+  color: var(--st-text-3); gap: 10px;
+}
+html.ui-studio .sidebar .section-header-flex:hover .section-title,
+html.ui-studio .sidebar .section-header-flex:hover h4 { color: var(--st-text-2); }
+html.ui-studio .sidebar .section-icon,
+html.ui-studio .sidebar .sidebar-action-icon { stroke: currentColor; color: var(--st-text-3); left: 0; }
+html.ui-studio .sidebar .section { margin-top: 6px; }
+html.ui-studio .sidebar .section-header-btn {
+  border-radius: var(--st-r-xs);
+  color: var(--st-text-3);
+}
+html.ui-studio .sidebar .section-header-btn:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* The pill "Inbound" style chips and + buttons in rows */
+html.ui-studio .sidebar .email-inbound-btn {
+  font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--st-line-2); background: transparent; color: var(--st-text-2);
+}
+html.ui-studio .sidebar .list-item-plus-btn { border-radius: var(--st-r-xs); color: var(--st-text-3); }
+html.ui-studio .sidebar .list-item-plus-btn:hover { background: var(--st-press); color: var(--st-text); }
+
+/* User bar */
+html.ui-studio .sidebar-user-bar {
+  border-top: 1px solid var(--st-line);
+  padding: 8px 10px;
+  min-height: 52px;
+}
+html.ui-studio .user-bar-left { border-radius: var(--st-r-sm); padding: 6px 8px; }
+html.ui-studio .user-bar-left:hover { background: var(--st-hover); }
+html.ui-studio .user-bar-avatar {
+  width: 26px; height: 26px; opacity: 1; font-size: 11px;
+  background: var(--st-accent-soft); color: var(--st-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-accent) 30%, transparent);
+}
+html.ui-studio .user-bar-name { font-size: 13px; font-weight: 550; opacity: 1; color: var(--st-text); }
+html.ui-studio .user-bar-btn { opacity: 1; color: var(--st-text-3); border-radius: var(--st-r-sm); }
+html.ui-studio .user-bar-btn:hover { color: var(--st-text); background: var(--st-hover); }
+
+/* Hamburger + icon rail */
+html.ui-studio .hamburger-btn { opacity: 1; color: var(--st-text-3); border-radius: var(--st-r-sm); }
+html.ui-studio .hamburger-btn:hover { color: var(--st-text); background: var(--st-hover); }
+html.ui-studio .icon-rail { background: var(--st-sidebar); border-right: 1px solid var(--st-line); gap: 2px; }
+html.ui-studio .icon-rail-btn { border-radius: var(--st-r-sm); color: var(--st-text-3); }
+html.ui-studio .icon-rail-btn:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* --- Chat area -------------------------------------------------------------- */
+html.ui-studio .chat-container { background: var(--bg); }
+
+/* Welcome */
+html.ui-studio #welcome-screen .welcome-name,
+html.ui-studio #welcome-screen .welcome-title,
+html.ui-studio #welcome-screen h1 {
+  font-family: var(--st-font);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  color: var(--st-text);
+}
+html.ui-studio .welcome-sub { color: var(--st-text-2); font-size: 15px; }
+html.ui-studio .welcome-tip { color: var(--st-text-3); font-size: 13px; line-height: 1.55; }
+html.ui-studio .welcome-sub a, html.ui-studio .welcome-tip a { color: var(--st-accent); text-decoration: none; }
+html.ui-studio .incognito-btn {
+  border: 1px solid var(--st-line-2); border-radius: 999px; color: var(--st-text-3);
+  background: transparent; padding: 4px 12px;
+}
+html.ui-studio .incognito-btn:hover { color: var(--st-text); background: var(--st-hover); }
+
+/* Messages */
+html.ui-studio .msg { border-radius: var(--st-r-lg); line-height: 1.6; }
+html.ui-studio .msg .body { font-size: 14.5px; line-height: 1.65; }
+html.ui-studio .msg-user {
+  background: var(--st-surface-2);
+  border: 1px solid var(--st-line);
+  border-radius: var(--st-r-xl) var(--st-r-xl) var(--st-r-xs) var(--st-r-xl);
+  padding: 10px 14px;
+  max-width: 78%;
+}
+html.ui-studio .msg-ai {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 4px 2px 6px;
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+}
+html.ui-studio .msg .role {
+  font-size: 12.5px; font-weight: 600; color: var(--st-text-2); letter-spacing: -0.005em;
+}
+html.ui-studio .msg-user .role { color: var(--st-text-3); }
+html.ui-studio .msg .body h1, html.ui-studio .msg .body h2, html.ui-studio .msg .body h3 {
+  font-weight: 650; letter-spacing: -0.02em; line-height: 1.3; margin-top: 18px;
+}
+html.ui-studio .msg .body h1 { font-size: 1.45em; }
+html.ui-studio .msg .body h2 { font-size: 1.25em; }
+html.ui-studio .msg .body h3 { font-size: 1.08em; }
+html.ui-studio .msg .body a { color: var(--st-accent); text-decoration: none; }
+html.ui-studio .msg .body a:hover { text-decoration: underline; text-underline-offset: 2px; }
+html.ui-studio .msg .body blockquote {
+  border-left: 2px solid var(--st-accent-line); margin-left: 0; padding: 2px 0 2px 14px; color: var(--st-text-2);
+}
+html.ui-studio .msg .body hr { border: none; border-top: 1px solid var(--st-line-2); margin: 18px 0; }
+html.ui-studio .msg .body :not(pre) > code {
+  font-family: var(--st-mono); font-size: .86em; padding: .12em .38em; border-radius: var(--st-r-xs);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border: 1px solid var(--st-line);
+}
+html.ui-studio .msg .body table {
+  border-collapse: separate; border-spacing: 0; width: auto; max-width: 100%;
+  border: 1px solid var(--st-line-2); border-radius: var(--st-r); overflow: hidden; font-size: 13.5px;
+}
+html.ui-studio .msg .body th {
+  background: var(--st-surface-2); font-weight: 600; text-align: left; color: var(--st-text);
+}
+html.ui-studio .msg .body th, html.ui-studio .msg .body td {
+  padding: 8px 12px; border: none; border-bottom: 1px solid var(--st-line);
+}
+html.ui-studio .msg .body tr:last-child td { border-bottom: none; }
+html.ui-studio .msg .body td + td, html.ui-studio .msg .body th + th { border-left: 1px solid var(--st-line); }
+
+/* Message actions (copy, retry, ...) */
+html.ui-studio .msg-actions button,
+html.ui-studio .msg-actions .msg-action-btn {
+  border-radius: var(--st-r-sm); color: var(--st-text-3);
+}
+html.ui-studio .msg-actions button:hover { background: var(--st-hover); color: var(--st-text); }
+
+/* Code blocks */
+html.ui-studio .msg .body pre,
+html.ui-studio .codeblock, html.ui-studio .code-block {
+  border-radius: var(--st-r);
+  border: 1px solid var(--st-line-2);
+  background: var(--hl-bg, var(--st-surface-2));
+}
+html.ui-studio pre code, html.ui-studio .codeblock code, html.ui-studio code.hljs {
+  font-family: var(--st-mono); font-size: 12.75px; line-height: 1.6;
+}
+
+/* --- Composer --------------------------------------------------------------- */
+html.ui-studio .chat-input-bar {
+  background: var(--st-surface);
+  border: 1px solid var(--st-line-2);
+  border-radius: var(--st-r-xl);
+  box-shadow: var(--st-shadow);
+  transition: border-color .15s var(--st-ease), box-shadow .15s var(--st-ease);
+}
+html.ui-studio .chat-input-bar:focus-within {
+  border-color: var(--st-accent-line);
+  box-shadow: var(--st-shadow), var(--st-ring);
+}
+html.ui-studio .chat-input-bar textarea#message {
+  font-family: var(--st-font);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--st-text);
+}
+html.ui-studio .chat-input-bar textarea#message::placeholder { color: var(--st-text-3); opacity: 1; }
+html.ui-studio .input-icon-btn {
+  border-radius: var(--st-r-sm);
+  color: var(--st-text-3);
+  opacity: 1;
+}
+html.ui-studio .input-icon-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .input-icon-btn[aria-pressed="true"],
+html.ui-studio .input-icon-btn.active {
+  background: var(--st-accent-soft); color: var(--st-accent);
+}
+html.ui-studio .model-picker-btn {
+  border-radius: 999px; padding: 4px 10px; font-size: 12.5px; font-weight: 500;
+  color: var(--st-text-2); border: 1px solid var(--st-line); background: transparent;
+}
+html.ui-studio .model-picker-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .chat-input-bar {
+  margin-bottom: 14px;
+  padding: 10px 12px 10px 14px;
+}
+/* The composer is autofocused on load, so a full ring would always show;
+   focus reads as a firmer border instead. */
+html.ui-studio .chat-input-bar:focus-within {
+  border-color: color-mix(in srgb, var(--fg) 24%, transparent);
+  box-shadow: var(--st-shadow);
+}
+@media (max-width: 768px) {
+  html.ui-studio .chat-input-bar {
+    margin-bottom: max(8px, env(safe-area-inset-bottom));
+    border-radius: var(--st-r-lg);
+  }
+}
+
+/* Send */
+html.ui-studio .send-btn {
+  background: var(--st-accent);
+  color: var(--st-accent-fg);
+  border-radius: var(--st-r);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 1px 2px rgba(0,0,0,.2);
+}
+html.ui-studio .send-btn:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); color: var(--st-accent-fg); }
+html.ui-studio .send-btn.mic-mode,
+html.ui-studio .send-btn.newchat-mode {
+  background: var(--st-surface-2);
+  color: var(--st-text-2);
+  border: 1px solid var(--st-line-2);
+  box-shadow: none;
+}
+html.ui-studio .send-btn.mic-mode:hover,
+html.ui-studio .send-btn.newchat-mode:hover {
+  background: var(--st-press); color: var(--st-text);
+}
+
+/* Agent / Chat: a segmented control */
+html.ui-studio .mode-toggle {
+  height: 30px; padding: 2px; border-radius: var(--st-r);
+  border: 1px solid var(--st-line); background: var(--st-sunken);
+}
+html.ui-studio .mode-toggle::before {
+  top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); height: auto; border-radius: var(--st-r-sm);
+  background: var(--st-surface-2);
+  box-shadow: var(--st-shadow-sm), inset 0 0 0 1px var(--st-line-2);
+}
+html.ui-studio .mode-toggle-btn {
+  font-size: 12px; font-weight: 550; color: var(--st-text-3); border-radius: var(--st-r-sm);
+  background: transparent;
+}
+html.ui-studio .mode-toggle-btn.active,
+html.ui-studio .mode-toggle-btn.active:hover { color: var(--st-text); background: transparent; }

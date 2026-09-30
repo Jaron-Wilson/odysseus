@@ -32,6 +32,8 @@ import './js/modalManager.js';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
 import './js/tileManager.js';
 import themeModule from './js/theme.js';
+// Interface design (Studio / Classic); sets html.ui-studio and its controls.
+import './js/uiDesign.js';
 // IMPORTANT: import cookbook.js with NO ?v= query — the same plain specifier
 // every other importer (cookbook-hwfit.js / cookbook-diagnosis.js) uses. A query
 // mismatch makes the browser load cookbook.js twice as separate modules (two
@@ -2142,7 +2144,10 @@ function initializeEventListeners() {
       pickerWrap.classList.toggle('picker-auto-hidden', w < PICKER_HIDE_WIDTH);
       // Hide placeholder text
       if (textarea) {
-        textarea.setAttribute('placeholder', w < PLACEHOLDER_HIDE_WIDTH ? '' : 'Message Odysseus...');
+        // Studio keeps a short placeholder when narrow, so an empty phone
+        // composer still reads as a text box (static/js/uiDesign.js).
+        const narrow = document.documentElement.classList.contains('ui-studio') ? 'Message…' : '';
+        textarea.setAttribute('placeholder', w < PLACEHOLDER_HIDE_WIDTH ? narrow : 'Message Odysseus...');
       }
       // Hide entire bottom toolbar (tools, mode toggle) — only send button remains
       if (inputBottom) {
