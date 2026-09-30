@@ -175,6 +175,16 @@ def _parse_run_log(run_dir: str) -> Dict:
                     stamp /= 1000.0
                     info["first"] = info["first"] or stamp
                     info["last"] = stamp
+                if j.get("event") in ("init", "step_update", "result") and not kind:
+                    # Antigravity (agy --output-format stream-json).
+                    info["engine"] = "antigravity"
+                    body = j.get(j["event"]) if isinstance(j.get(j["event"]), dict) else {}
+                    if j["event"] == "result":
+                        info["status"] = "done" if str(body.get("status") or "").upper() == "SUCCESS" else "failed"
+                        info["out"] = int(_num((body.get("usage") or {}).get("output_tokens")) or 0)
+                        if _num(body.get("duration_seconds")):
+                            info["secs"] = _num(body.get("duration_seconds"))
+                    continue
                 if kind == "system" and j.get("subtype") == "init":
                     info["engine"] = "claude"
                     info["model"] = j.get("model") or info["model"]
@@ -267,7 +277,7 @@ def coder_runs(since: float, owner: str = "") -> List[Dict]:
     return runs
 
 
-ENGINE_NAMES = {"claude": "Claude Code", "opencode": "OpenCode", "codex": "Codex"}
+ENGINE_NAMES = {"claude": "Claude Code", "opencode": "OpenCode", "antigravity": "Antigravity", "codex": "Codex"}
 
 
 def coder_stats(hours: float, owner: str = "", now: Optional[float] = None) -> Dict:

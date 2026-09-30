@@ -490,7 +490,8 @@ def _live_install_change(tool: str, content: str) -> str:
     return ""
 
 
-_CODE_CLI_RE = re.compile(r"(^|[;&|(`\s/'\"])(claude|opencode)(\s|$|['\"])")
+_CODE_CLI_RE = re.compile(r"(^|[;&|(`\s/'\"])(claude|opencode|agy)(\s|$|['\"])")
+_CODE_CLI_ENGINE = {"claude": "claude", "opencode": "opencode", "agy": "antigravity"}
 
 
 async def execute_tool_block(
@@ -539,14 +540,16 @@ async def execute_tool_block(
             "exit_code": 1})
 
     # A coding agent switched off for this chat (src/chat_prefs.py): no
-    # running its CLI (claude / opencode) through bash to get around it.
+    # running its CLI (claude / opencode / agy) through bash to get around it.
     if tool == "bash" and session_id:
         for m in _CODE_CLI_RE.finditer(content or ""):
             try:
                 from src import chat_prefs
                 name = m.group(2)
-                if not chat_prefs.engine_allowed(session_id, "claude" if name == "claude" else "opencode"):
-                    label = "Claude Code" if name == "claude" else "OpenCode"
+                engine = _CODE_CLI_ENGINE[name]
+                if not chat_prefs.engine_allowed(session_id, engine):
+                    from src.agent_tools.claude_code_tool import engine_label
+                    label = engine_label(engine)
                     return ("bash: refused", {
                         "error": (f"Not run: {label} is switched off for this chat by the user, and that "
                                   f"includes running {name} through bash. Do the work another way, or "

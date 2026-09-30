@@ -27,7 +27,8 @@ def _pending_plans(owner: str) -> list:
     from src.chat_queue import _session_title
     out = []
     for p in approvals.pending_for(owner)[:5]:
-        engine = "OpenCode" if p.get("engine") == "opencode" else "Claude Code"
+        from src.agent_tools.claude_code_tool import engine_label
+        engine = engine_label(p.get("engine") or "claude")
         out.append({"id": p["session_id"], "session_id": p["chat_session_id"],
                     "chat": _session_title(p["chat_session_id"]) if p["chat_session_id"] else "",
                     "runs_on": f"{engine} · {p.get('model') or 'local default'}",
@@ -162,7 +163,8 @@ def setup_overlay_routes() -> APIRouter:
             except Exception:
                 pages = 0
         chat = entry.get("chat_session_id") or ""
-        engine = "OpenCode" if entry.get("engine") == "opencode" else "Claude Code"
+        from src.agent_tools.claude_code_tool import engine_label
+        engine = engine_label(entry.get("engine") or "claude")
         return {"id": plan_id, "status": entry.get("status"), "plan": entry.get("plan") or "",
                 "chat": _session_title(chat) if chat else "", "session_id": chat,
                 "runs_on": f"{engine} · {entry.get('model') or 'local default'}",

@@ -67,12 +67,13 @@ def _opencode_models() -> tuple:
 def run_options(chat_id: str = "", plan: dict = None) -> dict:
     """What the Approve dialog offers: each engine with its models, whether
     this chat allows it, and what the plan was written with."""
-    from src.agent_tools.claude_code_tool import DEFAULT_MODEL
+    from src.agent_tools.claude_code_tool import (DEFAULT_MODEL, ENGINES, ANTIGRAVITY_DEFAULT_LABEL,
+                                                  antigravity_model_ids, engine_cli)
     try:
         from src import chat_prefs
-        allowed = {e: chat_prefs.engine_allowed(chat_id, e) for e in ("opencode", "claude")}
+        allowed = {e: chat_prefs.engine_allowed(chat_id, e) for e in ENGINES}
     except Exception:
-        allowed = {"opencode": True, "claude": True}
+        allowed = {e: True for e in ENGINES}
     oc_models, oc_default = _opencode_models()
     plan = plan or {}
     try:
@@ -89,6 +90,12 @@ def run_options(chat_id: str = "", plan: dict = None) -> dict:
             {"id": "claude", "label": "Claude Code", "hint": "uses your Claude plan",
              "allowed": allowed["claude"], "default_model": DEFAULT_MODEL,
              "models": [{"id": i, "label": l} for i, l in CLAUDE_MODELS]},
+            # Only offered once agy is installed on this host.
+            *([{"id": "antigravity", "label": "Antigravity", "hint": "uses your Google subscription",
+                "allowed": allowed["antigravity"], "default_model": "",
+                "default_label": ANTIGRAVITY_DEFAULT_LABEL,
+                "models": [{"id": i, "label": i} for i in antigravity_model_ids()]}]
+              if engine_cli("antigravity") else []),
         ],
         "plan_engine": plan.get("engine") or "opencode",
         "plan_model": plan.get("model") or "",
@@ -113,12 +120,13 @@ def approve_plan(session_id: str, user: str, limits: dict = None,
     # The engine and model picked in the Approve dialog, if any.
     engine = (engine or "").strip().lower()
     model = (model or "").strip()[:120]
-    if engine and engine not in ("opencode", "claude"):
-        raise HTTPException(400, "engine must be 'opencode' or 'claude'")
+    from src.agent_tools.claude_code_tool import ENGINES, engine_label
+    if engine and engine not in ENGINES:
+        raise HTTPException(400, "engine must be 'opencode', 'claude' or 'antigravity'")
     if engine:
         from src import chat_prefs
         if not chat_prefs.engine_allowed(chat_id, engine):
-            raise HTTPException(409, f"{'Claude Code' if engine == 'claude' else 'OpenCode'} is switched off "
+            raise HTTPException(409, f"{engine_label(engine)} is switched off "
                                      "for this chat (the coding-agent button in the chat bar)")
     if not approvals.set_status(session_id, "approved", owner=user):
         raise HTTPException(409, f"Plan is already {entry.get('status')}")
@@ -137,7 +145,7 @@ def approve_plan(session_id: str, user: str, limits: dict = None,
     from src.screen_control_resume import start_turn
     run_engine = engine or entry.get("engine")
     resuming = start_turn(chat_id, _EXECUTE_PROMPT.format(
-        run_id=run_id, engine="Claude Code" if run_engine == "claude" else "OpenCode",
+        run_id=run_id, engine=engine_label(run_engine),
         args=json.dumps({
             "action": "execute", "session_id": session_id, "cwd": entry.get("cwd") or "",
             "prompt": "Carry out the approved plan."})),
@@ -211,7 +219,8 @@ def setup_claude_code_routes() -> APIRouter:
         out = []
         for p in approvals.pending_for(user or ""):
             chat = p.get("chat_session_id") or ""
-            engine = "OpenCode" if p.get("engine") == "opencode" else "Claude Code"
+            from src.agent_tools.claude_code_tool import engine_label
+            engine = engine_label(p.get("engine") or "claude")
             out.append({
                 "id": p["session_id"], "chat_session_id": chat,
                 "chat_name": _session_title(chat) if chat else "",
@@ -271,7 +280,9 @@ def setup_claude_code_routes() -> APIRouter:
         entry = approvals.get(session_id)
         if not entry:
             raise HTTPException(404, "No such plan (it may have expired)")
-        return run_options(entry.get("chat_session_id") or "", entry)
+        # Off the event loop: listing Antigravity's models runs `agy models`.
+        import asyncio
+        return await asyncio.to_thread(run_options, entry.get("chat_session_id") or "", entry)
 
     @router.post("/api/claude_code/deny/{session_id}")
     async def deny(request: Request, session_id: str):

@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -52,14 +53,61 @@ LINE_CHARS = 500
 # model), and nothing said which one ran. Set ODYSSEUS_CLAUDE_CODE_MODEL to
 # change it.
 DEFAULT_MODEL = os.environ.get("ODYSSEUS_CLAUDE_CODE_MODEL", "sonnet").strip() or "sonnet"
+# Every coding-agent engine, and the CLI each one runs. Antigravity is
+# Google's (`agy`), signed in with the user's Google account; asked for
+# 2026-09-30: "I have a google subscription that has alot of credits and
+# models".
+ENGINES = ("opencode", "claude", "antigravity")
+ENGINE_BINARIES = {"opencode": "opencode", "claude": "claude", "antigravity": "agy"}
+ENGINE_LABELS = {"opencode": "OpenCode", "claude": "Claude Code", "antigravity": "Antigravity"}
 # The engine when the agent names none: OpenCode on this host's local models.
 # Seen live: a request to draft video cuts went to Claude Code (the user's
 # Claude plan) when the local 27B via OpenCode would have done. Claude is used
 # when the user asks for it by name. ODYSSEUS_CODE_ENGINE=claude flips this.
 DEFAULT_ENGINE = (os.environ.get("ODYSSEUS_CODE_ENGINE", "opencode").strip().lower() or "opencode")
-if DEFAULT_ENGINE not in ("claude", "opencode"):
+if DEFAULT_ENGINE not in ENGINES:
     DEFAULT_ENGINE = "opencode"
 OPENCODE_DEFAULT_LABEL = "local default (vllm3090/qwen3.8-27b)"
+ANTIGRAVITY_DEFAULT_LABEL = "Antigravity default"
+
+
+def engine_cli(engine: str) -> Optional[str]:
+    """The CLI for an engine, or None when it is not installed. `agy`'s
+    installer puts it in ~/.local/bin, which a service's PATH often lacks."""
+    name = ENGINE_BINARIES.get(engine or "", "")
+    if not name:
+        return None
+    found = shutil.which(name)
+    if not found and engine == "antigravity":
+        local = Path.home() / ".local" / "bin" / name
+        if local.is_file() and os.access(local, os.X_OK):
+            found = str(local)
+    return found
+
+
+_AGY_MODELS: Dict[str, object] = {"at": 0.0, "ids": []}
+_MODEL_SLUG = re.compile(r"^[a-z0-9][a-z0-9.\-_/:]*[a-z0-9]$")
+
+
+def antigravity_model_ids() -> list:
+    """The model slugs `agy models` lists (cached for 10 minutes). Empty when
+    agy is missing or signed out; then nothing is refused."""
+    if time.time() - float(_AGY_MODELS["at"]) < 600:
+        return list(_AGY_MODELS["ids"])
+    ids: list = []
+    cli = engine_cli("antigravity")
+    if cli:
+        try:
+            out = subprocess.run([cli, "models"], capture_output=True, text=True, timeout=8,
+                                 env=_cli_env(), stdin=subprocess.DEVNULL).stdout
+            for line in out.splitlines():
+                word = _strip_ansi(line).strip().lstrip("*-• ").split()
+                if word and _MODEL_SLUG.match(word[0].lower()) and any(c.isdigit() for c in word[0]):
+                    ids.append(word[0])
+        except Exception as e:
+            logger.debug("agy models failed: %s", e)
+    _AGY_MODELS.update(at=time.time(), ids=ids)
+    return ids
 
 
 def opencode_model_ids() -> list:
@@ -134,7 +182,27 @@ def engine_label(engine: str) -> str:
     """What the user sees for a run: the engine that actually ran it. The
     tool is named claude_code for history's sake, but most runs are OpenCode,
     and a card saying "Claude" for those misleads."""
-    return "Claude Code" if (engine or "") == "claude" else "OpenCode"
+    return ENGINE_LABELS.get(engine or "", "OpenCode")
+
+
+def _summarize_antigravity(event: dict) -> Optional[str]:
+    """One console line for an `agy --output-format stream-json` event:
+    {"event": "init" | "step_update" | "result", "<event>": {...}}. A step
+    streams its text as text_delta; the line is written once, when the step
+    is DONE, so a streamed answer is not repeated line by line."""
+    if event.get("event") != "step_update":
+        return None
+    step = event.get("step_update") or {}
+    if str(step.get("state") or "").upper() != "DONE":
+        return None
+    kind = str(step.get("step_type") or "")
+    if kind == "agent_response":
+        return None                                  # the text itself: _Stream collects it
+    hint = ""
+    for key in ("command", "path", "file_path", "target", "query", "url", "title"):
+        if step.get(key):
+            hint = str(step[key]); break
+    return f"● {kind or 'step'}({hint.replace(chr(10), ' ')[:70]})"
 
 
 def _clip(text, n: int) -> str:
@@ -504,8 +572,8 @@ class ClaudeCodeTool:
         try:
             from src import chat_prefs
             if not chat_prefs.claude_code_allowed((ctx or {}).get("session_id") or ""):
-                return {"error": ("Coding agents (OpenCode and Claude Code) are both switched off for this chat by the user. Do not "
-                                  "try again or work around it (no claude/opencode through bash "
+                return {"error": ("Coding agents (OpenCode, Claude Code and Antigravity) are all switched off for this chat by the user. Do not "
+                                  "try again or work around it (no claude/opencode/agy through bash "
                                   "either): do the work with your own tools, or tell the user "
                                   "they can switch them back on with the coding-agent button."),
                         "disabled": True, "exit_code": 1}
@@ -569,14 +637,14 @@ class ClaudeCodeTool:
             appr = approvals.get(resume_id) or {}
             plan_engine = str(appr.get("engine") or "")
             chosen = str(appr.get("run_engine") or "").lower()
-            if chosen in ("claude", "opencode"):
+            if chosen in ENGINES:
                 run_fresh = bool(plan_engine) and chosen != plan_engine
                 engine = chosen
             if appr.get("run_model"):
                 args["model"] = str(appr["run_model"])
             plan_text = str(appr.get("plan") or "")
-        if engine not in ("claude", "opencode"):
-            return {"error": "engine must be 'claude' or 'opencode'", "exit_code": 1}
+        if engine not in ENGINES:
+            return {"error": "engine must be 'opencode', 'claude' or 'antigravity'", "exit_code": 1}
         # Plans are written on OpenCode (the local model) unless the user
         # named Claude themselves. Seen live: the agent asked for Claude and
         # opus on its own for a plan, spending the user's Claude plan on
@@ -597,7 +665,9 @@ class ClaudeCodeTool:
         try:
             from src import chat_prefs
             engine_ok = chat_prefs.engine_allowed(chat_for_prefs, engine)
-            other = "opencode" if engine == "claude" else "claude"
+            # The first other engine this chat allows, OpenCode first (the local model).
+            others = [e for e in ENGINES if e != engine]
+            other = next((e for e in others if chat_prefs.engine_allowed(chat_for_prefs, e)), others[0])
             other_ok = chat_prefs.engine_allowed(chat_for_prefs, other)
         except Exception:
             engine_ok, other, other_ok = True, "", False
@@ -607,8 +677,9 @@ class ClaudeCodeTool:
                                f"{engine_label(other)}. Say so.")
                 engine = other
                 args.pop("model", None)                 # a model name for one engine means nothing to the other
-                if resume_id and resume_id.startswith("ses_") != (engine == "opencode"):
-                    resume_id = ""                      # the old session belongs to the other engine
+                # Sessions never cross engines, and Claude's and Antigravity's
+                # ids look alike (UUIDs), so the old one is always dropped.
+                resume_id = ""
             else:
                 return {"error": (f"{engine_label(engine)} is switched off for this chat by the user"
                                   + (", and this approved plan was written for it, so it cannot run on "
@@ -684,10 +755,12 @@ class ClaudeCodeTool:
                                   "new_agent:true for a fresh agent."),
                         "pid": pid, "already_running": True, "exit_code": 1}
 
-        cli = shutil.which("opencode" if engine == "opencode" else "claude")
+        cli = engine_cli(engine)
         if not cli:
             return {
-                "error": (f"{engine} CLI not found on PATH. Install it on this host."),
+                "error": (f"{engine_label(engine)} CLI not found on PATH ({ENGINE_BINARIES[engine]}). "
+                          + ("Ask the user to install it (curl -fsSL https://antigravity.google/cli/install.sh | bash) "
+                             "and sign in once by running agy." if engine == "antigravity" else "Install it on this host.")),
                 "exit_code": 1,
             }
 
@@ -765,7 +838,29 @@ class ClaudeCodeTool:
                               "OpenCode (~/.config/opencode/opencode.json)."),
                     "exit_code": 2,
                 }
-        if engine == "opencode":
+        if engine == "antigravity" and args.get("model"):
+            known = antigravity_model_ids()
+            if known and str(args["model"]) not in known:
+                if action == "execute" and resume_id:
+                    approvals.restore_approval(resume_id)     # nothing ran: the approval still stands
+                return {"error": (f"Antigravity has no model {str(args['model'])!r}. Use one of: "
+                                  f"{', '.join(known)}, or leave `model` out for its default."),
+                        "exit_code": 2}
+        if engine == "antigravity":
+            # agy mints the conversation id and reports it in its init event.
+            # Headless there is nobody to approve a tool, so without
+            # --dangerously-skip-permissions anything needing approval (writes,
+            # commands) is soft-denied, and --sandbox restricts the terminal:
+            # plans and asks stay read-only. An approved execute may write.
+            session_id = "" if run_fresh else (resume_id or "")
+            cmd = [cli, "-p", prompt, "--output-format", "stream-json"]
+            if args.get("model"):
+                cmd += ["--model", str(args["model"])]
+            if resume_id and not run_fresh:
+                cmd += ["--conversation", resume_id]
+            cmd += ["--dangerously-skip-permissions"] if action == "execute" else ["--sandbox"]
+            prompt_via_stdin = False
+        elif engine == "opencode":
             # OpenCode mints its own ses_… id, which the event stream reports.
             session_id = "" if run_fresh else (resume_id or "")
             cmd = [cli, "run", "--format", "json", "--dir", str(cwd_path),
@@ -779,7 +874,7 @@ class ClaudeCodeTool:
         else:
             cmd = [cli, "-p", "--output-format", "stream-json", "--verbose"]
 
-        if engine == "opencode":
+        if engine in ("opencode", "antigravity"):
             pass
         elif action == "ask":
             # Conversation, not change: resume (or open) a session with
@@ -823,7 +918,7 @@ class ClaudeCodeTool:
         limits = normalize_limits({k: args.get(k) for k in ("max_turns", "max_cost_usd", "take_your_time")})
         if (not any(limits.values())) and action == "execute":
             limits = normalize_limits((approvals.get(resume_id) or {}).get("limits"))
-        if engine != "opencode":
+        if engine == "claude":
             if not model and action == "execute" and plan_engine == "claude":
                 # The plan's own model, when it was a Claude plan: an OpenCode
                 # model name means nothing to Claude.
@@ -833,13 +928,15 @@ class ClaudeCodeTool:
             if limits.get("max_cost_usd"):
                 # The CLI's own hard stop, at the point where the wrap-up starts.
                 cmd += ["--max-budget-usd", f"{BUDGET_WRAP_AT * limits['max_cost_usd']:.2f}"]
-        model_label = model or OPENCODE_DEFAULT_LABEL
-        run_label = f"{'OpenCode' if engine == 'opencode' else 'Claude Code'} · {model_label}"
+        model_label = model or (ANTIGRAVITY_DEFAULT_LABEL if engine == "antigravity" else OPENCODE_DEFAULT_LABEL)
+        run_label = f"{engine_label(engine)} · {model_label}"
 
         # Detached mode: hand the run to bg_jobs and return now, so a refactor
         # that takes ten minutes does not hold the chat open. The monitor
         # re-invokes the agent with the output once it finishes.
-        if args.get("background"):
+        # --bg is Claude's own; other engines run here and can be sent to the
+        # background from the card instead.
+        if args.get("background") and engine == "claude":
             return await self._launch_background(
                 cmd, prompt, cwd_path, session_id, action,
                 (ctx or {}).get("session_id"))
@@ -858,6 +955,10 @@ class ClaudeCodeTool:
             timeout = DEFAULT_TIMEOUT_S
         if limits.get("take_your_time"):
             timeout = TAKE_YOUR_TIME_TIMEOUT_S
+        if engine == "antigravity":
+            # agy stops waiting after 5 minutes by default; the run's own
+            # timeout (and the stall check) decide instead.
+            cmd += ["--print-timeout", f"{int(timeout) + 60}s"]
 
         # Registered before the CLI starts, so its run directory exists to
         # write into. An approved plan's run takes the id the approval was
@@ -917,13 +1018,15 @@ class ClaudeCodeTool:
         # process exists at all, what it may touch, or how to kill it.
         if engine == "opencode":
             _grant = f"--agent {'build' if action == 'execute' else 'plan'}"
+        elif engine == "antigravity":
+            _grant = "--dangerously-skip-permissions" if action == "execute" else "--sandbox (read-only: tools needing approval are denied)"
         else:
             _grant = (
                 f"--permission-mode {'plan' if action in ('plan', 'ask') else 'bypassPermissions'}"
                 f" --allowedTools {args.get('allowed_tools') or (PLAN_TOOLS if action == 'plan' else ASK_TOOLS if action == 'ask' else EXECUTE_TOOLS)}"
             )
         banner = (
-            f"$ {engine} {_grant}\n"
+            f"$ {ENGINE_BINARIES.get(engine, engine)} {_grant}\n"
             f"  job {job.id} · pid {proc.pid} · session {(session_id or 'pending')[:12]} · cwd {cwd_path}\n"
             f"  model {model_label} · kill with: kill -- -{proc.pid}"
             + (f"\n  limits: {_limit_text(limits)}" if any(limits.values()) else "")
@@ -1079,6 +1182,8 @@ class _Stream:
         self.cost_exact: Optional[float] = None
         self.result_subtype = ""
         self._msg_usage: Dict[str, tuple] = {}
+        self._agy_steps: set = set()
+        self._agy_text: Dict[object, str] = {}
 
     @property
     def cost(self) -> float:
@@ -1096,6 +1201,40 @@ class _Stream:
             return [_strip_ansi(raw)]
         if not isinstance(event, dict):
             return [_strip_ansi(raw)]
+        if self.engine == "antigravity":
+            kind = event.get("event")
+            body = event.get(kind) if isinstance(event.get(kind), dict) else {}
+            if not self.session_id:
+                self.session_id = str(event.get("conversation_id") or body.get("conversation_id") or "")
+            if kind == "step_update":
+                idx = body.get("step_index")
+                if idx is not None and idx not in self._agy_steps:
+                    self._agy_steps.add(idx)
+                    self.turns += 1
+                if body.get("step_type") == "agent_response" and body.get("text_delta"):
+                    self._agy_text[idx] = self._agy_text.get(idx, "") + str(body["text_delta"])
+                    if str(body.get("state") or "").upper() == "DONE":
+                        text = self._agy_text.get(idx, "").strip()
+                        self.final_text = (self.final_text + "\n" + text).strip()
+                        return text.splitlines()
+                    return []
+                if str(body.get("state") or "").upper() == "DONE":
+                    usage = body.get("usage") or {}
+                    self.thinking_tokens += int(usage.get("thinking_tokens") or 0)
+            elif kind == "result":
+                # The whole answer, authoritative over the streamed pieces.
+                self.final_text = str(body.get("response") or "").strip() or self.final_text
+                status = str(body.get("status") or "").upper()
+                self.is_error = status not in ("", "SUCCESS")
+                self.result_subtype = status.lower()
+                if body.get("error"):
+                    # Kept even after partial text: a quota or sign-in failure is the news.
+                    self.final_text = (self.final_text + f"\n\nAntigravity error: {body['error']}").strip()
+                if isinstance(body.get("num_turns"), int):
+                    self.turns = max(self.turns, body["num_turns"])
+                return [f"Antigravity error: {body['error']}"] if body.get("error") else []
+            summary = _summarize_antigravity(event)
+            return summary.splitlines() if summary else []
         if self.engine == "opencode":
             # OpenCode allocates the session itself, so the id is only
             # knowable from the stream — and it is what a later --session
@@ -1354,11 +1493,17 @@ async def _wrap_up(job, reason: str) -> str:
     spec = job.spec
     engine = spec.get("engine", job.engine)
     sid = job.cli_session_id or spec.get("session_id") or ""
-    cli = shutil.which("opencode" if engine == "opencode" else "claude")
+    cli = engine_cli(engine)
     if not cli or not sid:
         return ""
     prompt = WRAP_UP_PROMPT.format(reason=reason)
-    if engine == "opencode":
+    if engine == "antigravity":
+        cmd = [cli, "-p", prompt, "--output-format", "stream-json", "--conversation", sid,
+               "--sandbox", "--print-timeout", "170s"]
+        if spec.get("args_model"):
+            cmd += ["--model", spec["args_model"]]
+        stdin_data = None
+    elif engine == "opencode":
         cmd = [cli, "run", "--format", "json", "--dir", spec.get("cwd") or job.cwd,
                "--agent", "plan", "--session", sid]
         if spec.get("args_model"):
@@ -1481,7 +1626,11 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
             approvals.restore_approval(session_id)
         detail = "\n".join(_stderr_tail(job)) or console[-2000:]
         hint = ""
-        if spec.get("args_model") and spec.get("engine", job.engine) == "opencode":
+        if spec.get("args_model") and spec.get("engine", job.engine) == "antigravity":
+            hint = (f" — note model was set to {spec['args_model']!r}; Antigravity's models are "
+                    f"{', '.join(antigravity_model_ids()) or 'those `agy models` lists'}. "
+                    "Retry without `model` to use its default.")
+        elif spec.get("args_model") and spec.get("engine", job.engine) == "opencode":
             hint = (f" — note model was set to {spec['args_model']!r}; OpenCode's models are "
                     f"{', '.join(opencode_model_ids()) or 'those in ~/.config/opencode/opencode.json'}. "
                     "Retry without `model` to use its default.")
@@ -1774,7 +1923,7 @@ def _os_process_for(session_id: str) -> Optional[int]:
         if not args:
             continue
         head = " ".join(os.path.basename(a) for a in args[:2]).lower()
-        if "claude" not in head and "opencode" not in head:
+        if "claude" not in head and "opencode" not in head and "agy" not in head:
             continue
         if any(a == session_id or a.endswith(f"/{session_id}.jsonl") for a in args):
             return int(d)
