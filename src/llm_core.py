@@ -476,6 +476,9 @@ def _detect_provider(url: str) -> str:
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url):
         return "chatgpt-subscription"
+    from src.chatgpt_plan import is_chatgpt_plan_base
+    if is_chatgpt_plan_base(url):
+        return "chatgpt-plan"
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"
@@ -544,6 +547,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "anthropic.com"): return "Anthropic"
     if _host_match(url, "ollama.com"): return "Ollama Cloud"
     if _host_match(url, "x.ai"): return "xAI"
+    from src.chatgpt_plan import is_chatgpt_plan_base
+    if is_chatgpt_plan_base(url): return "ChatGPT"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
@@ -1212,6 +1217,11 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
+    if provider == "chatgpt-plan":
+        response = _chatgpt_plan_call_sync(model, messages_copy, headers if isinstance(headers, dict) else None, timeout)
+        _set_cached_response(cache_key, response)
+        return response
+
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
@@ -1359,7 +1369,7 @@ async def llm_call_async(
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
-    if provider == "chatgpt-subscription":
+    if provider in ("chatgpt-subscription", "chatgpt-plan"):
         # ChatGPT/Codex requires streamed Responses requests even for callers
         # that want a plain string (auto-title, memory extraction, etc.).
         # Reuse stream_llm's validated Codex SSE path and collect deltas.
@@ -1395,6 +1405,8 @@ async def llm_call_async(
                     status = int(data.get("status") or 502)
                     text = data.get("text") or data.get("error") or "ChatGPT Subscription request failed"
                     raise HTTPException(status, text)
+                if data.get("thinking"):
+                    continue
                 delta = data.get("delta")
                 if isinstance(delta, str):
                     parts.append(delta)
@@ -1489,6 +1501,90 @@ async def llm_call_async(
                 raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
 
+async def _stream_chatgpt_plan(target_url: str, payload: Dict, h: Dict, stream_timeout):
+    """POST /v1/responses for a ChatGPT plan and translate its events."""
+    from src import chatgpt_plan as _cgp
+
+    if not any(k.lower() == "authorization" for k in h):
+        yield _cgp._sse_error("Sign in with ChatGPT in Settings > Services to use ChatGPT models.", 401, "not_signed_in")
+        return
+    translator = _cgp.StreamTranslator()
+    try:
+        client = _get_http_client()
+        async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+            _clear_host_dead(target_url)
+            if r.status_code != 200:
+                raw = (await r.aread()).decode(errors="replace")
+                yield _cgp.error_chunk_for_http(r.status_code, raw)
+                return
+            event_name = ""
+            async for line in r.aiter_lines():
+                if line.startswith("event:"):
+                    event_name = line[6:].strip()
+                    continue
+                event = _cgp.parse_data_line(line, event_name)
+                if not line:
+                    event_name = ""
+                if event is None:
+                    continue
+                for chunk in translator.feed(event):
+                    yield chunk
+                if translator.done:
+                    return
+            for chunk in translator.finish():
+                yield chunk
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        _mark_host_dead(target_url)
+        logger.warning("ChatGPT plan stream connect failed: %s", type(e).__name__)
+        yield _cgp._sse_error(f"Cannot reach {_host_key(target_url)}", 503)
+    except httpx.ReadTimeout:
+        yield _cgp._sse_error("Read timeout", 504)
+    except httpx.NetworkError:
+        yield _cgp._sse_error("Network error", 502)
+    except Exception as e:
+        logger.error("ChatGPT plan stream error: %s", _cgp.redact(e))
+        yield _cgp._sse_error(_cgp.redact(e), 502)
+
+
+def _chatgpt_plan_call_sync(model: str, messages: List[Dict], headers: Optional[Dict], timeout: int) -> str:
+    """Blocking ChatGPT plan call for llm_call: stream and collect the text."""
+    from src import chatgpt_plan as _cgp
+
+    h = _provider_headers("chatgpt-plan", headers)
+    h["Accept"] = "text/event-stream"
+    if not any(k.lower() == "authorization" for k in h):
+        raise HTTPException(401, "Sign in with ChatGPT in Settings > Services to use ChatGPT models.")
+    payload = _cgp.build_payload(model, messages)
+    translator = _cgp.StreamTranslator()
+    parts: List[str] = []
+    chunks: List[str] = []
+    try:
+        with httpx.stream("POST", _cgp.RESPONSES_URL, json=payload, headers=h, timeout=timeout) as r:
+            if r.status_code != 200:
+                chunks.append(_cgp.error_chunk_for_http(r.status_code, r.read().decode(errors="replace")))
+            else:
+                for event in _cgp.iter_sse_events(r.iter_lines()):
+                    chunks.extend(translator.feed(event))
+                    if translator.done:
+                        break
+                chunks.extend(translator.finish())
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"ChatGPT request failed ({type(e).__name__})")
+    for chunk in chunks:
+        for line in chunk.splitlines():
+            if not line.startswith("data: "):
+                continue
+            try:
+                data = json.loads(line[6:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict) and (data.get("error") or data.get("text")) and data.get("status"):
+                raise HTTPException(int(data.get("status") or 502), data.get("text") or data.get("error"))
+            if isinstance(data, dict) and isinstance(data.get("delta"), str) and not data.get("thinking"):
+                parts.append(data["delta"])
+    return "".join(parts)
+
+
 async def stream_llm(url: str, model: str, messages: List[Dict], *args, **kwargs):
     """Hold one of the endpoint's slots for the whole generation.
 
@@ -1567,6 +1663,14 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+    elif provider == "chatgpt-plan":
+        from src import chatgpt_plan as _cgp
+        # Every ChatGPT plan request goes to the real Responses endpoint; the
+        # configured URL is only Odysseus's routing marker.
+        target_url = _cgp.RESPONSES_URL
+        h = _provider_headers(provider, headers)
+        h["Accept"] = "text/event-stream"
+        payload = _cgp.build_payload(model, messages_copy, tools=tools)
     else:
         target_url = url
         payload = {
@@ -1603,6 +1707,12 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
         return
     note_model_activity(target_url, model)
+
+    # ── Sign in with ChatGPT (plan usage) Responses streaming ──
+    if provider == "chatgpt-plan":
+        async for _chunk in _stream_chatgpt_plan(target_url, payload, h, stream_timeout):
+            yield _chunk
+        return
 
     # ── ChatGPT Subscription / Codex Responses streaming ──
     if provider == "chatgpt-subscription":

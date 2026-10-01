@@ -6,6 +6,7 @@ import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
+import chatgptPlan from './chatgptPlan.js';
 
 let initialized = false;
 let modalEl = null;
@@ -2512,7 +2513,7 @@ function initDangerZone() {
    ═══════════════════════════════════════════ */
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, initTokenForm, () => settingsModule.initIntegrations()];
+  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, initTokenForm, () => settingsModule.initIntegrations(), () => chatgptPlan.init()];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
@@ -2523,6 +2524,7 @@ function initAll() {
 function refreshAll() {
   loadUsers();
   loadEndpoints();
+  chatgptPlan.refreshStatus();
   loadBuiltinTools();
   loadMcpServers();
   loadTokens();
