@@ -82,6 +82,13 @@ html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost) .ws-win:is(.ws-win, #ws-b
   margin: 0 !important; transform: none !important; translate: none !important;
   border-radius: 0 !important; box-shadow: none !important; resize: none !important;
 }
+/* A page from its first frame: the window's own open animation (a scale and
+   fade from the centered window) doesn't play, and nothing transitions from
+   the floating geometry while the shell docks it (.ws-docking, shell.js).
+   Closing animations still run; several tools wait for them to end. */
+html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost) .ws-win:is(.ws-win, #ws-boost):not(.modal-closing) { animation: none !important; }
+html.ui-workspace .ws-docked.ws-docking:is(.ws-docked, #ws-boost),
+html.ui-workspace .ws-docked.ws-docking:is(.ws-docked, #ws-boost) .ws-win { transition: none !important; }
 /* A tool that is its own window (Notes) keeps the page geometry above. */
 html.ui-workspace .ws-docked:is(.ws-docked, #ws-boost).ws-win:is(.ws-win, #ws-boost) {
   max-width: none !important; min-width: 0 !important;
