@@ -1121,6 +1121,13 @@ html.ui-studio .search-result-item:hover { background: var(--st-hover); }
 html.ui-studio .search-result-item.selected { background: var(--st-accent-soft); }
 html.ui-studio .search-result-role { font-size: 11px; color: var(--st-text-3); }
 html.ui-studio .search-empty { color: var(--st-text-3); font-size: 13px; }
+html.ui-studio .search-result-snippet { font-size: 13px; }
+html.ui-studio .search-result-sub,
+html.ui-studio .search-result-crumb { color: var(--st-text-3); }
+html.ui-studio .search-result-more .search-result-snippet { color: var(--st-text-3); font-size: 12px; }
+html.ui-studio .search-hint,
+html.ui-studio .search-pending { color: var(--st-text-3); font-size: 12px; padding: 8px 10px; }
+html.ui-studio .search-hint b { color: var(--st-text-2); }
 
 /* ==========================================================================
    11. Toasts, tour hints
