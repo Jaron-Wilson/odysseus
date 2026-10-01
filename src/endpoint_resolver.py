@@ -80,6 +80,13 @@ def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Opti
     base = normalize_base(getattr(ep, "base_url", "") or "")
     api_key = getattr(ep, "api_key", None)
     auth_id = getattr(ep, "provider_auth_id", None)
+    from src.chatgpt_plan import is_chatgpt_plan_base
+    if is_chatgpt_plan_base(base):
+        # Sign in with ChatGPT: per-user tokens in the data dir, refreshed
+        # here before expiry. Raises NotSignedIn / ReauthRequired.
+        from src.chatgpt_plan import get_access_token
+
+        return base, get_access_token(owner if owner is not None else getattr(ep, "owner", None))
     if auth_id:
         from src.chatgpt_subscription import resolve_runtime_credentials
 
@@ -177,7 +184,7 @@ def build_chat_url(base: str) -> str:
         return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama":
         return _ollama_api_root(base) + "/chat"
-    if provider == "chatgpt-subscription":
+    if provider in ("chatgpt-subscription", "chatgpt-plan"):
         return base.rstrip("/") + "/responses"
     return base + "/chat/completions"
 
@@ -190,7 +197,7 @@ def build_models_url(base: str) -> Optional[str]:
         return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama":
         return _ollama_api_root(base) + "/tags"
-    if provider == "chatgpt-subscription":
+    if provider in ("chatgpt-subscription", "chatgpt-plan"):
         return None
     return base + "/models"
 
@@ -210,6 +217,9 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     if provider == "chatgpt-subscription":
         from src.chatgpt_subscription import chatgpt_headers
         return chatgpt_headers(api_key)
+    if provider == "chatgpt-plan":
+        from src.chatgpt_plan import headers_for
+        return headers_for(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if provider == "openrouter":

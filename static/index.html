@@ -2587,6 +2587,32 @@
               </div>
             </div>
           </div>
+          <!-- Sign in with ChatGPT (static/js/chatgptPlan.js, routes/chatgpt_plan_routes.py) -->
+          <div class="admin-card" id="cgp-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>Sign in with ChatGPT</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:10px">Use OpenAI models on your ChatGPT Plus or Pro plan, no API key needed. Usage counts against your ChatGPT plan's limits: see <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">ChatGPT Settings &gt; Usage</a>.</div>
+            <div id="cgp-status" class="admin-toggle-sub" style="opacity:1;margin-bottom:8px">Checking sign-in...</div>
+            <div class="admin-model-form-row">
+              <button class="admin-btn-add" id="cgp-signin-btn">Sign in with ChatGPT</button>
+              <span style="flex:1"></span>
+              <button class="admin-btn-sm hidden" style="display:none" id="cgp-refresh-btn" title="Fetch the models your ChatGPT plan offers">Refresh models</button>
+              <button class="admin-btn-sm hidden" style="display:none" id="cgp-signout-btn" title="Delete the ChatGPT tokens stored for you">Sign out</button>
+            </div>
+            <div id="cgp-paste" class="hidden" style="display:none;margin-top:10px">
+              <ol class="admin-toggle-sub" style="margin:0 0 8px 18px;padding:0;line-height:1.5">
+                <li>In the ChatGPT tab that opened (<a id="cgp-auth-link" href="#" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">open it again</a>), sign in and approve Odysseus.</li>
+                <li>ChatGPT then sends that tab to <code id="cgp-redirect-uri">http://127.0.0.1:1455/auth/callback</code>, which won't load when Odysseus runs on another machine. That's expected.</li>
+                <li>Copy the whole address from that tab's address bar and paste it here.</li>
+              </ol>
+              <div class="admin-model-form-row">
+                <input id="cgp-redirect-input" type="text" placeholder="http://127.0.0.1:1455/auth/callback?code=...&amp;state=..." autocomplete="off" spellcheck="false" style="flex:1">
+                <button class="admin-btn-add" id="cgp-complete-btn">Finish sign-in</button>
+              </div>
+              <div id="cgp-auto-note" class="admin-toggle-sub hidden" style="display:none;margin-top:4px">If this browser is on the Odysseus server itself, sign-in finishes on its own.</div>
+            </div>
+            <div id="cgp-models" class="admin-toggle-sub" style="margin-top:8px"></div>
+            <div id="cgp-msg" class="adm-ep-inline-msg"></div>
+          </div>
           <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span>
               <span style="flex:1"></span>

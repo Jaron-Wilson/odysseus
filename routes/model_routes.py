@@ -557,7 +557,7 @@ def _safe_build_headers(api_key: Optional[str], base_url: str) -> dict:
 
 
 def _is_discovery_only_provider(provider: str) -> bool:
-    return provider == "chatgpt-subscription"
+    return provider in ("chatgpt-subscription", "chatgpt-plan")
 
 
 def _resolve_probe_key(ep) -> Optional[str]:
@@ -695,6 +695,14 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             return fetch_available_models(api_key, timeout=timeout)
         return []
+    if provider == "chatgpt-plan":
+        from src.chatgpt_plan import ChatGPTPlanError, fetch_models as _plan_models
+        if not api_key:
+            return []
+        try:
+            return [m["slug"] for m in _plan_models(api_key, timeout=max(timeout, 5))]
+        except ChatGPTPlanError:
+            return []
     if provider == "anthropic":
         # Try Anthropic's /v1/models endpoint first
         url = _safe_build_models_url(base)
