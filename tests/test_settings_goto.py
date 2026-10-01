@@ -428,7 +428,7 @@ def test_the_voice_call_points_at_a_real_place_and_links_it():
     assert "Settings > AI >" not in js
     labels = _tab_labels()
     assert labels["ai"] == "AI Defaults"
-    assert js.count("in Settings > AI Defaults > Voice call.") == 2 and js.count("goto: 'set-vcStt'") == 2
+    assert js.count("in Settings > AI Defaults > Voice call.") == 2 and js.count("goto: 'set-vcStt'") >= 2
     assert 'for="set-vcStt">Hears with<' in _INDEX
 
 

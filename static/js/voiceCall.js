@@ -311,13 +311,16 @@ function _browserRecognizer(lang) {
 export async function resolveStt() {
   const s = await _stats('/api/stt/stats');
   const p = String(s.provider || 'disabled');
-  if (p === 'local' || p.startsWith('endpoint:')) {
+  if (p === 'local' || p.startsWith('local:') || p.startsWith('endpoint:')) {
+    // A local engine that can't run yet (package missing, model not
+    // downloaded) says why up front instead of failing the first turn.
+    if (s.ready === false && s.reason) return { kind: 'none', goto: 'set-vcStt', reason: s.reason };
     return { kind: 'server', provider: p, transcribe: (blob) => transcribeOnServer(blob, 'utterance.wav') };
   }
   if (p === 'browser') {
     const r = _browserRecognizer(s.language || '');
     if (r) return r;
-    return { kind: 'none', goto: 'set-vcStt', reason: 'This browser has no built-in speech recognition. Pick Whisper or an API engine for "Hears with" in Settings > AI Defaults > Voice call.' };
+    return { kind: 'none', goto: 'set-vcStt', reason: 'This browser has no built-in speech recognition. Pick a local engine (Whisper or Parakeet) or an API engine for "Hears with" in Settings > AI Defaults > Voice call.' };
   }
   return { kind: 'none', goto: 'set-vcStt', reason: 'Speech to text is off. Pick an engine for "Hears with" in Settings > AI Defaults > Voice call.' };
 }
