@@ -147,3 +147,38 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'none'"
             )
         return response
+
+
+# Paths a request from the public internet may reach when it arrives through
+# Tailscale Funnel: only the phone call webhooks (routes/telephony_routes.py).
+FUNNEL_ALLOWED_PREFIXES = ("/api/telephony/twilio/",)
+
+
+class FunnelGuardMiddleware:
+    """Keep everything but the phone call webhooks off the public internet.
+
+    Tailscale Funnel marks each request it forwards with
+    "Tailscale-Funnel-Request: ?1" (tailscale ipn/ipnlocal/serve.go). The
+    setup in docs/phone-calls.md funnels only /api/telephony on its own port,
+    so this should never fire; it is here so that a wider Funnel (all of port
+    443, say) still exposes nothing else. Plain ASGI, so it covers WebSocket
+    upgrades too, which BaseHTTPMiddleware does not see."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") in ("http", "websocket"):
+            funneled = any(k == b"tailscale-funnel-request" for k, _ in scope.get("headers") or ())
+            path = scope.get("path") or ""
+            if funneled and not path.startswith(FUNNEL_ALLOWED_PREFIXES):
+                if scope["type"] == "websocket":
+                    await send({"type": "websocket.close", "code": 1008})
+                    return
+                body = b'{"detail":"Not Found"}'
+                await send({"type": "http.response.start", "status": 404,
+                            "headers": [(b"content-type", b"application/json"),
+                                        (b"content-length", str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)

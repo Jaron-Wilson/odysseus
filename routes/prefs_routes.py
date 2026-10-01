@@ -2,11 +2,16 @@
 import json
 import os
 from typing import Optional
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from src.auth_helpers import get_current_user
 from src.constants import USER_PREFS_FILE
 
 PREFS_FILE = USER_PREFS_FILE
+
+# Kept in this store but owned by their own routes, which hold credentials
+# there (the phone call provider's auth token, encrypted). The generic API
+# neither shows nor writes them; src/telephony/config.py does.
+PRIVATE_KEYS = {"phone_calls"}
 
 
 def _load():
@@ -72,16 +77,20 @@ def setup_prefs_routes():
     @router.get("")
     async def get_all_prefs(request: Request):
         user = get_current_user(request)
-        return _load_for_user(user)
+        return {k: v for k, v in _load_for_user(user).items() if k not in PRIVATE_KEYS}
 
     @router.get("/{key}")
     async def get_pref(request: Request, key: str):
         user = get_current_user(request)
+        if key in PRIVATE_KEYS:
+            return {"key": key, "value": None}
         prefs = _load_for_user(user)
         return {"key": key, "value": prefs.get(key)}
 
     @router.put("/{key}")
     async def set_pref(request: Request, key: str, body: dict):
+        if key in PRIVATE_KEYS:
+            raise HTTPException(403, "This setting is saved from its own settings card.")
         user = get_current_user(request)
         prefs = _load_for_user(user)
         prefs[key] = body.get("value")
