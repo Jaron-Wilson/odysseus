@@ -47,6 +47,7 @@ const PRECACHE = [
   '/static/js/voiceCall.js',
   '/static/js/sttEngines.js',
   '/static/js/callHandoff.js',
+  '/static/js/callPresenceWorker.js',
   '/static/js/settingsNav.js',
   '/static/js/document.js',
   '/static/js/gallery.js',

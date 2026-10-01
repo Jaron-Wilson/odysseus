@@ -364,7 +364,7 @@ export async function resolveStt() {
   const isLocal = p === 'local' || p.startsWith('local:');
   if (isLocal && (s.ready === false || s.available === false)) {
     const r = _browserRecognizer(s.language || '');
-    const why = s.reason || "The local speech engine isn't available on the server";
+    const why = s.reason || (p === 'local' ? 'Local Whisper is not installed on the server' : 'The local speech engine is not available on the server');
     if (r) return Object.assign(r, { notice: why.replace(/\.?$/, '.') + " This browser's speech recognition is hearing you for now." });
     return { kind: 'none', goto: 'set-vcStt', reason: why.replace(/\.?$/, '.') + ' This browser has no speech recognition either. Pick another engine for "Hears with" in Settings > AI Defaults > Voice call.' };
   }
