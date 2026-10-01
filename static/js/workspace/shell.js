@@ -42,6 +42,7 @@ const ICONS = {
   agents: svg('<rect x="4" y="7" width="16" height="12" rx="2"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/>'),
   devops: svg('<path d="M3 12h4l3-8 4 16 3-8h4"/>'),
   devices: svg('<rect x="2" y="4" width="14" height="10" rx="1"/><rect x="17" y="8" width="5" height="12" rx="1"/><path d="M6 18h6"/>'),
+  code: svg('<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>'),
   browser: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
   split: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
@@ -51,7 +52,8 @@ const ICONS = {
 // while it is open; `win` is its window inside that element (the part that
 // fills the page); `open` is the button that opens it, used to reopen a tab
 // restored after a reload; `close` closes it when it has no close button.
-// Order matters for `sel` (first match wins).
+// `title(el)`, when given, names the tab from the open window (the Code tab
+// shows its project). Order matters for `sel` (first match wins).
 const TOOLS = [
   { key: 'email', label: 'Email', icon: 'mail', id: 'email-lib-modal', open: '#email-section .section-header-flex' },
   { key: 'calendar', label: 'Calendar', icon: 'calendar', id: 'calendar-modal', open: '#tool-calendar-btn' },
@@ -70,7 +72,11 @@ const TOOLS = [
   { key: 'devices', label: 'Devices', icon: 'devices', sel: '.dp-backdrop', win: '.bg-panel', open: '#tool-devices-btn' },
   { key: 'browser', label: 'Browser', icon: 'browser', sel: '.cb-backdrop', win: '.bg-panel', open: '#tool-browser-btn' },
   { key: 'devops', label: 'DevOps', icon: 'devops', sel: '.bg-panel-backdrop:has(> .dv-panel)', win: '.bg-panel', open: '#tool-devops-btn' },
-  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(:has(> .dv-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
+  // VS Code (codePanel.js). One tab; its project picker switches the folder.
+  { key: 'code', label: 'Code', icon: 'code', sel: '.ide-backdrop', win: '.bg-panel', open: '#tool-code-btn',
+    title: (el) => { const n = el.querySelector('.ide-project-name')?.textContent.trim();
+      return n && n !== 'Pick a project' ? 'Code: ' + n : 'Code'; } },
+  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(:has(> .dv-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
 ];
 const TOOL_BY_KEY = Object.fromEntries(TOOLS.map(t => [t.key, t]));
 // An opened email is its own window (#email-reader-<n>) and its own tab.
@@ -232,6 +238,11 @@ function scanTools() {
         el._wsKnown = true;
         addTab({ id, kind: 'tool', key: tool.key }, { front: !late });
         return;
+      }
+      if (tool.title) {
+        const tt = tool.title(el);
+        const t = tab(id);
+        if (t && tt !== t.title) { t.title = tt; changed = true; }
       }
       if (_openingTool === id || !el._wsKnown) { el._wsKnown = true; _openingTool = null; if (!paneOf(id)) { show(id); return; } }
     } else if (_els.has(id)) {
@@ -445,6 +456,7 @@ function _label(t) {
   if (t.kind === 'home') return 'Home';
   if (t.kind === 'chat') return t.title || (t.sid ? 'Chat' : 'New chat');
   if (t.key === 'reader') return t.title || 'Email';
+  if (TOOL_BY_KEY[t.key]?.title && t.title) return t.title;
   return TOOL_BY_KEY[t.key]?.label || 'Tool';
 }
 function _icon(t) {
@@ -578,9 +590,9 @@ export function newChat() {
 
 function _launcher(anchor) {
   const r = anchor.getBoundingClientRect();
-  const keys = ['email', 'calendar', 'notes', 'tasks', 'library', 'gallery', 'memory', 'research', 'cookbook', 'agents', 'devices', 'settings'];
+  const keys = ['email', 'calendar', 'notes', 'tasks', 'library', 'gallery', 'memory', 'research', 'cookbook', 'agents', 'code', 'devices', 'settings'];
   const items = [{ label: 'New chat', icon: ICONS.chat, run: newChat }, '-',
-    ...keys.filter(k => TOOL_BY_KEY[k].open && document.querySelector(TOOL_BY_KEY[k].open))
+    ...keys.filter(k => { const b = TOOL_BY_KEY[k].open && document.querySelector(TOOL_BY_KEY[k].open); return b && b.style.display !== 'none'; })
       .map(k => ({ label: TOOL_BY_KEY[k].label, icon: ICONS[TOOL_BY_KEY[k].icon], run: () => openTool(k) }))];
   _menu(r.left, r.bottom + 4, items);
 }

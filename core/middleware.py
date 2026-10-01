@@ -83,6 +83,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "attachment", "inline", 1)
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
+        # The code editor (routes/ide_routes.py) is code-server's own pages,
+        # proxied: it brings its own CSP (a meta tag in its workbench), and the
+        # Code panel frames it, so it can't get the app's strict one.
+        is_ide = path == "/ide" or path.startswith("/ide/")
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -105,6 +109,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "connect-src 'self'; "
                 "frame-ancestors 'none'"
             )
+        elif is_ide:
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            if "content-security-policy" not in response.headers:
+                response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
         elif is_tool_render:
             # Tool iframe content: skip all framing headers — the iframe's
             # sandbox="allow-scripts" attribute provides isolation.
