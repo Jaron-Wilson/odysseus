@@ -667,6 +667,9 @@ app.include_router(setup_devops_routes())
 # The integrated IDE: /ide/ proxies code-server, /api/ide/* backs the Code panel.
 from routes.ide_routes import setup_ide_routes
 app.include_router(setup_ide_routes())
+# The Terminal: a live shell over a WebSocket, admin only (routes/terminal_routes.py).
+from routes.terminal_routes import setup_terminal_routes
+app.include_router(setup_terminal_routes())
 
 
 @app.get("/api/version")
@@ -1282,6 +1285,12 @@ async def _shutdown_event():
         await webhook_manager.close()
     except Exception as e:
         logger.warning(f"Webhook manager shutdown error: {e}")
+    # Hang up any open Terminal sessions (src/terminal.py).
+    try:
+        from src import terminal as _terminal
+        _terminal.manager.close_all()
+    except Exception as e:
+        logger.warning(f"Terminal shutdown error: {e}")
     # Disconnect all MCP servers
     try:
         await mcp_manager.disconnect_all()

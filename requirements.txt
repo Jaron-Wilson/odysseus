@@ -5,7 +5,8 @@ python-dotenv
 httpx
 # WebSockets: uvicorn needs it to accept WebSocket upgrades at all, and the
 # code editor proxy (routes/ide_routes.py) uses its client to reach
-# code-server. Small and pure Python (with an optional C speedup).
+# code-server; the Terminal (routes/terminal_routes.py) needs it too.
+# Small and pure Python (with an optional C speedup).
 websockets
 pydantic>=2.0
 pydantic-settings>=2.0
