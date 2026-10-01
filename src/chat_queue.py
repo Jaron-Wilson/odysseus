@@ -385,10 +385,11 @@ async def _prepare(sess, session_id: str, context: List[Dict]):
 
 
 async def run_headless(session_id: str, text: str, client_device: Optional[Dict] = None,
-                       source: str = "queued", voice_call: bool = False) -> bool:
+                       source: str = "queued", voice_call: bool = False, note: str = "") -> bool:
     """Send a message with no page open, as a detached run: a queued
     message, or a turn of a phone call (src/telephony/agent.py), which
-    `source` marks on both saved messages."""
+    `source` marks on both saved messages. `note` is added to the system
+    message for this turn only (a Google Meet says who else is listening)."""
     try:
         from src.ai_interaction import get_session_manager
         from src.screen_control_resume import _resume_stream
@@ -414,6 +415,11 @@ async def run_headless(session_id: str, text: str, client_device: Optional[Dict]
             # Spoken on a phone call: the same note an in-app call turn gets.
             from routes.chat_routes import apply_voice_call_note
             apply_voice_call_note(context)
+        if note:
+            if context and context[0].get("role") == "system" and isinstance(context[0].get("content"), str):
+                context[0]["content"] = (context[0]["content"] or "") + "\n\n" + note
+            else:
+                context.insert(0, {"role": "system", "content": note})
         if agent_runs.is_active(session_id):
             return True         # a page got in first; the message is in the chat either way
         agent_runs.start(session_id, _resume_stream(

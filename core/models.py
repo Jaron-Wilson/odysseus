@@ -58,9 +58,12 @@ def in_context(msg: "ChatMessage") -> bool:
     user: still shown in the chat, no longer read by the model. Asked for:
     "I should be able to prune the messages ... I can scroll up and still
     see it". Compaction counts with this too (context_compactor).
+    A Google Meet's transcript lines (``metadata.transcript``, src/meet/)
+    are a record for the reader; the agent gets them in the turn that asks
+    it something, and in the summary at the end.
     """
     meta = msg.metadata or {}
-    return meta.get("source") != "slash" and not meta.get("excluded")
+    return meta.get("source") != "slash" and not meta.get("excluded") and not meta.get("transcript")
 
 
 @dataclass

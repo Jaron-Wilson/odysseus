@@ -430,9 +430,214 @@ function onPhoneChange(ev) {
   if (ev.target && ev.target.id === 'phone-engine') showVoiceRow(ev.target.value);
 }
 
+// ── Google Meet: the agent joins a meeting (routes/meet_routes.py) ──
+//
+// Per user. The join panel takes a pasted link or a calendar event with a
+// Meet link; the meeting list polls while the agent is in one.
+
+let meetPoll = 0;
+let meetUpcoming = [];
+
+function meetSay(text, isError) {
+  const el = $('meet-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('sms-error', !!isError);
+}
+
+// .settings-row sets display, which beats the hidden attribute.
+function showDialRow(via) {
+  $('meet-dial-row').style.display = via === 'phone' ? '' : 'none';
+}
+
+function pickOption(sel, value, label) {
+  const v = String(value);
+  if (![...sel.options].some((o) => o.value === v)) {
+    sel.insertAdjacentHTML('beforeend', `<option value="${esc(v)}">${esc(label)}</option>`);
+  }
+  sel.value = v;
+}
+
+const MEET_STATES = {
+  starting: 'Starting', joining: 'Opening Meet', dialing: 'Calling the dial-in number', lobby: 'In the lobby, waiting to be let in',
+  in: 'In the meeting', leaving: 'Leaving', summarizing: 'Writing the notes', ended: 'Left', failed: 'Did not get in',
+};
+
+function renderMeetings(list) {
+  const box = $('meet-active');
+  if (!box) return;
+  if (!list || !list.length) {
+    box.innerHTML = '<div class="admin-toggle-sub">Not in a meeting.</div>';
+    return;
+  }
+  box.innerHTML = list.map((m) => {
+    const live = !['ended', 'failed', 'leaving', 'summarizing'].includes(m.state);
+    const what = m.title || m.url || 'by phone';
+    const tail = (m.transcript_tail || []).slice(-3).map((l) => `<div class="admin-toggle-sub">${esc(l.text)}</div>`).join('');
+    const why = m.error || (m.state === 'ended' && m.reason ? m.reason : '');
+    return `<div class="settings-col" data-meet-id="${esc(m.id)}">
+      <div class="settings-row"><span><strong>${esc(what)}</strong> · ${esc(MEET_STATES[m.state] || m.state)}` +
+      `${m.mode === 'assistant' ? ' · assistant' : ' · talk'}${m.lines ? ` · ${m.lines} line${m.lines === 1 ? '' : 's'}` : ''}` +
+      `${why ? ` · ${esc(why)}` : ''}${m.summary_posted ? ' · notes posted' : ''}</span>
+      ${m.sid ? `<button ${BTN} data-meet-open="${esc(m.sid)}">Open chat</button>` : ''}
+      ${live && m.via === 'browser' ? `<button ${BTN} data-meet-watch="1">Watch</button>` : ''}
+      ${live ? `<button ${BTN} data-meet-leave="${esc(m.id)}">Leave</button>` : ''}</div>${tail}</div>`;
+  }).join('');
+  if (list.some((m) => !['ended', 'failed'].includes(m.state))) scheduleMeetPoll();
+}
+
+function scheduleMeetPoll() {
+  if (meetPoll) return;
+  meetPoll = setTimeout(async () => {
+    meetPoll = 0;
+    if (!$('meet-card') || !$('meet-card').offsetParent) return;      // Settings closed
+    try {
+      renderMeetings((await api('GET', '/api/meet/meetings')).meetings);
+    } catch (_) { /* next open reloads */ }
+  }, 3000);
+}
+
+function renderUpcoming(list) {
+  meetUpcoming = list || [];
+  const box = $('meet-upcoming');
+  if (!box) return;
+  if (!meetUpcoming.length) {
+    box.innerHTML = '<div class="admin-toggle-sub">No meetings with a Meet link in the next day.</div>';
+    return;
+  }
+  box.innerHTML = meetUpcoming.map((m, i) => {
+    const when = m.start ? new Date(m.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+    return `<div class="settings-row"><span>${esc(when)} <strong>${esc(m.summary)}</strong>` +
+      `${m.dial_in ? ' · has dial-in' : ''}</span><button ${BTN} data-meet-pick="${i}">Use</button></div>`;
+  }).join('');
+}
+
+function renderMeet(cfg) {
+  if (!$('meet-card')) return;
+  $('meet-enabled').checked = !!cfg.enabled;
+  $('meet-mode').value = cfg.mode || 'assistant';
+  $('meet-via').value = cfg.via || 'browser';
+  showDialRow($('meet-via').value);
+  $('meet-name').value = cfg.display_name === 'Odysseus (AI)' ? '' : (cfg.display_name || '');
+  $('meet-owner').value = cfg.owner_name || '';
+  $('meet-joinas').value = cfg.join_as || 'guest';
+  $('meet-wake').value = (cfg.wake_words || []).join(', ');
+  $('meet-announcement').value = cfg.announcement || '';
+  $('meet-announcement').placeholder = (cfg.default_announcement || '').replace('{owner}', cfg.owner_name || 'you');
+  $('meet-announce').checked = cfg.announce !== false;
+  $('meet-chat-notice').checked = cfg.chat_notice !== false;
+  $('meet-summary').checked = cfg.summary !== false;
+  pickOption($('meet-max'), cfg.max_minutes || 120, `${cfg.max_minutes} minutes`);
+  pickOption($('meet-idle'), cfg.idle_minutes || 15, `${cfg.idle_minutes} minutes`);
+  pickOption($('meet-lobby'), cfg.lobby_minutes || 10, `${cfg.lobby_minutes} minutes`);
+  pickOption($('meet-dial-wait'), cfg.dial_wait ?? 4, `${cfg.dial_wait} seconds`);
+  const sel = $('meet-model');
+  sel.innerHTML = '<option value="">Default model</option>' + (cfg.models || []).map((m) => {
+    const where = m.endpoint_name ? ` (${m.endpoint_name})` : '';
+    return `<option value="${esc(`${m.endpoint_id}|${m.model}`)}">${esc(m.name)}${esc(where)}</option>`;
+  }).join('');
+  const cur = cfg.model && cfg.endpoint_id ? `${cfg.endpoint_id}|${cfg.model}` : '';
+  if (cur) pickOption(sel, cur, `${cfg.model} (not available now)`);
+  sel.value = cur;
+  const ready = cfg.ready || {};
+  const parts = [cfg.enabled ? 'On.' : 'Off: it joins nothing until you turn this on.'];
+  if (!ready.browser) parts.push('No cloud browser on this server, so only joining by phone works.');
+  if ((ready.engines || []).length) parts.push(ready.engines.join(' '));
+  $('meet-state').textContent = parts.join(' ');
+  renderMeetings(cfg.meetings || []);
+}
+
+function meetBody() {
+  const [endpoint_id, ...rest] = ($('meet-model').value || '').split('|');
+  return {
+    enabled: $('meet-enabled').checked,
+    mode: $('meet-mode').value,
+    via: $('meet-via').value,
+    display_name: $('meet-name').value.trim(),
+    owner_name: $('meet-owner').value.trim(),
+    join_as: $('meet-joinas').value,
+    wake_words: $('meet-wake').value,
+    announcement: $('meet-announcement').value.trim(),
+    announce: $('meet-announce').checked,
+    chat_notice: $('meet-chat-notice').checked,
+    summary: $('meet-summary').checked,
+    max_minutes: Number($('meet-max').value),
+    idle_minutes: Number($('meet-idle').value),
+    lobby_minutes: Number($('meet-lobby').value),
+    dial_wait: Number($('meet-dial-wait').value),
+    model: rest.join('|'),
+    endpoint_id: rest.length ? endpoint_id : '',
+  };
+}
+
+async function loadMeet() {
+  if (!$('meet-card')) return;
+  try {
+    renderMeet(await api('GET', '/api/meet/config'));
+  } catch (e) {
+    meetSay(`Could not load the Google Meet settings: ${e.message}`, true);
+    return;
+  }
+  try {
+    renderUpcoming((await api('GET', '/api/meet/upcoming')).meetings);
+  } catch (_) { /* no calendar */ }
+}
+
+async function openChat(sid) {
+  const [sessions, settings] = await Promise.all([import('./sessions.js'), import('./settings.js')]);
+  settings.close();
+  await sessions.loadSessions();   // made on the server: not in the list yet
+  await sessions.selectSession(sid);
+}
+
+async function onMeetClick(ev) {
+  const t = ev.target.closest('#meet-save,#meet-join,[data-meet-leave],[data-meet-open],[data-meet-pick],[data-meet-watch]');
+  if (!t) return;
+  ev.preventDefault();
+  try {
+    if (t.id === 'meet-save') {
+      renderMeet(await api('PUT', '/api/meet/config', meetBody()));
+      meetSay('Saved.');
+    } else if (t.id === 'meet-join') {
+      const body = { url: $('meet-url').value.trim(), mode: $('meet-mode').value, via: $('meet-via').value,
+                     dial_in: $('meet-dial').value.trim(), pin: $('meet-pin').value.trim(),
+                     title: $('meet-url').dataset.title || '' };
+      meetSay('Joining…');
+      const m = await api('POST', '/api/meet/join', body);
+      meetSay(m.via === 'phone' ? 'Calling the meeting…' : 'Opening Meet in the cloud browser…');
+      $('meet-url').dataset.title = '';
+      renderMeetings((await api('GET', '/api/meet/meetings')).meetings);
+    } else if (t.dataset.meetLeave) {
+      await api('POST', `/api/meet/meetings/${encodeURIComponent(t.dataset.meetLeave)}/leave`);
+      meetSay('Leaving…');
+      renderMeetings((await api('GET', '/api/meet/meetings')).meetings);
+    } else if (t.dataset.meetOpen) {
+      await openChat(t.dataset.meetOpen);
+    } else if (t.dataset.meetWatch) {
+      // The meeting's tab is in the cloud browser: watch it, or take over.
+      if (window.cloudBrowser) window.cloudBrowser.open();
+    } else if (t.dataset.meetPick !== undefined) {
+      const m = meetUpcoming[Number(t.dataset.meetPick)];
+      if (!m) return;
+      $('meet-url').value = m.url || '';
+      $('meet-url').dataset.title = m.summary || '';
+      $('meet-dial').value = m.dial_in ? m.dial_in.number : '';
+      $('meet-pin').value = m.dial_in ? m.dial_in.pin : '';
+      meetSay(`Picked ${m.summary}. Press Join when it starts.`);
+    }
+  } catch (e) {
+    meetSay(e.message, true);
+  }
+}
+
+function onMeetChange(ev) {
+  if (ev.target && ev.target.id === 'meet-via') showDialRow(ev.target.value);
+}
+
 async function load(refresh = false) {
   loadSms();
   loadPhone();
+  loadMeet();
   try {
     const [base, overview] = await Promise.all([
       api('GET', '/api/devices'),
@@ -739,6 +944,8 @@ function init() {
   panel.addEventListener('click', onSmsClick);
   panel.addEventListener('click', onPhoneClick);
   panel.addEventListener('change', onPhoneChange);
+  panel.addEventListener('click', onMeetClick);
+  panel.addEventListener('change', onMeetChange);
   panel.addEventListener('input', onComputersInput);
   panel.dataset.devicesReady = '1';
 }

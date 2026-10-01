@@ -219,7 +219,8 @@ if AUTH_ENABLED:
         # Twilio's phone call webhooks. routes/telephony_routes.py checks the
         # X-Twilio-Signature of each against the called user's auth token
         # (and the WebSockets a one-time token) and 404s otherwise.
-        _re.compile(r"^/api/telephony/twilio/(voice|pin|done|recording|health)/?$"),
+        # /meet answers the agent's own call into a Google Meet (src/meet/dialin.py).
+        _re.compile(r"^/api/telephony/twilio/(voice|pin|done|recording|health|meet)/?$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -654,6 +655,8 @@ from routes.sms_routes import setup_sms_routes
 app.include_router(setup_sms_routes(session_manager))
 from routes.telephony_routes import setup_telephony_routes
 app.include_router(setup_telephony_routes())
+from routes.meet_routes import setup_meet_routes
+app.include_router(setup_meet_routes())
 from routes.special_chat_routes import setup_special_chat_routes
 app.include_router(setup_special_chat_routes(session_manager))
 from routes.mail_listener_routes import setup_mail_listener_routes

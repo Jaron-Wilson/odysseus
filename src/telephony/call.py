@@ -17,13 +17,21 @@ Speech to text and text to speech are whatever Settings > AI Defaults > Voice
 call picked ("Hears with", "Speaks with"), called through the same services
 the in-app call's /api/stt and /api/tts use. The browser engines cannot run
 on a phone line; the webhook checks for that before a call is connected.
+
+A Google Meet (src/meet/) is the same call with other transports: the
+meeting's audio as 16 kHz PCM from the browser that joined it
+(codec.PCM_16K), or the Meet dial-in line over Twilio. As a meeting
+assistant it hears everyone: `respond` gets every transcribed utterance and
+says which ones to answer (the ones that call it by name), so transcription
+runs for each utterance in turn while it keeps listening, and only an
+answer is a turn.
 """
 
 import asyncio
 import logging
 import re
 import time
-from typing import Awaitable, Callable, List, Optional, Protocol
+from typing import Awaitable, Callable, List, Optional, Pattern, Protocol
 
 import numpy as np
 
@@ -37,7 +45,7 @@ _BYE = re.compile(r"^\W*(?:(?:ok(?:ay)?|alright|thanks|thank you)[\s,]+)?(?:good
 
 
 class Transport(Protocol):
-    async def play(self, ulaw: bytes, mark: str) -> None: ...
+    async def play(self, audio: bytes, mark: str) -> None: ...
     async def clear(self) -> None: ...
     async def hangup(self) -> None: ...
 
@@ -66,7 +74,7 @@ def engines_ready() -> List[str]:
         p = str(stats.get("provider") or "disabled")
         if p in ("disabled", "browser") or not stats.get("available"):
             problems.append("Speech to text: pick a local or API engine for \"Hears with\" "
-                            "(Settings > AI Defaults > Voice call). The browser engine cannot hear a phone line.")
+                            "(Settings > AI Defaults > Voice call). The browser engine cannot hear a phone line or a meeting.")
     except Exception:
         problems.append("Speech to text is not available.")
     try:
@@ -75,7 +83,7 @@ def engines_ready() -> List[str]:
         p = str(stats.get("provider") or "disabled")
         if p in ("disabled", "browser") or not stats.get("available"):
             problems.append("Text to speech: pick Kokoro or an API engine for \"Speaks with\" "
-                            "(Settings > AI Defaults > Voice call). The browser voice cannot speak on a phone line.")
+                            "(Settings > AI Defaults > Voice call). The browser voice cannot speak on a phone line or in a meeting.")
     except Exception:
         problems.append("Text to speech is not available.")
     return problems
@@ -86,9 +94,15 @@ class PhoneCall:
                  stt: Optional[SttFn] = None, tts: Optional[TtsFn] = None,
                  reply: Optional[Callable] = None, barge_in: bool = True,
                  silence_ms: int = speech.SILENCE_MS, max_call_s: float = MAX_CALL_S,
-                 on_event: Optional[Callable[[str, dict], None]] = None):
+                 on_event: Optional[Callable[[str, dict], None]] = None,
+                 fmt: codec.AudioFormat = codec.ULAW_8K,
+                 respond: Optional[Callable[[str], Optional[str]]] = None,
+                 bye: Optional[Pattern] = None):
         from src.telephony import agent
         self.t = transport
+        self.fmt = fmt
+        self.respond = respond
+        self.bye = bye or _BYE
         self.sid = sid
         self.greeting = greeting
         self.stt = stt or default_stt
@@ -116,6 +130,12 @@ class PhoneCall:
         self._quiet_until = 0.0
         self._reply_done = True
         self._hangup_after = False
+        self._stt_q: "asyncio.Queue" = asyncio.Queue()
+        # While set, nothing cuts the agent off (a meeting's announcement
+        # that an AI is listening is heard in full); cleared once it has
+        # finished talking.
+        self.hold = False
+        self._stt_task: Optional[asyncio.Task] = None
 
     # ── events, for logs and the simulator ──
 
@@ -135,6 +155,8 @@ class PhoneCall:
 
     async def start(self) -> None:
         self._speaker = asyncio.create_task(self._speak_loop())
+        if self.respond is not None:
+            self._stt_task = asyncio.create_task(self._stt_loop())
         if self.greeting:
             self._reply_done = False
             self._say(self.greeting, self._gen)
@@ -145,7 +167,7 @@ class PhoneCall:
             return
         self.ended = True
         self._gen += 1
-        for task in (self._turn_task, self._speaker):
+        for task in (self._turn_task, self._speaker, self._stt_task):
             if task and not task.done():
                 task.cancel()
         self._emit("ended", reason=reason, turns=self.turns, seconds=round(time.monotonic() - self.started))
@@ -155,12 +177,25 @@ class PhoneCall:
     def _hearing(self) -> bool:
         if self.ended:
             return False
-        if self.state == "listening":
+        if self.state == "listening" or self.respond is not None:
+            # A meeting assistant keeps hearing the room while it talks.
             return True
         return self.barge_in
 
+    def say(self, text: str, hold: bool = False) -> None:
+        """Say something that is not a reply (a meeting's announcement).
+        With `hold`, it cannot be talked over or cut off."""
+        if self.ended or not text:
+            return
+        if hold:
+            self.hold = True
+        self._reply_done = False
+        self._say(text, self._gen)
+        self._reply_done = True
+
     def feed(self, ulaw: bytes) -> None:
-        """Caller audio, any length; handled in 20 ms frames."""
+        """Caller audio in the call's format (8 kHz mu-law for a phone),
+        any length; handled in 20 ms frames."""
         if self.ended:
             return
         if time.monotonic() - self.started > self.max_call_s and not self._hangup_after:
@@ -170,11 +205,11 @@ class PhoneCall:
             self._say("This call has reached its time limit. Goodbye.", self._gen)
             self._reply_done = True
             return
-        for frame in codec.frames(ulaw):
-            self._frame(codec.ulaw_to_pcm16(frame))
+        for frame in codec.frames(ulaw, self.fmt.frame_bytes, self.fmt.pad):
+            self._frame(self.fmt.decode(frame))
 
     def _frame(self, pcm: np.ndarray) -> None:
-        dt = len(pcm) * 1000.0 / codec.RATE
+        dt = len(pcm) * 1000.0 / self.fmt.rate
         level = codec.rms(pcm)
         self._preroll.append(pcm)
         self._preroll_ms += dt
@@ -191,14 +226,14 @@ class PhoneCall:
             if not vad.calibrated:
                 vad.push(level, dt)
             return
-        barging = self.state != "listening"
+        barging = self.state != "listening" and (self.barge_in or self.respond is None)
         vad.onset_ms = 250 if barging else 120
         vad.ratio = 4 if barging else 3
         ev = vad.push(level, dt)
         if ev == "calibrated":
             self._emit("calibrated", noise=round(vad.noise, 4))
         elif ev == "start":
-            if barging:
+            if barging and not self.hold:
                 self.interrupt("barge-in")
             self._capturing = True
             self._frames = list(self._preroll)
@@ -212,7 +247,10 @@ class PhoneCall:
             self._frames = []
             self._emit("speech-end", ms=round(speech_ms))
             if speech_ms >= speech.MIN_SPEECH_MS and frames:
-                self._start_turn(np.concatenate(frames))
+                if self.respond is not None:
+                    self._stt_q.put_nowait(np.concatenate(frames))
+                else:
+                    self._start_turn(np.concatenate(frames))
 
     def dtmf(self, digit: str) -> None:
         """* stops the agent talking, like the in-app Interrupt button."""
@@ -233,8 +271,12 @@ class PhoneCall:
             asyncio.create_task(self._hang_up())
             return
         if self.state != "listening":
-            self._quiet_until = time.monotonic() + speech.ECHO_TAIL_MS / 1000
-            self.vad.reset(False)
+            if self.respond is None:
+                # A phone can hear its own speaker; a meeting never sends
+                # the agent its own voice, and someone may be mid-sentence.
+                self._quiet_until = time.monotonic() + speech.ECHO_TAIL_MS / 1000
+                self.vad.reset(False)
+            self.hold = False
             self._set("listening")
 
     async def _hang_up(self) -> None:
@@ -280,27 +322,68 @@ class PhoneCall:
         gen = self._gen
         self._turn_task = asyncio.create_task(self._turn(pcm, gen))
 
+    async def _transcribe(self, pcm: np.ndarray) -> str:
+        wav = codec.for_stt(pcm, self.fmt.rate)
+        try:
+            text = await asyncio.to_thread(self.stt, wav)
+        except Exception as e:
+            logger.warning("[phone] speech to text failed: %s", type(e).__name__)
+            text = None
+        return (text or "").strip()
+
+    async def _stt_loop(self) -> None:
+        """A meeting assistant: every utterance transcribed, in order, while
+        it keeps listening; `respond` picks the ones to answer."""
+        while not self.ended:
+            pcm = await self._stt_q.get()
+            text = await self._transcribe(pcm)
+            if self.ended:
+                return
+            self._emit("heard", text=text)
+            if not text:
+                continue
+            try:
+                ask = self.respond(text)
+            except Exception as e:
+                logger.warning("[phone] respond hook failed: %s", type(e).__name__)
+                ask = None
+            if not ask:
+                continue
+            if self.state != "listening" and not self.hold:
+                self.interrupt("asked again")
+            gen = self._gen
+            self._turn_task = asyncio.create_task(self._answer(ask, gen))
+
     async def _turn(self, pcm: np.ndarray, gen: int) -> None:
         self._set("thinking")
         self._reply_done = False
         try:
-            wav = codec.for_stt(pcm)
-            try:
-                text = await asyncio.to_thread(self.stt, wav)
-            except Exception as e:
-                logger.warning("[phone] speech to text failed: %s", type(e).__name__)
-                text = None
+            text = await self._transcribe(pcm)
             if gen != self._gen or self.ended:
                 return
-            text = (text or "").strip()
             if not text:
                 self._reply_done = True
                 self._emit("heard", text="")
                 self._maybe_listen()
                 return
-            self.turns += 1
             self._emit("heard", text=text)
-            if _BYE.match(text):
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("[phone] turn failed: %s", type(e).__name__)
+            self._reply_done = True
+            self._maybe_listen()
+            return
+        await self._answer(text, gen)
+
+    async def _answer(self, text: str, gen: int) -> None:
+        """Answer one turn out loud: the words into the chat, the reply read
+        out sentence by sentence as it streams."""
+        self._set("thinking")
+        self._reply_done = False
+        try:
+            self.turns += 1
+            if self.bye.match(text):
                 self._hangup_after = True
                 self._say(GOODBYE, gen)
                 self._reply_done = True
@@ -356,7 +439,7 @@ class PhoneCall:
                 continue
             try:
                 audio = await asyncio.to_thread(self.tts, text)
-                ulaw = codec.to_phone(audio) if audio else b""
+                ulaw = self.fmt.encode(audio) if audio else b""
             except Exception as e:
                 logger.warning("[phone] text to speech failed: %s", e)
                 ulaw = b""

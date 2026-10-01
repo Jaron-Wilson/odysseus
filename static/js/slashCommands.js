@@ -1763,6 +1763,49 @@ async function _cmdCall() {
   return true;
 }
 
+// /meet LINK [talk]: the agent joins a Google Meet (routes/meet_routes.py).
+// /meet leave: it leaves. /meet alone opens its Settings card.
+async function _cmdMeet(args, ctx) {
+  const first = (args[0] || '').toLowerCase();
+  const api = async (method, path, body) => {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method, credentials: 'same-origin',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { /* empty */ }
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    return data;
+  };
+  try {
+    if (!first) {
+      import('./settingsNav.js').then(m => m.goToSetting('google meet')).catch(() => slashReply('Could not open Settings.'));
+      return true;
+    }
+    if (first === 'leave' || first === 'stop') {
+      const live = ((await api('GET', '/api/meet/meetings')).meetings || [])
+        .filter(m => !['ended', 'failed', 'leaving', 'summarizing'].includes(m.state));
+      if (!live.length) { slashReply('Odysseus is not in a meeting.'); return true; }
+      await api('POST', `/api/meet/meetings/${encodeURIComponent(live[0].id)}/leave`);
+      await typewriterReply('Leaving the meeting.');
+      return true;
+    }
+    const mode = args.slice(1).some(a => /^(talk|chat)$/i.test(a)) ? 'talk'
+      : args.slice(1).some(a => /^(notes|assistant)$/i.test(a)) ? 'assistant' : undefined;
+    const m = await api('POST', '/api/meet/join', { url: args[0], via: 'browser', ...(mode ? { mode } : {}) });
+    await typewriterReply(`Joining as "Odysseus (AI)" (${m.mode === 'talk' ? 'talk with me' : 'meeting assistant'}). ` +
+      'Let it in from the lobby. The meeting has its own chat.');
+    if (m.sid) {
+      await sessionModule.loadSessions();
+      await sessionModule.selectSession(m.sid);
+    }
+  } catch (e) {
+    slashReply(ctx.esc(e.message || 'Could not join the meeting.'));
+  }
+  return true;
+}
+
 async function _cmdTodo(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
   if (sub === 'list' || sub === 'ls') {
@@ -5793,6 +5836,14 @@ const COMMANDS = {
     handler: _cmdCall,
     noUserBubble: true,
     usage: '/call',
+  },
+  meet: {
+    alias: ['gmeet'],
+    category: 'Chats',
+    help: 'Have the agent join a Google Meet (or leave it)',
+    handler: _cmdMeet,
+    noUserBubble: true,
+    usage: '/meet https://meet.google.com/abc-defg-hij [talk]  ·  /meet leave',
   },
   todo: {
     alias: ['td'],
