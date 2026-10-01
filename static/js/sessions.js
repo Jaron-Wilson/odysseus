@@ -2325,6 +2325,7 @@ function _initAllDropdowns() {
     getPendingChat: () => _pendingChat,
     setPendingChat: (v) => { _pendingChat = v; },
     createDirectChat,
+    loadSessions,
   });
   _initDropdownDismiss();
   _initBulkSelect();
