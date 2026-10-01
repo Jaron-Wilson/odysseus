@@ -357,20 +357,25 @@ function _browserRecognizer(lang) {
 export async function resolveStt() {
   const s = await _stats('/api/stt/stats');
   const p = String(s.provider || 'disabled');
-  // Local Whisper that cannot load (faster-whisper missing, or a CPU it does
-  // not run on): this browser's own recognizer, if it has one, says so.
-  if (p === 'local' && s.available === false) {
+  // A local engine that can't run yet (package missing, model not
+  // downloaded, a CPU it does not run on) hands over to this browser's own
+  // recognizer if it has one, and says why; else it says why up front
+  // instead of failing the first turn.
+  const isLocal = p === 'local' || p.startsWith('local:');
+  if (isLocal && (s.ready === false || s.available === false)) {
     const r = _browserRecognizer(s.language || '');
-    if (r) return Object.assign(r, { notice: "Local Whisper isn't available on the server, so this browser's speech recognition is hearing you." });
-    return { kind: 'none', goto: 'set-vcStt', reason: 'Local Whisper is not installed on the server, and this browser has no speech recognition. Pick an API engine for "Hears with" in Settings > AI Defaults > Voice call.' };
+    const why = s.reason || "The local speech engine isn't available on the server";
+    if (r) return Object.assign(r, { notice: why.replace(/\.?$/, '.') + " This browser's speech recognition is hearing you for now." });
+    return { kind: 'none', goto: 'set-vcStt', reason: why.replace(/\.?$/, '.') + ' This browser has no speech recognition either. Pick another engine for "Hears with" in Settings > AI Defaults > Voice call.' };
   }
-  if (p === 'local' || p.startsWith('endpoint:')) {
+  if (isLocal || p.startsWith('endpoint:')) {
+    if (s.ready === false && s.reason) return { kind: 'none', goto: 'set-vcStt', reason: s.reason };
     return { kind: 'server', provider: p, transcribe: (blob) => transcribeOnServer(blob, 'utterance.wav') };
   }
   if (p === 'browser') {
     const r = _browserRecognizer(s.language || '');
     if (r) return r;
-    return { kind: 'none', goto: 'set-vcStt', reason: 'This browser has no built-in speech recognition (Firefox does not). Use Chrome, Edge or Safari here, or pick an API engine for "Hears with" in Settings > AI Defaults > Voice call.' };
+    return { kind: 'none', goto: 'set-vcStt', reason: 'This browser has no built-in speech recognition (Firefox does not). Use Chrome, Edge or Safari here, or pick a local engine (Whisper or Parakeet) or an API engine for "Hears with" in Settings > AI Defaults > Voice call.' };
   }
   return { kind: 'none', goto: 'set-vcStt', reason: 'Speech to text is off. Pick an engine for "Hears with" in Settings > AI Defaults > Voice call.' };
 }
