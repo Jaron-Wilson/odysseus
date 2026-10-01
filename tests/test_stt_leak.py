@@ -1,30 +1,34 @@
 import os
 import tempfile
+
 from services.stt.stt_service import STTService
 
 
-def test_stt_local_transcribe_leak_on_error():
+def test_stt_local_transcribe_leak_on_error(monkeypatch):
+    """A failing local transcription returns None and leaves no temp files
+    (audio is decoded in memory now; it used to go through a temp file)."""
     service = STTService()
+    monkeypatch.setattr(service, "_load_settings", lambda: {
+        "stt_enabled": True, "stt_provider": "local", "stt_model": "base.en",
+        "stt_parakeet_model": "", "stt_language": "",
+    })
+    monkeypatch.setattr(service, "readiness", lambda engine, model: None)
 
     class MockWhisper:
         def transcribe(self, *args, **kwargs):
             raise ValueError("Simulated transcribe error")
 
-    service._get_whisper = lambda: MockWhisper()
+    monkeypatch.setattr(service, "_load", lambda engine, model: MockWhisper())
 
-    # Track WebM files in the temp directory before running transcription
     temp_dir = tempfile.gettempdir()
-    webm_before = {f for f in os.listdir(temp_dir) if f.endswith(".webm")}
+    before = set(os.listdir(temp_dir))
+    import io, wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b"\0\0" * 8000)
+    result = service._transcribe_local(buf.getvalue())
+    after = set(os.listdir(temp_dir))
 
-    # Run transcription, which will raise ValueError internally
-    result = service._transcribe_local(b"dummy_audio_data")
-
-    # Track WebM files in the temp directory after running transcription
-    webm_after = {f for f in os.listdir(temp_dir) if f.endswith(".webm")}
-
-    # Assert that it returned None (failure)
     assert result is None
-
-    # Assert that no new temp files were leaked
-    leaked = webm_after - webm_before
-    assert len(leaked) == 0, f"Leaked files: {leaked}"
+    leaked = {f for f in after - before if f.endswith((".webm", ".wav", ".ogg", ".mp4", ".mp3"))}
+    assert not leaked, f"Leaked files: {leaked}"

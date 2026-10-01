@@ -1777,9 +1777,20 @@
                 <label class="settings-label" for="set-vcStt">Hears with</label>
                 <select id="set-vcStt" class="settings-select" data-goto-keywords="stt speech to text transcription engine whisper microphone voice input">
                   <option value="disabled">Off</option>
-                  <option value="local">Local (Whisper)</option>
+                  <option value="local">Local: Whisper</option>
+                  <option value="local:parakeet">Local: Parakeet (NVIDIA)</option>
                   <option value="browser">Browser (built-in)</option>
                 </select>
+              </div>
+              <!-- Local engine model + download (static/js/sttEngines.js). -->
+              <div class="settings-row" id="set-vcSttModelRow" hidden style="display:none">
+                <label class="settings-label" for="set-vcSttModel">Model</label>
+                <select id="set-vcSttModel" class="settings-select" data-goto-keywords="whisper parakeet speech model size download tiny base small"></select>
+              </div>
+              <div class="settings-row" id="set-vcSttStatusRow" hidden style="display:none">
+                <span class="settings-label"></span>
+                <span id="set-vcSttStatus" style="flex:1;font-size:12px;opacity:0.75;overflow-wrap:anywhere"></span>
+                <button type="button" id="set-vcSttDownload" class="admin-btn-sm" style="flex-shrink:0;display:none" hidden>Download now</button>
               </div>
               <div class="settings-row">
                 <label class="settings-label" for="set-vcTts">Speaks with</label>
@@ -2931,6 +2942,7 @@
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/js/voiceCall.js"></script>
+<script type="module" src="/static/js/sttEngines.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
