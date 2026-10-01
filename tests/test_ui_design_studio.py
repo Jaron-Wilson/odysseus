@@ -179,6 +179,8 @@ def page():
             elif url.endswith("/static/js/theme.js"):
                 r.fulfill(body=_THEME_STUB, content_type="text/javascript")
             elif "/api/prefs/ui-design" in url:
+                if r.request.method == "PUT":
+                    puts.append(r.request.post_data)
                 r.fulfill(body=json.dumps({"key": "ui-design", "value": None}), content_type="application/json")
             elif url.rstrip("/").endswith("example.test"):
                 r.fulfill(body="<!doctype html><html><head></head><body>"
@@ -186,10 +188,15 @@ def page():
                                "<option value='studio'>S</option><option value='classic'>C</option></select>"
                                "<div data-ui-design-choice='workspace'></div>"
                                "<div data-ui-design-choice='studio'></div>"
-                               "<div data-ui-design-choice='classic'></div></body></html>",
+                               "<div data-ui-design-choice='classic'></div>"
+                               "<div class='ui-design-actions' hidden><button class='ui-design-cancel'>C</button>"
+                               "<button class='ui-design-save'>S</button></div>"
+                               "<button id='theme-design-save' hidden>S</button></body></html>",
                           content_type="text/html")
             else:
                 r.fulfill(status=404, body="")
+        puts = []
+        pg.puts = puts
         pg.route("**/*", route)
         yield pg
         browser.close()
@@ -269,3 +276,29 @@ def test_an_unknown_design_value_falls_back_to_workspace(page):
     assert "ui-workspace" in early
     page.evaluate("window.__ui.setDesign('neon')")                # ignored
     assert "ui-workspace" in _state(page)["cls"]
+
+
+# --- Picking waits for Save --------------------------------------------------
+# Asked for 2026-09-30, after a live switch away from Workspace crashed the tab:
+# "i would prefer to press save before it changes".
+
+def test_picking_a_design_only_marks_it_until_save(page):
+    _boot(page, {"odysseus-theme": _DARK})
+    page.evaluate("document.querySelector(\"[data-ui-design-choice='classic']\").click()")   # (an empty stub card)
+    s = _state(page)
+    assert "ui-workspace" in s["cls"] and s["stored"] in (None, "workspace")   # nothing switched
+    assert s["active"] == ["classic"]                                          # but it's marked
+    assert page.is_visible(".ui-design-actions .ui-design-save")
+    page.click(".ui-design-cancel")
+    s = _state(page)
+    assert s["active"] == ["workspace"] and not page.is_visible(".ui-design-actions")
+
+
+def test_save_stores_the_design_tells_the_server_and_reloads(page):
+    _boot(page, {"odysseus-theme": _DARK})
+    page.select_option("#theme-design-select", "studio")
+    assert page.is_visible("#theme-design-save")
+    with page.expect_navigation():
+        page.click("#theme-design-save")
+    assert page.evaluate("localStorage.getItem('odysseus-ui-design')") == "studio"
+    assert any('"studio"' in (b or "") for b in page.puts)
