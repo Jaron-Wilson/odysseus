@@ -1858,6 +1858,9 @@ function _initButton() {
 
 // ── Settings > AI Defaults > Voice call ─────────────────────────────────
 
+const KOKORO_VOICES = ['am_michael', 'am_fenrir', 'am_puck', 'am_echo', 'bm_george', 'bm_fable',
+  'af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'bf_emma', 'bf_isabella'];
+
 async function _loadEngines(card) {
   const $ = (id) => card.querySelector('#' + id);
   const stt = $('set-vcStt'), tts = $('set-vcTts'), voice = $('set-vcVoice'), msg = $('set-vcMsg');
@@ -1876,16 +1879,49 @@ async function _loadEngines(card) {
   pick(tts, settings.tts_enabled === false || !settings.tts_provider || settings.tts_provider === 'disabled' ? 'browser' : settings.tts_provider);
   // 'alloy' is the stored default, an API voice; it means nothing to the browser.
   voice.value = tts.value === 'browser' && ['alloy', 'af_heart'].includes(settings.tts_voice) ? '' : (settings.tts_voice || '');
-  const list = card.querySelector('#set-vcVoiceList');
+  // A real dropdown of the voices for the chosen engine (Kokoro's grouped by
+  // male/female and accent), plus "Other..." for typing any name. The hidden
+  // #set-vcVoice text box stays the value everything else reads and saves.
+  const pickSel = card.querySelector('#set-vcVoiceSelect');
+  const OTHER = '__other';
+  const showTyped = (on) => { voice.hidden = !on; voice.style.display = on ? '' : 'none'; };
   const fillVoices = () => {
     const p = tts.value;
-    let names = [];
-    if (p === 'browser' && typeof window.speechSynthesis !== 'undefined') names = window.speechSynthesis.getVoices().map(v => v.name);
-    else if (p === 'local') names = ['af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'am_michael', 'am_fenrir', 'am_puck', 'am_echo', 'bf_emma', 'bf_isabella', 'bm_george', 'bm_fable'];
-    else names = ['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'];
-    list.innerHTML = names.map(n => `<option value="${_esc(n)}"></option>`).join('');
-    voice.placeholder = p === 'browser' ? 'System default' : (p === 'local' ? 'af_heart' : 'alloy');
+    const groups = [];
+    if (p === 'browser' && typeof window.speechSynthesis !== 'undefined') {
+      groups.push(['', window.speechSynthesis.getVoices().map(v => [v.name, v.name])]);
+    } else if (p === 'local') {
+      const by = {};
+      for (const id of KOKORO_VOICES) {
+        const [k, name] = id.split('_');
+        const g = (k[1] === 'm' ? 'Male' : 'Female') + ', ' + (k[0] === 'b' ? 'British' : 'American');
+        (by[g] = by[g] || []).push([id, name[0].toUpperCase() + name.slice(1) + ' (' + id + ')']);
+      }
+      for (const g of ['Male, American', 'Male, British', 'Female, American', 'Female, British']) if (by[g]) groups.push([g, by[g]]);
+    } else {
+      groups.push(['', ['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'].map(n => [n, n])]);
+    }
+    const dflt = p === 'browser' ? 'System default' : (p === 'local' ? 'Default (af_heart)' : 'Default (alloy)');
+    let html = `<option value="">${_esc(dflt)}</option>`;
+    for (const [g, items] of groups) {
+      const opts = items.map(([v, l]) => `<option value="${_esc(v)}">${_esc(l)}</option>`).join('');
+      html += g ? `<optgroup label="${_esc(g)}">${opts}</optgroup>` : opts;
+    }
+    pickSel.innerHTML = html + `<option value="${OTHER}">Other...</option>`;
+    syncPick();
   };
+  const syncPick = () => {
+    const v = voice.value.trim();
+    const known = [...pickSel.options].some(o => o.value === v && v !== OTHER);
+    pickSel.value = known ? v : OTHER;
+    showTyped(!known);
+  };
+  pickSel.addEventListener('change', () => {
+    if (pickSel.value === OTHER) { showTyped(true); voice.focus(); return; }
+    showTyped(false);
+    voice.value = pickSel.value;
+    voice.dispatchEvent(new Event('change'));
+  });
   fillVoices();
   if (typeof window.speechSynthesis !== 'undefined') window.speechSynthesis.addEventListener?.('voiceschanged', fillVoices);
   const save = async (body) => {
@@ -1903,8 +1939,8 @@ async function _loadEngines(card) {
   };
   stt.addEventListener('change', () => save({ stt_enabled: stt.value !== 'disabled', stt_provider: stt.value }));
   tts.addEventListener('change', () => {
-    fillVoices();
     voice.value = '';
+    fillVoices();
     // The browser voice needs no server engine. It is saved as no server
     // TTS at all, so picking it does not switch on Read aloud in the chat.
     save({ tts_enabled: true, tts_provider: tts.value === 'browser' ? 'disabled' : tts.value,

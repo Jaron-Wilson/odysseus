@@ -342,6 +342,24 @@ def test_no_torch_and_ui_wiring():
     assert "const rate = 1;" in vc  # the server applies the speed now
 
 
+def test_voice_is_a_dropdown_with_male_voices_first():
+    """Reported 2026-10-01: the Voice box was a text field with a datalist, which
+    Chrome filters by what is typed, so with a voice set it listed nothing. It is a
+    real dropdown now (male voices first, by accent), with "Other..." for any name;
+    the hidden #set-vcVoice text box stays the saved value."""
+    root = Path(__file__).resolve().parent.parent
+    html = (root / "static" / "index.html").read_text()
+    assert '<select id="set-vcVoiceSelect"' in html
+    assert 'id="set-vcVoice"' in html and 'list="set-vcVoiceList"' not in html
+    vc = (root / "static" / "js" / "voiceCall.js").read_text()
+    order = ["'Male, American'", "'Male, British'", "'Female, American'", "'Female, British'"]
+    at = [vc.index(g) for g in order]
+    assert at == sorted(at)
+    assert "voice.dispatchEvent(new Event('change'))" in vc and "Other..." in vc
+    kokoro = vc[vc.index('const KOKORO_VOICES'):]
+    assert kokoro.index("'am_michael'") < kokoro.index("'af_heart'")
+
+
 # --- Real Kokoro (skipped unless installed and downloaded) -----------------------
 
 _REAL = os.getenv("ODYSSEUS_TTS_REAL_MODELS", "")

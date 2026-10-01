@@ -41,6 +41,10 @@ function wire(card) {
       o.value = v.id; o.label = v.label; o.textContent = v.label;
       list.appendChild(o);
     }
+    // The voice dropdown (voiceCall.js) names them the server's way too.
+    const pick = card.querySelector('#set-vcVoiceSelect');
+    const names = Object.fromEntries((eng.voices || []).map(v => [v.id, v.label]));
+    if (pick) for (const o of pick.options) if (names[o.value]) o.textContent = names[o.value];
   }
 
   function render() {
