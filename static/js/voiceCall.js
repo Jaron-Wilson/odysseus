@@ -26,7 +26,12 @@ import { transcribeOnServer } from './voiceRecorder.js';
 // ── Prefs ───────────────────────────────────────────────────────────────
 
 const PREFS_KEY = 'odysseus.voiceCall';
-export const DEFAULT_PREFS = Object.freeze({ mode: 'auto', silenceMs: 700, bargeIn: true });
+// echo: how the call keeps from hearing its own voice through the speakers.
+// 'auto' (louder, longer speech to cut in, and what it heard is checked
+// against what it was saying), 'headphones' (no guard, most responsive) or
+// 'strict' (the mic is ignored while the agent talks; Interrupt still works).
+export const ECHO_MODES = ['auto', 'headphones', 'strict'];
+export const DEFAULT_PREFS = Object.freeze({ mode: 'auto', silenceMs: 700, bargeIn: true, echo: 'auto' });
 
 export function loadPrefs() {
   let p = {};
@@ -36,6 +41,7 @@ export function loadPrefs() {
   const ms = Number(p.silenceMs);
   if (Number.isFinite(ms)) out.silenceMs = Math.min(3000, Math.max(300, Math.round(ms)));
   if (typeof p.bargeIn === 'boolean') out.bargeIn = p.bargeIn;
+  if (ECHO_MODES.includes(p.echo)) out.echo = p.echo;
   return out;
 }
 
@@ -116,6 +122,32 @@ export function takeSentences(plain, from = 0, final = false) {
   return { sentences: out, next: start };
 }
 
+function _words(s) {
+  return String(s || '').toLowerCase().replace(/[’']/g, '').match(/[\p{L}\p{N}]+/gu) || [];
+}
+
+/**
+ * Is `heard` the mic picking up the agent's own voice? True when nearly all
+ * of its words come, in order, from what was just spoken (`spoken`, recent
+ * sentences). One or two words must all match; longer, 60 percent of them.
+ */
+export function isEcho(heard, spoken) {
+  const h = _words(heard);
+  const ref = _words((spoken || []).join(' ')).slice(-120);
+  if (!h.length || !ref.length) return false;
+  // Longest common subsequence of words: STT drops and swaps a few.
+  let prev = new Array(ref.length + 1).fill(0);
+  for (let i = 1; i <= h.length; i++) {
+    const row = new Array(ref.length + 1).fill(0);
+    for (let j = 1; j <= ref.length; j++) {
+      row[j] = h[i - 1] === ref[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], row[j - 1]);
+    }
+    prev = row;
+  }
+  const ratio = prev[ref.length] / h.length;
+  return h.length <= 2 ? ratio === 1 : ratio >= 0.6;
+}
+
 // ── Voice activity detection ────────────────────────────────────────────
 
 /**
@@ -131,6 +163,7 @@ export class Vad {
     this.calibrateMs = opts.calibrateMs ?? 1000;
     this.minThreshold = opts.minThreshold ?? 0.012;
     this.ratio = opts.ratio ?? 3;
+    this.floor = 0;            // a raised threshold while the agent talks (bargeParams)
     this.reset(true);
   }
 
@@ -149,7 +182,7 @@ export class Vad {
   }
 
   get threshold() {
-    return Math.max(this.minThreshold, this.noise * this.ratio);
+    return Math.max(this.minThreshold, this.floor, this.noise * this.ratio);
   }
 
   /** Returns 'calibrated', 'start', 'end' or null. */
@@ -195,6 +228,19 @@ export class Vad {
     }
     return null;
   }
+}
+
+/**
+ * What it takes to talk over the agent. `noise` is the room's floor, `echo`
+ * the mic's level while the agent's voice plays (how much of the speakers it
+ * hears). With headphones a normal word is enough; on Auto the speech must be
+ * well above the echo and last longer, so the speakers cannot cut themselves
+ * off. Strict never barges in. Returns {threshold, onsetMs} or null.
+ */
+export function bargeParams({ noise = 0, echo = 0, mode = 'auto', minThreshold = 0.012 } = {}) {
+  if (mode === 'strict') return null;
+  if (mode === 'headphones') return { threshold: Math.max(minThreshold, noise * 4), onsetMs: 250 };
+  return { threshold: Math.max(minThreshold * 1.5, noise * 4, echo * 2.5), onsetMs: 400 };
 }
 
 // ── Audio helpers ───────────────────────────────────────────────────────
@@ -311,16 +357,25 @@ function _browserRecognizer(lang) {
 export async function resolveStt() {
   const s = await _stats('/api/stt/stats');
   const p = String(s.provider || 'disabled');
-  if (p === 'local' || p.startsWith('local:') || p.startsWith('endpoint:')) {
-    // A local engine that can't run yet (package missing, model not
-    // downloaded) says why up front instead of failing the first turn.
+  // A local engine that can't run yet (package missing, model not
+  // downloaded, a CPU it does not run on) hands over to this browser's own
+  // recognizer if it has one, and says why; else it says why up front
+  // instead of failing the first turn.
+  const isLocal = p === 'local' || p.startsWith('local:');
+  if (isLocal && (s.ready === false || s.available === false)) {
+    const r = _browserRecognizer(s.language || '');
+    const why = s.reason || (p === 'local' ? 'Local Whisper is not installed on the server' : 'The local speech engine is not available on the server');
+    if (r) return Object.assign(r, { notice: why.replace(/\.?$/, '.') + " This browser's speech recognition is hearing you for now." });
+    return { kind: 'none', goto: 'set-vcStt', reason: why.replace(/\.?$/, '.') + ' This browser has no speech recognition either. Pick another engine for "Hears with" in Settings > AI Defaults > Voice call.' };
+  }
+  if (isLocal || p.startsWith('endpoint:')) {
     if (s.ready === false && s.reason) return { kind: 'none', goto: 'set-vcStt', reason: s.reason };
     return { kind: 'server', provider: p, transcribe: (blob) => transcribeOnServer(blob, 'utterance.wav') };
   }
   if (p === 'browser') {
     const r = _browserRecognizer(s.language || '');
     if (r) return r;
-    return { kind: 'none', goto: 'set-vcStt', reason: 'This browser has no built-in speech recognition. Pick a local engine (Whisper or Parakeet) or an API engine for "Hears with" in Settings > AI Defaults > Voice call.' };
+    return { kind: 'none', goto: 'set-vcStt', reason: 'This browser has no built-in speech recognition (Firefox does not). Use Chrome, Edge or Safari here, or pick a local engine (Whisper or Parakeet) or an API engine for "Hears with" in Settings > AI Defaults > Voice call.' };
   }
   return { kind: 'none', goto: 'set-vcStt', reason: 'Speech to text is off. Pick an engine for "Hears with" in Settings > AI Defaults > Voice call.' };
 }
@@ -363,6 +418,11 @@ const ICON_MIC_OFF = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none
 const ICON_SPEAKER = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
 const ICON_STOP = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 const ICON_END = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform:rotate(135deg)"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+const ICON_MIN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+const ICON_EXPAND = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+const ICON_MOVE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="13" height="10" rx="1.5"/><path d="M6 18h5"/><rect x="17" y="8" width="5" height="12" rx="1"/></svg>';
+export const ICON_DEV_PHONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>';
+export const ICON_DEV_DESKTOP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
 
 const STATE_LABEL = {
   connecting: 'Connecting',
@@ -373,6 +433,16 @@ const STATE_LABEL = {
   ended: 'Call ended',
 };
 
+export function toast(msg) {
+  if (typeof window.showToast === 'function') { try { window.showToast(msg); return; } catch (_) { /* own one */ } }
+  const t = document.createElement('div');
+  t.className = 'vc-toast';
+  t.setAttribute('role', 'status');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 5000);
+}
+
 function _esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -381,7 +451,8 @@ function _esc(s) {
 
 function _defaultSend(text) {
   const cm = window.chatModule;
-  if (cm && typeof cm.sendText === 'function') return cm.sendText(text);
+  // voiceCall: the server tells the agent it is in a call (chat_stream's voice_call).
+  if (cm && typeof cm.sendText === 'function') return cm.sendText(text, { voiceCall: true });
   const ta = document.getElementById('message');
   const form = document.getElementById('chat-form');
   if (!ta || !form) throw new Error('The chat composer is not available.');
@@ -410,6 +481,81 @@ function _streaming(sid) {
   try { return !!(cm && typeof cm.hasActiveStream === 'function' && sid && cm.hasActiveStream(sid)); } catch (_) { return false; }
 }
 
+function _sessionInfo(sid) {
+  try {
+    const sm = window.sessionModule;
+    const s = sm && sm.getSessions ? sm.getSessions().find(x => x.id === sid) : null;
+    return s ? { name: s.name || s.title || '', model: s.model || '' } : {};
+  } catch (_) { return {}; }
+}
+
+/**
+ * Send a turn into `sid` when that chat is not the one on screen (the call
+ * was minimized and the user went elsewhere), and read its reply stream here.
+ * The same fields the composer sends, from the same toggles. `onReply` gets
+ * the 'odysseus:reply' shapes chat.js announces.
+ */
+export async function sendHeadless(text, sid, onReply, signal) {
+  const fd = new FormData();
+  fd.append('message', text);
+  fd.append('session', sid);
+  fd.append('voice_call', '1');
+  const on = (id) => { const e = document.getElementById(id); return !!(e && e.checked); };
+  let mode = 'chat';
+  try { mode = (JSON.parse(localStorage.getItem('odysseus-toggles') || '{}').mode) || ''; } catch (_) { /* default */ }
+  if (!mode) mode = document.querySelector('#mode-agent-btn.active') ? 'agent' : 'chat';
+  fd.append('mode', mode === 'agent' ? 'agent' : 'chat');
+  if (on('web-toggle')) fd.append(mode === 'agent' ? 'allow_web_search' : 'use_web', 'true');
+  if (on('bash-toggle')) fd.append('allow_bash', 'true');
+  const rag = document.getElementById('rag-toggle');
+  if (rag && !rag.checked) fd.append('use_rag', 'false');
+  if (on('incognito-toggle')) fd.append('incognito', 'true');
+  const tz = -new Date().getTimezoneOffset();
+  let tzName = '';
+  try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) { /* none */ }
+  const res = await fetch('/api/chat_stream', {
+    method: 'POST', body: fd, credentials: 'same-origin', signal,
+    headers: { 'X-Tz-Offset': String(tz), 'X-Tz-Name': tzName },
+  });
+  if (!res.ok) {
+    let msg = `Error ${res.status}`;
+    try { const b = await res.json(); msg = (b.detail && (b.detail.message || b.detail)) || msg; } catch (_) { /* plain */ }
+    throw new Error(String(msg));
+  }
+  onReply({ phase: 'start', sessionId: sid, text: '' });
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', voice = '', queued = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let k;
+      while ((k = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, k);
+        buf = buf.slice(k + 2);
+        for (const line of block.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+          let j;
+          try { j = JSON.parse(data); } catch (_) { continue; }
+          if (j.type === 'queued') queued = true;
+          else if (j.delta && !j.thinking) { voice += j.delta; onReply({ phase: 'delta', sessionId: sid, text: voice }); }
+          else if (j.type === 'agent_step' && voice && !voice.endsWith('\n')) { voice += '\n'; onReply({ phase: 'delta', sessionId: sid, text: voice }); }
+          else if (j.type === 'ui_control') {
+            // "Open Settings" from the call: it opens now, the call minimizes.
+            import('./chatStream.js').then(m => (m.handleUIControl || m.default.handleUIControl)(j.data || {})).catch(() => {});
+          }
+        }
+      }
+    }
+  } finally {
+    onReply({ phase: 'done', sessionId: sid, text: voice, queued });
+  }
+}
+
 // ── The call ────────────────────────────────────────────────────────────
 
 const FRAME = 2048;
@@ -417,6 +563,7 @@ const PREROLL_MS = 400;
 const MIN_SPEECH_MS = 220;
 const MAX_UTTERANCE_MS = 60000;
 const ECHO_TAIL_MS = 300;
+const ECHO_CAL_MS = 350;
 
 export class VoiceCall {
   constructor(opts = {}) {
@@ -440,6 +587,22 @@ export class VoiceCall {
     this._listen = [];
     this._level = 0;
     this._startedAt = 0;
+    // The chat this call talks in. It stays this chat while minimized, even
+    // with another one on screen (a new chat binds at its first reply).
+    this.sid = opts.sessionId ?? null;
+    this.minimized = !!opts.minimized;
+    this._spoken = [];          // recent sentences spoken, for the echo check
+    this._echoLevel = 0;        // the mic's level while the agent's voice plays
+    this._echoCalUntil = 0;
+    this._echoHits = 0;
+    this._echoHinted = false;
+    this._held = null;          // Auto echo mode: the voice paused while checking a barge-in
+    this._echoFor = null;
+    this._echoBase = 0;
+    this._echoSum = 0;
+    this._echoN = 0;
+    this._voiceOn = false;
+    this._voiceEndedAt = 0;
   }
 
   _emit(type, detail = {}) {
@@ -454,6 +617,7 @@ export class VoiceCall {
   // ── Lifecycle ──
 
   async start() {
+    if (this.sid == null) this.sid = _currentSid();
     this._mount();
     this._setState('connecting');
     // Audio has to be unlocked inside the click (iOS): make the context and
@@ -519,9 +683,11 @@ export class VoiceCall {
       };
     }
     if (this.tts.kind === 'none') this._hint('No voice is available here, so replies show as text.');
+    if (this.stt.notice) this._hint(this.stt.notice);
 
     this._wireAudio();
     this._wireApp();
+    if (this.tts.kind === 'server') this._setupLoopback();
     this._startedAt = Date.now();
     this._tick();
     this._setState('listening');
@@ -552,6 +718,85 @@ export class VoiceCall {
         this._reacquire();
       };
     }
+  }
+
+  // Echo cancellation in Chrome only subtracts audio it knows is playing,
+  // which is WebRTC's remote audio, not an <audio> element. So the agent's
+  // voice goes through a local peer connection (this page to itself) and is
+  // played as the remote track: the mic's echo canceller then has it as its
+  // reference. Anything failing leaves the voice on the plain element.
+  async _setupLoopback() {
+    if (this.opts.loopback === false || typeof RTCPeerConnection === 'undefined') return false;
+    const ctx = this.ctx;
+    if (!ctx || !ctx.createMediaStreamDestination || !ctx.createMediaElementSource) return false;
+    let pc1 = null, pc2 = null, out = null;
+    const fail = (why) => {
+      try { if (pc1) pc1.close(); } catch (_) { /* closed */ }
+      try { if (pc2) pc2.close(); } catch (_) { /* closed */ }
+      if (out) out.srcObject = null;
+      this._emit('loopback', { ok: false, error: String(why || 'failed') });
+      return false;
+    };
+    try {
+      const dest = ctx.createMediaStreamDestination();
+      pc1 = new RTCPeerConnection();
+      pc2 = new RTCPeerConnection();
+      pc1.onicecandidate = (e) => { if (e.candidate) pc2.addIceCandidate(e.candidate).catch(() => {}); };
+      pc2.onicecandidate = (e) => { if (e.candidate) pc1.addIceCandidate(e.candidate).catch(() => {}); };
+      const remote = new Promise((res) => { pc2.ontrack = (e) => res(e.streams[0] || new MediaStream([e.track])); });
+      for (const t of dest.stream.getAudioTracks()) pc1.addTrack(t, dest.stream);
+      const offer = await pc1.createOffer();
+      await pc1.setLocalDescription(offer);
+      await pc2.setRemoteDescription(offer);
+      const answer = await pc2.createAnswer();
+      await pc2.setLocalDescription(answer);
+      await pc1.setRemoteDescription(answer);
+      const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms));
+      const stream = await Promise.race([remote, timeout(4000)]);
+      await Promise.race([new Promise((res, rej) => {
+        const check = () => {
+          const st = pc2.connectionState || pc2.iceConnectionState;
+          if (st === 'connected' || st === 'completed') res();
+          else if (st === 'failed' || st === 'closed') rej(new Error(st));
+        };
+        pc2.addEventListener('connectionstatechange', check);
+        pc2.addEventListener('iceconnectionstatechange', check);
+        check();
+      }), timeout(5000)]);
+      if (this.ended) return fail('ended');
+      out = new Audio();
+      out.setAttribute('playsinline', '');
+      out.autoplay = true;
+      out.srcObject = stream;
+      await out.play();
+      if (this.ended) return fail('ended');
+      // From here the element plays only through the graph: element > gain > loopback.
+      const src = ctx.createMediaElementSource(this.audio);
+      const gain = ctx.createGain();
+      src.connect(gain);
+      gain.connect(dest);
+      this._loop = { pc1, pc2, out, src, gain, dest };
+      const watch = () => {
+        const st = pc2.connectionState;
+        if (this._loop && (st === 'failed' || st === 'disconnected' || st === 'closed')) this._dropLoopback();
+      };
+      pc2.addEventListener('connectionstatechange', watch);
+      this._emit('loopback', { ok: true });
+      return true;
+    } catch (e) {
+      return fail(e && e.message);
+    }
+  }
+
+  // The loopback broke mid-call: the voice goes straight to the speakers.
+  _dropLoopback() {
+    const l = this._loop;
+    if (!l) return;
+    this._loop = null;
+    try { l.gain.disconnect(); l.gain.connect(this.ctx.destination); } catch (_) { /* closed */ }
+    try { l.pc1.close(); l.pc2.close(); } catch (_) { /* closed */ }
+    l.out.srcObject = null;
+    this._emit('loopback', { ok: false, error: 'dropped' });
   }
 
   _wireApp() {
@@ -633,6 +878,11 @@ export class VoiceCall {
     for (const off of this._listen) off();
     this._listen = [];
     if (this._lock) { try { this._lock.release(); } catch (_) { /* released */ } this._lock = null; }
+    if (this._loop) {
+      try { this._loop.pc1.close(); this._loop.pc2.close(); } catch (_) { /* closed */ }
+      this._loop.out.srcObject = null;
+      this._loop = null;
+    }
     const mgr = window.aiTTSManager;
     if (mgr && this._savedAutoPlay !== undefined) mgr.autoPlay = this._savedAutoPlay;
     if (this._timer) clearInterval(this._timer);
@@ -642,6 +892,7 @@ export class VoiceCall {
     this.state = 'ended';
     this._emit('ended', { reason });
     this._unmount();
+    if (reason === 'moved') toast(`Call moved to ${this.movedTo || 'your other device'}`);
     if (this.opts.onEnd) { try { this.opts.onEnd(); } catch (_) { /* hook */ } }
   }
 
@@ -664,6 +915,9 @@ export class VoiceCall {
     const s = this.state;
     if (s === 'listening') return true;
     if (!this.prefs.bargeIn) return false;
+    // Strict echo protection: nothing the mic hears counts while the agent
+    // talks or is about to. Interrupt (the button) still cuts in.
+    if (this.prefs.echo === 'strict') return false;
     if (s === 'speaking') return true;
     return s === 'thinking' && this._pending && this._pending.sent;
   }
@@ -693,18 +947,47 @@ export class VoiceCall {
       if (!vad.calibrated && vad.push(rms, dt) === 'calibrated') this._emit('calibrated', { noise: vad.noise });
       return;
     }
-    if (!this._hearing() || (this._quietUntil && Date.now() < this._quietUntil)) {
+    // How loud the agent's own voice is in the mic: averaged over the start
+    // of each reply, then followed while nobody is cutting in.
+    const echoing = this.state === 'speaking' && this._voiceOn && !this._held;
+    if (echoing && !quiet) {
+      if (Date.now() < this._echoCalUntil) {
+        this._echoSum += rms;
+        this._echoN += 1;
+        this._echoLevel = Math.max(this._echoBase, this._echoSum / this._echoN);
+      } else if (!vad.speaking && !this._capturing) {
+        this._echoLevel = this._echoLevel * 0.95 + rms * 0.05;
+      }
+    }
+    if (!this._hearing() || (this._quietUntil && Date.now() < this._quietUntil)
+        || (echoing && this.prefs.echo === 'auto' && Date.now() < this._echoCalUntil)) {
       if (vad.speaking || vad._above) vad.reset(false);
       if (!vad.calibrated && !quiet) vad.push(rms, dt);
       return;
     }
     const barging = this.state !== 'listening';
-    vad.onsetMs = barging ? 250 : 120;
-    vad.ratio = barging ? 4 : 3;
+    if (!this._held) {
+      if (barging) {
+        const speaking = this.state === 'speaking';
+        const bp = bargeParams({
+          noise: vad.noise, echo: speaking ? this._echoLevel : 0,
+          mode: speaking ? this.prefs.echo : 'headphones', minThreshold: vad.minThreshold,
+        });
+        vad.onsetMs = bp.onsetMs;
+        vad.floor = bp.threshold;
+        vad.ratio = 4;
+      } else {
+        vad.onsetMs = 120;
+        vad.floor = 0;
+        vad.ratio = 3;
+      }
+    }
     const ev = vad.push(rms, dt);
     if (ev === 'calibrated') this._emit('calibrated', { noise: vad.noise });
     if (ev === 'start') {
-      if (barging) this.interrupt('barge-in');
+      if (this._held) { /* still checking the last one: this adds to it */ }
+      else if (barging && this.state === 'speaking' && this.prefs.echo === 'auto') this._hold();
+      else if (barging) this.interrupt('barge-in');
       this._beginCapture();
     } else if (ev === 'end' || (this._capturing && this._captureMs > MAX_UTTERANCE_MS)) {
       if (ev !== 'end') vad.reset(false);
@@ -712,27 +995,71 @@ export class VoiceCall {
     }
   }
 
+  // Auto echo protection, someone (or the speakers) talking over the agent:
+  // pause the voice, keep the reply, and decide once the words are in.
+  _hold() {
+    this._held = { at: Date.now(), spoken: this._recentSpoken() };
+    try { if (this.audio && !this.audio.paused) this.audio.pause(); } catch (_) { /* nothing playing */ }
+    if (typeof window.speechSynthesis !== 'undefined') { try { window.speechSynthesis.pause(); } catch (_) { /* fine */ } }
+    if (this.stt && this.stt.kind === 'browser') { this.stt.abort(); this.stt.begin(); }
+    this._emit('hold');
+  }
+
+  // It was the speakers (or nothing): carry on talking.
+  _release(why) {
+    if (!this._held) return;
+    this._held = null;
+    if (this.vad) this.vad.reset(false);
+    this._quietUntil = Date.now() + ECHO_TAIL_MS;
+    if (this.stt && this.stt.kind === 'browser') this.stt.abort();
+    try {
+      if (this.audio && this.audio.paused && this.audio.getAttribute('src')) {
+        const pr = this.audio.play();
+        if (pr && pr.catch) pr.catch(() => {});
+      }
+    } catch (_) { /* fine */ }
+    if (typeof window.speechSynthesis !== 'undefined') { try { window.speechSynthesis.resume(); } catch (_) { /* fine */ } }
+    this._emit('release', { why });
+    if (why === 'echo') this._echoHeard();
+  }
+
+  _recentSpoken() {
+    const cut = Date.now() - 15000;
+    this._spoken = this._spoken.filter(x => x.t >= cut);
+    return this._spoken.map(x => x.text);
+  }
+
+  _echoHeard() {
+    this._echoHits += 1;
+    this._emit('echo', { hits: this._echoHits });
+    if (this._echoHinted) return;
+    this._echoHinted = true;
+    this._showError('Sounds like the mic hears the speakers: use headphones or turn on Strict echo protection.', 'set-vcEcho');
+  }
+
   _beginCapture() {
     this._capturing = true;
     this._frames = this._preroll.slice();
     this._captureMs = this._prerollMs;
+    this._captureAt = Date.now();
     this._emit('speech-start');
-    if (this._els) this._els.root.classList.add('vc-hearing');
+    this._rootsClass('vc-hearing', true);
   }
 
   _dropCapture() {
     this._capturing = false;
     this._frames = [];
     if (this.vad) this.vad.reset(false);
-    if (this._els) this._els.root.classList.remove('vc-hearing');
+    this._rootsClass('vc-hearing', false);
   }
 
   _endCapture(speechMs) {
     const frames = this._frames;
     this._capturing = false;
     this._frames = [];
-    if (this._els) this._els.root.classList.remove('vc-hearing');
+    this._rootsClass('vc-hearing', false);
     this._emit('speech-end', { speechMs });
+    if (this._held) { this._checkHeld(frames, speechMs); return; }
     if (speechMs < MIN_SPEECH_MS) {
       if (this.stt.kind === 'browser') { this.stt.abort(); this.stt.begin(); }
       return;
@@ -740,25 +1067,49 @@ export class VoiceCall {
     this._utterance(frames);
   }
 
-  async _utterance(frames) {
+  async _transcribe(frames) {
+    if (this.stt.kind === 'browser') return this.stt.end();
+    const wav = encodeWav(frames, this.ctx.sampleRate);
+    this._emit('stt', { bytes: wav.size });
+    return _withRetry(() => this.stt.transcribe(wav));
+  }
+
+  // The words heard over the paused voice: the speakers, or a real turn?
+  async _checkHeld(frames, speechMs) {
+    const held = this._held;
+    if (speechMs < MIN_SPEECH_MS) { this._release('short'); return; }
+    let text = '';
+    try { text = String((await this._transcribe(frames)) || '').trim(); } catch (_) { text = ''; }
+    if (this.ended || this._held !== held) return;
+    if (!text) { this._release('empty'); return; }
+    if (isEcho(text, held.spoken.concat(this._recentSpoken()))) {
+      this._emit('echo-dropped', { text });
+      this._release('echo');
+      return;
+    }
+    // Someone really is talking: stop the voice and take it as the next turn.
+    this._held = null;
+    this.interrupt('barge-in');
+    this._utterance(null, text);
+  }
+
+  async _utterance(frames, known) {
     const turn = ++this._turnId;
     this._setState('thinking');
     this._pending = { turn, sent: false };
-    let text = '';
-    try {
-      if (this.stt.kind === 'browser') {
-        text = await this.stt.end();
-      } else {
-        const wav = encodeWav(frames, this.ctx.sampleRate);
-        this._emit('stt', { bytes: wav.size });
-        text = await _withRetry(() => this.stt.transcribe(wav));
+    let text = known || '';
+    if (known) {
+      if (this.stt.kind === 'browser') this.stt.abort();
+    } else {
+      try {
+        text = await this._transcribe(frames);
+      } catch (e) {
+        if (this.ended || turn !== this._turnId) return;
+        this._pending = null;
+        this._showError('Could not transcribe that: ' + ((e && e.message) || 'unknown error') + '. Try again.');
+        this._setState('listening');
+        return;
       }
-    } catch (e) {
-      if (this.ended || turn !== this._turnId) return;
-      this._pending = null;
-      this._showError('Could not transcribe that: ' + ((e && e.message) || 'unknown error') + '. Try again.');
-      this._setState('listening');
-      return;
     }
     if (this.ended || turn !== this._turnId) return;
     text = String(text || '').trim();
@@ -768,15 +1119,24 @@ export class VoiceCall {
       this._setState('listening');
       return;
     }
+    // Just after the voice stopped, the room can still be ringing with it.
+    if (!known && this.prefs.echo === 'auto' && this._voiceEndedAt
+        && this._captureAt - this._voiceEndedAt < 1500 && isEcho(text, this._recentSpoken())) {
+      this._pending = null;
+      this._emit('echo-dropped', { text });
+      this._echoHeard();
+      this._setState('listening');
+      return;
+    }
     this._clearError();
     this._addTurn('you', text);
-    const sid = _currentSid();
+    const sid = this.sid;
     Object.assign(this._pending, {
       sent: true, bound: false, sid: null, idx: 0, done: false, agent: null,
       wasStreaming: _streaming(sid),
     });
     try {
-      await (this.opts.send || _defaultSend)(text);
+      await this._sendTurn(text);
       this._emit('send', { text });
     } catch (e) {
       if (turn !== this._turnId) return;
@@ -786,23 +1146,50 @@ export class VoiceCall {
     }
   }
 
+  /** Into the call's own chat: the composer when it is on screen, else directly. */
+  async _sendTurn(text) {
+    const sid = this.sid;
+    if (this.opts.send) return this.opts.send(text, { sessionId: sid });
+    if (sid && _currentSid() !== sid) {
+      // Not awaited: the reply streams in while the turn loop goes on.
+      sendHeadless(text, sid, (d) => this._onReply(d)).catch((e) => {
+        if (this.ended) return;
+        this._onReply({ phase: 'done', sessionId: sid, text: '', error: (e && e.message) || 'failed' });
+      });
+      return undefined;
+    }
+    return _defaultSend(text);
+  }
+
+  /** Is `sid` the chat this call is in? (chat.js asks for background streams.) */
+  boundTo(sid) {
+    return !this.ended && sid != null && sid === this.sid;
+  }
+
   // ── The reply stream ──
 
   _onReply(d) {
     const p = this._pending;
     if (this.ended || !p || !p.sent) return;
     const phase = d.phase;
+    // Replies in other chats (the one on screen, while this call is
+    // minimized over it) are not this call's.
+    const mine = this.sid == null || d.sessionId == null || d.sessionId === this.sid;
     if (phase === 'start') {
-      if (!p.bound) { p.bound = true; p.sid = d.sessionId ?? null; }
+      if (!p.bound && mine) {
+        p.bound = true;
+        p.sid = d.sessionId ?? null;
+        if (this.sid == null) this.sid = p.sid;          // a new chat: bound at its first reply
+      }
       return;
     }
     if (!p.bound) {
       // A reply that was already running when this turn was sent finishes
       // first; ours starts after it. A 'done' with no 'start' otherwise
       // means the send failed before any reply began.
-      if (phase === 'done' && !p.wasStreaming) {
+      if (phase === 'done' && !p.wasStreaming && mine) {
         this._feed(p, d.text || '', true);
-        if (!p.agent) this._showError('The agent did not answer. Check the chat for details.');
+        if (!p.agent) this._showError(d.error ? 'Could not send: ' + d.error : 'The agent did not answer. Check the chat for details.');
         p.done = true;
         this._maybeFinish(p);
       }
@@ -812,6 +1199,7 @@ export class VoiceCall {
     if (phase === 'delta') this._feed(p, d.text || '', false);
     else if (phase === 'done') {
       this._feed(p, d.text || '', true);
+      if (d.queued && !p.agent) this._hint('Queued behind the reply already running in that chat. It is answered there next.');
       p.done = true;
       this._maybeFinish(p);
     }
@@ -876,7 +1264,17 @@ export class VoiceCall {
         const url = await item.ready;
         if (gen !== this._gen || this.ended) return;
         if (this.state !== 'speaking') this._setState('speaking');
+        if (item.p && item.p !== this._echoFor) {
+          // A new reply: measure how much of the voice the mic hears.
+          this._echoFor = item.p;
+          this._echoBase = this._echoLevel * 0.5;
+          this._echoSum = 0;
+          this._echoN = 0;
+          this._echoCalUntil = Date.now() + ECHO_CAL_MS;
+        }
+        this._spoken.push({ text: item.text, t: Date.now() });
         this._emit('speak-start', { text: item.text });
+        this._voiceOn = true;
         try {
           if (url) await this._playUrl(url, gen);
           else if (this.tts.kind === 'browser') await this._playBrowser(item.text, gen);
@@ -884,6 +1282,9 @@ export class VoiceCall {
         } catch (e) {
           if (gen !== this._gen) return;
           this._showError('Playback failed: ' + ((e && e.message) || 'error'));
+        } finally {
+          this._voiceOn = false;
+          this._voiceEndedAt = Date.now();
         }
         if (gen !== this._gen || this.ended) return;
         this._emit('speak-end', { text: item.text });
@@ -953,6 +1354,7 @@ export class VoiceCall {
   interrupt(reason = 'button') {
     if (this.ended) return;
     const busy = this.state === 'speaking' || this.state === 'thinking';
+    this._held = null;
     this._turnId += 1;
     if (this._pending) this._pending = null;
     this._stopSpeaking();
@@ -977,7 +1379,7 @@ export class VoiceCall {
     if (this.state !== 'listening') this.interrupt('button');
     this._pttSpeech = 0;
     this._beginCapture();
-    if (this._els) this._els.talk.classList.add('active');
+    this._talkActive(true);
     this._setState('listening');
     this._hint('Release to send.');
   }
@@ -985,7 +1387,7 @@ export class VoiceCall {
   _pttUp() {
     if (!this._pttHeld) return;
     this._pttHeld = false;
-    if (this._els) this._els.talk.classList.remove('active');
+    this._talkActive(false);
     this._hint('');
     this._setState(this.state);
     if (!this._capturing) return;
@@ -995,15 +1397,29 @@ export class VoiceCall {
     this._endCapture(loud ? Math.max(ms, 0) : 0);
   }
 
+  _talkActive(on) {
+    if (!this._els) return;
+    this._els.talk.classList.toggle('active', on);
+    this._els.pTalk.classList.toggle('active', on);
+  }
+
   _onKey(e, down) {
     if (this.ended) return;
+    // Escape folds the call away (it never hangs up: End does that). With
+    // the Move list open it closes the list first; minimized, it is the
+    // app's again.
     if (e.key === 'Escape' && down) {
+      if (this.minimized) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      this.end('escape');
+      if (this._els && !this._els.move.hidden) this._closeMove();
+      else this.minimize('escape');
       return;
     }
     if ((e.code === 'Space' || e.key === ' ') && this.prefs.mode === 'ptt') {
+      // Minimized, Space is for typing (the composer) unless nothing editable has focus.
+      const t = e.target;
+      if (this.minimized && t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName || ''))) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       if (down && !e.repeat) this._pttDown();
@@ -1011,7 +1427,7 @@ export class VoiceCall {
     }
   }
 
-  // ── Overlay ──
+  // ── Overlay and the minimized pill ──
 
   _mount() {
     const root = document.createElement('div');
@@ -1021,7 +1437,9 @@ export class VoiceCall {
     root.setAttribute('aria-labelledby', 'vc-title');
     root.dataset.state = 'connecting';
     root.dataset.mode = this.prefs.mode;
-    const name = (this.opts.chatName || _defaultChatName)();
+    const cn = this.opts.chatName;
+    const name = (typeof cn === 'string' ? cn : (cn || _defaultChatName)()) || 'New chat';
+    this.chatName = name;
     root.innerHTML = `
       <div class="vc-panel" tabindex="-1">
         <header class="vc-head">
@@ -1030,6 +1448,7 @@ export class VoiceCall {
             <h2 class="vc-title" id="vc-title">${_esc(name)}</h2>
           </div>
           <span class="vc-timer" aria-label="Call length">0:00</span>
+          <button type="button" class="vc-icon-btn vc-minimize" title="Minimize (Esc): the call keeps going" aria-label="Minimize the call">${ICON_MIN}</button>
         </header>
         <div class="vc-stage">
           <div class="vc-orb" aria-hidden="true">
@@ -1039,57 +1458,237 @@ export class VoiceCall {
           <div class="vc-state" aria-live="polite">Connecting</div>
           <div class="vc-hint" aria-live="polite"></div>
           <div class="vc-error" role="alert" hidden></div>
+          <div class="vc-handoff" aria-live="polite" hidden></div>
         </div>
         <ol class="vc-transcript" aria-label="Recent turns"></ol>
+        <div class="vc-move" hidden>
+          <div class="vc-move-head">Move call to</div>
+          <div class="vc-move-list" role="list"></div>
+        </div>
         <div class="vc-controls">
           <button type="button" class="vc-btn vc-mute" aria-pressed="false">${ICON_MIC}<span>Mute</span></button>
           <button type="button" class="vc-btn vc-talk" hidden>${ICON_MIC}<span>Hold to talk</span></button>
           <button type="button" class="vc-btn vc-interrupt">${ICON_STOP}<span>Interrupt</span></button>
+          <button type="button" class="vc-btn vc-move-btn" aria-expanded="false" hidden>${ICON_MOVE}<span>Move</span></button>
           <button type="button" class="vc-btn vc-end">${ICON_END}<span>End</span></button>
         </div>
       </div>`;
+    const pill = document.createElement('div');
+    pill.className = 'vc-pill';
+    pill.setAttribute('role', 'region');
+    pill.setAttribute('aria-label', 'Voice call');
+    pill.dataset.state = 'connecting';
+    pill.hidden = true;
+    pill.innerHTML = `
+      <button type="button" class="vc-pill-main" title="Open the call">
+        <span class="vc-pill-lvl" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span class="vc-pill-text">
+          <span class="vc-pill-state" aria-live="polite">Connecting</span>
+          <span class="vc-pill-sub"><span class="vc-pill-name">${_esc(name)}</span> <span class="vc-pill-timer">0:00</span></span>
+        </span>
+      </button>
+      <button type="button" class="vc-pill-btn vc-pill-talk" title="Hold to talk" hidden>${ICON_MIC}</button>
+      <button type="button" class="vc-pill-btn vc-pill-mute" aria-pressed="false" title="Mute">${ICON_MIC}</button>
+      <button type="button" class="vc-pill-btn vc-pill-expand" title="Open the call" aria-label="Open the call">${ICON_EXPAND}</button>
+      <button type="button" class="vc-pill-btn vc-pill-end" title="End the call" aria-label="End the call">${ICON_END}</button>`;
     const q = (s) => root.querySelector(s);
+    const qp = (s) => pill.querySelector(s);
     this._els = {
-      root, state: q('.vc-state'), hint: q('.vc-hint'), error: q('.vc-error'), timer: q('.vc-timer'),
+      root, pill, state: q('.vc-state'), hint: q('.vc-hint'), error: q('.vc-error'), timer: q('.vc-timer'),
       transcript: q('.vc-transcript'), mute: q('.vc-mute'), talk: q('.vc-talk'),
-      interrupt: q('.vc-interrupt'), end: q('.vc-end'),
+      interrupt: q('.vc-interrupt'), end: q('.vc-end'), handoff: q('.vc-handoff'),
+      move: q('.vc-move'), moveList: q('.vc-move-list'), moveBtn: q('.vc-move-btn'),
+      pState: qp('.vc-pill-state'), pTimer: qp('.vc-pill-timer'), pMute: qp('.vc-pill-mute'),
+      pTalk: qp('.vc-pill-talk'),
     };
     const e = this._els;
     e.talk.hidden = this.prefs.mode !== 'ptt';
+    e.pTalk.hidden = this.prefs.mode !== 'ptt';
     e.end.addEventListener('click', () => this.end('button'));
     e.interrupt.addEventListener('click', () => this.interrupt('button'));
     e.mute.addEventListener('click', () => this.setMuted(!this.muted));
-    e.talk.addEventListener('pointerdown', (ev) => { ev.preventDefault(); try { e.talk.setPointerCapture(ev.pointerId); } catch (_) { /* fine */ } this._pttDown(); });
-    e.talk.addEventListener('pointerup', () => this._pttUp());
-    e.talk.addEventListener('pointercancel', () => this._pttUp());
-    e.talk.addEventListener('contextmenu', (ev) => ev.preventDefault());
+    q('.vc-minimize').addEventListener('click', () => this.minimize('button'));
+    e.moveBtn.addEventListener('click', () => (e.move.hidden ? this._openMove() : this._closeMove()));
+    qp('.vc-pill-main').addEventListener('click', () => this.expand());
+    qp('.vc-pill-expand').addEventListener('click', () => this.expand());
+    qp('.vc-pill-end').addEventListener('click', () => this.end('button'));
+    e.pMute.addEventListener('click', () => this.setMuted(!this.muted));
+    for (const t of [e.talk, e.pTalk]) {
+      t.addEventListener('pointerdown', (ev) => { ev.preventDefault(); try { t.setPointerCapture(ev.pointerId); } catch (_) { /* fine */ } this._pttDown(); });
+      t.addEventListener('pointerup', () => this._pttUp());
+      t.addEventListener('pointercancel', () => this._pttUp());
+      t.addEventListener('contextmenu', (ev) => ev.preventDefault());
+    }
     this._prevFocus = document.activeElement;
     document.body.appendChild(root);
-    document.documentElement.classList.add('vc-open');
-    requestAnimationFrame(() => root.classList.add('vc-in'));
-    try { root.querySelector('.vc-panel').focus({ preventScroll: true }); } catch (_) { /* fine */ }
+    document.body.appendChild(pill);
+    this._paintMoveBtn();
+    if (this.minimized) {
+      this.minimized = false;
+      this.minimize('start');
+    } else {
+      document.documentElement.classList.add('vc-open');
+      requestAnimationFrame(() => root.classList.add('vc-in'));
+      try { root.querySelector('.vc-panel').focus({ preventScroll: true }); } catch (_) { /* fine */ }
+    }
     this._paintControls();
+  }
+
+  /** Fold the call into the pill: it keeps listening and talking. */
+  minimize(why = 'api') {
+    const e = this._els;
+    if (!e || this.minimized || this.ended) return;
+    this.minimized = true;
+    this._closeMove();
+    e.root.hidden = true;
+    e.root.classList.remove('vc-in');
+    e.pill.hidden = false;
+    document.documentElement.classList.remove('vc-open');
+    document.documentElement.classList.add('vc-minimized');
+    if (why !== 'ui') {
+      try { if (this._prevFocus && this._prevFocus.focus && document.contains(this._prevFocus)) this._prevFocus.focus({ preventScroll: true }); } catch (_) { /* gone */ }
+    }
+    this._emit('minimized', { why });
+  }
+
+  /** Back to the full call view. */
+  expand() {
+    const e = this._els;
+    if (!e || !this.minimized || this.ended) return;
+    this.minimized = false;
+    this._prevFocus = document.activeElement;
+    e.pill.hidden = true;
+    e.root.hidden = false;
+    document.documentElement.classList.remove('vc-minimized');
+    document.documentElement.classList.add('vc-open');
+    requestAnimationFrame(() => e.root.classList.add('vc-in'));
+    try { e.root.querySelector('.vc-panel').focus({ preventScroll: true }); } catch (_) { /* fine */ }
+    this._emit('expanded');
   }
 
   _unmount() {
     const e = this._els;
     if (!e) return;
-    document.documentElement.classList.remove('vc-open');
+    document.documentElement.classList.remove('vc-open', 'vc-minimized');
     e.root.remove();
+    e.pill.remove();
     this._els = null;
-    try { if (this._prevFocus && this._prevFocus.focus) this._prevFocus.focus({ preventScroll: true }); } catch (_) { /* gone */ }
+    try { if (!this.minimized && this._prevFocus && this._prevFocus.focus) this._prevFocus.focus({ preventScroll: true }); } catch (_) { /* gone */ }
+  }
+
+  _rootsClass(c, on) {
+    if (!this._els) return;
+    this._els.root.classList.toggle(c, on);
+    this._els.pill.classList.toggle(c, on);
+  }
+
+  // ── Moving the call to another device (callHandoff.js provides the targets) ──
+
+  _paintMoveBtn() {
+    if (this._els) this._els.moveBtn.hidden = !(_handoff && !this.opts.noHandoff);
+  }
+
+  async _openMove() {
+    const e = this._els;
+    if (!e || !_handoff) return;
+    e.move.hidden = false;
+    e.moveBtn.setAttribute('aria-expanded', 'true');
+    e.moveBtn.classList.add('active');
+    e.moveList.innerHTML = '<div class="vc-move-empty">Looking for your other devices...</div>';
+    let targets = [];
+    try { targets = await _handoff.list(this); } catch (_) { targets = []; }
+    if (!this._els || e.move.hidden) return;
+    if (!targets.length) {
+      e.moveList.innerHTML = '<div class="vc-move-empty">No other device has Odysseus open. Open it on your phone (or allow its notifications), then try again.</div>';
+      return;
+    }
+    e.moveList.innerHTML = targets.map((t, i) => `
+      <button type="button" class="vc-move-item" role="listitem" data-i="${i}">
+        <span class="vc-move-ico">${t.kind === 'phone' ? ICON_DEV_PHONE : ICON_DEV_DESKTOP}</span>
+        <span class="vc-move-text"><span class="vc-move-name">${_esc(t.name)}</span><span class="vc-move-sub">${_esc(t.sub || '')}</span></span>
+      </button>`).join('');
+    e.moveList.querySelectorAll('.vc-move-item').forEach((b) => {
+      b.addEventListener('click', () => {
+        const t = targets[Number(b.dataset.i)];
+        this._closeMove();
+        _handoff.offer(this, t);
+      });
+    });
+    const first = e.moveList.querySelector('.vc-move-item');
+    if (first) try { first.focus({ preventScroll: true }); } catch (_) { /* fine */ }
+  }
+
+  _closeMove() {
+    const e = this._els;
+    if (!e || e.move.hidden) return;
+    e.move.hidden = true;
+    e.moveBtn.setAttribute('aria-expanded', 'false');
+    e.moveBtn.classList.remove('active');
+  }
+
+  /**
+   * A line about the handoff under the state ("Waiting for Pixel 8a..."),
+   * with an optional action button. null clears it.
+   */
+  setHandoffStatus(text, action) {
+    const e = this._els;
+    if (!e) return;
+    const box = e.handoff;
+    if (!text) { box.hidden = true; box.textContent = ''; this._rootsClass('vc-moving', false); return; }
+    box.textContent = text;
+    if (action && action.label) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'vc-handoff-act';
+      b.textContent = action.label;
+      b.addEventListener('click', () => action.run());
+      box.append(' ', b);
+    }
+    box.hidden = false;
+    this._rootsClass('vc-moving', !!(action && action.pending));
+  }
+
+  /** The other device took the call: quiet here until it says it is live. */
+  holdForHandoff(name) {
+    if (this.ended) return;
+    this._mutedBeforeHandoff = this.muted;
+    this.interrupt('handoff');
+    this.setMuted(true);
+    this.setHandoffStatus(`Moving the call to ${name}...`, { pending: true });
+  }
+
+  /** The other device could not take it after all: back to normal here. */
+  resumeAfterHandoff(msg) {
+    if (this.ended) return;
+    if (this._mutedBeforeHandoff !== undefined) {
+      this.setMuted(this._mutedBeforeHandoff);
+      this._mutedBeforeHandoff = undefined;
+    }
+    this.setHandoffStatus(msg || null);
+  }
+
+  /** What a handoff needs to carry the call on elsewhere. */
+  info() {
+    const si = _sessionInfo(this.sid);
+    return {
+      session_id: this.sid, chat_name: this.chatName || si.name || '', model: si.model || '',
+      started: this._startedAt ? Math.round(this._startedAt / 1000) : 0,
+      prefs: { mode: this.prefs.mode, silenceMs: this.prefs.silenceMs, bargeIn: this.prefs.bargeIn, echo: this.prefs.echo },
+    };
   }
 
   _tick() {
     this._timer = setInterval(() => {
       if (!this._els) return;
       const s = Math.floor((Date.now() - this._startedAt) / 1000);
-      this._els.timer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      const t = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      this._els.timer.textContent = t;
+      this._els.pTimer.textContent = t;
     }, 1000);
     const frame = () => {
       if (!this._els || this.ended) return;
-      const lvl = Math.min(1, this._level * 6);
-      this._els.root.style.setProperty('--vc-level', lvl.toFixed(3));
+      const lvl = Math.min(1, this._level * 6).toFixed(3);
+      (this.minimized ? this._els.pill : this._els.root).style.setProperty('--vc-level', lvl);
       this._level *= 0.92;
       this._raf = requestAnimationFrame(frame);
     };
@@ -1103,9 +1702,12 @@ export class VoiceCall {
     if (s === 'listening' && this.stt && this.stt.kind === 'browser' && prev !== 'listening' && !this.muted) this.stt.begin();
     if (this._els) {
       this._els.root.dataset.state = s;
-      this._els.state.textContent = this.prefs.mode === 'ptt' && s === 'listening'
+      this._els.pill.dataset.state = s;
+      const label = this.prefs.mode === 'ptt' && s === 'listening'
         ? (this._pttHeld ? 'Listening' : 'Ready')
         : (STATE_LABEL[s] || s);
+      this._els.state.textContent = label;
+      this._els.pState.textContent = this.muted && s === 'listening' ? 'Muted' : label;
       this._paintControls();
     }
     if (prev !== s) this._emit('state', { state: s, prev });
@@ -1114,13 +1716,22 @@ export class VoiceCall {
   _paintControls() {
     const e = this._els;
     if (!e) return;
-    e.mute.setAttribute('aria-pressed', this.muted ? 'true' : 'false');
-    e.mute.classList.toggle('active', this.muted);
+    for (const b of [e.mute, e.pMute]) {
+      b.setAttribute('aria-pressed', this.muted ? 'true' : 'false');
+      b.classList.toggle('active', this.muted);
+    }
     e.mute.innerHTML = (this.muted ? ICON_MIC_OFF : ICON_MIC) + `<span>${this.muted ? 'Unmute' : 'Mute'}</span>`;
+    e.pMute.innerHTML = this.muted ? ICON_MIC_OFF : ICON_MIC;
+    e.pMute.title = this.muted ? 'Unmute' : 'Mute';
+    e.pMute.setAttribute('aria-label', this.muted ? 'Unmute' : 'Mute');
+    if (this.state === 'listening') e.pState.textContent = this.muted ? 'Muted' : (this.prefs.mode === 'ptt' && !this._pttHeld ? 'Ready' : 'Listening');
     e.interrupt.disabled = !(this.state === 'speaking' || this.state === 'thinking');
     const live = this.state !== 'error' && this.state !== 'connecting';
     e.mute.disabled = !live;
+    e.pMute.disabled = !live;
     e.talk.disabled = !live;
+    e.pTalk.disabled = !live;
+    e.moveBtn.disabled = !live || !this.sid;
   }
 
   _hint(msg) {
@@ -1128,7 +1739,8 @@ export class VoiceCall {
   }
 
   // `goto` is a Settings control id (settingsNav.js); the message then ends
-  // with a link that closes the call and opens Settings right at it.
+  // with a link that opens Settings right at it. A live call minimizes for
+  // that and goes on; one that never started closes.
   _showError(msg, goto) {
     this._emit('error', { message: msg });
     if (!this._els) return;
@@ -1140,21 +1752,30 @@ export class VoiceCall {
       a.className = 'settings-goto-link vc-error-goto';
       a.textContent = 'Open that setting';
       a.addEventListener('click', () => {
-        this.end('settings');
+        if (this.state === 'error' || this.state === 'connecting') this.end('settings');
+        else this.minimize('settings');
         import('./settingsNav.js').then(m => m.goToSetting(goto)).catch(() => {});
       });
       box.append(' ', a);
     }
     box.hidden = false;
+    this._els.pill.classList.add('vc-alert');
+    this._els.pill.title = msg;
   }
 
   _clearError() {
-    if (this._els) { this._els.error.hidden = true; this._els.error.textContent = ''; }
+    if (this._els) {
+      this._els.error.hidden = true;
+      this._els.error.textContent = '';
+      this._els.pill.classList.remove('vc-alert');
+      this._els.pill.removeAttribute('title');
+    }
   }
 
   _fail(msg, goto) {
     this._showError(msg, goto);
     this._setState('error');
+    this.expand();                 // a call that cannot go on says why, in full
   }
 
   _addTurn(who, text) {
@@ -1181,23 +1802,42 @@ export class VoiceCall {
 // ── Entry points ────────────────────────────────────────────────────────
 
 let _current = null;
+let _handoff = null;          // callHandoff.js: {list(call), offer(call, target)}
+const _watchers = new Set();
+
+function _changed() {
+  for (const fn of _watchers) { try { fn(_current && !_current.ended ? _current : null); } catch (_) { /* a watcher */ } }
+}
 
 /** Open a call in the current chat (one at a time). Options are for tests. */
 export function open(opts = {}) {
   if (_current && !_current.ended) return _current;
   const call = new VoiceCall({
     ...opts,
-    onEnd: () => { if (_current === call) _current = null; _paintButton(); if (opts.onEnd) opts.onEnd(); },
+    onEnd: () => { if (_current === call) _current = null; _paintButton(); _changed(); if (opts.onEnd) opts.onEnd(); },
   });
   _current = call;
   _paintButton();
   call.start();
+  _changed();
   return call;
 }
 
 export function end() { if (_current) _current.end('api'); }
 export function isActive() { return !!(_current && !_current.ended); }
 export function current() { return _current; }
+/** Fold the call into its pill, e.g. when the agent opens a page (chatStream.js). */
+export function minimize(why = 'api') { if (isActive()) _current.minimize(why); }
+export function expand() { if (isActive()) _current.expand(); }
+/** Is a call running in chat `sid`? */
+export function boundTo(sid) { return !!(isActive() && _current.boundTo(sid)); }
+/** callHandoff.js offers the user's other devices to move the call to. */
+export function setHandoff(provider) {
+  _handoff = provider || null;
+  if (_current) _current._paintMoveBtn();
+}
+/** `fn(call or null)` whenever a call starts or ends. Returns an unsubscribe. */
+export function onChange(fn) { _watchers.add(fn); return () => _watchers.delete(fn); }
 
 function _paintButton() {
   const b = document.getElementById('voice-call-btn');
@@ -1212,7 +1852,8 @@ function _initButton() {
   b.dataset.wired = '1';
   if (!b.innerHTML.trim()) b.innerHTML = ICON_PHONE;
   b.title = 'Voice call: talk with the agent';
-  b.addEventListener('click', () => { if (isActive()) end(); else open(); });
+  // During a call it brings the call back up; End (or the pill's) hangs up.
+  b.addEventListener('click', () => { if (isActive()) expand(); else open(); });
 }
 
 // ── Settings > AI Defaults > Voice call ─────────────────────────────────
@@ -1289,6 +1930,11 @@ export function initSettings(root = document) {
   }
   silence.value = String(p.silenceMs);
   barge.checked = p.bargeIn;
+  const echo = card.querySelector('#set-vcEcho');
+  if (echo) {
+    echo.value = p.echo;
+    echo.addEventListener('change', () => savePrefs({ echo: echo.value }));
+  }
   mode.addEventListener('change', () => savePrefs({ mode: mode.value }));
   silence.addEventListener('change', () => savePrefs({ silenceMs: Number(silence.value) }));
   barge.addEventListener('change', () => savePrefs({ bargeIn: barge.checked }));
@@ -1308,7 +1954,7 @@ function _boot() {
   initSettings();
 }
 
-const voiceCall = { open, end, isActive, current, initSettings, loadPrefs, savePrefs };
+const voiceCall = { open, end, isActive, current, minimize, expand, boundTo, setHandoff, onChange, initSettings, loadPrefs, savePrefs };
 window.voiceCall = voiceCall;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _boot);
 else _boot();

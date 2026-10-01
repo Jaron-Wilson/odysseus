@@ -8,6 +8,8 @@ import themeModule from './theme.js';
 import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
 
+var OPENS_SOMETHING = ['open_panel', 'open_email_reply', 'highlight', 'screen_control_request'];
+
 /**
  * Handle a ui_control SSE event — AI-driven UI manipulation.
  * Extracted from the duplicated ui_control + tool_output.ui_event handlers.
@@ -15,6 +17,13 @@ import sessionModule from './sessions.js';
 export function handleUIControl(uiData) {
   var uiEvent = uiData.ui_event || uiData;
   var esc = uiModule.esc;
+
+  // Something the agent opens or points at during a voice call would land
+  // under the call's full screen view (it opened Settings "after I ended the
+  // call"): fold the call into its pill first. The call keeps going.
+  if (OPENS_SOMETHING.indexOf(uiEvent) >= 0 && window.voiceCall && window.voiceCall.isActive()) {
+    try { window.voiceCall.minimize('ui'); } catch (_) { /* the page still opens */ }
+  }
 
   try {
     if (uiEvent === 'toggle' || uiData.ui_event === 'toggle') {

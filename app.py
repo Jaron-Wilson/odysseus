@@ -634,6 +634,9 @@ async def _service_worker():
 # Web Push subscriptions — notifications with no third-party app installed.
 from routes.push_routes import setup_push_routes
 app.include_router(setup_push_routes())
+# Moving a voice call to another open Odysseus page (callHandoff.js).
+from routes.call_routes import setup_call_routes
+app.include_router(setup_call_routes())
 from routes.device_routes import setup_device_routes
 app.include_router(setup_device_routes())
 from routes.enroll_routes import setup_enroll_routes
