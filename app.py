@@ -141,6 +141,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/ide/",                # the code editor proxy: long polls and big downloads stream
 )
 
 
@@ -663,6 +664,9 @@ from routes.deploy_routes import setup_deploy_routes
 app.include_router(setup_deploy_routes())
 from routes.devops_routes import setup_devops_routes
 app.include_router(setup_devops_routes())
+# The integrated IDE: /ide/ proxies code-server, /api/ide/* backs the Code panel.
+from routes.ide_routes import setup_ide_routes
+app.include_router(setup_ide_routes())
 
 
 @app.get("/api/version")

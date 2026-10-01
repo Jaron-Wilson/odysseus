@@ -237,6 +237,7 @@
   <link rel="stylesheet" href="/static/css/studio-pages-a.css">
   <link rel="stylesheet" href="/static/css/studio-pages-b.css">
   <link rel="stylesheet" href="/static/css/workspace.css">
+  <link rel="stylesheet" href="/static/css/codePanel.css">
   <link rel="stylesheet" href="/static/css/voiceCall.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
@@ -989,6 +990,17 @@
             <polyline points="15 7 21 7 21 13"/>
           </svg>
           <span class="grow">DevOps</span>
+        </div>
+
+        <!-- Code: VS Code in the browser, proxied at /ide/ (codePanel.js). Admin only. -->
+        <div class="list-item" id="tool-code-btn" title="VS Code for the Odysseus dev checkout and your other projects">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+          </svg>
+          <span class="grow">Code</span>
         </div>
 
         <!-- Cloud browser: watch the agent's browser and take over (cloudBrowser.js) -->
@@ -2708,6 +2720,29 @@
         <!-- ═══ SYSTEM TAB ═══ -->
         <div data-settings-panel="system" class="hidden">
 
+          <!-- The Code tool's editor (codePanel.js, routes/ide_routes.py) -->
+          <div class="admin-card" id="ide-settings-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>Code editor</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">The Code tool shows a code-server (VS Code in the browser) that runs on this server, through Odysseus at <code>/ide/</code>, for admins only. It gives full shell access to the server. code-server still asks for its own password; since Odysseus guards it, you can set <code>auth: none</code> and <code>bind-addr: 127.0.0.1:8080</code> in its config.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" for="ide-set-upstream">Editor address</label>
+                <input id="ide-set-upstream" class="settings-select" type="text" spellcheck="false" placeholder="http://127.0.0.1:8080" style="flex:1" />
+              </div>
+              <div class="settings-row" style="align-items:flex-start">
+                <label class="settings-label" for="ide-set-roots">Project folders</label>
+                <textarea id="ide-set-roots" class="settings-select" rows="3" spellcheck="false" placeholder="/home/you" style="flex:1;font-family:inherit;resize:vertical"></textarea>
+              </div>
+              <div class="admin-toggle-sub">One absolute path per line. The Code tool lists the repos directly inside each, and "Open folder" only opens folders under them. The Odysseus dev checkout (<code id="ide-set-ody">...</code>) is always listed first.</div>
+              <div class="settings-row" style="gap:8px;flex-wrap:wrap;align-items:center">
+                <button class="admin-btn-add" id="ide-set-save" type="button">Save</button>
+                <button class="admin-btn-add" id="ide-set-check" type="button">Check</button>
+                <span id="ide-set-status" class="ide-status"></span>
+              </div>
+              <div id="ide-set-msg" class="ide-set-msg"></div>
+            </div>
+          </div>
+
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Data Backup</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Export or import your user data (memories, presets, settings, skills, preferences) as a JSON file.</div>
@@ -2816,6 +2851,7 @@
 <script type="module" src="/static/js/mailListenerSettings.js"></script>
 <script type="module" src="/static/js/inboundMail.js"></script>
 <script type="module" src="/static/js/devopsPage.js"></script>
+<script type="module" src="/static/js/codePanel.js"></script>
 <script type="module" src="/static/js/cloudBrowser.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
