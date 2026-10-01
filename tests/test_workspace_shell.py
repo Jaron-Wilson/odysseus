@@ -44,6 +44,7 @@ _PAGE = """<!doctype html><html class="ui-workspace ui-studio"><head>
   </div>
   <button id="tool-calendar-btn">Calendar</button>
   <button id="tool-notes-btn">Notes</button>
+  <button id="tool-terminal-btn">Terminal</button>
   <span id="user-bar-name">Jaron Wilson</span>
 </nav>
 <button id="rail-new-session">+</button>
@@ -97,7 +98,28 @@ _PAGE = """<!doctype html><html class="ui-workspace ui-studio"><head>
     p.querySelector('.notes-close-btn').addEventListener('click', () => p.remove());
     document.body.appendChild(p);
   });
+  // Terminal: a backdrop with a panel in it, appended on open, like bgPanel.js.
+  document.getElementById('tool-terminal-btn').addEventListener('click', () => {
+    const b = document.createElement('div');
+    b.className = 'bg-panel-backdrop term-backdrop';
+    b.innerHTML = '<div class="bg-panel"><div class="bg-panel-head">Terminal' +
+                  '<button class="bg-close">x</button></div></div>';
+    b.querySelector('.bg-close').addEventListener('click', () => b.remove());
+    document.body.appendChild(b);
+  });
 </script></body></html>"""
+
+# The floating-window look the tools have outside Workspace (style.css): a
+# dimmed full-screen backdrop and a centered window that scales and fades in.
+_WINDOW_CSS = """<style>
+.modal, .bg-panel-backdrop { position: fixed; inset: 0; z-index: 250; display: flex;
+  align-items: center; justify-content: center; background: rgba(0,0,0,.5); }
+.modal.hidden { display: none; }
+.modal-content, .bg-panel { width: 520px; height: 300px; background: #222;
+  animation: stub-enter .25s ease-out both; transition: left .3s, top .3s, width .3s, height .3s; }
+.notes-pane { position: fixed; top: 20px; right: 20px; width: 400px; height: 600px; background: #222; }
+@keyframes stub-enter { from { opacity: 0; transform: scale(.95) translateY(8px); } }
+</style>"""
 
 _MODALSNAP_STUB = "export function clearRightDock() {}"
 _RENDERER_STUB = "export function openEntityHash(h) { (window.calls ||= []).push(['hash', h]); return true; }"
@@ -123,7 +145,7 @@ def page(browser):
         url = r.request.url
         path = url.split("example.test", 1)[-1].split("?", 1)[0]
         if path in ("", "/"):
-            r.fulfill(body=_PAGE, content_type="text/html")
+            r.fulfill(body=pg.html, content_type="text/html")
         elif path == "/static/js/modalSnap.js":
             r.fulfill(body=_MODALSNAP_STUB, content_type="text/javascript")
         elif path == "/static/js/chatRenderer.js":
@@ -138,6 +160,7 @@ def page(browser):
         else:
             r.fulfill(status=404, body="")
     ctx.route("**/*", route)
+    pg.html = _PAGE
     pg.boot = lambda: _boot(pg)
     yield pg
     ctx.close()
@@ -300,3 +323,64 @@ def test_the_scroll_to_bottom_button_steps_back_with_the_chat(page):
     _click(page, ".ws-split-btn")                              # the chat moves into a pane
     assert btn.is_visible()
     assert page.evaluate("wsLayouts") >= 3                      # each move told it to re-measure
+
+
+# Every animation frame while a tool opens: is a tool window on screen
+# anywhere but in its tab page?
+_FRAME_RECORDER = """() => {
+  window.wsFrames = [];
+  const roots = '.modal, .bg-panel-backdrop, .notes-pane';
+  const px = (n) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(n)) || 0;
+  const tick = () => {
+    if (!window.wsRec) return;
+    const bad = [];
+    for (const el of document.querySelectorAll(roots)) {
+      if (!el.getClientRects().length || getComputedStyle(el).visibility === 'hidden') continue;
+      const win = el.querySelector('.modal-content, .bg-panel') || el;
+      const docked = el.classList.contains('ws-docked') && !el.classList.contains('ws-away');
+      const r = win.getBoundingClientRect();
+      const x = px('--ws-x'), w = px('--ws-w'), lw = px('--ws-lw');
+      const [l, pw] = el.dataset.wsPane === 'right' ? [x + lw, w - lw] : [x, lw];
+      const anim = win === el ? 'none' : getComputedStyle(win).animationName;
+      if (!docked) bad.push(el.className + ': floating');
+      else if (Math.abs(r.left - l) > 2 || Math.abs(r.width - pw) > 2 || Math.abs(r.top - 40) > 8) bad.push(el.className + ': not in its pane');
+      else if (anim !== 'none') bad.push(el.className + ': its window animation ' + anim + ' runs');
+    }
+    wsFrames.push(bad);
+    requestAnimationFrame(tick);
+  };
+  window.wsRec = true;
+  requestAnimationFrame(tick);
+}"""
+
+
+@pytest.mark.parametrize("how", ["calendar", "notes", "terminal", "open-tool", "split", "back-from-home"])
+def test_a_tool_never_paints_as_a_floating_window_on_its_way_into_a_tab(page, how):
+    # Reported 2026-10-01: "when i click a new tab or get routed to one, it
+    # Flickers tries to do the old way where it opens up in a new windows
+    # above everything then realizes that it shouldnt be like then then goes
+    # properly". The shell docked a tool a moment after it opened, so the
+    # first frames showed it as the old centered window over a dimmed page.
+    page.html = _PAGE.replace("</head>", _WINDOW_CSS + "</head>")
+    page.boot()
+    if how == "split":
+        _click(page, "#tool-calendar-btn")
+        _click(page, ".ws-split-btn")
+    if how == "back-from-home":
+        _click(page, "#tool-calendar-btn")
+        _click(page, ".ws-tab[data-tab=home]")
+    page.evaluate(_FRAME_RECORDER)
+    if how == "open-tool":                                     # "+" menu, Home, Ctrl+K, the agent
+        page.evaluate("__ws.openTool('calendar')")
+    elif how == "back-from-home":
+        page.evaluate("document.querySelector(\".ws-tab[data-tab='tool:calendar']\").click()")
+    else:
+        btn = {"calendar": "#tool-calendar-btn", "notes": "#tool-notes-btn"}.get(how, "#tool-terminal-btn")
+        page.evaluate(f"document.querySelector('{btn}').click()")
+    page.wait_for_timeout(500)
+    frames = page.evaluate("window.wsRec = false, wsFrames")
+    assert len(frames) > 10                                    # the page really was painting
+    flashes = [f for f in frames if f]
+    assert not flashes, f"{len(flashes)} of {len(frames)} frames: {flashes[0]}"
+    if how == "split":
+        assert page.get_attribute(".term-backdrop", "data-ws-pane") == "right"

@@ -88,6 +88,10 @@ const TOOLS = [
 const TOOL_BY_KEY = Object.fromEntries(TOOLS.map(t => [t.key, t]));
 // An opened email is its own window (#email-reader-<n>) and its own tab.
 const READER_PREFIX = 'email-reader-';
+// The outer elements of every tool, for telling which DOM changes may have
+// opened or closed one (see _mayOpenOrClose).
+const ROOT_SEL = [...TOOLS.map(t => t.id ? '#' + t.id : t.sel.split(':')[0]),
+  '#notes-pane-backdrop', `[id^="${READER_PREFIX}"]`].join(', ');
 
 // ── State ────────────────────────────────────────────────────────────────
 // tabs: [{ id, kind: 'home'|'chat'|'tool', sid?, key?, title? }]
@@ -168,7 +172,7 @@ function addTab(t, { after = activeId(), front = true } = {}) {
     const i = S.tabs.findIndex(x => x.id === after);
     S.tabs.splice(i < 0 ? S.tabs.length : i + 1, 0, t);
   }
-  if (front) show(t.id); else { renderTabs(); _save(); }
+  if (front) show(t.id); else apply();      // apply docks a background tool away at once
 }
 
 function closeTab(id, { fromTool = false } = {}) {
@@ -284,6 +288,13 @@ function _dock(el, key, pane) {
   if (el.classList.contains('modal-right-docked') || el.classList.contains('modal-left-docked')) {
     try { clearRightDock(el); } catch {}
   }
+  // Coming in (opened, back from behind another tab, or to the other pane):
+  // no transition from the old geometry to the page (workspace.css).
+  if (!el.classList.contains('ws-docked') || el.classList.contains('ws-away') || el.dataset.wsPane !== pane) {
+    el.classList.add('ws-docking');
+    clearTimeout(el._wsDockT);
+    el._wsDockT = setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('ws-docking'))), 0);
+  }
   el.classList.add('ws-docked');
   el.classList.remove('ws-away');
   el.dataset.wsPane = pane;
@@ -308,7 +319,7 @@ function _dropForcedZ(el) {
 }
 
 function _undock(el) {
-  el.classList.remove('ws-docked', 'ws-away');
+  el.classList.remove('ws-docked', 'ws-away', 'ws-docking');
   delete el.dataset.wsPane;
   if (el._wsWin) el._wsWin.classList.remove('ws-win');
 }
@@ -871,6 +882,31 @@ function _blockDrag(e) {
   e.stopPropagation();
 }
 
+// A tool has to be docked before the browser paints it, or its first frames
+// show the old floating window (centered, over a dimmed page) and then jump
+// into the tab (reported 2026-10-01 as a flicker on every tab open). Observer
+// callbacks run before the next paint, so a change to a tool's outer element
+// is scanned right here; everything else waits for the debounced scan.
+// `_burst` stops a scan that keeps changing what it watches from spinning.
+let _burst = 0;
+function _onMutations(recs) {
+  if (_burst < 20 && recs.some(_mayOpenOrClose)) {
+    if (!_burst++) setTimeout(() => { _burst = 0; });
+    scanTools();
+  }
+  clearTimeout(_obs._t);
+  _obs._t = setTimeout(scanTools, 30);
+}
+
+function _mayOpenOrClose(r) {
+  const hit = (n) => n.nodeType === 1 && (n.matches(ROOT_SEL) || (r.type === 'childList' && !!n.querySelector(ROOT_SEL)));
+  if (r.type === 'attributes') return hit(r.target);
+  if (r.target.nodeType === 1 && r.target.matches(ROOT_SEL)) return true;   // a panel put into its backdrop
+  for (const n of r.addedNodes) if (hit(n)) return true;
+  for (const n of r.removedNodes) if (hit(n)) return true;
+  return false;
+}
+
 let _obs, _poll, _ro;
 function mount() {
   if (_mounted) return;
@@ -881,7 +917,7 @@ function mount() {
   _buildDivider();
   Home.mount({ openChat: (sid) => { _seenSid = sid; SM()?.selectSession(sid); _openChatTab(sid); }, newChat, openTool });
   document.documentElement.classList.add('ws-on');
-  _obs = new MutationObserver(() => { clearTimeout(_obs._t); _obs._t = setTimeout(scanTools, 30); });
+  _obs = new MutationObserver(_onMutations);
   _obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
   _poll = setInterval(_pollSession, 500);
   _ro = new ResizeObserver(() => layout());
