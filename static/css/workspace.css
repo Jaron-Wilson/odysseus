@@ -112,6 +112,9 @@ html.ui-workspace.ws-on #notes-pane-backdrop > .ws-docked:not(.ws-away) { pointe
 
 /* No chat on screen: the chat column steps back. */
 html.ui-workspace.ws-no-chat main.chat-container { visibility: hidden; }
+/* The scroll-to-bottom button sits outside <main> (index.html); it steps back
+   with the chat, or it floats over Home and tool pages. */
+html.ui-workspace.ws-no-chat #scroll-bottom-btn { display: none !important; }
 html.ui-workspace.ws-on main.chat-container { transition: none !important; }
 
 /* Split divider */

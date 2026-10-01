@@ -16,7 +16,10 @@ tab pages. What matters to the user:
     half;
   * tabs survive a reload, and a tool tab reopens its tool when picked;
   * switching to another Interface design takes the shell away cleanly;
-  * the Home composer starts a new chat with what was typed.
+  * the Home composer starts a new chat with what was typed;
+  * the scroll-to-bottom button (outside <main>) hides when no chat is on
+    screen, and is told to re-measure when the chat moves (reported
+    2026-09-30: it showed "randomly" over Home and tool pages).
 
 The real shell.js and home.js run in Chromium against a small page with
 stand-in tools and a stand-in session module; only modalSnap.js and
@@ -48,6 +51,7 @@ _PAGE = """<!doctype html><html class="ui-workspace ui-studio"><head>
   <textarea id="message"></textarea>
   <form id="chat-form"></form>
 </main>
+<button id="scroll-bottom-btn" class="scroll-nav-btn show" style="position:fixed;bottom:100px;right:20px">v</button>
 <script>
   document.body.style.cssText = 'display:flex;margin:0;height:100vh';
   document.getElementById('sidebar').style.cssText = 'width:240px;flex:none';
@@ -281,3 +285,18 @@ def test_the_home_composer_starts_a_new_chat_with_the_text(page):
     assert ["new"] in calls and ["send", "plan my week"] in calls
     assert calls.index(["new"]) < calls.index(["send", "plan my week"])
     assert _tabs(page)[-1] == "*chat:new"
+
+
+def test_the_scroll_to_bottom_button_steps_back_with_the_chat(page):
+    page.boot()
+    page.evaluate("window.wsLayouts = 0; addEventListener('odysseus:ws-layout', () => wsLayouts++)")
+    btn = page.locator("#scroll-bottom-btn")
+    assert not btn.is_visible()                                # Home is in front
+    _click(page, "#session-list [data-session-id=s1]")
+    assert btn.is_visible()                                    # the chat is back
+    _click(page, "#tool-calendar-btn")
+    assert not btn.is_visible()                                # a tool page is in front
+    _click(page, ".ws-tab[data-tab='chat:s1']")
+    _click(page, ".ws-split-btn")                              # the chat moves into a pane
+    assert btn.is_visible()
+    assert page.evaluate("wsLayouts") >= 3                      # each move told it to re-measure

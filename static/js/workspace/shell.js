@@ -82,6 +82,7 @@ const READER_PREFIX = 'email-reader-';
 let S = { tabs: [{ id: 'home', kind: 'home' }], left: 'home', right: null, focus: 'left', ratio: 0.5 };
 let _mru = ['home'];
 let _mounted = false;
+let _layoutKey = '';
 let _seenSid;               // last session id the poll saw
 let _openingTool = null;    // a dormant tab reopening its tool, let its click through
 const _asked = new Map();   // tool tab id -> when its button was clicked
@@ -398,6 +399,13 @@ function layout() {
   const pane = c ? paneOf(c.id) : null;
   main.style.setProperty('margin-left', split && pane === 'right' ? lw + 'px' : '0px', 'important');
   main.style.setProperty('margin-right', split && pane === 'left' ? (w - lw) + 'px' : '0px', 'important');
+  // Things pinned to the chat (the scroll-to-bottom button in index.html)
+  // measure the composer, which moves here without resizing.
+  const key = [x, w, lw, pane, !!c].join(',');
+  if (key !== _layoutKey) {
+    _layoutKey = key;
+    window.dispatchEvent(new CustomEvent('odysseus:ws-layout'));
+  }
 }
 
 function apply() {
