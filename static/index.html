@@ -1818,8 +1818,9 @@
                 <button type="button" id="set-vcTtsDownload" class="admin-btn-sm" style="flex-shrink:0;display:none" hidden>Download now</button>
               </div>
               <div class="settings-row">
-                <label class="settings-label" for="set-vcVoice">Voice</label>
-                <input id="set-vcVoice" class="settings-select" type="text" data-goto-keywords="tts speaker" list="set-vcVoiceList" autocomplete="off" spellcheck="false">
+                <label class="settings-label" for="set-vcVoiceSelect">Voice</label>
+                <select id="set-vcVoiceSelect" class="settings-select" data-goto-keywords="tts speaker"></select>
+                <input id="set-vcVoice" class="settings-select" type="text" placeholder="Voice name" autocomplete="off" spellcheck="false" hidden style="display:none">
                 <datalist id="set-vcVoiceList"></datalist>
                 <button type="button" id="set-vcVoicePreview" class="admin-btn-sm" style="flex-shrink:0" title="Play a short sample in this voice">Preview</button>
               </div>

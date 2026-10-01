@@ -259,7 +259,7 @@ def test_wiring_script_worker_and_service_worker():
     assert 'id="set-vcEcho"' in html
     assert "'/static/js/callHandoff.js'" in sw and "'/static/js/callPresenceWorker.js'" in sw
     assert "options.tag === 'odysseus-call'" in sw and "odysseus-call-offer" in sw
-    assert "const CACHE_NAME = 'odysseus-v347';" in sw
+    assert "const CACHE_NAME = 'odysseus-v349';" in sw
     for f in ("callHandoff.js", "callPresenceWorker.js"):
         assert "\u2014" not in (_REPO / "static" / "js" / f).read_text()
 
