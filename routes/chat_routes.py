@@ -427,6 +427,7 @@ def setup_chat_routes(
             max_tokens=ctx.preset.max_tokens,
             prompt_type=preset_id,
             session_id=session,
+            owner=owner,
         )
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
@@ -1044,6 +1045,7 @@ def setup_chat_routes(
                         prompt_type=preset_id,
                         tools=None,
                         session_id=session,
+                        owner=_user,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1606,6 +1608,7 @@ def setup_chat_routes(
                     sess.model,
                     messages,
                     headers=sess.headers,
+                    owner=getattr(sess, "owner", None) or get_current_user(request),
                     temperature=0.7,
                     # 0 = let the server decide (no cap). A hardcoded 4096 made
                     # local reasoning models (Qwen3 / R1) burn the whole budget

@@ -1000,6 +1000,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 max_tokens=1024,
                 headers=headers,
                 timeout=60,
+                owner=owner,
             )
         except Exception as e:
             logger.error("Manual compaction failed: %s", e)
@@ -1201,7 +1202,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             # reasoning model spends tokens thinking first — 4096 truncated the
             # JSON mid-output, so it never parsed ("invalid JSON for auto-sort").
             raw = llm_call(url, model, [{"role": "user", "content": prompt}],
-                           temperature=0.3, max_tokens=16384, headers=headers, timeout=120)
+                           temperature=0.3, max_tokens=16384, headers=headers, timeout=120,
+                           owner=user)
             logger.info(f"Auto-sort raw response ({len(raw)} chars): {raw[:300]}")
             # Extract JSON from response — handle markdown fences, leading text,
             # reasoning-model <think> blocks, and trailing commas.

@@ -522,6 +522,26 @@ def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[st
     payload.setdefault("cache_prompt", True)
 
 
+def _request_scoped_headers(url: str, headers, owner: Optional[str]):
+    """Fresh bearer for ChatGPT plan / Subscription, resolved at send time.
+
+    Their tokens are short-lived and never persisted on the session, so the
+    headers a caller got from ``sess.headers`` are usually empty by the time
+    the request is made. See endpoint_resolver.request_scoped_headers.
+    """
+    if isinstance(headers, str):
+        try:
+            headers = json.loads(headers)
+        except Exception:
+            headers = None
+    try:
+        from src.endpoint_resolver import request_scoped_headers
+        return request_scoped_headers(url, headers if isinstance(headers, dict) else None, owner)
+    except Exception as e:
+        logger.debug("request-scoped header resolution failed: %s", type(e).__name__)
+        return headers
+
+
 def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
     h = {"Content-Type": "application/json"}
     if isinstance(headers, dict):
@@ -1181,8 +1201,14 @@ def normalize_model_id(
 
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
-             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
-    """Synchronous LLM call with optional prompt type enhancement."""
+             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
+             owner: Optional[str] = None) -> str:
+    """Synchronous LLM call with optional prompt type enhancement.
+
+    ``owner`` is whose ChatGPT sign-in to use for request-scoped providers.
+    """
+    if _detect_provider(url) in ("chatgpt-plan", "chatgpt-subscription"):
+        headers = _request_scoped_headers(url, headers, owner)
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
@@ -1345,8 +1371,12 @@ async def llm_call_async(
     max_retries: int = LLMConfig.MAX_RETRIES,
     prompt_type: Optional[str] = None,
     session_id: Optional[str] = None,
+    owner: Optional[str] = None,
 ) -> str:
-    """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
+    """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging.
+
+    ``owner`` is whose ChatGPT sign-in to use for request-scoped providers.
+    """
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
@@ -1382,6 +1412,7 @@ async def llm_call_async(
             max_tokens=max_tokens,
             headers=headers,
             timeout=timeout,
+            owner=owner,
         ):
             event_is_error = False
             for line in str(chunk).splitlines():
@@ -1620,8 +1651,13 @@ async def stream_llm(url: str, model: str, messages: List[Dict], *args, **kwargs
 async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None):
+                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
+                     owner: Optional[str] = None):
     """Stream LLM responses with improved error handling.
+
+    ``owner`` is whose ChatGPT sign-in to use for request-scoped providers
+    (Sign in with ChatGPT, ChatGPT Subscription); their bearer is resolved
+    here, at send time, because sessions never persist it.
 
     Yields SSE chunks:
       - data: {"delta": "text"}           — text content
@@ -1630,6 +1666,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
       - data: [DONE]                       — end of stream
     """
     provider = _detect_provider(url)
+    if provider in ("chatgpt-plan", "chatgpt-subscription"):
+        headers = _request_scoped_headers(url, headers, owner)
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
