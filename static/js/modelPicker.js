@@ -515,6 +515,15 @@ function _initModelPickerDropdown() {
       if (m.endpointId) fd.append('endpoint_id', m.endpointId);
       try {
         const res = await fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd });
+        if (res.status === 404) {
+          // The chat is gone (deleted elsewhere, e.g. by the agent's
+          // manage_session) but still on screen: start a new chat with the
+          // picked model instead of failing every pick.
+          await _deps.createDirectChat(m.url, m.mid, m.endpointId);
+          try { await _deps.loadSessions?.(); } catch {}
+          uiModule.showToast(`That chat was deleted. New chat with ${m.display}`);
+          return;
+        }
         if (!res.ok) {
           uiModule.showError('Failed to set model');
           return;
