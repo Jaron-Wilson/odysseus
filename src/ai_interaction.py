@@ -1293,7 +1293,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
       switch_model <model>    — Change the model for the current session
       set_theme <preset>      — Apply a built-in theme preset (dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute)
       create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
-      open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, cookbook)
+      open_panel <page>       - Open any page or tool (src/tool_pages.py: calendar, devices, terminal, code, library, ...)
       open_panel settings <what> - Open Settings right at a setting, in plain words (e.g. "speech to text")
       open_email_reply <uid> [folder] [reply|reply-all|ai-reply] — Open a reply draft document for an email; does not send
       get_toggles             — Return current toggle states (server-side knowledge)
@@ -1494,52 +1494,29 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         }
 
     elif action == "open_panel":
-        # Open a top-level panel/modal: documents/library, gallery,
-        # email, sessions, notes, memories, skills, settings, cookbook.
-        panel = parts[1].lower() if len(parts) > 1 else ""
-        _panel_aliases = {
-            "documents": "documents",
-            "document": "documents",
-            "doc": "documents",
-            "docs": "documents",
-            "library": "documents",
-            "doclib": "documents",
-            "gallery": "gallery",
-            "images": "gallery",
-            "email": "email",
-            "emails": "email",
-            "inbox": "email",
-            "mail": "email",
-            "sessions": "sessions",
-            "chats": "sessions",
-            "history": "sessions",
-            "notes": "notes",
-            "note": "notes",
-            "todo": "notes",
-            "todos": "notes",
-            "memories": "memories",
-            "memory": "memories",
-            "brain": "memories",
-            "skills": "skills",
-            "settings": "settings",
-            "preferences": "settings",
-            "cookbook": "cookbook",
-            "models": "cookbook",
-            "llm": "cookbook",
-            "serve": "cookbook",
-            "serving": "cookbook",
-        }
-        target = _panel_aliases.get(panel)
-        if not target:
-            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook."}
+        # Open any page the way its sidebar button does (static/js/toolPages.js,
+        # read by src/tool_pages.py): Devices, Terminal, Calendar, Library, ...
+        # Page names can be several words ("command line", "odysseus dev").
+        from src import tool_pages
+        rest = lines[0].strip().split(None, 1)
+        rest = rest[1] if len(rest) > 1 else ""
+        page, where = tool_pages.split(rest)
+        if not page:
+            return {"error": f"Unknown page '{rest.strip()}'. Valid: {', '.join(tool_pages.keys())}."}
+        target = page["key"]
+        if page.get("adminOnly") and owner:
+            from src.tool_security import owner_is_admin_or_single_user
+            if not owner_is_admin_or_single_user(owner):
+                return {"error": f"{page['label']} is only for admins, so it can't be opened for this user."}
         out = {
             "ui_event": "open_panel",
             "panel": target,
-            "results": f"Opening {target} panel",
+            "label": page["label"],
+            "results": f"Opening {page['label']}",
         }
         # `open_panel settings <what>`: the page finds that setting in Settings
         # (static/js/settingsNav.js), opens its tab and scrolls to it.
-        where = (parts[2] if len(parts) > 2 else "").strip()[:200]
+        where = (where or "").strip()[:200]
         if target == "settings" and where:
             out["settings_target"] = where
             out["results"] = f"Opening Settings at: {where}"

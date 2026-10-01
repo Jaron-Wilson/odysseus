@@ -119,7 +119,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "search_chats": "Search past session transcripts across chats.",
     "ask_user": "Ask the user a multiple-choice question to get a decision or clarification. Use this when the task is genuinely ambiguous and the answer changes what you do next — pick between approaches, confirm an assumption, choose among options — instead of guessing. Provide a clear `question` and 2-6 `options` (each with a short `label`, optional `description`). Calling this ENDS your turn: the user sees clickable buttons and their choice arrives as your next message. Don't use it for things you can decide from context or sensible defaults, or for irreversible-action confirmation if a dedicated flow exists.",
     "update_plan": "Write back to the ACTIVE PLAN while executing an approved plan: mark steps done or revise them. After finishing a step call this with the full checklist and that step marked done; when the user asks to change the plan call it with the revised checklist. Always pass the COMPLETE markdown checklist (`- [ ]` / `- [x]`), not a diff. The user's docked plan window updates live. No effect when there is no active plan.",
-    "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, cookbook) via `open_panel <name>`; take the user to one setting with `open_panel settings <what>` ('take me to the voice settings'). Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
+    "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Navigate: open any page or tool, take me to / go to / show me a page (devices, terminal, code, browser, calendar, tasks, notes, brain, library, gallery, deep research, compare, cookbook, devops, background, odysseus dev, theme, email, chats, skills, settings) via `open_panel <page>`; take the user to one setting with `open_panel settings <what>` ('take me to the voice settings'). Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
     "list_email_accounts": "List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.",
     "list_emails": "List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
     "read_email": "Read the full content of a specific email by UID or Message-ID. View email body, check details. Supports account from list_email_accounts when the UID belongs to a non-default mailbox.",
@@ -352,6 +352,16 @@ class ToolIndex:
         r"|\bat\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b",  # at 7:30 am / at 7am
         re.I,
     )
+    # App navigation: "take me to devices", "go to the terminal", "open the
+    # command line", "show me my calendar". ui_control open_panel opens any
+    # page (src/tool_pages.py); without it the model says it can't navigate.
+    _NAV_RE = re.compile(
+        r"\b(?:take|bring|send|get)\s+me\s+(?:to|into|back\s+to)\b"
+        r"|\b(?:go|navigate|jump|switch|head)\s+(?:over\s+)?to\b"
+        r"|\b(?:pull|bring)\s+up\b"
+        r"|\b(?:open|show(?:\s+me)?|launch)\s+(?:up\s+)?(?:the\s+|my\s+)?[a-z][a-z -]{1,30}?\s+(?:page|panel|tab|tool|app|window|screen)\b",
+        re.I,
+    )
     _WEB_RE = re.compile(
         r"https?://|www\.|\b(?:visit|open|fetch|check|read)\s+(?:this\s+)?(?:url|link|site|website|page)\b",
         re.I,
@@ -507,7 +517,12 @@ class ToolIndex:
                    "open skills", "open notes", "open chats", "open sessions",
                    "show library", "show gallery", "show inbox", "show settings",
                    "show memory", "show memories", "show skills", "show notes",
-                   "show chats", "show sessions", "show documents"}):
+                   "show chats", "show sessions", "show documents",
+                   "take me to", "bring me to", "send me to", "go to", "navigate to",
+                   "jump to", "pull up", "bring up", "open terminal", "open the terminal",
+                   "open devices", "open code", "open browser", "open calendar",
+                   "open tasks", "open devops", "open cookbook", "open theme",
+                   "show devices", "show terminal", "show calendar", "show tasks"}):
             {"ui_control"},
         # Document creation intent
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
@@ -543,7 +558,20 @@ class ToolIndex:
         # prompts do not drag web schemas into the agent context.
         if self._WEB_RE.search(query):
             base.update({"web_search", "web_fetch"})
+        if self._NAV_RE.search(query) or _names_a_page_to_open(ql):
+            base.add("ui_control")
         return base
+
+
+def _names_a_page_to_open(ql: str) -> bool:
+    """"open terminal", "show devices", "open the command line": an open/show
+    verb followed by a page name or alias from src/tool_pages.py."""
+    m = re.search(r"\b(?:open|show(?:\s+me)?|launch|display)\s+(?:up\s+)?(?:the\s+|my\s+)?(.{1,40})", ql)
+    if not m:
+        return False
+    from src import tool_pages
+    page, _ = tool_pages.split(m.group(1))
+    return page is not None
 
 
 # ── Singleton ──

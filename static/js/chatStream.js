@@ -162,48 +162,19 @@ export function handleUIControl(uiData) {
 
     } else if (uiEvent === 'open_panel' || uiData.ui_event === 'open_panel') {
       var panel = uiData.panel;
-      if (panel === 'documents') {
-        import('./documentLibrary.js').then(function(mod) {
-          var fn = mod.openLibrary || (mod.default && mod.default.openLibrary);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'gallery') {
-        import('./gallery.js').then(function(mod) {
-          var fn = mod.openGallery || (mod.default && mod.default.openGallery);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'email') {
-        import('./emailLibrary.js').then(function(mod) {
-          var fn = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'sessions') {
-        import('./sessions.js').then(function(mod) {
-          var fn = mod.openLibrary || (mod.default && mod.default.openLibrary);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'cookbook') {
-        import('./cookbook.js').then(function(mod) {
-          var fn = mod.open || (mod.default && mod.default.open);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'notes') {
-        import('./notes.js').then(function(mod) {
-          var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'settings') {
+      if (panel === 'settings') {
         // "Take me to the voice settings": the agent passes what to open,
         // and settingsNav finds it (or opens Settings with Go to filled in).
         import('./settingsNav.js').then(function(mod) {
           if (uiData.settings_target) mod.goToSetting(uiData.settings_target);
           else mod.openSettings();
         }).catch(function(){});
-      } else if (panel === 'memories' || panel === 'skills') {
-        // These live in the sidebar, so an existing button click opens them.
-        var ids = { memories: 'tool-memory-btn', skills: 'skills-btn' };
-        var btn = document.getElementById(ids[panel]);
-        if (btn) btn.click();
+      } else {
+        // Every other page opens the way its sidebar button does, as a tab
+        // in Workspace (toolPages.js knows the pages and their old names).
+        import('./toolPages.js').then(function(mod) {
+          return (mod.openPage || mod.default.openPage)(panel);
+        }).catch(function(){});
       }
 
     } else if (uiEvent === 'open_email_reply' || uiData.ui_event === 'open_email_reply') {

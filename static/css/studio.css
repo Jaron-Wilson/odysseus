@@ -225,6 +225,21 @@ html.ui-studio .sidebar .section-header-flex:hover h4 { color: var(--st-text-2);
 html.ui-studio .sidebar .section-icon,
 html.ui-studio .sidebar .sidebar-action-icon { stroke: currentColor; color: var(--st-text-3); left: 0; }
 html.ui-studio .sidebar .section { margin-top: 6px; }
+
+/* Tool group labels (Organize, Create & research, Build, System) */
+html.ui-studio .sidebar .tool-group-head {
+  height: 28px; padding: 0 10px; margin-top: 8px; border-radius: var(--st-r-sm);
+  color: var(--st-text-3);
+}
+html.ui-studio .sidebar .tool-group:first-child .tool-group-head { margin-top: 6px; }
+html.ui-studio .sidebar .tool-group-head:hover { background: var(--st-hover); color: var(--st-text-2); }
+html.ui-studio .sidebar .tool-group-head:focus-visible { outline-color: var(--st-accent); }
+html.ui-studio .sidebar .tool-group-label { font-size: 11px; letter-spacing: 0.06em; opacity: 1; }
+html.ui-studio .sidebar .tool-group-summary { font-size: 12px; opacity: 0.75; }
+html.ui-studio .sidebar .tool-group-dot { background: var(--st-accent); }
+@media (pointer: coarse), (max-width: 768px) {
+  html.ui-studio .sidebar .tool-group-head { height: 36px; }
+}
 html.ui-studio .sidebar .section-header-btn {
   border-radius: var(--st-r-xs);
   color: var(--st-text-3);

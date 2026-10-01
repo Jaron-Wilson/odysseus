@@ -18,6 +18,7 @@
 
 import { clearRightDock } from '../modalSnap.js';
 import * as Home from './home.js';
+import ToolPages from '../toolPages.js';
 
 const LS_KEY = 'odysseus-ws-tabs-v1';
 const TABBAR_H = 40;
@@ -47,7 +48,11 @@ const ICONS = {
   terminal: svg('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 9l4 3-4 3M12 15h5"/>'),
   split: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  compare: svg('<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/>'),
+  branch: svg('<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-5 3-10 5.5"/>'),
 };
+// Icons for pages that aren't tab tools.
+const ICON_FOR = { compare: 'compare', 'odysseus-dev': 'branch', chats: 'chat' };
 
 // Tools that open as tab pages. `id` or `sel` finds the tool's outer element
 // while it is open; `win` is its window inside that element (the part that
@@ -532,13 +537,28 @@ function toggleSplit() {
   show(other, 'right');
 }
 
-function _menu(x, y, items) {
+// `items`: {label, icon, run}, '-' for a line, or {group, items} for a
+// labeled block (the launcher's tool groups, laid out side by side).
+function _menu(x, y, items, cls = '') {
   _closeMenu();
   const m = document.createElement('div');
-  m.className = 'ws-menu';
+  m.className = 'ws-menu' + (cls ? ' ' + cls : '');
   m.setAttribute('role', 'menu');
-  m.innerHTML = items.map((it, i) => it === '-' ? '<div class="ws-menu-sep"></div>'
-    : `<button type="button" role="menuitem" data-i="${i}">${it.icon || ''}<span>${it.label}</span></button>`).join('');
+  const flat = [];
+  const btn = (it) => `<button type="button" role="menuitem" data-i="${flat.push(it) - 1}">${it.icon || ''}<span>${it.label}</span></button>`;
+  let html = '', groups = '';
+  const flush = () => { if (groups) { html += `<div class="ws-menu-groups">${groups}</div>`; groups = ''; } };
+  for (const it of items) {
+    if (it && it.group) {
+      groups += `<div class="ws-menu-group" role="group" aria-label="${it.group}"><div class="ws-menu-head">${it.group}</div>${it.items.map(btn).join('')}</div>`;
+      continue;
+    }
+    flush();
+    html += it === '-' ? '<div class="ws-menu-sep"></div>' : btn(it);
+  }
+  flush();
+  m.innerHTML = html;
+  items = flat;
   document.body.appendChild(m);
   const r = m.getBoundingClientRect();
   m.style.left = Math.max(6, Math.min(x, innerWidth - r.width - 6)) + 'px';
@@ -590,13 +610,31 @@ export function newChat() {
   setTimeout(() => { if (!(SM()?.getCurrentSessionId?.())) _openChatTab(null); }, 60);
 }
 
+// The "+" menu: New chat and Inbox, then every tool in the sidebar's groups
+// (toolPages.js), then Settings. A tool whose sidebar button is hidden
+// (admin only, or turned off in Customize UI) isn't offered.
 function _launcher(anchor) {
   const r = anchor.getBoundingClientRect();
-  const keys = ['email', 'calendar', 'notes', 'tasks', 'library', 'gallery', 'memory', 'research', 'cookbook', 'agents', 'code', 'devices', 'terminal', 'settings'];
-  const items = [{ label: 'New chat', icon: ICONS.chat, run: newChat }, '-',
-    ...keys.filter(k => { const b = TOOL_BY_KEY[k].open && document.querySelector(TOOL_BY_KEY[k].open); return b && b.style.display !== 'none'; })
-      .map(k => ({ label: TOOL_BY_KEY[k].label, icon: ICONS[TOOL_BY_KEY[k].icon], run: () => openTool(k) }))];
-  _menu(r.left, r.bottom + 4, items);
+  const offer = (p) => {
+    if (!ToolPages.isAvailable(p)) return false;
+    const b = document.querySelector(p.open);
+    return !!b && b.style.display !== 'none';
+  };
+  const item = (p) => ({
+    label: p.label,
+    icon: ICONS[(p.tab && TOOL_BY_KEY[p.tab]?.icon) || ICON_FOR[p.key]] || ICONS.plus,
+    run: () => ((p.tab && TOOL_BY_KEY[p.tab]) ? openTool(p.tab) : ToolPages.openPage(p)),
+  });
+  const items = [{ label: 'New chat', icon: ICONS.chat, run: newChat }];
+  const email = ToolPages.page('email');
+  if (offer(email)) items.push({ ...item(email), label: 'Inbox' });
+  for (const g of ToolPages.GROUPS) {
+    const ps = ToolPages.pagesIn(g.id).filter(offer);
+    if (ps.length) items.push({ group: g.label, items: ps.map(item) });
+  }
+  const settings = ToolPages.page('settings');
+  if (document.querySelector(settings.open)) items.push('-', item(settings));
+  _menu(r.left, r.bottom + 4, items, 'ws-launcher');
 }
 
 function _tabMenu(id, x, y) {
