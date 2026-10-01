@@ -704,10 +704,11 @@ def upsert_endpoint(owner: Optional[str], models: List[str]) -> Dict[str, Any]:
         ep.model_type = "llm"
         ep.endpoint_kind = "api"
         ep.model_refresh_mode = "manual"
-        # Agent mode uses Odysseus's text tool protocol for these models;
-        # the toggle on the endpoint can opt in to native function tools.
+        # The Responses API takes function tools (build_payload maps them), so
+        # agent mode sends native tool schemas. The endpoint toggle can still
+        # switch this off; only an unset value gets the default.
         if ep.supports_tools is None:
-            ep.supports_tools = False
+            ep.supports_tools = True
         ep.cached_models = json.dumps(models)
         db.commit()
         result = {"id": ep.id, "name": ep.name, "models": models}
@@ -715,6 +716,37 @@ def upsert_endpoint(owner: Optional[str], models: List[str]) -> Dict[str, Any]:
         db.close()
     _invalidate_models_cache()
     return result
+
+
+_NATIVE_TOOLS_MARKER = "native_tools_default.json"
+
+
+def enable_native_tools_once(session_local=None) -> int:
+    """One-time upgrade for endpoint rows saved before native tools were the
+    default: those got ``supports_tools=False``, which made agent mode send
+    the plan models no tools. Flip them on once, then leave the toggle to
+    the user. Returns the number of rows changed."""
+    marker = _store_dir() / _NATIVE_TOOLS_MARKER
+    if marker.exists():
+        return 0
+    from core.database import ModelEndpoint
+
+    db = (session_local or _session_local())()
+    try:
+        rows = db.query(ModelEndpoint).filter(
+            ModelEndpoint.base_url == ENDPOINT_BASE,
+            ModelEndpoint.supports_tools == False,  # noqa: E712
+        ).all()
+        for ep in rows:
+            ep.supports_tools = True
+        db.commit()
+        changed = len(rows)
+    finally:
+        db.close()
+    _write_private(marker, {"done": True, "at": int(time.time())})
+    if changed:
+        logger.info("ChatGPT plan: turned on native tools for %d endpoint(s)", changed)
+    return changed
 
 
 def remove_endpoint(owner: Optional[str]) -> int:
@@ -870,8 +902,13 @@ def tools_to_responses(tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, 
             continue
         fn = tool.get("function") if tool.get("type") == "function" else None
         if isinstance(fn, dict) and fn.get("name"):
+            # The Responses API treats function tools as strict unless told
+            # otherwise, and strict mode rejects schemas with optional
+            # properties (most of ours). Chat Completions defaults to
+            # non-strict, which is what these schemas were written for.
             item = {"type": "function", "name": fn["name"],
-                    "parameters": fn.get("parameters") or {"type": "object", "properties": {}}}
+                    "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+                    "strict": bool(fn.get("strict", False))}
             if fn.get("description"):
                 item["description"] = fn["description"]
             out.append(item)

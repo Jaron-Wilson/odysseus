@@ -96,6 +96,77 @@ def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Opti
     return base, api_key
 
 
+def _without_auth(headers: Dict[str, str]) -> Dict[str, str]:
+    return {k: v for k, v in headers.items() if k.lower() != "authorization"}
+
+
+def request_scoped_headers(url: str, headers: Optional[Dict], owner: Optional[str] = None) -> Optional[Dict]:
+    """Headers with a current bearer for providers whose token is never persisted.
+
+    Sign in with ChatGPT and ChatGPT Subscription use short-lived OAuth
+    bearers, so sessions store ``headers = {}`` for them and the token has to
+    be resolved when the request is made (``sess.headers`` is reloaded from
+    the DB on every ``get_session``, which drops any request-local token).
+    llm_core calls this right before sending; every other provider gets
+    ``headers`` back unchanged.
+
+    ``owner`` picks whose sign-in to use. When it is None and the caller
+    already supplied a bearer, that bearer is kept as is.
+    """
+    from src.chatgpt_plan import is_chatgpt_plan_base, uses_request_scoped_bearer
+
+    if not url or not uses_request_scoped_bearer(url):
+        return headers
+    out: Dict[str, str] = dict(headers) if isinstance(headers, dict) else {}
+    has_auth = any(k.lower() == "authorization" for k in out)
+    if has_auth and owner is None:
+        return out
+    if is_chatgpt_plan_base(url):
+        from src import chatgpt_plan
+
+        try:
+            token = chatgpt_plan.get_access_token(owner)
+        except Exception as e:
+            # Signed out or the refresh was rejected: drop any stale bearer so
+            # the caller gets the sign-in message instead of an upstream 401.
+            logger.info("ChatGPT plan token unavailable at request time: %s", type(e).__name__)
+            return _without_auth(out)
+        out = _without_auth(out)
+        out.update(chatgpt_plan.headers_for(token))
+        return out
+    if has_auth:
+        # ChatGPT Subscription: a bearer resolved earlier in this request.
+        return out
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(
+            ModelEndpoint.is_enabled == True,
+            ModelEndpoint.provider_auth_id != None,  # noqa: E711
+        )
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        else:
+            q = q.filter(ModelEndpoint.owner == None)  # noqa: E711
+        target = normalize_base(url)
+        for ep in q.all():
+            if normalize_base(getattr(ep, "base_url", "") or "") != target:
+                continue
+            try:
+                base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+            except Exception as e:
+                logger.info("ChatGPT Subscription token unavailable at request time: %s", type(e).__name__)
+                return out
+            if api_key:
+                out.update(build_headers(api_key, base))
+            return out
+    except Exception as e:
+        logger.debug("request-scoped header lookup failed: %s", type(e).__name__)
+    finally:
+        db.close()
+    return out
+
+
 # Cache for Tailscale hostname → IP resolution
 _tailscale_cache: Dict[str, Optional[str]] = {}
 
@@ -247,11 +318,18 @@ def resolve_endpoint(
     Returns:
         (endpoint_url, model, headers) — resolved or fallback values.
     """
+    def _fallback():
+        # Fallback headers usually come from ``sess.headers``, which never
+        # carries a ChatGPT bearer (it is not persisted): resolve one now.
+        return fallback_url, fallback_model, request_scoped_headers(
+            fallback_url or "", fallback_headers, owner,
+        )
+
     try:
         from src.settings import get_user_setting, load_settings
         settings = load_settings()
     except Exception:
-        return fallback_url, fallback_model, fallback_headers
+        return _fallback()
 
     owner_str = owner or ""
     def _stg(key: str) -> str:
@@ -265,7 +343,7 @@ def resolve_endpoint(
     # This prevents background tasks from jumping to the global default_model
     # when the user is mid-conversation with a different model.
     if not ep_id and fallback_url and fallback_model:
-        return fallback_url, fallback_model, fallback_headers
+        return _fallback()
 
     # Unset Utility means "same as Default Chat Model".
     if setting_prefix == "utility" and not ep_id:
@@ -282,7 +360,7 @@ def resolve_endpoint(
             model = _stg("default_model")
 
     if not ep_id:
-        return fallback_url, fallback_model, fallback_headers
+        return _fallback()
 
     db = SessionLocal()
     try:
@@ -296,13 +374,13 @@ def resolve_endpoint(
         else:
             ep = ep.first()
         if not ep:
-            return fallback_url, fallback_model, fallback_headers
+            return _fallback()
 
         try:
             base, api_key = resolve_endpoint_runtime(ep, owner=owner)
         except Exception as e:
             logger.warning("Could not resolve endpoint runtime credentials: %s", e)
-            return fallback_url, fallback_model, fallback_headers
+            return _fallback()
         chat_url = build_chat_url(base)
         headers = build_headers(api_key, base)
 
@@ -321,7 +399,7 @@ def resolve_endpoint(
         return chat_url, model or fallback_model, headers
     except Exception as e:
         logger.debug(f"Could not resolve {setting_prefix} endpoint: {e}")
-        return fallback_url, fallback_model, fallback_headers
+        return _fallback()
     finally:
         db.close()
 

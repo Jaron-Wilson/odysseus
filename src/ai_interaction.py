@@ -575,6 +575,7 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None, own
             sess.endpoint_url, sess.model, context,
             headers=sess.headers,
             timeout=AI_CHAT_TIMEOUT,
+            owner=getattr(sess, "owner", None) or owner,
         )
 
         # Save both messages to session

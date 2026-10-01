@@ -407,7 +407,7 @@ def test_refresh_models_puts_a_chatgpt_endpoint_in_the_picker(plan, monkeypatch)
     try:
         ep = db.query(ModelEndpoint).filter(ModelEndpoint.owner == "alice").one()
         assert ep.name == "ChatGPT" and ep.base_url == cgp.ENDPOINT_BASE
-        assert ep.api_key is None and ep.supports_tools is False
+        assert ep.api_key is None and ep.supports_tools is True
     finally:
         db.close()
 
@@ -468,7 +468,7 @@ def test_payload_always_sends_store_false_and_stream_true():
     p = cgp.build_payload("gpt-5.5", [{"role": "user", "content": "hi"}], tools=tools)
     assert p["store"] is False and p["stream"] is True and p["model"] == "gpt-5.5"
     assert p["tools"] == [{"type": "function", "name": "t", "description": "d",
-                           "parameters": {"type": "object", "properties": {}}}]
+                           "parameters": {"type": "object", "properties": {}}, "strict": False}]
     assert "messages" not in p and "temperature" not in p and "max_output_tokens" not in p
     p2 = cgp.build_payload("gpt-5.5", [])
     assert p2["store"] is False and p2["stream"] is True and "tools" not in p2

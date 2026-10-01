@@ -182,6 +182,7 @@ async def auto_name_session(session_manager, sess):
             max_tokens=4096,
             headers=t_headers,
             timeout=60,
+            owner=owner,
         )
 
         title = title.strip().strip('"\'').strip()

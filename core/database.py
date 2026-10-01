@@ -954,6 +954,16 @@ def _migrate_add_task_run_model_column():
         except Exception:
             pass
 
+def _migrate_chatgpt_plan_native_tools():
+    """Sign in with ChatGPT endpoints first shipped with supports_tools=False;
+    turn native tools on for them once (src/chatgpt_plan.py)."""
+    try:
+        from src.chatgpt_plan import enable_native_tools_once
+        enable_native_tools_once(SessionLocal)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"chatgpt plan native tools migration failed: {e}")
+
+
 def _migrate_add_supports_tools_column():
     """Add supports_tools column to model_endpoints if it doesn't exist."""
     import sqlite3
@@ -1769,6 +1779,7 @@ def init_db():
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_provider_auth_id_column()
     _migrate_add_supports_tools_column()
+    _migrate_chatgpt_plan_native_tools()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()

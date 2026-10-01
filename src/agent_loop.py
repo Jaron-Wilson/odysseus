@@ -1802,7 +1802,8 @@ async def _with_stall_timeout(agen, first_timeout, later_timeout, model_label):
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
 
 
-async def _closing_words(messages, tool_events, *, endpoint_url, model, headers, max_tokens) -> str:
+async def _closing_words(messages, tool_events, *, endpoint_url, model, headers, max_tokens,
+                         owner=None) -> str:
     """What the agent says after its tools, when its last round said nothing:
     one short call over the conversation (which holds every tool result), and
     failing that, a line naming what ran."""
@@ -1810,7 +1811,7 @@ async def _closing_words(messages, tool_events, *, endpoint_url, model, headers,
         from src.llm_core import llm_call_async
         raw = await llm_call_async(
             url=endpoint_url, model=model, headers=headers, temperature=0.3,
-            max_tokens=min(max_tokens or 1024, 1024), timeout=60,
+            max_tokens=min(max_tokens or 1024, 1024), timeout=60, owner=owner,
             messages=list(messages) + [{"role": "user", "content": (
                 "Your tools have finished (their results are above). Tell the user now, in a few "
                 "short sentences, what you did and what you found or changed, and anything they "
@@ -1855,7 +1856,7 @@ def _build_actions_snapshot(tool_events: list, limit: int = 8000) -> str:
 
 async def _run_verifier_subagent(
     instruction: str, actions_snapshot: str,
-    *, endpoint_url: str, model: str, headers: dict,
+    *, endpoint_url: str, model: str, headers: dict, owner: Optional[str] = None,
 ) -> list:
     """Fresh-context completion verifier. A second model instance with NO
     shared history reads the user's request + a record of what the agent did
@@ -1887,7 +1888,7 @@ async def _run_verifier_subagent(
         raw = await llm_call_async(
             url=endpoint_url, model=model,
             messages=[{"role": "user", "content": prompt}],
-            headers=headers, temperature=0.0, max_tokens=600, timeout=60,
+            headers=headers, temperature=0.0, max_tokens=600, timeout=60, owner=owner,
         )
     except Exception as e:
         logger.warning(f"[agent] verifier subagent failed: {e}")
@@ -2657,6 +2658,7 @@ async def stream_agent_loop(
                 tools=all_tool_schemas if all_tool_schemas else None,
                 timeout=agent_stream_timeout,
                 session_id=session_id,
+                owner=owner,
             ),
             FIRST_TOKEN_TIMEOUT_S,
             max(float(agent_stream_timeout), 60.0),
@@ -2847,6 +2849,7 @@ async def stream_agent_loop(
                     _raw = await llm_call_async(
                         url=endpoint_url, model=model, messages=_synth_messages,
                         headers=headers, temperature=0.3, max_tokens=max_tokens, timeout=60,
+                        owner=owner,
                     )
                     _synth = _THINK_RE.sub("", strip_tool_blocks(_raw or "")).strip()
                 except Exception as _e:
@@ -2924,7 +2927,7 @@ async def stream_agent_loop(
                 _vfail = await _run_verifier_subagent(
                     _verifier_instruction,
                     _build_actions_snapshot(tool_events),
-                    endpoint_url=endpoint_url, model=model, headers=headers,
+                    endpoint_url=endpoint_url, model=model, headers=headers, owner=owner,
                 )
                 if _vfail:
                     _verifier_rounds += 1
@@ -2994,7 +2997,8 @@ async def stream_agent_loop(
             if (tool_events and not _force_answer
                     and not _THINK_RE.sub("", strip_tool_blocks(round_response)).strip()):
                 _closing = await _closing_words(messages, tool_events, endpoint_url=endpoint_url,
-                                                model=model, headers=headers, max_tokens=max_tokens)
+                                                model=model, headers=headers, max_tokens=max_tokens,
+                                                owner=owner)
                 yield f'data: {json.dumps({"delta": _closing})}\n\n'
                 full_response += _closing
             break  # no tools — done

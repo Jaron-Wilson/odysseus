@@ -376,7 +376,7 @@ def setup_webhook_routes(
 
         reply = await llm_call_async(
             sess.endpoint_url, sess.model, messages,
-            headers=sess.headers, timeout=120,
+            headers=sess.headers, timeout=120, owner=token_owner,
         )
         sess.add_message(ChatMessage("assistant", reply))
         session_manager.save_sessions()

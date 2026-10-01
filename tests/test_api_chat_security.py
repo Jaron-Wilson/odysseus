@@ -232,7 +232,7 @@ def _install_sync_chat_stubs(monkeypatch):
             self.role = role
             self.content = content
 
-    async def _llm_call_async(endpoint_url, model, messages, headers=None, timeout=None):
+    async def _llm_call_async(endpoint_url, model, messages, headers=None, timeout=None, owner=None):
         return "mocked response"
 
     endpoint_resolver = types.ModuleType("src.endpoint_resolver")

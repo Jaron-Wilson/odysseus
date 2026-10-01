@@ -2820,6 +2820,7 @@ def setup_email_routes():
                     temperature=0.7,
                     max_tokens=1024 if fast_reply else 6144,
                     timeout=60 if fast_reply else 180,
+                    owner=owner,
                 )
             except Exception as e:
                 detail = getattr(e, "detail", None) or str(e)

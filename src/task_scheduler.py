@@ -1427,7 +1427,8 @@ class TaskScheduler:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task.prompt},
             ]
-            result = await llm_call_async(url=endpoint_url, model=model, messages=messages, timeout=120)
+            result = await llm_call_async(url=endpoint_url, model=model, messages=messages, timeout=120,
+                                          owner=task.owner or None)
 
         # Strip the model's chain-of-thought before saving/delivering. Task
         # output is LLM-only, so prose=True (which also removes untagged
@@ -1631,7 +1632,7 @@ class TaskScheduler:
         headers = {}
         try:
             from core.database import SessionLocal, ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers
+            from src.endpoint_resolver import normalize_base, build_headers, resolve_endpoint_runtime
             from src.auth_helpers import owner_filter
             db2 = SessionLocal()
             try:
@@ -1640,7 +1641,10 @@ class TaskScheduler:
                 eps = ep_q.all()
                 for ep in eps:
                     if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
-                        headers = build_headers(ep.api_key, normalize_base(ep.base_url))
+                        # Runtime credentials, not ep.api_key: Sign in with
+                        # ChatGPT / Subscription rows have no static key.
+                        _base, _key = resolve_endpoint_runtime(ep, owner=task.owner or None)
+                        headers = build_headers(_key, _base)
                         break
             finally:
                 db2.close()
@@ -1709,6 +1713,7 @@ class TaskScheduler:
                         {"role": "user", "content": grace_context},
                     ],
                     timeout=30,
+                    owner=task.owner or None,
                 )
                 full_text = (full_text or "").strip()
             except Exception as e:
@@ -1760,7 +1765,7 @@ class TaskScheduler:
         # Resolve headers
         try:
             from core.database import ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers
+            from src.endpoint_resolver import normalize_base, build_headers, resolve_endpoint_runtime
             from src.auth_helpers import owner_filter
             db2 = db
             if not headers_from_resolver:
@@ -1769,7 +1774,8 @@ class TaskScheduler:
                 eps = ep_q.all()
                 for ep in eps:
                     if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
-                        headers = build_headers(ep.api_key, normalize_base(ep.base_url))
+                        _base, _key = resolve_endpoint_runtime(ep, owner=task.owner or None)
+                        headers = build_headers(_key, _base)
                         break
         except Exception:
             pass
