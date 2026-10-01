@@ -430,9 +430,125 @@ function onPhoneChange(ev) {
   if (ev.target && ev.target.id === 'phone-engine') showVoiceRow(ev.target.value);
 }
 
+// ── Free SIP line: a softphone on the tailnet calls Odysseus (routes/sip_routes.py) ──
+//
+// The password is write-only like the Twilio token: the server says only
+// whether one is saved. Generate makes one here, in the browser, and shows
+// it once so it can go into the softphone; the server never echoes it.
+
+function sipSay(text, isError) {
+  const el = $('sip-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('sms-error', !!isError);
+}
+
+function renderSip(cfg) {
+  if (!$('sip-section')) return;
+  $('sip-enabled').checked = !!cfg.enabled;
+  $('sip-username').value = cfg.username || '';
+  $('sip-password').value = '';
+  $('sip-password').type = 'password';
+  $('sip-password').placeholder = cfg.has_password ? 'Saved (type or Generate a new one to replace it)' : 'At least 10 characters';
+  $('sip-devices').value = (cfg.devices || []).join(', ');
+  $('sip-require-pin').checked = !!cfg.require_pin;
+  $('sip-require-pin').disabled = !cfg.has_pin && !cfg.require_pin;
+  const parts = [];
+  if (!cfg.enabled) parts.push('Off: the line does not listen.');
+  else if (cfg.running) parts.push(`On, listening on ${(cfg.addresses || []).join(', ')} port ${cfg.port} (UDP and TCP)${cfg.test_mode ? ', test mode: loopback only' : ''}.`);
+  else parts.push(`On, but not listening: ${cfg.error || 'starting'}`);
+  const regs = cfg.registered || [];
+  if (cfg.enabled) parts.push(regs.length ? `Softphone registered from ${regs[0].ip} (${regs[0].transport.toUpperCase()}).` : 'No softphone registered yet.');
+  if (cfg.active_calls) parts.push(`${cfg.active_calls} call${cfg.active_calls === 1 ? '' : 's'} on the line now.`);
+  if (cfg.enabled && (cfg.engines || []).length) parts.push(cfg.engines.join(' '));
+  $('sip-state').textContent = parts.join(' ');
+  const dial = cfg.dial || [];
+  $('sip-dial').innerHTML = dial.length
+    ? dial.map((d) => `<code class="sms-url">${esc(d)}</code> ${copyBtn(d)}`).join('<br>') +
+      `<br>Server (domain) for the softphone: <code>${esc(cfg.server_host)}${cfg.port === 5060 ? '' : `:${cfg.port}`}</code> ${copyBtn(cfg.server_host)}, UDP or TCP, codec PCMU.`
+    : 'Turn the line on and Save to see the address to dial.';
+  const have = new Set(cfg.devices || []);
+  const devs = (cfg.tailnet_devices || []).filter((d) => !have.has(d.ip));
+  $('sip-device-list').innerHTML = devs.length
+    ? 'Add a device: ' + devs.slice(0, 12).map((d) => `<button ${BTN} data-sip-add="${esc(d.ip)}" title="${esc(d.os)}${d.online ? ', online' : ', offline'}">+ ${esc(d.name || d.ip)} (${esc(d.ip)})</button>`).join(' ')
+    : '';
+}
+
+function sipBody() {
+  const body = {
+    enabled: $('sip-enabled').checked,
+    username: $('sip-username').value.trim(),
+    devices: $('sip-devices').value.split(/[,;\s]+/).map((d) => d.trim()).filter(Boolean),
+    require_pin: $('sip-require-pin').checked,
+  };
+  const pw = $('sip-password').value;
+  if (pw) body.password = pw;
+  return body;
+}
+
+function newSipPassword() {
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = new Uint8Array(20);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => abc[b % abc.length]).join('');
+}
+
+async function loadSip() {
+  if (!$('sip-section')) return;
+  try {
+    renderSip(await api('GET', '/api/telephony/sip'));
+  } catch (e) {
+    sipSay(`Could not load the SIP line settings: ${e.message}`, true);
+  }
+}
+
+async function onSipClick(ev) {
+  const t = ev.target.closest('#sip-save,#sip-test,#sip-call-me,#sip-qr,#sip-generate,[data-sip-add]');
+  if (!t) return;
+  ev.preventDefault();
+  try {
+    if (t.id === 'sip-generate') {
+      const f = $('sip-password');
+      f.value = newSipPassword();
+      f.type = 'text';
+      sipSay('New password filled in. Copy it into the softphone, then Save.');
+    } else if (t.dataset.sipAdd) {
+      const cur = $('sip-devices').value.split(/[,;\s]+/).filter(Boolean);
+      if (!cur.includes(t.dataset.sipAdd)) cur.push(t.dataset.sipAdd);
+      $('sip-devices').value = cur.join(', ');
+      t.remove();
+    } else if (t.id === 'sip-save') {
+      renderSip(await api('PUT', '/api/telephony/sip', sipBody()));
+      sipSay('Saved.');
+    } else if (t.id === 'sip-test') {
+      sipSay('Testing…');
+      const r = await api('POST', '/api/telephony/sip/test');
+      const box = $('sip-checks');
+      box.innerHTML = (r.checks || []).map((c) => `<div class="admin-toggle-sub"${c.ok || c.optional ? '' : ' style="color:var(--red, #d33)"'}>` +
+        `${c.ok ? 'OK' : (c.optional ? 'Not yet (optional)' : 'Not yet')}: <strong>${esc(c.name)}</strong>${c.detail ? `. ${esc(c.detail)}` : ''}</div>`).join('');
+      box.hidden = false;
+      sipSay(r.ok ? 'Everything checks out. Dial odysseus from the softphone.' : 'Some checks did not pass; see above.', !r.ok);
+    } else if (t.id === 'sip-call-me') {
+      const r = await api('POST', '/api/telephony/sip/call-me', {});
+      sipSay(`Ringing your softphone (${r.device})…`);
+    } else if (t.id === 'sip-qr') {
+      const r = await api('POST', '/api/telephony/sip/provision');
+      $('sip-qr-box').innerHTML = `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <div style="background:#fff;padding:6px;border-radius:8px;width:180px">${r.qr_svg}</div>
+        <div class="admin-toggle-sub" style="flex:1;min-width:200px">In Linphone, choose <strong>Scan QR code</strong> (remote provisioning) and scan this.
+          It sets up the account (no password inside, only its digest) and works once, for ${Math.round((r.expires_in || 600) / 60)} minutes.
+          ${r.warning ? `<div style="color:var(--red, #d33);margin-top:6px">${esc(r.warning)}</div>` : ''}
+          <div style="margin-top:6px"><code style="word-break:break-all">${esc(r.url)}</code> ${copyBtn(r.url)}</div></div></div>`;
+    }
+  } catch (e) {
+    sipSay(e.message, true);
+  }
+}
+
 async function load(refresh = false) {
   loadSms();
   loadPhone();
+  loadSip();
   try {
     const [base, overview] = await Promise.all([
       api('GET', '/api/devices'),
@@ -738,6 +854,7 @@ function init() {
   panel.addEventListener('click', onEnrollClick);
   panel.addEventListener('click', onSmsClick);
   panel.addEventListener('click', onPhoneClick);
+  panel.addEventListener('click', onSipClick);
   panel.addEventListener('change', onPhoneChange);
   panel.addEventListener('input', onComputersInput);
   panel.dataset.devicesReady = '1';

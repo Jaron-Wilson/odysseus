@@ -152,6 +152,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "chat_memory": "This chat's 'Needs to know' list, like memory but per chat, shown to you on every turn. Suggest an item when something worth keeping comes up (the task, a decision, who you are waiting on); the user decides. Add directly when the user says 'remember for this chat' or 'put it in needs to know'. Remove items that are done.",
     "manage_devices": "List, register, control or remove the user's devices (phone, tablet, desktop) and see what each one can be told to do. Use for 'what devices do I have', 'register my phone', 'add a device', or before sending a command so you know the device supports it. To make a device DO something, use action 'control': {\"action\":\"control\",\"name\":\"phone\",\"command\":\"open_app\",\"params\":{\"package\":\"com.bambulab.bambuhandy\"}}. Commands: open_app, open_url, list_apps, install_app, set_timer, set_alarm, speak. Use list_apps first if you do not know the exact package name, rather than guessing one. install_app only opens the store page; the user still has to tap install.",
     "notify_device": "Send a notification or a command to one of the user's own devices (phone, tablet, desktop) as a browser push notification. Use for 'send it to my phone', 'notify me', 'text me when it is done', 'remind me on my phone', 'push this to my phone', or to tell a device to do something it already knows how to do. This only SHOWS a notification. To OPEN a link or an app on a device, use manage_devices action 'control' (open_url / open_app) instead: it acts immediately, with no tap. Pass device to pick which one; omitting it sends to every device.",
+    "call_me": "Phone the user and talk out loud: rings the softphone on their free SIP line (Linphone or Zoiper over Tailscale), else their phone number through Twilio, and opens the call with your message, then listens and answers like a voice call. Use for 'call me', 'ring me', 'phone me when it is done', 'give me a call'. Each call is its own chat. Only the user's own devices and numbers are ever called.",
     "claude_code": "Hand a CODING or SOFTWARE task to the Claude Code agent on this host: writing code, editing code, adding a feature, fixing a bug, refactoring, rebuilding or rebranding a website, building a new project, debugging failing tests, reviewing a codebase, explaining how code works. It reads the project, edits files, runs commands and uses its own subagents, streaming its console live. Use for 'claude code', 'claude agent', 'use claude', 'code this', 'build me', 'fix the bug', 'refactor', 'rebrand the site', 'work on my repo'. Plans first and waits for the user to approve before changing anything.",
 }
 
@@ -392,6 +393,9 @@ class ToolIndex:
                    "tailnet", "on my device", "my devices", "push to", "send to my",
                    "open on my", "open it on"}):
             {"manage_devices", "notify_device", "bash"},
+        # Being phoned: the call_me tool rings the SIP line or the Twilio number.
+        frozenset({"call me", "ring me", "phone me", "give me a call", "call my phone", "softphone"}):
+            {"call_me"},
         # Shopping means looking things up on the web.
         frozenset({"amazon", "buy", "shop", "shopping", "product", "products",
                    "price", "prices", "order", "deal", "deals"}):

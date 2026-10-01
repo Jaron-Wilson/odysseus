@@ -748,6 +748,14 @@ async def execute_tool_block(
         desc = "chat_memory"
         from src import chat_memory
         result = chat_memory.run_tool(content, session_id=session_id, owner=owner)
+    elif tool == "call_me":
+        desc = f"call_me: {content.split(chr(10))[0][:80]}"
+        from src.agent_tools import TOOL_HANDLERS
+        try:
+            result = await TOOL_HANDLERS["call_me"](content, {"owner": owner})
+        except Exception as e:
+            logger.warning("call_me failed: %s", e, exc_info=True)
+            result = {"error": f"call_me: {type(e).__name__}: {e}"[:400], "exit_code": 1}
     elif tool == "notify_device":
         desc = f"notify_device: {content.split(chr(10))[0][:80]}"
         from src.agent_tools import TOOL_HANDLERS

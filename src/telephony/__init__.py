@@ -11,6 +11,9 @@
                  barge-in, greeting
     twilio.py    the Twilio adapter: webhook signatures, TwiML, Media Streams
                  and ConversationRelay messages, the REST call for "call me"
+    sip.py, rtp.py, sip_server.py, sip_line.py
+                 the free SIP line: a softphone on the tailnet calls Odysseus
+                 directly (docs/sip-line.md), into the same PhoneCall
 
 routes/telephony_routes.py wires these to the webhook, the media WebSocket
 and the Settings card. docs/phone-calls.md is the setup guide and the research

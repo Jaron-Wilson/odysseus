@@ -2614,6 +2614,65 @@
               <div id="phone-checks" class="settings-col" hidden></div>
               <div id="phone-msg" class="admin-toggle-sub"></div>
             </div>
+            <!-- Free SIP line: routes/sip_routes.py, src/telephony/sip_line.py, filled in by devicesSettings.js. -->
+            <div id="sip-section" data-goto-keywords="sip softphone linphone zoiper free tailnet tailscale voip" style="margin-top:14px;padding-top:12px;border-top:1px solid color-mix(in srgb, var(--fg) 12%, transparent)">
+              <div class="admin-toggle-label" style="font-size:14px">Free SIP line (tailnet)</div>
+              <div class="admin-toggle-sub">Call the agent for free from a SIP app (Linphone or Zoiper) on any device on your tailnet. No phone number, no provider, nothing public: Odysseus answers the call itself, on its Tailscale address only, and asks for this username and password. It uses the Greeting, Model and PIN above and the Voice call speech engines.</div>
+              <div class="admin-toggle-row">
+                <div>
+                  <div class="admin-toggle-label">Answer SIP calls</div>
+                  <div class="admin-toggle-sub" id="sip-state">Loading…</div>
+                </div>
+                <label class="admin-switch"><input type="checkbox" id="sip-enabled"><span class="admin-slider"></span></label>
+              </div>
+              <div class="settings-col">
+                <div class="settings-row">
+                  <span class="settings-label">Dial</span>
+                  <span class="admin-toggle-sub" id="sip-dial" style="flex:1"></span>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="sip-username">Username</label>
+                  <input id="sip-username" class="settings-select" type="text" autocomplete="off" placeholder="jaron (what the softphone signs in as)" />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="sip-password">Password</label>
+                  <input id="sip-password" class="settings-select" type="password" autocomplete="new-password" placeholder="At least 10 characters" />
+                  <button class="settings-btn" id="sip-generate" type="button">Generate</button>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="sip-devices">Allowed devices</label>
+                  <input id="sip-devices" class="settings-select" type="text" placeholder="Any device on your tailnet (or Tailscale IPs, comma-separated)" />
+                </div>
+                <div class="admin-toggle-sub" id="sip-device-list"></div>
+                <div class="settings-row">
+                  <label class="settings-label" for="sip-require-pin">PIN</label>
+                  <label class="admin-toggle-sub" style="flex:1"><input type="checkbox" id="sip-require-pin"> Ask for the PIN above on SIP calls too (type it on the keypad, then #)</label>
+                </div>
+                <div class="settings-row">
+                  <span class="admin-toggle-sub">Test checks the listener, the account, the speech engines and the model. Call me rings your registered softphone.</span>
+                  <button class="admin-btn-add" id="sip-save" type="button">Save</button>
+                </div>
+                <div class="settings-row">
+                  <button class="settings-btn" id="sip-test" type="button">Test</button>
+                  <button class="settings-btn" id="sip-call-me" type="button">Call me</button>
+                  <button class="settings-btn" id="sip-qr" type="button">Linphone QR code</button>
+                </div>
+                <div id="sip-checks" class="settings-col" hidden></div>
+                <div id="sip-qr-box"></div>
+                <div id="sip-msg" class="admin-toggle-sub"></div>
+              </div>
+              <details>
+                <summary class="admin-toggle-sub">Softphone setup (Android, over Tailscale)</summary>
+                <ol class="admin-toggle-sub">
+                  <li>Here: pick a username, Generate a password (copy it), turn on Answer SIP calls, Save, then Test.</li>
+                  <li>On the phone, have Tailscale connected, and install <strong>Linphone</strong> (Play Store or F-Droid) or <strong>Zoiper</strong>.</li>
+                  <li><strong>Linphone</strong>: open Settings here through your Tailscale name on the phone or another screen, tap Linphone QR code, and in Linphone choose "Scan QR code" (remote provisioning) and scan it. Or by hand: "Use a SIP account", username and password from above, domain = the server address shown under Dial, transport UDP.</li>
+                  <li><strong>Zoiper</strong>: Add account, "I have an account", username = <code>username@server address</code>, password, then "Skip" the provider search and pick UDP.</li>
+                  <li>In the app's audio codecs, keep <strong>PCMU</strong> (G.711 mu-law) on. Turn off battery optimization for the app so "Call me" can ring it.</li>
+                  <li>Dial <code>odysseus</code> (or the full address under Dial). Talk, pause, listen; press * to interrupt; say "bye" to hang up. Full steps and troubleshooting: docs/sip-line.md.</li>
+                </ol>
+              </details>
+            </div>
             <details>
               <summary class="admin-toggle-sub">Setup guide</summary>
               <ol class="admin-toggle-sub">
