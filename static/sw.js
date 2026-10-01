@@ -46,10 +46,13 @@ const PRECACHE = [
   '/static/js/tts-ai.js',
   '/static/js/voiceCall.js',
   '/static/js/sttEngines.js',
+  '/static/js/callHandoff.js',
+  '/static/js/callPresenceWorker.js',
   '/static/js/ttsEngines.js',
   '/static/js/settingsNav.js',
   '/static/js/toolPages.js',
   '/static/js/toolGroups.js',
+  '/static/js/searchEverything.js',
   '/static/js/document.js',
   '/static/js/gallery.js',
   '/static/js/chatRenderer.js',
@@ -190,6 +193,12 @@ self.addEventListener('push', (e) => {
     icon: '/static/icons/icon-192.png',
     badge: '/static/icons/icon-192.png',
   };
+  // "Continue your call with ..." (callHandoff.js): stays up until answered
+  // or the offer runs out, and buzzes like a call.
+  if (options.tag === 'odysseus-call') {
+    options.requireInteraction = true;
+    options.vibrate = [300, 150, 300];
+  }
   e.waitUntil(self.registration.showNotification(title, options));
 });
 
@@ -197,9 +206,16 @@ self.addEventListener('push', (e) => {
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   const target = (e.notification.data && e.notification.data.url) || '/';
+  // A call offer goes to an open page as a message (no reload); a closed
+  // one opens at the offer and shows "Continue call here".
+  const offer = /[?&]call_offer=([A-Za-z0-9_-]+)/.exec(target);
   e.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
       for (const w of wins) {
+        if (offer && 'focus' in w) {
+          w.postMessage({ type: 'odysseus-call-offer', id: offer[1] });
+          return w.focus();
+        }
         if ('focus' in w) {
           if ('navigate' in w && target !== '/') w.navigate(target).catch(() => {});
           return w.focus();

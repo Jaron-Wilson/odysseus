@@ -314,6 +314,23 @@ async def _client_device_for(request: Request) -> Optional[Dict[str, Any]]:
     return None
 
 
+VOICE_CALL_NOTE = (
+    "You are in a live voice call with the user. They are speaking (their words "
+    "reach you transcribed by speech recognition, so expect small mistakes) and "
+    "your replies are read aloud to them. Keep replies short and conversational, "
+    "a few sentences, like talking on the phone. No markdown, tables, lists or "
+    "code unless they ask for them. You can still use your tools as usual."
+)
+
+
+def apply_voice_call_note(messages: list) -> None:
+    """Tell the model this turn is spoken in a call: on the system message."""
+    if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
+        messages[0]["content"] = (messages[0]["content"] or "") + "\n\n" + VOICE_CALL_NOTE
+    else:
+        messages.insert(0, {"role": "system", "content": VOICE_CALL_NOTE})
+
+
 def _public_base(request: Request) -> str:
     """The address this request came in on, for links in later notifications."""
     try:
@@ -638,6 +655,11 @@ def setup_chat_routes(
                                               session_manager=session_manager)
             except Exception as e:
                 logger.warning(f"Could not attach references: {e}")
+
+        # A turn spoken in the in-app voice call (static/js/voiceCall.js): the
+        # model did not know, and answered "I'm not hearing live audio".
+        if str(form_data.get("voice_call") or "").lower() in ("1", "true"):
+            apply_voice_call_note(ctx.messages)
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
 

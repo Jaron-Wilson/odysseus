@@ -6336,6 +6336,27 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       flex-shrink: 0;
       white-space: nowrap;
     }
+    /* Search everything (search-chat.js): a second line of detail, the chat
+       a message is in, image thumbnails, "Show N more", and the hint and
+       "Searching ..." lines that aren't results. */
+    .search-result-snippet b { font-weight: 600; }
+    .search-result-sub,
+    .search-result-crumb { color: color-mix(in srgb, var(--fg) 45%, transparent); }
+    .search-result-sub { margin-left: 6px; }
+    .search-result-crumb { margin-right: 4px; }
+    .search-result-crumb::after { content: ' \203A'; }
+    .search-result-thumb {
+      width: 22px; height: 22px; flex-shrink: 0; border-radius: 4px; object-fit: cover;
+      align-self: center;
+    }
+    .search-result-more .search-result-snippet { color: color-mix(in srgb, var(--fg) 55%, transparent); font-size: 11px; }
+    .search-hint,
+    .search-pending {
+      font-size: 11px; line-height: 1.5;
+      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      padding: 8px 12px;
+    }
+    .search-hint b { color: var(--fg); font-weight: 600; }
     mark.search-highlight {
       /* Was orange-on-orange (0.35 alpha bg + orange text) — too low-contrast
          to read. Solid accent fill with bg-colored text reads clearly. */
