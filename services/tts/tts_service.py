@@ -1,15 +1,20 @@
-# src/tts_service.py
-"""Multi-provider TTS service — dispatches to local Kokoro, OpenAI-compatible API, or browser."""
+# services/tts/tts_service.py
+"""Multi-provider TTS service: local Kokoro (kokoro-onnx), an
+OpenAI-compatible API (OpenAI, Kokoro-FastAPI, ...), or the browser."""
 
-import io
-import wave
-import logging
 import hashlib
-import httpx
+import logging
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+import httpx
+
 from src.constants import TTS_CACHE_DIR
+from services.tts.kokoro_local import (
+    KOKORO_MODELS, PIP, VOICES, KokoroEngine, TTSError, cpu_has_vnni, cpu_threads,
+    default_model, missing_packages, model_status, models_dir, resolve_model, resolve_voice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +36,14 @@ class TTSService:
 
     Reads provider config from data/settings.json on each call.
     Providers:
-      "disabled"        — no TTS
-      "browser"         — client-side Web Speech API (no server synthesis)
-      "local"           — Kokoro-82M on GPU
-      "endpoint:<id>"   — OpenAI-compatible /audio/speech via ModelEndpoint
+      "disabled"        - no TTS
+      "browser"         - client-side Web Speech API (no server synthesis)
+      "local"           - Kokoro-82M on this machine via kokoro-onnx (no torch)
+      "endpoint:<id>"   - OpenAI-compatible /audio/speech via ModelEndpoint
+                          (also Kokoro-FastAPI on a GPU box: voice "af_heart")
+
+    Speed is applied here for every server provider (Kokoro natively, APIs
+    through their `speed` field), so the browser plays the audio at 1x.
     """
 
     def __init__(self, cache_dir: str = TTS_CACHE_DIR):
@@ -53,7 +62,11 @@ class TTSService:
             "tts_model": saved.get("tts_model", "tts-1"),
             "tts_voice": saved.get("tts_voice", "alloy"),
             "tts_speed": saved.get("tts_speed", "1"),
+            "tts_kokoro_model": saved.get("tts_kokoro_model", ""),
         }
+
+    def _kokoro_model(self, settings: dict) -> str:
+        return resolve_model(settings.get("tts_kokoro_model", ""))
 
     @property
     def available(self) -> bool:
@@ -66,8 +79,8 @@ class TTSService:
         if provider == "browser":
             return True  # handled client-side
         if provider == "local":
-            kokoro = self._get_kokoro()
-            return kokoro is not None and kokoro.available
+            # Cheap: package present and files on disk; never loads the model.
+            return self._get_kokoro().readiness(self._kokoro_model(settings)) is None
         if provider.startswith("endpoint:"):
             return True  # assume reachable; errors surface at synthesis time
         return False
@@ -98,94 +111,148 @@ class TTSService:
 
     # ── Kokoro (local) ──
 
-    def _get_kokoro(self):
+    def _get_kokoro(self) -> KokoroEngine:
         if self._kokoro is None:
-            self._kokoro = _KokoroPipeline()
+            self._kokoro = KokoroEngine()
         return self._kokoro
+
+    def warm(self) -> bool:
+        """Load the Kokoro model in the background when it is the provider."""
+        settings = self._load_settings()
+        if settings.get("tts_enabled") is False or settings["tts_provider"] != "local":
+            return False
+        return self._get_kokoro().warm(self._kokoro_model(settings))
+
+    def start_download(self, model: str) -> Dict[str, Any]:
+        def after(m):
+            if self._kokoro_model(self._load_settings()) == m:
+                self.warm()
+        return self._get_kokoro().downloads.start(model, on_done=after)
 
     # ── API endpoint ──
 
     def _synthesize_api(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0) -> Optional[bytes]:
+        try:
+            return self._synthesize_api_checked(text, endpoint_id, model, voice, speed)
+        except TTSError as e:
+            logger.error(f"API TTS synthesis failed: {e.message}")
+            return None
+
+    def _synthesize_api_checked(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0) -> bytes:
         from src.database import SessionLocal, ModelEndpoint
 
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
             if not ep:
-                logger.error(f"TTS endpoint {endpoint_id} not found")
-                return None
+                raise TTSError(f"TTS endpoint {endpoint_id} not found", 404)
             base_url = ep.base_url.rstrip("/")
             api_key = ep.api_key
         finally:
             db.close()
+        try:
+            from src.endpoint_resolver import normalize_base, resolve_url
+            base_url = resolve_url(normalize_base(base_url))
+        except Exception:
+            pass
 
-        url = base_url + "/audio/speech"
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
         payload = {
-            "model": model,
+            "model": model or "tts-1",
             "input": text,
             "voice": voice,
             "response_format": "mp3",
             "speed": speed,
         }
 
-        try:
-            r = httpx.post(url, json=payload, headers=headers, timeout=60)
-            r.raise_for_status()
-            logger.info(f"API TTS: {len(r.content)} bytes from {base_url}")
+        # OpenAI-style bases end in /v1. Kokoro-FastAPI is often added as
+        # just http://host:8880, so try /v1/audio/speech when that 404s.
+        urls = [base_url + "/audio/speech"]
+        if not base_url.endswith("/v1"):
+            urls.append(base_url + "/v1/audio/speech")
+        last = None
+        for url in urls:
+            try:
+                r = httpx.post(url, json=payload, headers=headers, timeout=60)
+            except Exception as e:
+                raise TTSError(f"The text to speech endpoint did not answer: {e}", 502)
+            if r.status_code == 404 and url != urls[-1]:
+                last = r
+                continue
+            if r.status_code >= 400:
+                detail = r.text[:300]
+                raise TTSError(f"The text to speech endpoint answered {r.status_code}: {detail}", 502)
+            logger.info(f"API TTS: {len(r.content)} bytes from {url}")
             return r.content
-        except Exception as e:
-            logger.error(f"API TTS synthesis failed: {e}")
-            return None
+        raise TTSError(f"The text to speech endpoint answered {last.status_code if last else '?'}", 502)
 
     # ── Public interface ──
 
-    def synthesize(self, text: str, use_cache: bool = True) -> Optional[bytes]:
+    def synthesize_checked(self, text: str, use_cache: bool = True, voice: Optional[str] = None,
+                           speed: Optional[float] = None) -> bytes:
+        """Audio for `text` with the configured provider. `voice` and `speed`
+        override the saved ones (the Settings preview). Raises TTSError."""
         settings = self._load_settings()
-        if settings.get("tts_enabled") is False:
-            return None
         provider = settings["tts_provider"]
+        if settings.get("tts_enabled") is False or provider == "disabled":
+            raise TTSError("Text to speech is off.")
+        if provider == "browser":
+            raise TTSError("Text to speech is set to the browser's voice, so the server does not speak.")
         model = settings["tts_model"]
-        voice = settings["tts_voice"]
-        speed = _safe_speed(settings.get("tts_speed", "1"))
+        voice = voice or settings["tts_voice"]
+        speed = _safe_speed(speed if speed is not None else settings.get("tts_speed", "1"))
 
-        if provider in ("disabled", "browser"):
-            return None
-
+        text = (text or "").strip()
+        if not text:
+            raise TTSError("Nothing to say.", 400)
         if len(text) > 5000:
             text = text[:5000]
 
+        if provider == "local":
+            model = self._kokoro_model(settings)
+            voice = resolve_voice(voice)
+        elif not provider.startswith("endpoint:"):
+            raise TTSError(f"Unknown TTS provider: {provider}", 400)
+
+        key = self._cache_key(text, provider, model, voice, speed)
         if use_cache:
-            key = self._cache_key(text, provider, model, voice, speed)
             cached = self._get_cached(key)
             if cached:
                 logger.info(f"TTS cache hit ({len(text)} chars)")
                 return cached
 
-        audio_data = None
-
         if provider == "local":
-            kokoro = self._get_kokoro()
-            if kokoro and kokoro.available:
-                audio_data = kokoro.synthesize_raw(text, voice)
-            else:
-                logger.warning("Kokoro TTS not available")
-                return None
-        elif provider.startswith("endpoint:"):
-            endpoint_id = provider.split(":", 1)[1]
-            audio_data = self._synthesize_api(text, endpoint_id, model, voice, speed)
+            k = self._get_kokoro()
+            reason = k.readiness(model)
+            if reason:
+                job = k.downloads.state(model)
+                if not missing_packages() and not (job and job["status"] in ("downloading", "error")):
+                    # Fetch it now so the next reply has a voice (STT does the same).
+                    self.start_download(model)
+                    reason = k.readiness(model) or reason
+                raise TTSError(reason)
+            audio_data = k.synthesize(text, model, voice, speed)
         else:
-            logger.error(f"Unknown TTS provider: {provider}")
-            return None
+            t0 = time.monotonic()
+            audio_data = self._synthesize_api_checked(text, provider.split(":", 1)[1], model, voice, speed)
+            self._last_api = {"latency_ms": round((time.monotonic() - t0) * 1000), "chars": len(text), "at": time.time()}
 
         if audio_data and use_cache:
-            key = self._cache_key(text, provider, model, voice, speed)
             self._put_cache(key, audio_data)
-
         return audio_data
+
+    def synthesize(self, text: str, use_cache: bool = True) -> Optional[bytes]:
+        try:
+            return self.synthesize_checked(text, use_cache=use_cache)
+        except TTSError as e:
+            logger.warning("TTS: %s", e.message)
+            return None
+        except Exception as e:
+            logger.error("TTS synthesis failed: %s", e, exc_info=True)
+            return None
 
     def synthesize_to_base64(self, text: str) -> Optional[str]:
         import base64
@@ -196,6 +263,33 @@ class TTSService:
 
     def set_voice(self, voice: str):
         """Legacy no-op — voice is now managed via admin settings."""
+
+    def engines(self) -> Dict[str, Any]:
+        """The local Kokoro engine: installed, models, downloads, voices."""
+        settings = self._load_settings()
+        k = self._get_kokoro()
+        selected = self._kokoro_model(settings)
+        missing = missing_packages()
+        reason = k.readiness(selected)
+        loaded = k.loaded
+        return {"engines": [{
+            "id": "kokoro",
+            "provider": "local",
+            "label": "Kokoro (local)",
+            "installed": not missing,
+            "missing_packages": missing,
+            "pip": PIP if missing else "",
+            "setting": "tts_kokoro_model",
+            "selected_model": selected,
+            "default_model": default_model(),
+            "ready": reason is None,
+            "reason": reason or "",
+            "loaded_model": loaded["model"] if loaded else "",
+            "loading": k.loading,
+            "models": [model_status(m, k.downloads, selected) for m in KOKORO_MODELS],
+            "voices": VOICES,
+            "voice": resolve_voice(settings["tts_voice"]),
+        }], "models_dir": str(models_dir()), "cpu_threads": cpu_threads(), "vnni": cpu_has_vnni()}
 
     def get_stats(self) -> Dict[str, Any]:
         settings = self._load_settings()
@@ -213,78 +307,41 @@ class TTSService:
             "model": settings["tts_model"],
             "voice": settings["tts_voice"],
             "speed": _safe_speed(settings.get("tts_speed", "1")),
+            # Server providers apply the speed themselves; play at 1x.
+            "speed_applied": provider == "local" or provider.startswith("endpoint:"),
             "cache_entries": len(cache_files),
             "cache_size_mb": round(cache_size / (1024 * 1024), 2),
         }
 
         if provider == "local":
-            kokoro = self._get_kokoro()
-            stats["model"] = "Kokoro-82M (GPU)" if (kokoro and kokoro.available) else "Kokoro (not loaded)"
+            k = self._get_kokoro()
+            model = self._kokoro_model(settings)
+            reason = k.readiness(model)
+            loaded = k.loaded
+            stats.update({
+                "engine": "kokoro",
+                "model": model,
+                "voice": resolve_voice(settings["tts_voice"]),
+                "reason": reason or "",
+                "model_loaded": bool(loaded and loaded["model"] == model),
+                "loading": k.loading,
+                "device": loaded["device"] if loaded else "",
+                "load_seconds": loaded["load_s"] if loaded else None,
+                "max_concurrent": k.max_concurrent,
+            })
+            if k.last:
+                stats["last"] = dict(k.last)
+                stats["last_latency_ms"] = k.last.get("latency_ms")
         elif provider == "browser":
             stats["model"] = "Browser (Web Speech API)"
         elif provider.startswith("endpoint:"):
             stats["endpoint_id"] = provider.split(":", 1)[1]
+            last = getattr(self, "_last_api", None)
+            if last:
+                stats["last"] = dict(last)
+                stats["last_latency_ms"] = last["latency_ms"]
 
         return stats
-
-
-class _KokoroPipeline:
-    """Encapsulates the Kokoro-82M local GPU pipeline."""
-
-    def __init__(self):
-        self.pipeline = None
-        self.available = False
-        self.device = None
-        self._init()
-
-    def _init(self):
-        try:
-            import torch
-            from kokoro import KPipeline
-
-            if not torch.cuda.is_available():
-                logger.warning("CUDA not available for Kokoro TTS")
-                return
-
-            self.device = torch.device("cuda:0")
-            with torch.cuda.device(0):
-                self.pipeline = KPipeline(lang_code="a")
-                if hasattr(self.pipeline, "model"):
-                    self.pipeline.model = self.pipeline.model.to(self.device)
-            self.available = True
-            logger.info("Kokoro-82M TTS pipeline loaded")
-        except ImportError as e:
-            logger.warning(f"Kokoro TTS not available: {e}")
-            logger.warning("Install with: pip install kokoro soundfile")
-        except Exception as e:
-            logger.error(f"Kokoro init failed: {e}", exc_info=True)
-
-    def synthesize_raw(self, text: str, voice: str = "af_heart") -> Optional[bytes]:
-        if not self.available:
-            return None
-        try:
-            import torch
-            import numpy as np
-
-            with torch.cuda.device(self.device):
-                chunks = []
-                for _, _, audio in self.pipeline(text, voice=voice):
-                    chunks.append(audio)
-
-            if not chunks:
-                return None
-
-            full = np.concatenate(chunks)
-            buf = io.BytesIO()
-            with wave.open(buf, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(24000)
-                wf.writeframes((full * 32767).astype(np.int16).tobytes())
-            return buf.getvalue()
-        except Exception as e:
-            logger.error(f"Kokoro synthesis failed: {e}", exc_info=True)
-            return None
 
 
 # Module-level singleton

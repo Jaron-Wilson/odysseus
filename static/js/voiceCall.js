@@ -1308,7 +1308,7 @@ export class VoiceCall {
       a.onpause = () => { if (gen !== this._gen) resolve(); };
       this._stopCurrent = () => resolve();
       a.src = url;
-      const rate = this.tts.provider === 'local' && this.tts.speed ? this.tts.speed : 1;
+      const rate = 1; // the server applies the speed (Kokoro natively, APIs via `speed`)
       a.defaultPlaybackRate = rate;
       a.playbackRate = rate;
       const pr = a.play();
@@ -1881,7 +1881,7 @@ async function _loadEngines(card) {
     const p = tts.value;
     let names = [];
     if (p === 'browser' && typeof window.speechSynthesis !== 'undefined') names = window.speechSynthesis.getVoices().map(v => v.name);
-    else if (p === 'local') names = ['af_heart', 'af_bella', 'af_nicole', 'am_adam', 'am_michael', 'bf_emma', 'bm_george'];
+    else if (p === 'local') names = ['af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'am_michael', 'am_fenrir', 'am_puck', 'am_echo', 'bf_emma', 'bf_isabella', 'bm_george', 'bm_fable'];
     else names = ['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'];
     list.innerHTML = names.map(n => `<option value="${_esc(n)}"></option>`).join('');
     voice.placeholder = p === 'browser' ? 'System default' : (p === 'local' ? 'af_heart' : 'alloy');
