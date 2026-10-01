@@ -25,11 +25,13 @@ def _git(*args: str) -> str:
 
 
 def _read() -> dict:
-    commit = _git("rev-parse", "--short=8", "HEAD")
+    full = _git("rev-parse", "HEAD")
+    commit = full[:8]
     # The newest "Merge pull request #N" on the branch's own line of history.
     subject = _git("log", "--first-parent", "--merges", "-1", "--format=%s")
     m = re.search(r"#(\d+)", subject or "")
-    return {"pr": int(m.group(1)) if m else None, "commit": commit,
+    # The full hash too, for What's new to tell which merges are running.
+    return {"pr": int(m.group(1)) if m else None, "commit": commit, "commit_full": full,
             "branch": _git("rev-parse", "--abbrev-ref", "HEAD"), "started": STARTED}
 
 

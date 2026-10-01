@@ -240,6 +240,7 @@
   <link rel="stylesheet" href="/static/css/codePanel.css">
   <link rel="stylesheet" href="/static/css/terminal.css">
   <link rel="stylesheet" href="/static/css/settingsNav.css">
+  <link rel="stylesheet" href="/static/css/whatsNew.css">
   <link rel="stylesheet" href="/static/css/voiceCall.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
@@ -1077,6 +1078,17 @@
                 <circle cx="9" cy="15" r="1.5" fill="currentColor"/>
               </svg>
               <span class="grow">Theme</span>
+            </div>
+            <!-- What's new: every merged PR, and chats about them (whatsNew.js) -->
+            <div class="list-item" id="tool-whats-new-btn" title="Every change merged into Odysseus: what it does, whether it is running, and ask about it">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>
+                <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>
+              </svg>
+              <span class="grow">What's new</span>
+              <span class="sidebar-notif-dot" id="whats-new-dot" style="display:none" title="New changes since you last looked"></span>
             </div>
           </div>
         </div>
@@ -3035,6 +3047,7 @@
 <script type="module" src="/static/js/mailListenerSettings.js"></script>
 <script type="module" src="/static/js/inboundMail.js"></script>
 <script type="module" src="/static/js/devopsPage.js"></script>
+<script type="module" src="/static/js/whatsNew.js"></script>
 <script type="module" src="/static/js/codePanel.js"></script>
 <script type="module" src="/static/js/cloudBrowser.js"></script>
 <script type="module" src="/static/js/terminal.js"></script>
