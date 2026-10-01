@@ -108,7 +108,7 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "Discord Incoming Webhook. Paste the full webhook URL (including the token) as the Base URL.\n"
             "To get a URL: Discord server -> Server Settings -> Integrations -> Webhooks -> New Webhook -> Copy Webhook URL.\n"
             "The secret is embedded in the URL — leave auth type as None.\n\n"
-            "Use this integration as the target in Settings -> Reminders -> Webhook channel.\n"
+            "Use this integration as the target in Settings > Reminders > How you're reminded > Channel (Webhook).\n"
             "Payload template examples:\n"
             "  Simple:  {\"content\": \"{{title}}: {{message}}\"}\n"
             "  Embed:   {\"embeds\": [{\"title\": \"{{title}}\", \"description\": \"{{message}}\", \"color\": 5793266}]}"

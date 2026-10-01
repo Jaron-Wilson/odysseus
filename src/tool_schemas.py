@@ -406,14 +406,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "ui_control",
-            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), open_email_reply (open an email reply draft document; does NOT send), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation). When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
+            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook; name=settings with a value opens Settings right at that setting), open_email_reply (open an email reply draft document; does NOT send), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation). When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["toggle", "open_panel", "open_email_reply", "set_mode", "switch_model", "set_theme", "create_theme", "get_toggles"],
                                "description": "The UI action. Use set_theme for presets, create_theme to build a custom theme with any hex colors"},
                     "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, email, sessions, notes, brain/memories, skills, settings, cookbook. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
-                    "value": {"type": "string", "description": "Value: on/off for toggle, agent/chat for set_mode, model name for switch_model, theme name for set_theme, or folder for open_email_reply"},
+                    "value": {"type": "string", "description": "Value: on/off for toggle, agent/chat for set_mode, model name for switch_model, theme name for set_theme, folder for open_email_reply, or for open_panel settings the setting to jump to in plain words (e.g. 'speech to text engine')"},
                     "uid": {"type": "string", "description": "Email UID for open_email_reply"},
                     "folder": {"type": "string", "description": "Email folder for open_email_reply (default INBOX)"},
                     "mode": {"type": "string", "description": "Reply draft mode for open_email_reply: reply, reply-all, or ai-reply"},
@@ -1458,7 +1458,9 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         if action == "toggle":
             content = f"toggle {name} {value}"
         elif action == "open_panel":
-            content = f"open_panel {name or value}"
+            # `value` is what to show inside the panel: for settings, the
+            # setting to scroll to ("speech to text engine").
+            content = f"open_panel {name} {value}".strip() if name and value else f"open_panel {name or value}"
         elif action == "open_email_reply":
             uid = args.get("uid") or name
             folder = args.get("folder") or value or "INBOX"

@@ -549,7 +549,7 @@ function _animateEmailCardRemoval(uids, opts = {}) {
 // Every email route call in this file goes through here so switching accounts
 // is a single-variable flip.
 // Open the Settings modal and activate a specific tab. Used by empty-state
-// "Set up at: Settings › X" links across email/calendar/etc.
+// "Set up at: Settings › Integrations" links across email/calendar/etc.
 function _openSettingsTab(tab) {
   if (tab === 'integrations' && window.adminModule && typeof window.adminModule.open === 'function') {
     window.adminModule.open('integrations');
@@ -1858,7 +1858,7 @@ async function _loadInbound(grid, seq) {
   if (stats) stats.textContent = `${d.messages.length} inbound`;
   grid.innerHTML = '';
   if (!d.messages.length) {
-    grid.innerHTML = '<div class="email-loading">No mail yet. Mail to an address you route to the Odysseus mail Worker shows up here (Settings › Email › Inbound mail).</div>';
+    grid.innerHTML = '<div class="email-loading">No mail yet. Mail to an address you route to the Odysseus mail Worker shows up here (<a href="#" class="settings-goto-link" data-goto-setting="mail-listener-card">Settings › Email › Inbound mail</a>).</div>';
     return;
   }
   for (const m of d.messages) {

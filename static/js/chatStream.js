@@ -183,10 +183,16 @@ export function handleUIControl(uiData) {
           var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
           if (fn) fn();
         }).catch(function(){});
-      } else if (panel === 'memories' || panel === 'skills' || panel === 'settings') {
-        // These live in the sidebar / settings drawer — most just need
-        // an existing button click.
-        var ids = { memories: 'tool-memory-btn', skills: 'skills-btn', settings: 'open-settings-btn' };
+      } else if (panel === 'settings') {
+        // "Take me to the voice settings": the agent passes what to open,
+        // and settingsNav finds it (or opens Settings with Go to filled in).
+        import('./settingsNav.js').then(function(mod) {
+          if (uiData.settings_target) mod.goToSetting(uiData.settings_target);
+          else mod.openSettings();
+        }).catch(function(){});
+      } else if (panel === 'memories' || panel === 'skills') {
+        // These live in the sidebar, so an existing button click opens them.
+        var ids = { memories: 'tool-memory-btn', skills: 'skills-btn' };
         var btn = document.getElementById(ids[panel]);
         if (btn) btn.click();
       }

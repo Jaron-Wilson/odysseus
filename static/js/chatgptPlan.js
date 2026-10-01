@@ -1,4 +1,4 @@
-// static/js/chatgptPlan.js - "Sign in with ChatGPT" card in Settings > Services.
+// static/js/chatgptPlan.js - "Sign in with ChatGPT" card in Settings > Add Models.
 //
 // OpenAI's ChatGPT plan usage flow redirects to http://127.0.0.1:1455/auth/callback
 // on whatever device the browser is on. Odysseus usually runs on another

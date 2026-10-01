@@ -1293,6 +1293,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
       set_theme <preset>      — Apply a built-in theme preset (dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute)
       create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
       open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, cookbook)
+      open_panel settings <what> - Open Settings right at a setting, in plain words (e.g. "speech to text")
       open_email_reply <uid> [folder] [reply|reply-all|ai-reply] — Open a reply draft document for an email; does not send
       get_toggles             — Return current toggle states (server-side knowledge)
     """
@@ -1530,11 +1531,18 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         target = _panel_aliases.get(panel)
         if not target:
             return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook."}
-        return {
+        out = {
             "ui_event": "open_panel",
             "panel": target,
             "results": f"Opening {target} panel",
         }
+        # `open_panel settings <what>`: the page finds that setting in Settings
+        # (static/js/settingsNav.js), opens its tab and scrolls to it.
+        where = (parts[2] if len(parts) > 2 else "").strip()[:200]
+        if target == "settings" and where:
+            out["settings_target"] = where
+            out["results"] = f"Opening Settings at: {where}"
+        return out
 
     elif action == "open_email_reply":
         reply_parts = lines[0].strip().split()

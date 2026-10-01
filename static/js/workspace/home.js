@@ -4,8 +4,12 @@
 // the APIs the tools already use: today's calendar, what needs you (agent
 // plans waiting for approval, unanswered mail), running agent jobs, recent
 // chats and pinned notes. Every card links into the matching tab.
+//
+// "Take me to the voice settings" typed here opens Settings at that setting
+// instead of starting a chat (settingsNav.js), when there is one to open.
 
 import { openEntityHash } from '../chatRenderer.js';
+import settingsNav from '../settingsNav.js';
 
 let _el = null;
 let _api = null;
@@ -104,13 +108,19 @@ function _build() {
   ta.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
   });
-  form.addEventListener('submit', e => {
+  form.addEventListener('submit', async e => {
     e.preventDefault();
     const text = ta.value.trim();
     if (!text) { ta.focus(); return; }
+    if (settingsNav.isNavRequest(text)) {
+      const r = await settingsNav.locate(text);
+      if (r.entry) { ta.value = ''; grow(); ta.dispatchEvent(new Event('input')); settingsNav.goToSetting(r.entry); return; }
+    }
     ta.value = ''; grow();
+    ta.dispatchEvent(new Event('input'));
     _startChat(text);
   });
+  settingsNav.attachComposerChip(ta, form);
   _el.addEventListener('click', _onClick);
 }
 

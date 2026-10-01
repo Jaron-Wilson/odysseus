@@ -81,7 +81,7 @@ REFRESH_SKEW_SECONDS = 300
 # Refresh-token errors that mean the token set is dead (errors-and-recovery).
 _DEAD_REFRESH_CODES = {"invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_reused"}
 
-SIGN_IN_AGAIN = "Your ChatGPT sign-in expired. Sign in again in Settings > Services > Sign in with ChatGPT."
+SIGN_IN_AGAIN = "Your ChatGPT sign-in expired. Sign in again in Settings > Add Models > Sign in with ChatGPT."
 USAGE_LIMIT_MESSAGE = (
     "Your ChatGPT plan's usage limit was reached for now. "
     f"Check ChatGPT Settings > Usage ({USAGE_SETTINGS_URL}) or try again later."
@@ -575,7 +575,7 @@ def get_access_token(owner: Optional[str], *, now: Optional[float] = None) -> st
     """A current access token for this user, refreshing first when due."""
     creds = load_credentials(owner)
     if not creds.get("access_token"):
-        raise NotSignedIn("Sign in with ChatGPT in Settings > Services to use ChatGPT models.")
+        raise NotSignedIn("Sign in with ChatGPT in Settings > Add Models to use ChatGPT models.")
     t = time.time() if now is None else now
     if not _needs_refresh(creds, t):
         return creds["access_token"]

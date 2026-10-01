@@ -35,7 +35,7 @@ async def _delete_endpoint_for_task(task: dict) -> None:
 
     Without this, killing the tmux session leaves the endpoint sitting in
     the picker (probe goes offline; chats still try to route there) and
-    the user has to delete it by hand in Settings -> Endpoints.
+    the user has to delete it by hand in Settings > Add Models > Added Models.
     """
     import re as _re
     payload = task.get("payload") or {}

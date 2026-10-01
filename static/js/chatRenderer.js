@@ -299,7 +299,7 @@ function _openVisionEditor(att, userMsgEl) {
   panel.className = 'vision-editor-panel';
   const title = document.createElement('div');
   title.className = 'vision-editor-title';
-  // Eye icon matches the one in Settings → Vision so users recognise where
+  // Eye icon matches the one in Settings > AI Defaults > Vision so users recognize where
   // this text originates.
   title.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg><span>Vision text</span>';
   panel.appendChild(title);

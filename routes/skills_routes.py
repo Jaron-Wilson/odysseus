@@ -995,7 +995,7 @@ def _resolve_audit_models(owner=None):
     """Resolve (url, model, headers, teacher) for an audit run from Settings.
 
     Worker = Utility model (falling back to Default, normalized to a served
-    model id); teacher = the optional Settings → Teacher Model config. Shared
+    model id); teacher = the optional Settings > AI Defaults > Teacher Model config. Shared
     by the manual /audit-all route and scheduled/event audits. Raises
     ValueError if no worker model.
     """

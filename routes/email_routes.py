@@ -2824,7 +2824,7 @@ def setup_email_routes():
             except Exception as e:
                 detail = getattr(e, "detail", None) or str(e)
                 _attempted = ", ".join(f"{m}@{u.split('/')[2] if '/' in u else u}" for u, m, _ in _candidates) or "no candidates"
-                return {"success": False, "error": f"All endpoints failed ({_attempted}): {detail}. Check your API keys in Settings → Services."}
+                return {"success": False, "error": f"All endpoints failed ({_attempted}): {detail}. Check your API keys in Settings > Add Models."}
 
             reply = _apply_email_style_mechanics(_extract_reply(reply or ""))
             if not reply:

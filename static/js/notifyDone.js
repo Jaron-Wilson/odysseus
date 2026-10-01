@@ -129,7 +129,7 @@ async function _openMenu(btn) {
       <button type="button" class="notify-done-opt${is(o.t) ? ' selected' : ''}" data-i="${i}">
         ${_esc(o.label)}
       </button>`).join('')}
-    ${names.length || here ? '' : '<div class="notify-done-hint">No devices have notifications turned on yet. Turn them on in Settings, Devices.</div>'}
+    ${names.length || here ? '' : '<div class="notify-done-hint">No devices have notifications turned on yet. Turn them on in <a href="#" class="settings-goto-link" data-goto-setting="set-push-toggle">Settings &gt; Reminders &gt; How you&#39;re reminded &gt; This device</a>.</div>'}
     <div class="notify-done-hint">Sent from the server, so it arrives even with this page closed.</div>`;
   menu.addEventListener('click', (ev) => {
     const b = ev.target.closest('.notify-done-opt');

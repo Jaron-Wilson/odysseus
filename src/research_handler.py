@@ -1064,7 +1064,7 @@ Try the web search toggle for simpler queries, or fix the research engine for co
 **Fallback Error:** {str(e2)}
 
 **Please check:**
-1. Search provider configuration in Settings -> Search Settings
+1. Search provider configuration in Settings > Search > Web Search
 2. Network connectivity to search APIs
 3. Application logs for detailed error information
 4. That SearXNG is running (if using SearXNG)
