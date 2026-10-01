@@ -1,0 +1,132 @@
+/* What's new (static/js/whatsNew.js): the merged PRs, newest first. Built on
+   the .bg-panel window the DevOps and Background pages use; the Studio look
+   is at the bottom. */
+
+.wn-panel { width: min(980px, 100%); }
+.wn-panel .bg-panel-head { gap: 10px; justify-content: flex-start; }
+.wn-panel .bg-panel-head > span:first-child { flex: 1; }
+.wn-panel .fill-chat-area-btn { margin-left: 0; }
+.wn-panel.fill-chat-area .wn-body { max-width: 980px; width: 100%; margin: 0 auto; }
+
+.wn-btn {
+  font: inherit; font-size: 12.5px; font-weight: 500; line-height: 1.3; padding: 4px 10px; border-radius: 8px;
+  cursor: pointer; color: inherit; background: none; text-decoration: none; display: inline-flex; align-items: center;
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+}
+.wn-btn:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.wn-btn:disabled { opacity: .55; cursor: default; }
+.wn-btn.wn-primary {
+  background: color-mix(in srgb, var(--accent, #60a5fa) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #60a5fa) 45%, transparent);
+}
+.wn-btn.wn-primary:hover { background: color-mix(in srgb, var(--accent, #60a5fa) 32%, transparent); }
+
+.wn-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0 4px; padding: 9px 12px;
+  font-size: 13px; border-radius: 10px; background: color-mix(in srgb, #d9a400 14%, transparent);
+  border: 1px solid color-mix(in srgb, #d9a400 40%, transparent);
+}
+
+.wn-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0 6px; }
+.wn-search {
+  flex: 1 1 240px; min-width: 0; font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 9px; color: inherit;
+  background: color-mix(in srgb, var(--fg) 5%, transparent); border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+}
+.wn-chips { display: inline-flex; gap: 4px; }
+.wn-chip {
+  font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; cursor: pointer; color: inherit;
+  background: none; border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+}
+.wn-chip.active { background: color-mix(in srgb, var(--fg) 12%, transparent); font-weight: 600; }
+.wn-count { font-size: 12px; opacity: .6; }
+
+.wn-selbar {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 7px 10px;
+  font-size: 13px; border-radius: 10px; background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--accent, #60a5fa) 45%, transparent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+}
+.wn-selbar[hidden] { display: none; }
+.wn-selcount { flex: 1; font-weight: 600; }
+
+.wn-status { font-size: 11.5px; opacity: .6; margin: 2px 0 4px; }
+.wn-status code { font-size: 11px; }
+
+.wn-day { margin-top: 16px; }
+.wn-item {
+  position: relative; padding: 10px 12px; margin-bottom: 6px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.wn-item:hover { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+.wn-item.is-new { border-left: 3px solid var(--accent, #60a5fa); padding-left: 10px; }
+.wn-item.picked { background: color-mix(in srgb, var(--accent, #60a5fa) 8%, transparent); }
+.wn-row { display: flex; gap: 10px; align-items: flex-start; }
+.wn-pick { padding-top: 2px; cursor: pointer; }
+.wn-pick input { margin: 0; cursor: pointer; accent-color: var(--accent, #60a5fa); }
+.wn-main { flex: 1; min-width: 0; }
+.wn-title-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.wn-title {
+  font: inherit; font-size: 14px; font-weight: 600; text-align: left; color: inherit; background: none; border: 0;
+  padding: 0; cursor: pointer; min-width: 0; overflow-wrap: anywhere;
+}
+.wn-title:hover { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--fg) 35%, transparent); }
+.wn-num { opacity: .55; font-weight: 500; font-variant-numeric: tabular-nums; }
+.wn-pill { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+.wn-new { background: color-mix(in srgb, var(--accent, #60a5fa) 25%, transparent); }
+.wn-running { background: color-mix(in srgb, #3fb950 20%, transparent); }
+.wn-pending { background: color-mix(in srgb, #d9a400 24%, transparent); }
+.wn-meta { font-size: 12px; opacity: .6; margin-top: 3px; }
+.wn-meta code { font-size: 11.5px; }
+.wn-add { color: #3fb950; font-variant-numeric: tabular-nums; }
+.wn-del { color: #e5533d; font-variant-numeric: tabular-nums; }
+.wn-summary { font-size: 13px; line-height: 1.5; margin: 6px 0 0; opacity: .9; }
+.wn-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.wn-muted { opacity: .6; }
+
+.wn-detail { margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--fg) 8%, transparent); }
+.wn-body { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.wn-body :is(h1, h2, h3, h4) { font-family: inherit; font-size: 14px; font-weight: 650; margin: 12px 0 4px; }
+.wn-body pre { max-height: 360px; overflow: auto; }
+.wn-body img { max-width: 100%; }
+.wn-files { margin-top: 10px; font-size: 12.5px; }
+.wn-files summary { cursor: pointer; opacity: .8; }
+.wn-files ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 320px; overflow: auto; }
+.wn-files li { display: flex; gap: 10px; justify-content: space-between; padding: 2px 0; }
+.wn-files li code { overflow-wrap: anywhere; font-size: 12px; }
+.wn-stat { flex: none; font-size: 11.5px; }
+.wn-more { opacity: .6; }
+
+@media (max-width: 600px) {
+  .wn-pick { display: none; }
+  .wn-item.is-new { padding-left: 10px; }
+}
+
+/* Studio and Workspace */
+html.ui-studio .wn-panel .wn-btn {
+  font-family: var(--st-font); color: var(--st-text-2); border-color: var(--st-line-2); border-radius: var(--st-r-sm);
+}
+html.ui-studio .wn-panel .wn-btn:hover { background: var(--st-hover); color: var(--st-text); }
+html.ui-studio .wn-panel .wn-btn.wn-primary { color: var(--st-accent-fg, #fff); background: var(--st-accent); border-color: var(--st-accent); }
+html.ui-studio .wn-panel .wn-btn.wn-primary:hover { filter: brightness(1.08); }
+html.ui-studio .wn-panel .wn-btn:focus-visible,
+html.ui-studio .wn-panel .wn-chip:focus-visible,
+html.ui-studio .wn-panel .wn-title:focus-visible { outline: none; box-shadow: var(--st-ring); }
+html.ui-studio .wn-panel .wn-search {
+  font-family: var(--st-font); background: var(--st-sunken, transparent); border-color: var(--st-line-2); border-radius: var(--st-r);
+}
+html.ui-studio .wn-panel .wn-search:focus { border-color: var(--st-accent-line); box-shadow: var(--st-ring); outline: none; }
+html.ui-studio .wn-panel .wn-chip { color: var(--st-text-2); border-color: var(--st-line-2); }
+html.ui-studio .wn-panel .wn-chip.active { color: var(--st-text); background: var(--st-press); border-color: var(--st-line-2); }
+html.ui-studio .wn-panel .wn-item { border-color: var(--st-line); border-radius: var(--st-r); }
+html.ui-studio .wn-panel .wn-item:hover { background: var(--st-hover); border-color: var(--st-line-2); }
+html.ui-studio .wn-panel .wn-item.is-new { border-left-color: var(--st-accent); }
+html.ui-studio .wn-panel .wn-item.picked { background: var(--st-accent-soft); }
+html.ui-studio .wn-panel .wn-title { color: var(--st-text); }
+html.ui-studio .wn-panel .wn-meta,
+html.ui-studio .wn-panel .wn-status { color: var(--st-text-3); opacity: 1; }
+html.ui-studio .wn-panel .wn-summary { color: var(--st-text-2); opacity: 1; }
+html.ui-studio .wn-panel .wn-new { background: var(--st-accent-soft); color: var(--st-text); }
+html.ui-studio .wn-panel .wn-running { background: var(--stb-ok-soft, color-mix(in srgb, #3fb950 18%, transparent)); color: var(--st-text); }
+html.ui-studio .wn-panel .wn-banner { border-radius: var(--st-r); }
+html.ui-studio .wn-panel .wn-selbar { background: var(--st-surface); border-color: var(--st-accent-line); border-radius: var(--st-r); box-shadow: var(--st-shadow); }
+html.ui-studio .wn-panel code { font-family: var(--st-mono); }

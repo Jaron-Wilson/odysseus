@@ -86,6 +86,10 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "theme", "label": "Theme", "group": "system", "open": "#tool-theme-btn", "tab": "theme",
       "desc": "Colors and background",
       "aliases": ["themes", "colors", "colours", "color scheme"] },
+    { "key": "whats-new", "label": "What's new", "group": "system", "open": "#tool-whats-new-btn", "tab": "whats-new",
+      "desc": "Every merged change, and ask about any of them",
+      "aliases": ["whats new", "what is new", "changelog", "change log", "updates", "release notes", "what changed",
+                  "changes", "merged prs", "pull requests", "prs", "news"] },
 
     { "key": "email", "label": "Email", "group": null, "open": "#email-section-title", "tab": "email",
       "desc": "Your inbox",
