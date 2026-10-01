@@ -711,7 +711,7 @@ export function updateModelPicker() {
   }
 
   let displayName = modelId ? modelId.split('/').pop() : 'Select model';
-  // Which server it is on, by its nickname (Settings > Models > Rename): the
+  // Which server it is on, by its nickname (Settings > Add Models > Added Models > Rename): the
   // same model name can be on two servers (two Ollamas). Shown when the name
   // is ambiguous, and always on hover.
   const epUrl = ((s && s.endpoint_url) || (_pendingChat && _pendingChat.url) || '').replace(/\/+$/, '');

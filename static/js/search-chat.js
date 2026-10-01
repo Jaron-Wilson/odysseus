@@ -1,12 +1,17 @@
 // Search Chat Module — Ctrl+K command palette for searching conversations
+// and for jumping to a setting (settingsNav.js): matching settings are listed
+// above the chats, and "take me to ..." can ask the Utility model.
 
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
+import settingsNav from './settingsNav.js';
 
 let API_BASE = '';
 let debounceTimer = null;
 let selectedIndex = -1;
 let results = [];
+let settingHits = [];     // index entries shown in the Settings group
+let lastQuery = '';
 
 function el(id) { return document.getElementById(id); }
 
@@ -21,6 +26,7 @@ export function openSearch() {
   }
   selectedIndex = -1;
   results = [];
+  settingHits = [];
   el('search-results').innerHTML = '';
 }
 
@@ -61,16 +67,59 @@ function formatTimestamp(iso) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function renderResults(data, query) {
-  results = data;
+// Up to three settings for the query, plus an "ask the helper" row when it
+// reads as "take me to ..." and nothing local is a sure match.
+function _settingsGroup(query) {
+  settingHits = [];
+  if (!query || query.length < 2) return '';
+  let ranked = [];
+  try { ranked = settingsNav.rank(query); } catch (_) { return ''; }
+  const nav = settingsNav.isNavRequest(query);
+  const sure = settingsNav.isConfident(ranked);
+  settingHits = ranked.filter(r => r.score >= (nav ? 1 : 2.4)).slice(0, nav && !sure ? 2 : 3).map(r => r.entry);
+  let html = '';
+  if (settingHits.length || nav) html += '<div class="search-group-header">Settings</div>';
+  settingHits.forEach((e, i) => {
+    html += `<div class="search-result-item search-result-setting" data-setting="${i}">
+      <div class="search-result-role">Go</div>
+      <div class="search-result-snippet">${settingsNav.pathHtml(e)}</div>
+    </div>`;
+  });
+  if (nav && !sure) {
+    html += `<div class="search-result-item search-result-setting" data-setting-ask="1">
+      <div class="search-result-role">Ask</div>
+      <div class="search-result-snippet">Find "${escapeHtml(query)}" in Settings</div>
+    </div>`;
+  }
+  return html;
+}
+
+function _openSettingItem(item) {
+  const q = lastQuery;
+  closeSearch();
+  if (item.dataset.settingAsk) settingsNav.goToSetting(q);
+  else {
+    const e = settingHits[+item.dataset.setting];
+    if (e) settingsNav.goToSetting(e);
+  }
+}
+
+function renderResults(data, query, pending = false) {
+  results = data || [];
+  lastQuery = query;
   selectedIndex = -1;
   const container = el('search-results');
   if (!container) return;
+  const settingsHtml = _settingsGroup(query);
+  const wire = () => container.querySelectorAll('.search-result-setting').forEach(item => {
+    item.addEventListener('click', () => _openSettingItem(item));
+  });
 
   if (!data || data.length === 0) {
-    container.innerHTML = query
+    container.innerHTML = settingsHtml || (query && !pending
       ? '<div class="search-empty">No results found</div>'
-      : '';
+      : '');
+    wire();
     return;
   }
 
@@ -83,7 +132,7 @@ function renderResults(data, query) {
     grouped[r.session_id].items.push(r);
   }
 
-  let html = '';
+  let html = settingsHtml;
   let idx = 0;
   for (const [sessionId, group] of Object.entries(grouped)) {
     html += `<div class="search-group-header">${escapeHtml(group.name)}</div>`;
@@ -98,9 +147,10 @@ function renderResults(data, query) {
     }
   }
   container.innerHTML = html;
+  wire();
 
   // Click handlers
-  container.querySelectorAll('.search-result-item').forEach(item => {
+  container.querySelectorAll('.search-result-item:not(.search-result-setting)').forEach(item => {
     item.addEventListener('click', () => {
       const sid = item.dataset.session;
       navigateToSession(sid);
@@ -145,10 +195,13 @@ function handleKeydown(e) {
     updateSelection();
   } else if (e.key === 'Enter') {
     e.preventDefault();
-    if (selectedIndex >= 0 && items[selectedIndex]) {
-      const sid = items[selectedIndex].dataset.session;
-      navigateToSession(sid);
-    }
+    // Nothing picked: a sure settings match (or "take me to ...") still goes.
+    const item = selectedIndex >= 0 ? items[selectedIndex]
+      : (container && settingHits.length && settingsNav.isConfident(settingsNav.rank(lastQuery)) ? items[0]
+        : (container && container.querySelector('[data-setting-ask]')));
+    if (!item) return;
+    if (item.classList.contains('search-result-setting')) _openSettingItem(item);
+    else navigateToSession(item.dataset.session);
   }
 }
 
@@ -160,6 +213,8 @@ function handleInput(e) {
     renderResults([], '');
     return;
   }
+  // Settings matches are local and instant; chats follow from the server.
+  renderResults([], query, true);
 
   debounceTimer = setTimeout(async () => {
     try {

@@ -101,7 +101,7 @@ class NotifyDeviceTool:
             return {
                 "error": (
                     "No device has enabled notifications yet. Open Odysseus on the device "
-                    "and turn them on under Settings → How you're reminded."
+                    "and turn them on under Settings > Reminders > How you're reminded."
                 ),
                 "exit_code": 1,
             }

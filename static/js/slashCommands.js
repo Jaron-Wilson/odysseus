@@ -1383,6 +1383,13 @@ async function _cmdSettings(args, ctx) {
   // Opens the Settings modal — primarily useful when the user has hidden the
   // Settings cog in Appearance and needs a way back in.
   const tab = (args[0] || '').toLowerCase() || undefined;
+  // Anything but a tab id is a setting to go to: /settings speech to text.
+  const rest = (args || []).join(' ').trim();
+  const tabs = [...document.querySelectorAll('#settings-modal [data-settings-tab]')].map(b => b.dataset.settingsTab);
+  if (rest && !(args.length === 1 && tabs.includes(tab))) {
+    import('./settingsNav.js').then(m => m.goToSetting(rest)).catch(() => slashReply('Could not open Settings.'));
+    return true;
+  }
   try {
     if (settingsModule && typeof settingsModule.open === 'function') {
       settingsModule.open(tab);
@@ -5929,9 +5936,9 @@ const COMMANDS = {
   settings: {
     alias: ['cfg', 'preferences', 'config'],
     category: 'Settings',
-    help: 'Open the Settings panel',
+    help: 'Open the Settings panel, or go straight to a setting',
     handler: _cmdSettings,
-    usage: '/settings [tab]'
+    usage: '/settings [tab or setting, e.g. speech to text]'
   },
   open: {
     alias: ['show'],

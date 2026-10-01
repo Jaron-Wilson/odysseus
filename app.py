@@ -658,6 +658,9 @@ from routes.overlay_routes import setup_overlay_routes
 app.include_router(setup_overlay_routes())
 from routes.chat_prefs_routes import setup_chat_prefs_routes
 app.include_router(setup_chat_prefs_routes())
+# Settings "Go to...": the Utility model picks a setting (routes/settings_locate_routes.py).
+from routes.settings_locate_routes import setup_settings_locate_routes
+app.include_router(setup_settings_locate_routes())
 
 
 from routes.deploy_routes import setup_deploy_routes

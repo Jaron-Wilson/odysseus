@@ -1657,7 +1657,7 @@ class TaskScheduler:
         # Falls back to 20 if not set — the historical default.
         _task_max_rounds = task.max_steps if task.max_steps and task.max_steps > 0 else 20
         # Tasks are background workloads — they share the Utility model's
-        # fallback chain (Settings → Utility Model → Fallbacks). A downed
+        # fallback chain (Settings > AI Defaults > Utility Model > Fallbacks). A downed
         # primary endpoint won't silently yield `(no output)` — same recipe
         # chat uses but with the utility list (`utility_model_fallbacks`).
         try:

@@ -48,8 +48,8 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'if [ -n "$HF_TOKEN" ]; then '
     'echo "[odysseus] HF token: applied"; '
     'else '
-    'echo "[odysseus] HF token: NOT SET — gated/private models will be denied. '
-    'Add one in Odysseus Settings -> Cookbook -> HuggingFace Token."; '
+    'echo "[odysseus] HF token: NOT SET, gated/private models will be denied. '
+    'Add one in Odysseus Cookbook > Settings > HuggingFace Token."; '
     'fi'
 )
 

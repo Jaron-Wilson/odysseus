@@ -317,9 +317,9 @@ export async function resolveStt() {
   if (p === 'browser') {
     const r = _browserRecognizer(s.language || '');
     if (r) return r;
-    return { kind: 'none', reason: 'This browser has no built-in speech recognition. Pick Whisper or an API engine in Settings > AI > Voice call.' };
+    return { kind: 'none', goto: 'set-vcStt', reason: 'This browser has no built-in speech recognition. Pick Whisper or an API engine for "Hears with" in Settings > AI Defaults > Voice call.' };
   }
-  return { kind: 'none', reason: 'Speech to text is off. Pick an engine in Settings > AI > Voice call.' };
+  return { kind: 'none', goto: 'set-vcStt', reason: 'Speech to text is off. Pick an engine for "Hears with" in Settings > AI Defaults > Voice call.' };
 }
 
 async function _synthServer(text, signal) {
@@ -503,7 +503,7 @@ export class VoiceCall {
     if (this.ended) { this._releaseMic(); return false; }
     if (!this.stt || this.stt.kind === 'none') {
       this._releaseMic();
-      this._fail((this.stt && this.stt.reason) || 'Speech to text is not set up.');
+      this._fail((this.stt && this.stt.reason) || 'Speech to text is not set up.', (this.stt && this.stt.goto) || 'set-vcStt');
       return false;
     }
     if (this.stt.kind === 'browser') {
@@ -1124,19 +1124,33 @@ export class VoiceCall {
     if (this._els) this._els.hint.textContent = msg || '';
   }
 
-  _showError(msg) {
+  // `goto` is a Settings control id (settingsNav.js); the message then ends
+  // with a link that closes the call and opens Settings right at it.
+  _showError(msg, goto) {
     this._emit('error', { message: msg });
     if (!this._els) return;
-    this._els.error.textContent = msg;
-    this._els.error.hidden = false;
+    const box = this._els.error;
+    box.textContent = msg;
+    if (goto) {
+      const a = document.createElement('button');
+      a.type = 'button';
+      a.className = 'settings-goto-link vc-error-goto';
+      a.textContent = 'Open that setting';
+      a.addEventListener('click', () => {
+        this.end('settings');
+        import('./settingsNav.js').then(m => m.goToSetting(goto)).catch(() => {});
+      });
+      box.append(' ', a);
+    }
+    box.hidden = false;
   }
 
   _clearError() {
     if (this._els) { this._els.error.hidden = true; this._els.error.textContent = ''; }
   }
 
-  _fail(msg) {
-    this._showError(msg);
+  _fail(msg, goto) {
+    this._showError(msg, goto);
     this._setState('error');
   }
 
@@ -1198,7 +1212,7 @@ function _initButton() {
   b.addEventListener('click', () => { if (isActive()) end(); else open(); });
 }
 
-// ── Settings > AI > Voice call ──────────────────────────────────────────
+// ── Settings > AI Defaults > Voice call ─────────────────────────────────
 
 async function _loadEngines(card) {
   const $ = (id) => card.querySelector('#' + id);

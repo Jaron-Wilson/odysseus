@@ -239,6 +239,7 @@
   <link rel="stylesheet" href="/static/css/workspace.css">
   <link rel="stylesheet" href="/static/css/codePanel.css">
   <link rel="stylesheet" href="/static/css/terminal.css">
+  <link rel="stylesheet" href="/static/css/settingsNav.css">
   <link rel="stylesheet" href="/static/css/voiceCall.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
@@ -1549,6 +1550,12 @@
     <div class="modal-content settings-modal-content" role="dialog" aria-label="Settings">
       <div class="modal-header">
         <h4><span style="vertical-align:-1px;margin-right:6px;font-size:15px">&#x2699;</span>Settings</h4>
+        <!-- "Go to..." (static/js/settingsNav.js): find a setting in plain words. -->
+        <div class="settings-goto" id="settings-goto">
+          <svg class="settings-goto-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" id="settings-goto-input" placeholder="Go to... e.g. speech to text" aria-label="Go to a setting" autocomplete="off" spellcheck="false">
+          <div class="settings-goto-results" id="settings-goto-results" role="listbox" aria-label="Matching settings" hidden></div>
+        </div>
         <button type="button" class="theme-opacity-wrap theme-opacity-toggle hidden" id="settings-opacity-wrap" title="Fade this window to preview the page behind it" aria-pressed="false">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span class="theme-opacity-label">Peek</span>
@@ -1654,7 +1661,7 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label">Model</label>
-                <select id="set-utilityModelSelect" class="settings-select"><option value="">—</option></select>
+                <select id="set-utilityModelSelect" class="settings-select" data-goto-keywords="utility helper background title naming model"><option value="">—</option></select>
               </div>
               <div id="set-utilityFallbacks" class="settings-fallbacks"></div>
               <button type="button" class="settings-fallback-add" id="set-utilityAddFallback" title="Add a model to try if the utility model fails">+ Add fallback</button>
@@ -1724,13 +1731,13 @@
           <!-- Voice call (static/js/voiceCall.js). Listening, pause and
                barge-in are kept on this device; the engines are the app's
                Speech to Text and Text to Speech settings. -->
-          <div class="admin-card" id="voice-call-settings">
+          <div class="admin-card" id="voice-call-settings" data-goto-primary="set-vcStt" data-goto-keywords="voice call talk phone">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Voice call</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Talk with the agent from the phone button by the composer, or <code>/call</code>. Your words go into the chat as messages and the reply is read out loud.</div>
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label" for="set-vcMode">Listening</label>
-                <select id="set-vcMode" class="settings-select">
+                <select id="set-vcMode" class="settings-select" data-goto-keywords="push to talk ptt automatic listen">
                   <option value="auto">Automatic: a pause sends</option>
                   <option value="ptt">Push to talk (hold Space)</option>
                 </select>
@@ -1748,11 +1755,11 @@
               <div class="settings-row">
                 <label class="settings-label" for="set-vcBargeIn">Barge-in</label>
                 <span style="flex:1;font-size:12px;opacity:0.7">Talking over the agent stops it</span>
-                <label class="admin-switch"><input type="checkbox" id="set-vcBargeIn" checked><span class="admin-slider"></span></label>
+                <label class="admin-switch"><input type="checkbox" id="set-vcBargeIn" checked data-goto-keywords="interrupt talk over"><span class="admin-slider"></span></label>
               </div>
               <div class="settings-row">
                 <label class="settings-label" for="set-vcStt">Hears with</label>
-                <select id="set-vcStt" class="settings-select">
+                <select id="set-vcStt" class="settings-select" data-goto-keywords="stt speech to text transcription engine whisper microphone voice input">
                   <option value="disabled">Off</option>
                   <option value="local">Local (Whisper)</option>
                   <option value="browser">Browser (built-in)</option>
@@ -1760,14 +1767,14 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label" for="set-vcTts">Speaks with</label>
-                <select id="set-vcTts" class="settings-select">
+                <select id="set-vcTts" class="settings-select" data-goto-keywords="tts text to speech read aloud engine kokoro voice output">
                   <option value="browser">Browser (built-in)</option>
                   <option value="local">Local (Kokoro-82M)</option>
                 </select>
               </div>
               <div class="settings-row">
                 <label class="settings-label" for="set-vcVoice">Voice</label>
-                <input id="set-vcVoice" class="settings-select" type="text" list="set-vcVoiceList" autocomplete="off" spellcheck="false">
+                <input id="set-vcVoice" class="settings-select" type="text" data-goto-keywords="tts speaker" list="set-vcVoiceList" autocomplete="off" spellcheck="false">
                 <datalist id="set-vcVoiceList"></datalist>
               </div>
               <div id="set-vcMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
@@ -1934,7 +1941,7 @@
 
         <!-- ═══ APPEARANCE TAB ═══ -->
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
-          <div class="admin-card ui-design-card">
+          <div class="admin-card ui-design-card" data-goto-keywords="interface design layout workspace studio classic redesign">
             <h2>Interface</h2>
             <p class="ui-design-hint">How the whole app is laid out. Your color theme works with any of them.</p>
             <div class="ui-design-choices" role="radiogroup" aria-label="Interface design">
@@ -2206,7 +2213,7 @@
               </div>
             </div>
           </div>
-          <div class="admin-card" id="settings-2fa-card">
+          <div class="admin-card" id="settings-2fa-card" data-goto-keywords="2fa totp mfa authenticator">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>Two-Factor Authentication</h2>
             <div id="settings-2fa-content">
               <!-- Populated by JS -->
@@ -2289,7 +2296,7 @@
               <div class="settings-row">
                 <label class="settings-label">This device</label>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                  <button id="set-push-toggle" class="settings-btn" type="button">Enable notifications</button>
+                  <button id="set-push-toggle" class="settings-btn" type="button" data-goto-keywords="push notification enable browser">Enable notifications</button>
                   <button id="set-push-test" class="settings-btn" type="button">Send test</button>
                   <span id="set-push-status" class="admin-toggle-sub"></span>
                 </div>
@@ -2299,7 +2306,7 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label">Channel</label>
-                <select id="set-reminder-channel" class="settings-select">
+                <select id="set-reminder-channel" class="settings-select" data-goto-keywords="webhook ntfy email delivery">
                   <option value="browser">Browser notification (default)</option>
                   <option value="email" id="set-reminder-channel-email-opt">Email</option>
                   <option value="ntfy" id="set-reminder-channel-ntfy-opt">ntfy</option>
@@ -2426,7 +2433,7 @@
             <div id="devices-subs"><div class="admin-toggle-sub">Loading…</div></div>
           </div>
           <!-- Phone SMS: routes/sms_routes.py, filled in by devicesSettings.js. -->
-          <div class="admin-card" id="sms-card">
+          <div class="admin-card" id="sms-card" data-goto-keywords="sms text message texting phone gateway">
             <h2>Phone SMS</h2>
             <div class="admin-toggle-sub">Text Odysseus from your number. Your Android phone forwards each text it gets to this server, which answers: <strong>new [model]</strong> or <strong>chat &lt;n&gt;</strong> (start talking to a chat; then just text it), <strong>end</strong>, <strong>models</strong> and <strong>model &lt;n|name&gt;</strong> (pick its model), <strong>list</strong> (your recent chats, numbered), <strong>say &lt;n&gt; &lt;text&gt;</strong> (one text to chat n), <strong>status</strong>, <strong>help</strong>. Only texts from your numbers, sent with the secret below, are acted on.</div>
             <div class="settings-col">
@@ -2856,7 +2863,7 @@
   <!-- Search overlay (Ctrl+K command palette) -->
   <div class="search-overlay hidden" id="search-overlay">
     <div class="search-popup">
-      <input type="text" id="search-input" placeholder="Search conversations..." autocomplete="off" />
+      <input type="text" id="search-input" placeholder="Search conversations and settings..." autocomplete="off" />
       <div class="search-results" id="search-results"></div>
     </div>
   </div>

@@ -1537,7 +1537,7 @@ async def _stream_chatgpt_plan(target_url: str, payload: Dict, h: Dict, stream_t
     from src import chatgpt_plan as _cgp
 
     if not any(k.lower() == "authorization" for k in h):
-        yield _cgp._sse_error("Sign in with ChatGPT in Settings > Services to use ChatGPT models.", 401, "not_signed_in")
+        yield _cgp._sse_error("Sign in with ChatGPT in Settings > Add Models to use ChatGPT models.", 401, "not_signed_in")
         return
     translator = _cgp.StreamTranslator()
     try:
@@ -1584,7 +1584,7 @@ def _chatgpt_plan_call_sync(model: str, messages: List[Dict], headers: Optional[
     h = _provider_headers("chatgpt-plan", headers)
     h["Accept"] = "text/event-stream"
     if not any(k.lower() == "authorization" for k in h):
-        raise HTTPException(401, "Sign in with ChatGPT in Settings > Services to use ChatGPT models.")
+        raise HTTPException(401, "Sign in with ChatGPT in Settings > Add Models to use ChatGPT models.")
     payload = _cgp.build_payload(model, messages)
     translator = _cgp.StreamTranslator()
     parts: List[str] = []

@@ -35,6 +35,8 @@ import themeModule from './js/theme.js';
 // Interface design (Studio / Classic); sets html.ui-studio and its controls.
 import './js/uiDesign.js';
 import './js/workspace/shell.js';
+// "Go to..." for Settings: the header box, composer chip and setting links.
+import './js/settingsNav.js';
 // IMPORTANT: import cookbook.js with NO ?v= query — the same plain specifier
 // every other importer (cookbook-hwfit.js / cookbook-diagnosis.js) uses. A query
 // mismatch makes the browser load cookbook.js twice as separate modules (two

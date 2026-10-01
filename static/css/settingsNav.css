@@ -1,0 +1,157 @@
+/* "Go to..." for Settings (static/js/settingsNav.js): the box in the Settings
+   header, its match list, the flash on the control it lands on, and the
+   "Open <setting>" chip by a composer. Works in Classic, Studio and Workspace. */
+
+.settings-goto {
+  position: relative;
+  flex: 1 1 auto;
+  max-width: 340px;
+  min-width: 120px;
+  margin: 0 10px 0 16px;
+  display: flex;
+  align-items: center;
+  cursor: auto;
+}
+.settings-goto-icon {
+  position: absolute;
+  left: 9px;
+  opacity: 0.45;
+  pointer-events: none;
+}
+.settings-goto input#settings-goto-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 10px 0 28px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+.settings-goto input#settings-goto-input:focus {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+}
+.settings-goto input#settings-goto-input::placeholder {
+  color: color-mix(in srgb, var(--fg) 38%, transparent);
+}
+.settings-goto-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 280px;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 50;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+.settings-goto-results[hidden] { display: none; }
+.settings-goto-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-goto-item:hover,
+.settings-goto-item.selected {
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.settings-goto-crumbs { opacity: 0.6; }
+.settings-goto-item b { font-weight: 600; }
+.settings-goto-note {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* Where a jump lands: two soft pulses, then gone. */
+.settings-goto-flash {
+  border-radius: 8px;
+  animation: settings-goto-flash 1.3s ease-in-out 2;
+}
+@keyframes settings-goto-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; background-color: transparent; }
+  30% {
+    box-shadow: 0 0 0 2px var(--accent, var(--red));
+    background-color: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-goto-flash {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--accent, var(--red));
+  }
+}
+
+/* The composer chip: above the chat composer, below the Workspace Home one. */
+.settings-goto-chip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 14px);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
+  background: var(--panel, var(--bg));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+.settings-goto-chip[hidden] { display: none; }
+.ws-compose > .settings-goto-chip { bottom: auto; top: calc(100% + 8px); left: 12px; }
+.settings-goto-chip-btn,
+.settings-goto-chip-x {
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.settings-goto-chip-btn {
+  padding: 4px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-goto-chip-btn:hover { background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent); }
+.settings-goto-chip-lead { color: var(--accent, var(--red)); font-weight: 600; }
+.settings-goto-chip-x { padding: 2px 8px; opacity: 0.55; font-size: 15px; line-height: 1; }
+.settings-goto-chip-x:hover { opacity: 1; }
+
+/* A link to a setting inside a message (the voice call's "Open that setting"). */
+.settings-goto-link {
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+}
+
+@media (max-width: 640px) {
+  .settings-goto { max-width: none; margin: 0 6px 0 8px; min-width: 0; }
+  .settings-goto input#settings-goto-input { font-size: 16px; }   /* no iOS zoom on focus */
+  .settings-goto-results { min-width: 0; }
+}

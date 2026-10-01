@@ -80,7 +80,7 @@ async function showList() {
         <span class="bg-job-meta">${esc(when(m.received))}</span></div>
       <div class="bg-job-sub">${esc(m.from)} → ${esc((m.to || []).join(', '))}${m.action && m.action !== 'in Inbound mail' ? ` · ${esc(m.action)}` : ''}</div>
     </div>`).join('')
-    : '<div class="bg-empty">No mail yet. Mail to an address you route to the Odysseus mail Worker shows up here (Settings › Email › Inbound mail).</div>');
+    : '<div class="bg-empty">No mail yet. Mail to an address you route to the Odysseus mail Worker shows up here (<a href="#" class="settings-goto-link" data-goto-setting="mail-listener-card">Settings › Email › Inbound mail</a>).</div>');
 }
 
 async function showOne(key) {

@@ -1,4 +1,4 @@
-"""Sign in with ChatGPT routes (Settings > Services card).
+"""Sign in with ChatGPT routes (Settings > Add Models card).
 
 Per Odysseus user: each browser user signs in to their own ChatGPT account,
 and their tokens and "ChatGPT" endpoint row belong to them only.

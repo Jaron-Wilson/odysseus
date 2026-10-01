@@ -113,7 +113,7 @@ function renderProjects() {
   if (!list) return;
   if (!_projects) { list.innerHTML = '<div class="bg-empty">Loading…</div>'; return; }
   if (!_projects.length) {
-    list.innerHTML = '<div class="bg-empty">No git repos under the project folders. Add folders in Settings &gt; System &gt; Code editor, or open a folder below.</div>';
+    list.innerHTML = '<div class="bg-empty">No git repos under the project folders. Add folders in <a href="#" class="settings-goto-link" data-goto-setting="ide-set-roots">Settings &gt; System &gt; Code editor</a>, or open a folder below.</div>';
     return;
   }
   list.innerHTML = _projects.map((p, i) => `
