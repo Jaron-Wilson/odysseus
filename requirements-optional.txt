@@ -4,13 +4,21 @@
 # Note: chromadb-client + fastembed moved to requirements.txt — RAG, semantic
 # memory, and tool selection are core paths, so they ship by default now.
 
-# Local speech-to-text (microphone -> text) via faster-whisper, for the
-# "local" STT provider. Runs on CPU out of the box (CTranslate2 backend, no
-# torch needed). Install if you want to dictate/transcribe with the mic
-# without sending audio to an external endpoint.
-# Optional extra: install `torch` too if you have a CUDA GPU and want
-# GPU-accelerated transcription — it's auto-detected, CPU is used otherwise.
-faster-whisper
+# Local speech-to-text (microphone -> text), no audio leaves the machine.
+# Neither needs torch; both run on CPU (and use a CUDA GPU when one is there).
+# Models download from Settings > AI Defaults > Voice call into
+# <data dir>/models/stt.
+#
+# Whisper, the "local" provider: faster-whisper (CTranslate2).
+# av<16: faster-whisper 1.2.1 opens files with av.open(..., metadata_errors=)
+# and PyAV 16+ removed that argument (TypeError on every non-WAV upload).
+faster-whisper>=1.1
+av<16
+#
+# Parakeet, the "local:parakeet" provider: NVIDIA Parakeet TDT 0.6B as ONNX
+# via onnx-asr. The [cpu] extra is onnxruntime, which fastembed already
+# installs; [hub] is huggingface_hub for the model download.
+onnx-asr[cpu,hub]>=0.12
 
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.

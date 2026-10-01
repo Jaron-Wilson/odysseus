@@ -52,7 +52,11 @@ DEFAULT_SETTINGS = {
     "tts_speed": "1",
     "stt_enabled": False,
     "stt_provider": "disabled",
-    "stt_model": "base",
+    # Whisper model for the "local" STT provider (see services/stt/local_models.py).
+    "stt_model": "base.en",
+    # Parakeet model for "local:parakeet"; empty picks the one that is
+    # fastest on this CPU.
+    "stt_parakeet_model": "",
     "stt_language": "",
     "search_provider": "searxng",
     # Default fallback chain — when the primary provider fails or

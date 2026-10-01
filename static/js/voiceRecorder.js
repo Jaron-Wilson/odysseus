@@ -7,6 +7,7 @@
  *   "disabled"       — record audio as file attachment (original behavior)
  *   "browser"        — use Web Speech API for real-time transcription
  *   "local"          — send recording to server /api/stt/transcribe (Whisper)
+ *   "local:parakeet" - same, transcribed by NVIDIA Parakeet on the server
  *   "endpoint:<id>"  — send recording to server /api/stt/transcribe (API)
  */
 
@@ -190,7 +191,7 @@ export function startRecording(onFileCreated, showToast, showError) {
             const audioFile = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
             if (onFileCreated) onFileCreated(audioFile);
           }
-        } else if (provider === 'local' || provider.startsWith('endpoint:')) {
+        } else if (provider === 'local' || provider.startsWith('local:') || provider.startsWith('endpoint:')) {
           // Show "Transcribing..." feedback
           if (showToast) showToast('Transcribing...', 5000);
           try {
