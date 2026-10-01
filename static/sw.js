@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v334';
+const CACHE_NAME = 'odysseus-v336';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
@@ -21,7 +21,9 @@ const PRECACHE = [
   '/static/css/studio-pages-b.css',
   '/static/css/workspace.css',
   '/static/css/voiceCall.css',
+  '/static/css/codePanel.css',
   '/static/js/uiDesign.js',
+  '/static/js/codePanel.js',
   '/static/js/workspace/shell.js',
   '/static/js/workspace/home.js',
   '/static/app.js',
@@ -55,6 +57,7 @@ const PRECACHE = [
   '/static/js/censor.js',
   '/static/js/settings.js',
   '/static/js/admin.js',
+  '/static/js/chatgptPlan.js',
   '/static/js/init.js',
   '/static/js/slashCommands.js',
   '/static/js/emailInbox.js',
@@ -107,8 +110,9 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
-  // Never touch API calls or non-GET.
-  if (url.pathname.startsWith('/api/') || e.request.method !== 'GET') return;
+  // Never touch API calls or non-GET, or the code editor proxied at /ide/
+  // (code-server runs its own service worker there).
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ide/') || e.request.method !== 'GET') return;
 
   // HTML navigation: stale-while-revalidate the app shell — but ONLY for the
   // SPA root. Other navigations (e.g. a deep-linked /static/*.html page) must

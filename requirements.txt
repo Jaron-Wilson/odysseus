@@ -1,12 +1,13 @@
 fastapi
 uvicorn
-# uvicorn only serves WebSockets with a WebSocket library installed; the
-# Terminal (routes/terminal_routes.py) is one. Without it the socket is
-# refused with "Unsupported upgrade request".
-websockets
 python-multipart
 python-dotenv
 httpx
+# WebSockets: uvicorn needs it to accept WebSocket upgrades at all, and the
+# code editor proxy (routes/ide_routes.py) uses its client to reach
+# code-server; the Terminal (routes/terminal_routes.py) needs it too.
+# Small and pure Python (with an optional C speedup).
+websockets
 pydantic>=2.0
 pydantic-settings>=2.0
 SQLAlchemy

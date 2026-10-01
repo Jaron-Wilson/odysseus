@@ -141,6 +141,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/ide/",                # the code editor proxy: long polls and big downloads stream
 )
 
 
@@ -663,6 +664,9 @@ from routes.deploy_routes import setup_deploy_routes
 app.include_router(setup_deploy_routes())
 from routes.devops_routes import setup_devops_routes
 app.include_router(setup_devops_routes())
+# The integrated IDE: /ide/ proxies code-server, /api/ide/* backs the Code panel.
+from routes.ide_routes import setup_ide_routes
+app.include_router(setup_ide_routes())
 # The Terminal: a live shell over a WebSocket, admin only (routes/terminal_routes.py).
 from routes.terminal_routes import setup_terminal_routes
 app.include_router(setup_terminal_routes())
@@ -717,6 +721,10 @@ app.include_router(setup_copilot_routes())
 # ChatGPT Subscription device-flow login
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
 app.include_router(setup_chatgpt_subscription_routes())
+
+# Sign in with ChatGPT (official ChatGPT plan usage, Responses API)
+from routes.chatgpt_plan_routes import setup_chatgpt_plan_routes
+app.include_router(setup_chatgpt_plan_routes())
 
 # TTS
 from routes.tts_routes import setup_tts_routes
