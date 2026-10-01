@@ -211,7 +211,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
         normalize_base,
         resolve_endpoint_runtime,
     )
-    from src.chatgpt_subscription import is_chatgpt_subscription_base
+    from src.chatgpt_plan import uses_request_scoped_bearer
 
     current_url = sess.endpoint_url or ""
     owner = getattr(sess, "owner", None)
@@ -258,7 +258,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
             new_model = models[0]
             chat_url = build_chat_url(base)
             new_headers = build_headers(api_key, base)
-            persisted_headers = {} if is_chatgpt_subscription_base(base) else new_headers
+            persisted_headers = {} if uses_request_scoped_bearer(base) else new_headers
 
             sess.model = new_model
             sess.endpoint_url = chat_url
@@ -373,8 +373,10 @@ def _has_auth_keys(headers) -> bool:
 def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
     """Ensure session has auth headers — resolve from endpoint DB if missing."""
     try:
-        from src.chatgpt_subscription import is_chatgpt_subscription_base
-        is_chatgpt_subscription = is_chatgpt_subscription_base(getattr(sess, "endpoint_url", "") or "")
+        # ChatGPT Subscription and Sign in with ChatGPT both use short-lived
+        # OAuth bearers: re-resolve (and refresh) per request, never persist.
+        from src.chatgpt_plan import uses_request_scoped_bearer
+        is_chatgpt_subscription = uses_request_scoped_bearer(getattr(sess, "endpoint_url", "") or "")
     except Exception:
         is_chatgpt_subscription = False
     has_auth = _has_auth_keys(sess.headers)
