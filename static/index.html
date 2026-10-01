@@ -1796,13 +1796,36 @@
                 <label class="settings-label" for="set-vcTts">Speaks with</label>
                 <select id="set-vcTts" class="settings-select" data-goto-keywords="tts text to speech read aloud engine kokoro voice output">
                   <option value="browser">Browser (built-in)</option>
-                  <option value="local">Local (Kokoro-82M)</option>
+                  <option value="local">Local: Kokoro</option>
                 </select>
+              </div>
+              <!-- Local voice model + download (static/js/ttsEngines.js). -->
+              <div class="settings-row" id="set-vcTtsModelRow" hidden style="display:none">
+                <label class="settings-label" for="set-vcTtsModel">Voice model</label>
+                <select id="set-vcTtsModel" class="settings-select" data-goto-keywords="kokoro tts voice model download int8"></select>
+              </div>
+              <div class="settings-row" id="set-vcTtsStatusRow" hidden style="display:none">
+                <span class="settings-label"></span>
+                <span id="set-vcTtsStatus" style="flex:1;font-size:12px;opacity:0.75;overflow-wrap:anywhere"></span>
+                <button type="button" id="set-vcTtsDownload" class="admin-btn-sm" style="flex-shrink:0;display:none" hidden>Download now</button>
               </div>
               <div class="settings-row">
                 <label class="settings-label" for="set-vcVoice">Voice</label>
                 <input id="set-vcVoice" class="settings-select" type="text" data-goto-keywords="tts speaker" list="set-vcVoiceList" autocomplete="off" spellcheck="false">
                 <datalist id="set-vcVoiceList"></datalist>
+                <button type="button" id="set-vcVoicePreview" class="admin-btn-sm" style="flex-shrink:0" title="Play a short sample in this voice">Preview</button>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="set-vcSpeed">Speed</label>
+                <select id="set-vcSpeed" class="settings-select" data-goto-keywords="tts speech rate talk faster slower">
+                  <option value="0.8">0.8x</option>
+                  <option value="0.9">0.9x</option>
+                  <option value="1">1x</option>
+                  <option value="1.1">1.1x</option>
+                  <option value="1.2">1.2x</option>
+                  <option value="1.35">1.35x</option>
+                  <option value="1.5">1.5x</option>
+                </select>
               </div>
               <div id="set-vcMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
@@ -2943,6 +2966,7 @@
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/js/voiceCall.js"></script>
 <script type="module" src="/static/js/sttEngines.js"></script>
+<script type="module" src="/static/js/ttsEngines.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
