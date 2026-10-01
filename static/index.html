@@ -726,17 +726,20 @@
     <!-- Dynamic contextual indicators (shown only while active) -->
     <button class="icon-rail-btn rail-dynamic" id="rail-chats" title="Chat ready" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
     <button class="icon-rail-btn rail-dynamic" id="rail-documents" title="Documents" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></button>
-    <!-- Tool launchers — always visible, alphabetical -->
-    <button class="icon-rail-btn" id="rail-calendar" title="Calendar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
-    <button class="icon-rail-btn" id="rail-compare" title="Compare"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg></button>
-    <button class="icon-rail-btn" id="rail-cookbook" title="Cookbook"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg></button>
-    <button class="icon-rail-btn" id="rail-research" title="Deep Research"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+    <!-- Tool launchers, always visible, in the sidebar's groups (toolPages.js) -->
     <button class="icon-rail-btn" id="rail-email" title="Email"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></button>
-    <button class="icon-rail-btn" id="rail-gallery" title="Gallery"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
-    <button class="icon-rail-btn" id="rail-archive" title="Library"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg></button>
-    <button class="icon-rail-btn" id="rail-memory" title="Brain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></button>
-    <button class="icon-rail-btn" id="rail-notes" title="Notes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg></button>
+    <div class="rail-separator"></div>
+    <button class="icon-rail-btn" id="rail-calendar" title="Calendar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
     <button class="icon-rail-btn" id="rail-tasks" title="Tasks"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg></button>
+    <button class="icon-rail-btn" id="rail-notes" title="Notes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg></button>
+    <button class="icon-rail-btn" id="rail-memory" title="Brain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></button>
+    <div class="rail-separator"></div>
+    <button class="icon-rail-btn" id="rail-archive" title="Library"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg></button>
+    <button class="icon-rail-btn" id="rail-gallery" title="Gallery"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
+    <button class="icon-rail-btn" id="rail-research" title="Deep Research"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+    <button class="icon-rail-btn" id="rail-compare" title="Compare"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg></button>
+    <div class="rail-separator"></div>
+    <button class="icon-rail-btn" id="rail-cookbook" title="Cookbook"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg></button>
     <button class="icon-rail-btn" id="rail-theme" title="Theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg></button>
     <div style="flex:1"></div>
     <!-- Static: bottom -->
@@ -882,187 +885,200 @@
         </div>
       </div>
 
+      <!-- Tools, in groups (toolGroups.js collapses them and remembers it;
+           the groups and their order come from toolPages.js, which the
+           Workspace "+" menu, "take me to ..." and the agent read too) -->
       <div class="section" id="tools-section">
-        <div class="section-header-flex">
-          <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Tools</span>
+        <div class="tool-group" data-tool-group="organize">
+          <button type="button" class="tool-group-head" aria-expanded="true" aria-controls="tool-group-organize"><span class="tool-group-label">Organize</span><span class="tool-group-summary" aria-hidden="true"></span><span class="tool-group-dot" aria-hidden="true"></span><svg class="tool-group-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <div class="tool-group-items" id="tool-group-organize" role="group" aria-label="Organize">
+            <div class="list-item" id="tool-calendar-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <rect x="3" y="4" width="18" height="18" rx="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+              </svg>
+              <span class="grow">Calendar</span>
+            </div>
+            <div class="list-item" id="tool-tasks-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <rect x="3" y="4" width="18" height="18" rx="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+                <path d="M9 16l2 2 4-4"/>
+              </svg>
+              <span class="grow">Tasks</span>
+              <span id="assistant-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
+            </div>
+            <div class="list-item" id="tool-notes-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <path d="M5 3h10l4 4v14H5z"/>
+                <path d="M15 3v5h5"/>
+                <path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/>
+              </svg>
+              <span class="grow">Notes</span>
+            </div>
+            <div class="list-item" id="tool-memory-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+                <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+                <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
+              </svg>
+              <span class="grow">Brain</span>
+            </div>
+          </div>
         </div>
-        <div class="list-item" id="tool-memory-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
-            <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
-            <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
-          </svg>
-          <span class="grow">Brain</span>
+        <div class="tool-group" data-tool-group="create">
+          <button type="button" class="tool-group-head" aria-expanded="true" aria-controls="tool-group-create"><span class="tool-group-label">Create &amp; research</span><span class="tool-group-summary" aria-hidden="true"></span><span class="tool-group-dot" aria-hidden="true"></span><svg class="tool-group-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <div class="tool-group-items" id="tool-group-create" role="group" aria-label="Create &amp; research">
+            <div class="list-item" id="tool-library-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/>
+              </svg>
+              <span class="grow">Library</span>
+              <button type="button" class="list-item-plus-btn" id="library-new-doc-btn" title="New document">
+                <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span class="list-item-plus-label">new</span>
+              </button>
+            </div>
+            <div class="list-item" id="tool-gallery-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <path d="M21 15l-5-5L5 21"/>
+              </svg>
+              <span class="grow">Gallery</span>
+            </div>
+            <div class="list-item" id="tool-research-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:0.5;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+              <span class="grow">Deep Research</span>
+            </div>
+            <div class="list-item" id="tool-compare-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
+              <span class="grow">Compare</span>
+            </div>
+          </div>
         </div>
-        <div class="list-item" id="tool-calendar-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="3" y="4" width="18" height="18" rx="2"/>
-            <line x1="16" y1="2" x2="16" y2="6"/>
-            <line x1="8" y1="2" x2="8" y2="6"/>
-            <line x1="3" y1="10" x2="21" y2="10"/>
-          </svg>
-          <span class="grow">Calendar</span>
+        <div class="tool-group" data-tool-group="build">
+          <button type="button" class="tool-group-head" aria-expanded="true" aria-controls="tool-group-build"><span class="tool-group-label">Build</span><span class="tool-group-summary" aria-hidden="true"></span><span class="tool-group-dot" aria-hidden="true"></span><svg class="tool-group-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <div class="tool-group-items" id="tool-group-build" role="group" aria-label="Build">
+            <!-- Code: VS Code in the browser, proxied at /ide/ (codePanel.js). Admin only. -->
+            <div class="list-item" id="tool-code-btn" title="VS Code for the Odysseus dev checkout and your other projects">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <polyline points="16 18 22 12 16 6"/>
+                <polyline points="8 6 2 12 8 18"/>
+              </svg>
+              <span class="grow">Code</span>
+            </div>
+            <!-- A live shell on the server, admin only (terminal.js) -->
+            <div class="list-item" id="tool-terminal-btn" title="A live command line on the server: run commands, ssh to other machines">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                <polyline points="6 9 10 12 6 15"/>
+                <line x1="12" y1="15" x2="17" y2="15"/>
+              </svg>
+              <span class="grow">Terminal</span>
+            </div>
+            <!-- Cloud browser: watch the agent's browser and take over (cloudBrowser.js) -->
+            <div class="list-item" id="tool-browser-btn" title="The browser the agent uses: watch it live, or take over to log in">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              </svg>
+              <span class="grow">Browser</span>
+            </div>
+            <!-- Background tasks: Claude Code runs sent to the background (bgTasks.js) -->
+            <div class="list-item" id="tool-bg-btn" title="Claude Code runs working in the background">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <rect x="2" y="4" width="20" height="14" rx="2"/>
+                <polyline points="6 9 9 11 6 13"/>
+                <line x1="11" y1="13" x2="15" y2="13"/>
+                <line x1="8" y1="21" x2="16" y2="21"/>
+              </svg>
+              <span class="grow">Background</span>
+              <span id="bg-tasks-count" class="bg-tasks-count" hidden></span>
+            </div>
+            <!-- DevOps: what is running, model speed, coder stats (devopsPage.js) -->
+            <div class="list-item" id="tool-devops-btn" title="What is running, tokens per second and per hour, and which coder does best">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <polyline points="3 17 9 11 13 15 21 7"/>
+                <polyline points="15 7 21 7 21 13"/>
+              </svg>
+              <span class="grow">DevOps</span>
+            </div>
+            <!-- One chat for changes to Odysseus itself (specialChats.js) -->
+            <div class="list-item" id="tool-odysseus-dev-btn" title="A chat for changing Odysseus itself: every change ends in a PR against dev">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/>
+                <path d="M6 8.5v7"/><path d="M18 10.5c0 4-5 3-10 5.5"/>
+              </svg>
+              <span class="grow">Odysseus dev</span>
+            </div>
+          </div>
         </div>
-        <div class="list-item" id="tool-compare-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
-          <span class="grow">Compare</span>
-        </div>
-        <div class="list-item" id="tool-cookbook-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M12 7v14"/>
-            <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
-          </svg>
-          <span class="grow">Cookbook</span>
-          <span id="cookbook-bg-status" style="display:none;font-size:9px;opacity:0.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:12px;flex-shrink:1;min-width:0;position:relative;top:-1px;"></span>
-          <span class="cookbook-notif-dot" id="cookbook-notif-dot" style="display:none;margin-left:6px;margin-right:4px;position:relative;top:-1px;left:0px;"></span>
-        </div>
-        <div class="list-item" id="tool-research-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:0.5;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-          <span class="grow">Deep Research</span>
-        </div>
-        <div class="list-item" id="tool-gallery-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <circle cx="8.5" cy="8.5" r="1.5"/>
-            <path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <span class="grow">Gallery</span>
-        </div>
-        <div class="list-item" id="tool-library-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;">
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/>
-          </svg>
-          <span class="grow">Library</span>
-          <button type="button" class="list-item-plus-btn" id="library-new-doc-btn" title="New document">
-            <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            <span class="list-item-plus-label">new</span>
-          </button>
-        </div>
-        <div class="list-item" id="tool-notes-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M5 3h10l4 4v14H5z"/>
-            <path d="M15 3v5h5"/>
-            <path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/>
-          </svg>
-          <span class="grow">Notes</span>
-        </div>
-        <div class="list-item" id="tool-tasks-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="3" y="4" width="18" height="18" rx="2"/>
-            <line x1="16" y1="2" x2="16" y2="6"/>
-            <line x1="8" y1="2" x2="8" y2="6"/>
-            <line x1="3" y1="10" x2="21" y2="10"/>
-            <path d="M9 16l2 2 4-4"/>
-          </svg>
-          <span class="grow">Tasks</span>
-          <span id="assistant-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
-        </div>
-        <!-- Background tasks: Claude Code runs sent to the background (bgTasks.js) -->
-        <div class="list-item" id="tool-bg-btn" title="Claude Code runs working in the background">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="2" y="4" width="20" height="14" rx="2"/>
-            <polyline points="6 9 9 11 6 13"/>
-            <line x1="11" y1="13" x2="15" y2="13"/>
-            <line x1="8" y1="21" x2="16" y2="21"/>
-          </svg>
-          <span class="grow">Background</span>
-          <span id="bg-tasks-count" class="bg-tasks-count" hidden></span>
-        </div>
-
-        <!-- DevOps: what is running, model speed, coder stats (devopsPage.js) -->
-        <div class="list-item" id="tool-devops-btn" title="What is running, tokens per second and per hour, and which coder does best">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <polyline points="3 17 9 11 13 15 21 7"/>
-            <polyline points="15 7 21 7 21 13"/>
-          </svg>
-          <span class="grow">DevOps</span>
-        </div>
-
-        <!-- Code: VS Code in the browser, proxied at /ide/ (codePanel.js). Admin only. -->
-        <div class="list-item" id="tool-code-btn" title="VS Code for the Odysseus dev checkout and your other projects">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <polyline points="16 18 22 12 16 6"/>
-            <polyline points="8 6 2 12 8 18"/>
-          </svg>
-          <span class="grow">Code</span>
-        </div>
-
-        <!-- Cloud browser: watch the agent's browser and take over (cloudBrowser.js) -->
-        <div class="list-item" id="tool-browser-btn" title="The browser the agent uses: watch it live, or take over to log in">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="2" y1="12" x2="22" y2="12"/>
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-          </svg>
-          <span class="grow">Browser</span>
-        </div>
-
-        <!-- Devices and MCP servers in one panel (devicesPanel.js) -->
-        <div class="list-item" id="tool-devices-btn" title="Your computers, phones and MCP servers">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="2" y="3" width="14" height="11" rx="2"/>
-            <line x1="5" y1="18" x2="13" y2="18"/>
-            <rect x="17" y="8" width="5" height="12" rx="1"/>
-          </svg>
-          <span class="grow">Devices</span>
-        </div>
-
-        <!-- A live shell on the server, admin only (terminal.js) -->
-        <div class="list-item" id="tool-terminal-btn" title="A live command line on the server: run commands, ssh to other machines">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="2" y="4" width="20" height="16" rx="2"/>
-            <polyline points="6 9 10 12 6 15"/>
-            <line x1="12" y1="15" x2="17" y2="15"/>
-          </svg>
-          <span class="grow">Terminal</span>
-        </div>
-
-        <!-- One chat for changes to Odysseus itself (specialChats.js) -->
-        <div class="list-item" id="tool-odysseus-dev-btn" title="A chat for changing Odysseus itself: every change ends in a PR against dev">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/>
-            <path d="M6 8.5v7"/><path d="M18 10.5c0 4-5 3-10 5.5"/>
-          </svg>
-          <span class="grow">Odysseus dev</span>
-        </div>
-
-        <div class="list-item" id="tool-theme-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/>
-            <circle cx="8" cy="9" r="1.5" fill="currentColor"/>
-            <circle cx="15" cy="14" r="1.5" fill="currentColor"/>
-            <circle cx="9" cy="15" r="1.5" fill="currentColor"/>
-          </svg>
-          <span class="grow">Theme</span>
+        <div class="tool-group" data-tool-group="system">
+          <button type="button" class="tool-group-head" aria-expanded="true" aria-controls="tool-group-system"><span class="tool-group-label">System</span><span class="tool-group-summary" aria-hidden="true"></span><span class="tool-group-dot" aria-hidden="true"></span><svg class="tool-group-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <div class="tool-group-items" id="tool-group-system" role="group" aria-label="System">
+            <!-- Devices and MCP servers in one panel (devicesPanel.js) -->
+            <div class="list-item" id="tool-devices-btn" title="Your computers, phones and MCP servers">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <rect x="2" y="3" width="14" height="11" rx="2"/>
+                <line x1="5" y1="18" x2="13" y2="18"/>
+                <rect x="17" y="8" width="5" height="12" rx="1"/>
+              </svg>
+              <span class="grow">Devices</span>
+            </div>
+            <div class="list-item" id="tool-cookbook-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <path d="M12 7v14"/>
+                <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
+              </svg>
+              <span class="grow">Cookbook</span>
+              <span id="cookbook-bg-status" style="display:none;font-size:9px;opacity:0.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:12px;flex-shrink:1;min-width:0;position:relative;top:-1px;"></span>
+              <span class="cookbook-notif-dot" id="cookbook-notif-dot" style="display:none;margin-left:6px;margin-right:4px;position:relative;top:-1px;left:0px;"></span>
+            </div>
+            <div class="list-item" id="tool-theme-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/>
+                <circle cx="8" cy="9" r="1.5" fill="currentColor"/>
+                <circle cx="15" cy="14" r="1.5" fill="currentColor"/>
+                <circle cx="9" cy="15" r="1.5" fill="currentColor"/>
+              </svg>
+              <span class="grow">Theme</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -2874,7 +2890,7 @@
   <!-- Search overlay (Ctrl+K command palette) -->
   <div class="search-overlay hidden" id="search-overlay">
     <div class="search-popup">
-      <input type="text" id="search-input" placeholder="Search conversations and settings..." autocomplete="off" />
+      <input type="text" id="search-input" placeholder="Search pages, settings and conversations..." autocomplete="off" />
       <div class="search-results" id="search-results"></div>
     </div>
   </div>
