@@ -302,8 +302,137 @@ async function onSmsClick(ev) {
   }
 }
 
+// ── Phone calls: call the agent on a phone number (routes/telephony_routes.py) ──
+//
+// Per user, like the SMS card. The auth token and PIN are write-only: the
+// server says only whether one is saved, and a blank field keeps it.
+
+function phoneSay(text, isError) {
+  const el = $('phone-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('sms-error', !!isError);
+}
+
+function renderPhone(cfg) {
+  if (!$('phone-card')) return;
+  $('phone-enabled').checked = !!cfg.enabled;
+  $('phone-number').value = cfg.phone_number || '';
+  $('phone-sid').value = cfg.account_sid || '';
+  $('phone-token').value = '';
+  $('phone-token').placeholder = cfg.has_auth_token ? 'Saved (type a new one to replace it)' : 'Twilio auth token';
+  $('phone-allowed').value = (cfg.numbers || []).join(', ');
+  $('phone-allowed').placeholder = cfg.numbers_from_sms && (cfg.allowed || []).length
+    ? `${cfg.allowed.join(', ')} (your Phone SMS numbers)` : '+15550102000 (comma-separated, up to 5)';
+  $('phone-public').value = cfg.public_url || '';
+  $('phone-greeting').value = cfg.greeting || '';
+  $('phone-greeting').placeholder = cfg.default_greeting || '';
+  const sel = $('phone-model');
+  sel.innerHTML = '<option value="">Default model</option>' + (cfg.models || []).map((m) => {
+    const v = `${m.endpoint_id}|${m.model}`;
+    const where = m.endpoint_name ? ` (${m.endpoint_name})` : '';
+    return `<option value="${esc(v)}">${esc(m.name)}${esc(where)}</option>`;
+  }).join('');
+  const cur = cfg.model && cfg.endpoint_id ? `${cfg.endpoint_id}|${cfg.model}` : '';
+  if (cur && ![...sel.options].some((o) => o.value === cur)) {
+    sel.insertAdjacentHTML('beforeend', `<option value="${esc(cur)}">${esc(cfg.model)} (not available now)</option>`);
+  }
+  sel.value = cur;
+  $('phone-engine').value = cfg.engine || 'odysseus';
+  $('phone-voice').value = cfg.relay_voice || '';
+  showVoiceRow($('phone-engine').value);
+  $('phone-unknown').value = cfg.unknown || 'reject';
+  const delay = String(cfg.answer_delay || 0);
+  if (![...$('phone-delay').options].some((o) => o.value === delay)) {
+    $('phone-delay').insertAdjacentHTML('beforeend', `<option value="${esc(delay)}">${esc(delay)} seconds</option>`);
+  }
+  $('phone-delay').value = delay;
+  $('phone-pin').value = '';
+  $('phone-pin').placeholder = cfg.has_pin ? 'A PIN is set (type a new one to replace it)' : 'Optional, 4 to 8 digits, asked before the agent answers';
+  $('phone-clear-pin').disabled = !cfg.has_pin;
+  const engines = (cfg.engines || []).join(' ');
+  const parts = [cfg.enabled ? 'On.' : 'Off: calls hear "turned off" and hang up.'];
+  if (cfg.active_calls) parts.push(`${cfg.active_calls} call${cfg.active_calls === 1 ? '' : 's'} on the line now.`);
+  if (engines) parts.push(engines);
+  $('phone-state').textContent = parts.join(' ');
+  $('phone-webhook').innerHTML = cfg.webhook_url
+    ? `Twilio webhook ("A call comes in", HTTP POST): <code class="sms-url">${esc(cfg.webhook_url)}</code> ${copyBtn(cfg.webhook_url)}`
+    : 'Save the public URL to see the webhook address for Twilio.';
+}
+
+// .settings-row sets display, which beats the hidden attribute.
+function showVoiceRow(engine) {
+  $('phone-voice-row').style.display = engine === 'relay' ? '' : 'none';
+}
+
+function phoneBody() {
+  const [endpoint_id, ...rest] = ($('phone-model').value || '').split('|');
+  const body = {
+    enabled: $('phone-enabled').checked,
+    phone_number: $('phone-number').value.trim(),
+    account_sid: $('phone-sid').value.trim(),
+    numbers: $('phone-allowed').value.split(/[,;\n]/).map((n) => n.trim()).filter(Boolean),
+    public_url: $('phone-public').value.trim(),
+    greeting: $('phone-greeting').value.trim(),
+    model: rest.join('|'),
+    endpoint_id: rest.length ? endpoint_id : '',
+    engine: $('phone-engine').value,
+    relay_voice: $('phone-voice').value.trim(),
+    unknown: $('phone-unknown').value,
+    answer_delay: Number($('phone-delay').value) || 0,
+  };
+  const token = $('phone-token').value.trim();
+  if (token) body.auth_token = token;
+  const pin = $('phone-pin').value.trim();
+  if (pin) body.pin = pin;
+  return body;
+}
+
+async function loadPhone() {
+  if (!$('phone-card')) return;
+  try {
+    renderPhone(await api('GET', '/api/telephony/config'));
+  } catch (e) {
+    phoneSay(`Could not load the phone call settings: ${e.message}`, true);
+  }
+}
+
+async function onPhoneClick(ev) {
+  const t = ev.target.closest('#phone-save,#phone-test,#phone-call-me,#phone-clear-pin');
+  if (!t) return;
+  ev.preventDefault();
+  try {
+    if (t.id === 'phone-save') {
+      renderPhone(await api('PUT', '/api/telephony/config', phoneBody()));
+      phoneSay('Saved.');
+    } else if (t.id === 'phone-clear-pin') {
+      renderPhone(await api('PUT', '/api/telephony/config', { clear_pin: true }));
+      phoneSay('PIN cleared.');
+    } else if (t.id === 'phone-test') {
+      phoneSay('Testing…');
+      const r = await api('POST', '/api/telephony/test');
+      const box = $('phone-checks');
+      box.innerHTML = (r.checks || []).map((c) => `<div class="admin-toggle-sub"${c.ok ? '' : ' style="color:var(--red, #d33)"'}>` +
+        `${c.ok ? 'OK' : 'Not yet'}: <strong>${esc(c.name)}</strong>${c.detail ? `. ${esc(c.detail)}` : ''}</div>`).join('');
+      box.hidden = false;
+      phoneSay(r.ok ? 'Everything checks out. Call the agent\'s number.' : 'Some checks did not pass; see above.', !r.ok);
+    } else if (t.id === 'phone-call-me') {
+      if (!confirm('Have the agent call your first number now?')) return;
+      const r = await api('POST', '/api/telephony/call-me', {});
+      phoneSay(`Calling ${r.to}…`);
+    }
+  } catch (e) {
+    phoneSay(e.message, true);
+  }
+}
+
+function onPhoneChange(ev) {
+  if (ev.target && ev.target.id === 'phone-engine') showVoiceRow(ev.target.value);
+}
+
 async function load(refresh = false) {
   loadSms();
+  loadPhone();
   try {
     const [base, overview] = await Promise.all([
       api('GET', '/api/devices'),
@@ -608,6 +737,8 @@ function init() {
   panel.addEventListener('click', onMachineClick);
   panel.addEventListener('click', onEnrollClick);
   panel.addEventListener('click', onSmsClick);
+  panel.addEventListener('click', onPhoneClick);
+  panel.addEventListener('change', onPhoneChange);
   panel.addEventListener('input', onComputersInput);
   panel.dataset.devicesReady = '1';
 }

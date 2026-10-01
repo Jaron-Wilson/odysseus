@@ -2529,6 +2529,101 @@
               </ol>
             </details>
           </div>
+          <!-- Phone calls: routes/telephony_routes.py, filled in by devicesSettings.js. -->
+          <div class="admin-card" id="phone-card" data-goto-keywords="phone call calling twilio dial ring number google">
+            <h2>Phone calls</h2>
+            <div class="admin-toggle-sub">Call a phone number and talk to the agent, the way a call in the app works: you talk, a pause ends your turn, and the answer is read back to you. You can talk over it. Each call is saved as a chat. A Twilio number answers the call and streams it to this server; only your numbers get through.</div>
+            <div class="admin-toggle-row">
+              <div>
+                <div class="admin-toggle-label">Answer calls</div>
+                <div class="admin-toggle-sub" id="phone-state">Loading…</div>
+              </div>
+              <label class="admin-switch"><input type="checkbox" id="phone-enabled"><span class="admin-slider"></span></label>
+            </div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" for="phone-number">Agent's number</label>
+                <input id="phone-number" class="settings-select" type="text" placeholder="+15550109999 (the Twilio number)" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-sid">Account SID</label>
+                <input id="phone-sid" class="settings-select" type="text" autocomplete="off" placeholder="AC... (Twilio Console > Account info)" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-token">Auth token</label>
+                <input id="phone-token" class="settings-select" type="password" autocomplete="new-password" placeholder="Twilio auth token" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-allowed">Your numbers</label>
+                <input id="phone-allowed" class="settings-select" type="text" placeholder="+15550102000 (comma-separated, up to 5)" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-public">Public URL</label>
+                <input id="phone-public" class="settings-select" type="text" placeholder="https://server.tailnet.ts.net:8443" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-greeting">Greeting</label>
+                <input id="phone-greeting" class="settings-select" type="text" maxlength="300" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-model">Model</label>
+                <select id="phone-model" class="settings-select"><option value="">Default model</option></select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-engine">Speech</label>
+                <select id="phone-engine" class="settings-select">
+                  <option value="odysseus">Odysseus engines (Voice call settings)</option>
+                  <option value="relay">Twilio hears and speaks (ConversationRelay, costs more)</option>
+                </select>
+              </div>
+              <div class="settings-row" id="phone-voice-row" style="display:none">
+                <label class="settings-label" for="phone-voice">Twilio voice</label>
+                <input id="phone-voice" class="settings-select" type="text" placeholder="Twilio's default voice" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-unknown">Other callers</label>
+                <select id="phone-unknown" class="settings-select">
+                  <option value="reject">Say it only takes your calls, and hang up</option>
+                  <option value="message">Take a message (transcribed into a Phone messages chat)</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-delay">Ring first</label>
+                <select id="phone-delay" class="settings-select">
+                  <option value="0">Answer right away</option>
+                  <option value="10">10 seconds</option>
+                  <option value="15">15 seconds</option>
+                  <option value="20">20 seconds</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="phone-pin">PIN</label>
+                <input id="phone-pin" class="settings-select" type="password" inputmode="numeric" autocomplete="off" placeholder="Optional, 4 to 8 digits, asked before the agent answers" />
+                <button class="settings-btn" id="phone-clear-pin" type="button">Clear PIN</button>
+              </div>
+              <div class="settings-row">
+                <span class="admin-toggle-sub" id="phone-webhook"></span>
+                <button class="admin-btn-add" id="phone-save" type="button">Save</button>
+              </div>
+              <div class="settings-row">
+                <span class="admin-toggle-sub">Test checks the account, the number's webhook, the public URL, the speech engines and the model. Call me rings your first number.</span>
+                <button class="settings-btn" id="phone-test" type="button">Test</button>
+                <button class="settings-btn" id="phone-call-me" type="button">Call me</button>
+              </div>
+              <div id="phone-checks" class="settings-col" hidden></div>
+              <div id="phone-msg" class="admin-toggle-sub"></div>
+            </div>
+            <details>
+              <summary class="admin-toggle-sub">Setup guide</summary>
+              <ol class="admin-toggle-sub">
+                <li>Make a Twilio account and buy a local voice number (about $1.15 a month). Copy the account SID and auth token from the Console into the fields above.</li>
+                <li>Make the phone path public, and only it: <code>tailscale funnel --bg --https=8443 --set-path=/api/telephony http://127.0.0.1:7000/api/telephony</code>. Put <code>https://&lt;server&gt;.&lt;tailnet&gt;.ts.net:8443</code> in Public URL.</li>
+                <li>In Twilio, open the number, and under Voice set "A call comes in" to Webhook, the address shown above, HTTP POST.</li>
+                <li>Pick Speech: Odysseus engines uses "Hears with" and "Speaks with" from AI Defaults > Voice call (they must be server engines, not the browser's). Or let Twilio do the speech.</li>
+                <li>Turn on Answer calls, Save, then Test. Save the agent's number as a contact and call it. Full steps, costs and Google Voice: docs/phone-calls.md.</li>
+              </ol>
+            </details>
+          </div>
         </div>
 
         <!-- ═══ ADMIN: USERS TAB ═══ -->
