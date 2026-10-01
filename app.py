@@ -216,6 +216,10 @@ if AUTH_ENABLED:
         # path is the credential; routes/sms_routes.py checks it and the
         # sender's number, and 404s otherwise.
         _re.compile(r"^/api/sms/inbound/[A-Za-z0-9_-]{32,64}/?$"),
+        # Twilio's phone call webhooks. routes/telephony_routes.py checks the
+        # X-Twilio-Signature of each against the called user's auth token
+        # (and the WebSockets a one-time token) and 404s otherwise.
+        _re.compile(r"^/api/telephony/twilio/(voice|pin|done|recording|health)/?$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -421,6 +425,11 @@ if AUTH_ENABLED:
     logger.info("Auth middleware enabled (AUTH_ENABLED=true)")
 else:
     logger.info("Auth middleware disabled (set AUTH_ENABLED=true to enable)")
+
+# Outermost: requests from the public internet (Tailscale Funnel) reach the
+# phone call webhooks and nothing else (core/middleware.py).
+from core.middleware import FunnelGuardMiddleware
+app.add_middleware(FunnelGuardMiddleware)
 
 # ========= STATIC FILES =========
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -643,6 +652,8 @@ from routes.enroll_routes import setup_enroll_routes
 app.include_router(setup_enroll_routes())
 from routes.sms_routes import setup_sms_routes
 app.include_router(setup_sms_routes(session_manager))
+from routes.telephony_routes import setup_telephony_routes
+app.include_router(setup_telephony_routes())
 from routes.special_chat_routes import setup_special_chat_routes
 app.include_router(setup_special_chat_routes(session_manager))
 from routes.mail_listener_routes import setup_mail_listener_routes

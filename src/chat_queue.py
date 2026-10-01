@@ -384,8 +384,11 @@ async def _prepare(sess, session_id: str, context: List[Dict]):
     return context, ctx_len
 
 
-async def run_headless(session_id: str, text: str, client_device: Optional[Dict] = None) -> bool:
-    """Send a queued message with no page open, as a detached run."""
+async def run_headless(session_id: str, text: str, client_device: Optional[Dict] = None,
+                       source: str = "queued", voice_call: bool = False) -> bool:
+    """Send a message with no page open, as a detached run: a queued
+    message, or a turn of a phone call (src/telephony/agent.py), which
+    `source` marks on both saved messages."""
     try:
         from src.ai_interaction import get_session_manager
         from src.screen_control_resume import _resume_stream
@@ -401,18 +404,22 @@ async def run_headless(session_id: str, text: str, client_device: Optional[Dict]
             return False
         if not sess or agent_runs.is_active(session_id):
             return False
-        sm.add_message(session_id, ChatMessage("user", text, metadata={"source": "queued"}))
+        sm.add_message(session_id, ChatMessage("user", text, metadata={"source": source}))
         sm.save_sessions()
         context = sess.get_context_messages()
         if not context or context[-1].get("content") != text:
             context.append({"role": "user", "content": text})
         context, ctx_len = await _prepare(sess, session_id, context)
+        if voice_call:
+            # Spoken on a phone call: the same note an in-app call turn gets.
+            from routes.chat_routes import apply_voice_call_note
+            apply_voice_call_note(context)
         if agent_runs.is_active(session_id):
             return True         # a page got in first; the message is in the chat either way
         agent_runs.start(session_id, _resume_stream(
-            sess, sm, context, source="queued", client_device=client_device,
+            sess, sm, context, source=source, client_device=client_device,
             context_length=ctx_len))
-        logger.info("Sent a queued message in %s with no page open", session_id)
+        logger.info("Sent a %s message in %s with no page open", source, session_id)
         return True
     except Exception as e:
         logger.warning("Could not send queued message in %s: %s", session_id, e)
