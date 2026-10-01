@@ -138,7 +138,8 @@ class TTSService:
             logger.error(f"API TTS synthesis failed: {e.message}")
             return None
 
-    def _synthesize_api_checked(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0) -> bytes:
+    def _synthesize_api_checked(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0,
+                                response_format: str = "mp3") -> bytes:
         from src.database import SessionLocal, ModelEndpoint
 
         db = SessionLocal()
@@ -164,7 +165,7 @@ class TTSService:
             "model": model or "tts-1",
             "input": text,
             "voice": voice,
-            "response_format": "mp3",
+            "response_format": response_format,
             "speed": speed,
         }
 
@@ -192,9 +193,12 @@ class TTSService:
     # ── Public interface ──
 
     def synthesize_checked(self, text: str, use_cache: bool = True, voice: Optional[str] = None,
-                           speed: Optional[float] = None) -> bytes:
+                           speed: Optional[float] = None, response_format: str = "mp3") -> bytes:
         """Audio for `text` with the configured provider. `voice` and `speed`
-        override the saved ones (the Settings preview). Raises TTSError."""
+        override the saved ones (the Settings preview). `response_format` is
+        what an API engine is asked for: MP3 for the browser, WAV for a phone
+        call (src/telephony), which has no MP3 decoder to count on. Kokoro
+        always makes WAV. Raises TTSError."""
         settings = self._load_settings()
         provider = settings["tts_provider"]
         if settings.get("tts_enabled") is False or provider == "disabled":
@@ -217,7 +221,10 @@ class TTSService:
         elif not provider.startswith("endpoint:"):
             raise TTSError(f"Unknown TTS provider: {provider}", 400)
 
-        key = self._cache_key(text, provider, model, voice, speed)
+        # The format is in the key only when it is not the default, so the
+        # cache the browser already filled stays valid.
+        cache_voice = voice if response_format == "mp3" or provider == "local" else f"{voice}|{response_format}"
+        key = self._cache_key(text, provider, model, cache_voice, speed)
         if use_cache:
             cached = self._get_cached(key)
             if cached:
@@ -237,16 +244,17 @@ class TTSService:
             audio_data = k.synthesize(text, model, voice, speed)
         else:
             t0 = time.monotonic()
-            audio_data = self._synthesize_api_checked(text, provider.split(":", 1)[1], model, voice, speed)
+            audio_data = self._synthesize_api_checked(text, provider.split(":", 1)[1], model, voice, speed,
+                                                      response_format)
             self._last_api = {"latency_ms": round((time.monotonic() - t0) * 1000), "chars": len(text), "at": time.time()}
 
         if audio_data and use_cache:
             self._put_cache(key, audio_data)
         return audio_data
 
-    def synthesize(self, text: str, use_cache: bool = True) -> Optional[bytes]:
+    def synthesize(self, text: str, use_cache: bool = True, response_format: str = "mp3") -> Optional[bytes]:
         try:
-            return self.synthesize_checked(text, use_cache=use_cache)
+            return self.synthesize_checked(text, use_cache=use_cache, response_format=response_format)
         except TTSError as e:
             logger.warning("TTS: %s", e.message)
             return None
