@@ -50,6 +50,9 @@ DEFAULT_SETTINGS = {
     "tts_model": "tts-1",
     "tts_voice": "alloy",
     "tts_speed": "1",
+    # Kokoro model for the "local" TTS provider (services/tts/kokoro_local.py);
+    # empty picks the one that is faster on this CPU.
+    "tts_kokoro_model": "",
     "stt_enabled": False,
     "stt_provider": "disabled",
     # Whisper model for the "local" STT provider (see services/stt/local_models.py).

@@ -20,6 +20,13 @@ av<16
 # installs; [hub] is huggingface_hub for the model download.
 onnx-asr[cpu,hub]>=0.12
 
+# Local text to speech, the "local" TTS provider: Kokoro-82M through
+# kokoro-onnx (onnxruntime + espeak-ng via espeakng-loader, no torch). The
+# model (92-326 MB) and voices (28 MB) download from Settings > AI Defaults >
+# Voice call into <data dir>/models/tts/kokoro. WAV is written with the
+# standard library, so soundfile is not needed.
+kokoro-onnx>=0.6
+
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.
 # Alternatives: SearXNG, Brave, Tavily, Serper, Google PSE.

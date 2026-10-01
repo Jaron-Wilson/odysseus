@@ -1,7 +1,6 @@
 // Search Chat Module — Ctrl+K command palette for searching conversations
-// and for jumping to a page or a setting (settingsNav.js, toolPages.js):
-// matching pages and settings are listed above the chats, and "take me to
-// ..." can ask the Utility model.
+// and for jumping to a setting (settingsNav.js): matching settings are listed
+// above the chats, and "take me to ..." can ask the Utility model.
 
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
@@ -68,36 +67,24 @@ function formatTimestamp(iso) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-// Pages ("devices", "terminal") and up to three settings for the query,
-// plus an "ask the helper" row when it reads as "take me to ..." and nothing
-// local is a sure match. Pages come first, in their own group.
+// Up to three settings for the query, plus an "ask the helper" row when it
+// reads as "take me to ..." and nothing local is a sure match.
 function _settingsGroup(query) {
   settingHits = [];
   if (!query || query.length < 2) return '';
   let ranked = [];
-  try { ranked = settingsNav.rank(query, settingsNav.buildNavIndex()); } catch (_) { return ''; }
+  try { ranked = settingsNav.rank(query); } catch (_) { return ''; }
   const nav = settingsNav.isNavRequest(query);
   const sure = settingsNav.isConfident(ranked);
-  const ok = ranked.filter(r => r.score >= (nav ? 1 : 2.4));
-  const pages = ok.filter(r => r.entry.kind === 'page').slice(0, 3).map(r => r.entry);
-  const settings = ok.filter(r => r.entry.kind !== 'page').slice(0, nav && !sure ? 2 : 3).map(r => r.entry);
-  // The sure match leads, so a bare Enter takes it.
-  settingHits = sure && ranked[0].entry.kind !== 'page' ? settings.concat(pages) : pages.concat(settings);
+  settingHits = ranked.filter(r => r.score >= (nav ? 1 : 2.4)).slice(0, nav && !sure ? 2 : 3).map(r => r.entry);
   let html = '';
-  const row = (e) => {
-    const i = settingHits.indexOf(e);
-    return `<div class="search-result-item search-result-setting" data-setting="${i}">
-      <div class="search-result-role">${e.kind === 'page' ? 'Open' : 'Go'}</div>
+  if (settingHits.length || nav) html += '<div class="search-group-header">Settings</div>';
+  settingHits.forEach((e, i) => {
+    html += `<div class="search-result-item search-result-setting" data-setting="${i}">
+      <div class="search-result-role">Go</div>
       <div class="search-result-snippet">${settingsNav.pathHtml(e)}</div>
     </div>`;
-  };
-  const groups = [['Pages', pages], ['Settings', settings]];
-  if (settingHits[0] && settingHits[0].kind !== 'page') groups.reverse();
-  for (const [name, list] of groups) {
-    if (!list.length && !(name === 'Settings' && nav && !sure)) continue;
-    html += `<div class="search-group-header">${name}</div>`;
-    list.forEach(e => { html += row(e); });
-  }
+  });
   if (nav && !sure) {
     html += `<div class="search-result-item search-result-setting" data-setting-ask="1">
       <div class="search-result-role">Ask</div>
@@ -210,7 +197,7 @@ function handleKeydown(e) {
     e.preventDefault();
     // Nothing picked: a sure settings match (or "take me to ...") still goes.
     const item = selectedIndex >= 0 ? items[selectedIndex]
-      : (container && settingHits.length && settingsNav.isConfident(settingsNav.rank(lastQuery, settingsNav.buildNavIndex())) ? items[0]
+      : (container && settingHits.length && settingsNav.isConfident(settingsNav.rank(lastQuery)) ? items[0]
         : (container && container.querySelector('[data-setting-ask]')));
     if (!item) return;
     if (item.classList.contains('search-result-setting')) _openSettingItem(item);

@@ -1337,48 +1337,6 @@ body.bg-pattern-sparkles {
     .section.collapsed .section-header-btn { display: none; }
     .section.collapsed { cursor: pointer; }
 
-    /* Tool groups (toolGroups.js): Organize, Create & research, Build,
-       System. A quiet uppercase label over each group; folded, the label
-       is followed by what's inside, and a dot when something there has news. */
-    .tool-group + .tool-group { margin-top: 4px; }
-    .tool-group[hidden] { display: none; }
-    .tool-group-head {
-      all: unset;
-      box-sizing: border-box;
-      display: flex; align-items: center; gap: 8px;
-      width: 100%; height: 26px; padding: 0 8px; margin-top: 6px;
-      border-radius: 4px; cursor: pointer; user-select: none;
-      color: var(--fg);
-    }
-    .tool-group-head:hover { background: color-mix(in srgb, var(--red) 8%, transparent); }
-    .tool-group-head:focus-visible { outline: 2px solid var(--accent, var(--red)); outline-offset: -2px; }
-    .tool-group-label {
-      flex: none; font-size: 9px; font-weight: 600; line-height: 1.3;
-      letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.5;
-    }
-    .tool-group-summary {
-      flex: 1; min-width: 0; font-size: 9.5px; line-height: 1.3;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      visibility: hidden; opacity: 0.4;
-    }
-    .tool-group.collapsed .tool-group-summary { visibility: visible; }
-    .tool-group-dot {
-      display: none; flex: none; width: 6px; height: 6px; border-radius: 50%;
-      background: var(--accent, var(--red));
-    }
-    .tool-group.collapsed.has-badge .tool-group-dot { display: inline-block; }
-    .tool-group-chevron { flex: none; opacity: 0; transition: transform 0.2s, opacity 0.15s; }
-    .tool-group-head:hover .tool-group-chevron,
-    .tool-group-head:focus-visible .tool-group-chevron { opacity: 0.6; }
-    .tool-group.collapsed .tool-group-chevron { transform: rotate(-90deg); opacity: 0.4; }
-    .tool-group.collapsed > .tool-group-items { display: none; }
-    @media (hover: none) {
-      .tool-group-chevron { opacity: 0.4; }
-    }
-    @media (pointer: coarse), (max-width: 768px) {
-      .tool-group-head { height: 34px; }
-    }
-
     /* Domino expand: every time a section goes from .collapsed → open
        (toggleCollapse in section-management.js adds .section-just-expanded
        for ~700ms), the .list-item children cascade in one after another,

@@ -310,9 +310,7 @@ class AITTSManager {
 
                 await new Promise((resolve, reject) => {
                     const audio = new Audio(audioUrl);
-                    if (this._provider === 'local' && this.playbackSpeed !== 1) {
-                        audio.playbackRate = this.playbackSpeed;
-                    }
+                    // The server applies the speed (Kokoro natively), so 1x here.
                     this.currentAudio = audio;
                     audio.onended = () => {
                         this.isPlaying = false;

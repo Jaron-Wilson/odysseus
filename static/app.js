@@ -37,7 +37,6 @@ import './js/uiDesign.js';
 import './js/workspace/shell.js';
 // "Go to..." for Settings: the header box, composer chip and setting links.
 import './js/settingsNav.js';
-import './js/toolGroups.js';
 // IMPORTANT: import cookbook.js with NO ?v= query — the same plain specifier
 // every other importer (cookbook-hwfit.js / cookbook-diagnosis.js) uses. A query
 // mismatch makes the browser load cookbook.js twice as separate modules (two
@@ -1142,8 +1141,6 @@ function initializeEventListeners() {
     .then(r => r.json())
     .then(d => {
       window._isAdmin = !!d.is_admin;
-      // The sidebar's tool groups hide admin-only tools for everyone else.
-      document.dispatchEvent(new CustomEvent('odysseus:auth', { detail: d }));
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
