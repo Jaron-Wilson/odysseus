@@ -34,6 +34,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 from xml.sax.saxutils import escape, quoteattr
@@ -104,10 +105,22 @@ def gather_pin(action: str, digits: int, prompt: str = "Enter your PIN.") -> str
     )
 
 
+def stream_verb(ws_url: str, params: Dict[str, str]) -> str:
+    ps = "".join(f"<Parameter name={quoteattr(k)} value={quoteattr(v)}/>" for k, v in params.items())
+    return f"<Connect><Stream url={quoteattr(ws_url)}>{ps}</Stream></Connect>"
+
+
 def connect_stream(ws_url: str, params: Dict[str, str]) -> str:
     """Bidirectional Media Stream: only <Connect> lets us send audio back."""
-    ps = "".join(f"<Parameter name={quoteattr(k)} value={quoteattr(v)}/>" for k, v in params.items())
-    return twiml(f"<Connect><Stream url={quoteattr(ws_url)}>{ps}</Stream></Connect>")
+    return twiml(stream_verb(ws_url, params))
+
+
+def play_digits(digits: str) -> str:
+    """Key in DTMF tones (w waits half a second, W a second), as a caller
+    typing a conference PIN would."""
+    if not re.fullmatch(r"[0-9wW#*]{1,64}", digits or ""):
+        raise ValueError("digits are 0-9, #, * and w/W pauses")
+    return f'<Play digits="{digits}"/>'
 
 
 def connect_relay(ws_url: str, params: Dict[str, str], greeting: str = "", voice: str = "",

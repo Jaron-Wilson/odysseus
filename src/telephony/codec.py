@@ -12,7 +12,8 @@ Pure numpy, no audioop: audioop is gone in Python 3.13.
 import io
 import struct
 import wave
-from typing import Iterator, Tuple
+from dataclasses import dataclass
+from typing import Callable, Iterator, Tuple
 
 import numpy as np
 
@@ -176,16 +177,50 @@ def to_phone(audio: bytes) -> bytes:
     return pcm16_to_ulaw(resample(samples, rate, RATE))
 
 
-def for_stt(pcm8k: np.ndarray) -> bytes:
+def for_stt(pcm: np.ndarray, rate: int = RATE) -> bytes:
     """A caller's utterance as the WAV speech to text gets: 16 kHz, the rate
     Whisper works at, so no engine has to guess with 8 kHz input."""
-    return wav_bytes(resample(pcm8k, RATE, 16000), 16000)
+    return wav_bytes(resample(pcm, rate, 16000), 16000)
 
 
-def frames(ulaw: bytes, size: int = FRAME_BYTES) -> Iterator[bytes]:
-    """mu-law audio as 20 ms frames, the last one padded with silence."""
+def frames(ulaw: bytes, size: int = FRAME_BYTES, pad: bytes = SILENCE) -> Iterator[bytes]:
+    """Audio (mu-law by default) as 20 ms frames, the last one padded with
+    silence."""
     for i in range(0, len(ulaw), size):
         chunk = ulaw[i:i + size]
         if len(chunk) < size:
-            chunk = chunk + SILENCE * (size - len(chunk))
+            chunk = chunk + (pad * size)[: size - len(chunk)]
         yield chunk
+
+
+# ── What a transport carries ───────────────────────────────────────────────
+
+WIDE_RATE = 16000
+
+
+def pcm16_bytes_to_samples(data: bytes) -> np.ndarray:
+    return np.frombuffer(data[: len(data) // 2 * 2], dtype="<i2")
+
+
+def to_wide(audio: bytes) -> bytes:
+    """TTS output as 16 kHz 16-bit little-endian PCM bytes."""
+    samples, rate = decode_audio(audio)
+    return np.asarray(resample(samples, rate, WIDE_RATE), dtype="<i2").tobytes()
+
+
+@dataclass(frozen=True)
+class AudioFormat:
+    """The audio a call's transport sends and takes: a phone line's 8 kHz
+    mu-law, or the 16 kHz PCM a browser in a Google Meet hands over
+    (src/meet/). The turn loop (call.py) is the same for both."""
+    name: str
+    rate: int
+    frame_bytes: int                        # one 20 ms frame
+    pad: bytes                              # a silent sample
+    decode: Callable[[bytes], np.ndarray]   # transport bytes -> int16 samples
+    encode: Callable[[bytes], bytes]        # TTS audio (WAV/MP3) -> transport bytes
+
+
+ULAW_8K = AudioFormat("ulaw8k", RATE, FRAME_BYTES, SILENCE, ulaw_to_pcm16, to_phone)
+PCM_16K = AudioFormat("pcm16k", WIDE_RATE, WIDE_RATE * FRAME_MS // 1000 * 2, b"\x00\x00",
+                      pcm16_bytes_to_samples, to_wide)

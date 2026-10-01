@@ -2624,6 +2624,141 @@
               </ol>
             </details>
           </div>
+          <!-- Google Meet: routes/meet_routes.py, filled in by devicesSettings.js. -->
+          <div class="admin-card" id="meet-card" data-goto-keywords="google meet meeting video call join notes transcript summary assistant bot">
+            <h2>Google Meet</h2>
+            <div class="admin-toggle-sub">Bring the agent into a Google Meet. Talk with it there like a call, or let it sit in as a meeting assistant: it transcribes the meeting into a chat, answers only when someone says its name, and posts notes with action items when the meeting ends. It joins as "Odysseus (AI)" and says out loud that an AI is listening and transcribing.</div>
+            <div class="admin-toggle-row">
+              <div>
+                <div class="admin-toggle-label">Join meetings</div>
+                <div class="admin-toggle-sub" id="meet-state">Loading…</div>
+              </div>
+              <label class="admin-switch"><input type="checkbox" id="meet-enabled"><span class="admin-slider"></span></label>
+            </div>
+            <div class="settings-col">
+              <div class="admin-toggle-label">Join a Meet</div>
+              <div class="settings-row">
+                <label class="settings-label" for="meet-url">Meet link</label>
+                <input id="meet-url" class="settings-select" type="text" autocomplete="off" placeholder="https://meet.google.com/abc-defg-hij" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="meet-mode">Mode</label>
+                <select id="meet-mode" class="settings-select">
+                  <option value="assistant">Meeting assistant (transcribes, answers when called by name, notes after)</option>
+                  <option value="talk">Talk with me (answers every turn, like a call)</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="meet-via">Join by</label>
+                <select id="meet-via" class="settings-select">
+                  <option value="browser">The cloud browser (any Meet link)</option>
+                  <option value="phone">Phone dial-in (the Twilio number from Phone calls)</option>
+                </select>
+              </div>
+              <div class="settings-row" id="meet-dial-row" style="display:none">
+                <label class="settings-label" for="meet-dial">Dial-in</label>
+                <input id="meet-dial" class="settings-select" type="text" autocomplete="off" placeholder="+1 650-555-0123 (Join by phone in the invite)" />
+                <input id="meet-pin" class="settings-select" type="text" inputmode="numeric" autocomplete="off" placeholder="PIN" />
+              </div>
+              <div class="settings-row">
+                <span class="admin-toggle-sub">Someone in the meeting may have to let it in from the lobby.</span>
+                <button class="admin-btn-add" id="meet-join" type="button">Join</button>
+              </div>
+              <div class="admin-toggle-label">Coming up (from your calendar)</div>
+              <div id="meet-upcoming" class="settings-col"><div class="admin-toggle-sub">No meetings with a Meet link in the next day.</div></div>
+              <div class="admin-toggle-label">Meetings</div>
+              <div id="meet-active" class="settings-col"><div class="admin-toggle-sub">Not in a meeting.</div></div>
+              <div id="meet-msg" class="admin-toggle-sub"></div>
+            </div>
+            <details>
+              <summary class="admin-toggle-sub">Settings</summary>
+              <div class="settings-col">
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-name">Display name</label>
+                  <input id="meet-name" class="settings-select" type="text" maxlength="60" placeholder="Odysseus (AI)" />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-owner">Your name</label>
+                  <input id="meet-owner" class="settings-select" type="text" maxlength="60" placeholder="Said in the announcement: here for ..." />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-joinas">Join as</label>
+                  <select id="meet-joinas" class="settings-select">
+                    <option value="guest">Guest (asks to join with the display name; nothing to sign in to)</option>
+                    <option value="signed_in">Signed in (the Google account signed in to the cloud browser)</option>
+                  </select>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-wake">Wake words</label>
+                  <input id="meet-wake" class="settings-select" type="text" placeholder="odysseus (comma-separated, up to 5)" />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-announcement">Announcement</label>
+                  <input id="meet-announcement" class="settings-select" type="text" maxlength="400" />
+                </div>
+                <div class="settings-row">
+                  <label><input type="checkbox" id="meet-announce"> Say it out loud when it joins</label>
+                  <label><input type="checkbox" id="meet-chat-notice"> Post it in the meeting chat</label>
+                  <label><input type="checkbox" id="meet-summary"> Notes and action items after (assistant)</label>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-max">Leave after</label>
+                  <select id="meet-max" class="settings-select">
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="120">2 hours</option>
+                    <option value="240">4 hours</option>
+                    <option value="480">8 hours</option>
+                    <option value="1440">24 hours (Meet's limit)</option>
+                  </select>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-idle">Leave when quiet for</label>
+                  <select id="meet-idle" class="settings-select">
+                    <option value="5">5 minutes</option>
+                    <option value="15">15 minutes</option>
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 hour</option>
+                  </select>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-lobby">Wait in the lobby</label>
+                  <select id="meet-lobby" class="settings-select">
+                    <option value="5">5 minutes</option>
+                    <option value="10">10 minutes</option>
+                    <option value="20">20 minutes</option>
+                  </select>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-dial-wait">PIN after</label>
+                  <select id="meet-dial-wait" class="settings-select">
+                    <option value="2">2 seconds</option>
+                    <option value="4">4 seconds</option>
+                    <option value="6">6 seconds</option>
+                    <option value="8">8 seconds</option>
+                  </select>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-model">Model</label>
+                  <select id="meet-model" class="settings-select"><option value="">Default model</option></select>
+                </div>
+                <div class="settings-row">
+                  <span class="admin-toggle-sub">Speech uses "Hears with" and "Speaks with" from AI Defaults > Voice call (server engines, not the browser's).</span>
+                  <button class="admin-btn-add" id="meet-save" type="button">Save</button>
+                </div>
+              </div>
+            </details>
+            <details>
+              <summary class="admin-toggle-sub">Setup guide</summary>
+              <ol class="admin-toggle-sub">
+                <li>Pick server speech engines in AI Defaults > Voice call (Whisper or Parakeet to hear, Kokoro to speak).</li>
+                <li>Turn on Join meetings and Save. Paste a Meet link and Join, or use <code>/meet https://meet.google.com/...</code> in a chat. Let "Odysseus (AI)" in from the lobby.</li>
+                <li>Meetings that only admit signed-in accounts: sign the cloud browser in to a Google account (a separate one named "Odysseus (AI)" is best) and pick Signed in. Invite that account to skip the lobby.</li>
+                <li>Join by phone instead: set up Phone calls (Twilio) first, then use the dial-in number and PIN from the invite. Meet has dial-in numbers only when the organizer's plan includes them.</li>
+                <li>Say "Odysseus, leave the meeting", press Leave here, or end the meeting. Full steps, costs and what your plan unlocks: docs/google-meet.md.</li>
+              </ol>
+            </details>
+          </div>
         </div>
 
         <!-- ═══ ADMIN: USERS TAB ═══ -->
