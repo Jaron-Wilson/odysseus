@@ -208,6 +208,10 @@ def call_page():
                 r.fulfill(body=_wav(fakes.tts_ms, freq=330), content_type="audio/wav")
             elif path in ("/", ""):
                 r.fulfill(body=_PAGE, content_type="text/html")
+            elif path.startswith("/static/") and (_REPO / path.lstrip("/")).is_file():
+                # The rest of the app's modules, for the ones that import them.
+                r.fulfill(body=(_REPO / path.lstrip("/")).read_bytes(),
+                          content_type="text/javascript" if path.endswith(".js") else "text/plain")
             else:
                 r.fulfill(status=404, body="")
 
@@ -299,7 +303,7 @@ def test_the_reply_is_spoken_sentence_by_sentence_as_it_streams(call_page):
 def test_talking_over_the_agent_stops_it_and_listens(call_page):
     pg, fakes = call_page
     fakes.tts_ms = 4000                             # long sentences, so there is time to cut in
-    _open(pg, {"bargeIn": True})
+    _open(pg, {"bargeIn": True, "echo": "headphones"})
     _wait_event(pg, "calibrated")
     _say(pg, 700)
     _wait_event(pg, "speak-start", timeout=10000)
@@ -348,7 +352,7 @@ def test_end_releases_the_microphone(call_page):
     assert pg.evaluate("window.__vc.isActive()") is False
 
 
-def test_escape_ends_the_call_mid_reply(call_page):
+def test_escape_minimizes_mid_reply_and_never_hangs_up(call_page):
     pg, fakes = call_page
     fakes.tts_ms = 4000
     _open(pg)
@@ -356,9 +360,18 @@ def test_escape_ends_the_call_mid_reply(call_page):
     _say(pg, 700)
     _wait_event(pg, "speak-start", timeout=10000)
     pg.keyboard.press("Escape")
-    _wait_event(pg, "ended")
-    assert pg.evaluate("window.__call.audio.paused")
-    assert pg.evaluate("window.__mic.stream.getAudioTracks().every(t => t.readyState === 'ended')")
+    _wait_event(pg, "minimized")
+    assert pg.is_hidden(".vc-overlay") and pg.is_visible(".vc-pill")
+    assert not pg.evaluate("document.documentElement.classList.contains('vc-open')")
+    # Still talking, still listening.
+    assert not pg.evaluate("window.__call.audio.paused")
+    assert pg.evaluate("window.__mic.stream.getAudioTracks().every(t => t.readyState === 'live')")
+    pg.keyboard.press("Escape")                         # minimized, Escape is the app's again
+    pg.wait_for_timeout(300)
+    assert pg.evaluate("window.__vc.isActive()") and _events(pg, "ended") == []
+    pg.click(".vc-pill-expand")
+    _wait_event(pg, "expanded")
+    assert pg.is_visible(".vc-overlay") and pg.is_hidden(".vc-pill")
 
 
 def test_denied_permission_shows_the_error(call_page):
@@ -426,3 +439,267 @@ def test_markdown_is_read_as_words_and_split_into_sentences(call_page):
     assert out["all"] == ["Plan", "Sure, Dr. Lee can help.", "See the docs.", "First item", "Second one?", "Yes"]
     assert out["partial"] == out["all"][:-1]            # "Yes" may still grow
     assert out["streamed"] == [out["all"]] * 3
+
+
+# --- Minimized ---------------------------------------------------------------
+
+def _pill_state(pg):
+    return pg.evaluate("document.querySelector('.vc-pill').dataset.state")
+
+
+def test_minimized_the_call_goes_on_in_the_pill(call_page):
+    pg, fakes = call_page
+    fakes.tts_ms = 600
+    _open(pg)
+    _wait_event(pg, "calibrated")
+    pg.click(".vc-minimize")
+    _wait_event(pg, "minimized")
+    assert pg.is_visible(".vc-pill") and pg.is_hidden(".vc-overlay")
+    assert "Trip planning" in pg.inner_text(".vc-pill")
+    assert _pill_state(pg) == "listening" and "Listening" in pg.inner_text(".vc-pill-state")
+    # A whole turn while minimized: heard, sent, spoken, back to listening.
+    pg.evaluate("window.__mic.talk(true)")
+    pg.wait_for_timeout(250)
+    lvl = pg.evaluate("Number(getComputedStyle(document.querySelector('.vc-pill')).getPropertyValue('--vc-level'))")
+    assert lvl > 0.05                                    # the level bars move with the voice
+    pg.wait_for_timeout(450)
+    pg.evaluate("window.__mic.talk(false)")
+    pg.wait_for_function("() => document.querySelector('.vc-pill').dataset.state === 'thinking'", timeout=6000)
+    pg.wait_for_function("() => document.querySelector('.vc-pill').dataset.state === 'speaking'", timeout=8000)
+    assert pg.inner_text(".vc-pill-state") == "Speaking"
+    _wait_event(pg, "speak-end", 3, timeout=10000)
+    pg.wait_for_function("() => document.querySelector('.vc-pill').dataset.state === 'listening'", timeout=6000)
+    assert pg.evaluate("window.__sent") == ["what's the weather like"]
+    assert pg.is_hidden(".vc-overlay")                   # it stayed minimized the whole time
+    # Mute from the pill.
+    pg.click(".vc-pill-mute")
+    assert pg.evaluate("window.__call.muted")
+    assert pg.get_attribute(".vc-pill-mute", "aria-pressed") == "true"
+    assert pg.inner_text(".vc-pill-state") == "Muted"
+    pg.click(".vc-pill-mute")
+    assert not pg.evaluate("window.__call.muted")
+    pg.click(".vc-pill-main")
+    assert pg.is_visible(".vc-overlay")
+    pg.click(".vc-minimize")
+    pg.click(".vc-pill-end")
+    _wait_event(pg, "ended")
+    assert pg.evaluate("document.querySelector('.vc-pill')") is None
+    assert pg.evaluate("window.__mic.stream.getAudioTracks().every(t => t.readyState === 'ended')")
+
+
+def test_a_mobile_pill_sits_in_the_safe_area_clear_of_the_composer():
+    with playwright_api.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
+        except Exception as e:
+            pytest.skip(f"chromium unavailable: {e}")
+        ctx = browser.new_context(viewport={"width": 412, "height": 915}, is_mobile=True, has_touch=True)
+        pg = ctx.new_page()
+        css = _CSS.read_text()
+        pg.set_content("<meta name='viewport' content='width=device-width, initial-scale=1'>"
+                       f"<style>:root{{--bg:#111;--fg:#eee;--panel:#222;--border:#333;--red:#e33}}{css}</style>"
+                       "<form id='chat-form' style='position:fixed;left:0;right:0;bottom:0;height:120px'></form>"
+                       "<div class='vc-pill'><button class='vc-pill-main'><span class='vc-pill-lvl'><i></i></span>"
+                       "<span class='vc-pill-text'><span class='vc-pill-state'>Listening</span>"
+                       "<span class='vc-pill-sub'>A long chat name that goes on and on 1:23</span></span></button>"
+                       "<button class='vc-pill-btn'></button><button class='vc-pill-btn'></button>"
+                       "<button class='vc-pill-btn vc-pill-end'></button></div>")
+        box = pg.locator(".vc-pill").bounding_box()
+        form = pg.locator("#chat-form").bounding_box()
+        assert box["y"] >= 8 and box["y"] + box["height"] < form["y"]
+        assert box["x"] >= 0 and box["x"] + box["width"] <= 412
+        assert "env(safe-area-inset-top)" in css.split(".vc-pill {", 1)[1].split("}", 1)[0]
+        browser.close()
+
+
+# --- The call stays in its own chat ----------------------------------------
+
+_SSE_REPLY = "".join(f"data: {json.dumps({'delta': d})}\n\n" for d in ["It is ", "raining in Lisbon. ", "Take a coat."]) + "data: [DONE]\n\n"
+
+
+def test_minimized_over_another_chat_the_call_still_talks_in_its_own(call_page):
+    pg, fakes = call_page
+    seen = []
+
+    def chat_stream(route):
+        seen.append(route.request.post_data_buffer or b"")
+        route.fulfill(body=_SSE_REPLY, content_type="text/event-stream")
+    pg.route("**/api/chat_stream", chat_stream)
+    pg.evaluate("""() => {
+      window.__cur = 's1';
+      window.chatModule.currentSessionId = () => window.__cur;
+      const orig = window.chatModule.sendText;
+      window.chatModule.sendText = (t, o) => { window.__sendOpts = o; orig(t); };
+    }""")
+    _open(pg)
+    _wait_event(pg, "calibrated")
+    # First turn with the call's chat on screen: through the composer, flagged.
+    _say(pg, 700)
+    _wait_event(pg, "speak-end", 3, timeout=10000)
+    assert pg.evaluate("window.__sendOpts") == {"voiceCall": True}
+    pg.wait_for_function("() => document.querySelector('.vc-overlay').dataset.state === 'listening'")
+    # Minimize and open another chat. Its replies are not the call's.
+    pg.click(".vc-minimize")
+    pg.evaluate("window.__cur = 's2'")
+    _say(pg, 700)
+    pg.wait_for_function("() => window.__ev.some(e => e.type === 'send' && e.text === 'and tomorrow')", timeout=6000)
+    pg.evaluate("""() => {
+      const fire = (phase, t) => window.dispatchEvent(new CustomEvent('odysseus:reply', {detail: {phase, sessionId: 's2', text: t}}));
+      fire('start', ''); fire('delta', 'Something for the other chat. '); fire('done', 'Something for the other chat. ');
+    }""")
+    _wait_event(pg, "speak-end", 5, timeout=10000)
+    assert pg.evaluate("window.__sent") == ["what's the weather like"]      # not into s2's composer
+    assert len(seen) == 1
+    body = seen[0].decode("utf-8", "replace")
+    assert 'name="session"\r\n\r\ns1' in body and 'name="voice_call"\r\n\r\n1' in body
+    assert 'name="message"\r\n\r\nand tomorrow' in body
+    assert fakes.tts[3:] == ["It is raining in Lisbon.", "Take a coat."]
+    assert "Something for the other chat." not in fakes.tts
+    assert pg.evaluate("window.__call.sid") == "s1"
+
+
+def test_the_agent_opening_a_page_minimizes_the_call(call_page):
+    pg, _ = call_page
+    _open(pg)
+    _wait_event(pg, "calibrated")
+    assert pg.is_visible(".vc-overlay")
+    pg.evaluate("""() => import('/static/js/chatStream.js').then(m => { window.__cs = m; })""")
+    pg.wait_for_function("() => window.__cs", timeout=15000)
+    pg.evaluate("() => window.__cs.handleUIControl({ui_event: 'open_panel', panel: 'settings', settings_target: 'voice call'})")
+    _wait_event(pg, "minimized")
+    assert pg.is_hidden(".vc-overlay") and pg.is_visible(".vc-pill")
+    assert pg.evaluate("window.__vc.isActive()")
+    # A theme change is not something to look at: the call stays as it is.
+    pg.click(".vc-pill-expand")
+    pg.evaluate("() => window.__cs.handleUIControl({ui_event: 'clear_highlight'})")
+    assert pg.is_visible(".vc-overlay")
+
+
+# --- Echo --------------------------------------------------------------------
+
+def test_echo_check_drops_the_agents_own_words(call_page):
+    pg, _ = call_page
+    r = pg.evaluate("""() => {
+      const {isEcho} = window.__vc;
+      const spoken = ['The weather in Lisbon is sunny today.', 'Bring a hat!'];
+      return {
+        exact: isEcho('the weather in Lisbon is sunny today', spoken),
+        sloppy: isEcho('weather in lisbon is sunny to day bring', spoken),
+        tail: isEcho('bring a hat', spoken),
+        user: isEcho('wait, what about tomorrow', spoken),
+        mixed: isEcho('no stop I meant Porto', spoken),
+        short_user: isEcho('stop', spoken),
+        short_echo: isEcho('Bring a', spoken),
+        nothing: isEcho('', spoken),
+        no_ref: isEcho('the weather', []),
+      };
+    }""")
+    assert r == {"exact": True, "sloppy": True, "tail": True, "user": False, "mixed": False,
+                 "short_user": False, "short_echo": True, "nothing": False, "no_ref": False}
+
+
+def test_barge_in_needs_more_over_speakers_than_over_headphones(call_page):
+    pg, _ = call_page
+    r = pg.evaluate("""() => {
+      const {bargeParams} = window.__vc;
+      return {
+        hp: bargeParams({noise: 0.005, echo: 0.04, mode: 'headphones'}),
+        auto_quiet: bargeParams({noise: 0.005, echo: 0, mode: 'auto'}),
+        auto_loud: bargeParams({noise: 0.005, echo: 0.04, mode: 'auto'}),
+        strict: bargeParams({noise: 0.005, echo: 0.04, mode: 'strict'}),
+      };
+    }""")
+    assert r["strict"] is None
+    assert r["hp"]["onsetMs"] == 250 and abs(r["hp"]["threshold"] - 0.02) < 1e-9
+    assert r["auto_quiet"]["onsetMs"] == 400 and r["auto_quiet"]["threshold"] >= r["hp"]["threshold"]
+    assert abs(r["auto_loud"]["threshold"] - 0.1) < 1e-9                # 2.5x what the speakers put in the mic
+
+
+def test_auto_echo_resumes_the_voice_when_it_only_heard_itself(call_page):
+    pg, fakes = call_page
+    fakes.tts_ms = 3000
+    fakes.stt_text = ["what's the weather like", "sure thing"]           # the second "turn" is the speakers
+    _open(pg)                                                             # echo: auto (the default)
+    _wait_event(pg, "calibrated")
+    _say(pg, 700)
+    _wait_event(pg, "speak-start", timeout=10000)
+    pg.wait_for_timeout(500)                                              # past the echo calibration
+    _say(pg, 900)
+    _wait_event(pg, "hold", timeout=4000)
+    _wait_event(pg, "echo-dropped", timeout=6000)
+    _wait_event(pg, "release")
+    assert _events(pg, "barge-in") == []                                  # the reply was never cut off
+    assert pg.evaluate("window.__sent") == ["what's the weather like"]
+    assert not pg.evaluate("window.__call.audio.paused")
+    assert "headphones" in pg.inner_text(".vc-error")                     # said once
+    _wait_event(pg, "speak-end", 3, timeout=15000)
+
+
+def test_auto_echo_a_real_interruption_still_cuts_in(call_page):
+    pg, fakes = call_page
+    fakes.tts_ms = 3000
+    fakes.stt_text = ["what's the weather like", "no wait, what about Porto"]
+    _open(pg)
+    _wait_event(pg, "calibrated")
+    _say(pg, 700)
+    _wait_event(pg, "speak-start", timeout=10000)
+    pg.wait_for_timeout(500)
+    _say(pg, 900)
+    _wait_event(pg, "barge-in", timeout=6000)
+    pg.wait_for_function("() => window.__sent.length >= 2", timeout=6000)
+    assert pg.evaluate("window.__sent") == ["what's the weather like", "no wait, what about Porto"]
+
+
+def test_strict_echo_ignores_the_mic_while_the_agent_talks(call_page):
+    pg, fakes = call_page
+    fakes.tts_ms = 3000
+    _open(pg, {"echo": "strict"})
+    _wait_event(pg, "calibrated")
+    _say(pg, 700)
+    _wait_event(pg, "speak-start", timeout=10000)
+    _say(pg, 900)
+    pg.wait_for_timeout(500)
+    assert _events(pg, "hold") == [] and _events(pg, "barge-in") == []
+    assert len(fakes.stt) == 1
+    pg.click(".vc-interrupt")                                             # the button still cuts in
+    _wait_event(pg, "interrupt")
+    assert _state(pg) == "listening"
+
+
+def test_the_voice_plays_through_the_echo_cancelling_loopback(call_page):
+    pg, fakes = call_page
+    _open(pg)
+    _wait_event(pg, "loopback", timeout=10000)
+    ok = [e for e in pg.evaluate("window.__ev") if e["type"] == "loopback"][0]
+    _wait_event(pg, "calibrated")
+    _say(pg, 700)
+    _wait_event(pg, "speak-end", 3, timeout=10000)                        # played to the end through it
+    assert ok.get("ok") is True, ok
+    assert pg.evaluate("!!window.__call._loop && window.__call._loop.out.srcObject instanceof MediaStream")
+    assert pg.evaluate("window.__call._loop.pc2.connectionState") == "connected"
+
+
+def test_without_webrtc_the_voice_plays_straight_out(call_page):
+    pg, fakes = call_page
+    pg.evaluate("() => { window.RTCPeerConnection = undefined; }")
+    _open(pg)
+    _wait_event(pg, "calibrated")
+    _say(pg, 700)
+    _wait_event(pg, "speak-end", 3, timeout=10000)
+    assert pg.evaluate("window.__call._loop") is None
+
+
+def test_local_whisper_missing_falls_back_to_the_browser_recognizer(call_page):
+    pg, _ = call_page
+    pg.route("**/api/stt/stats", lambda r: r.fulfill(
+        body=json.dumps({"available": False, "provider": "local"}), content_type="application/json"))
+    r = pg.evaluate("""async () => {
+      window.webkitSpeechRecognition = function () { this.start = () => {}; this.stop = () => {}; this.abort = () => {}; };
+      const a = await window.__vc.resolveStt();
+      window.webkitSpeechRecognition = undefined;
+      window.SpeechRecognition = undefined;
+      const b = await window.__vc.resolveStt();
+      return {a: a.kind, notice: a.notice || '', b: b.kind, reason: b.reason || ''};
+    }""")
+    assert r["a"] == "browser" and "Whisper" in r["notice"]
+    assert r["b"] == "none" and "not installed" in r["reason"]

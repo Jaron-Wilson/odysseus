@@ -1,5 +1,6 @@
 /* static/css/voiceCall.css
-   The voice call overlay (static/js/voiceCall.js) and its composer button.
+   The voice call overlay (static/js/voiceCall.js), its minimized pill, its
+   composer button, and the handoff prompts (static/js/callHandoff.js).
    Neutral on purpose: only the shared palette (--bg, --fg, --panel, --border,
    --red) so it reads the same in Workspace, Studio and Classic, dark or
    light. Full screen on a phone, a centered card on a desktop. */
@@ -51,7 +52,7 @@ html.vc-open { overscroll-behavior: none; }
   justify-content: space-between;
   gap: 12px;
 }
-.vc-head-text { min-width: 0; }
+.vc-head-text { flex: 1; min-width: 0; }
 .vc-kicker {
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -252,6 +253,314 @@ html.vc-open { overscroll-behavior: none; }
   -webkit-touch-callout: none;
 }
 
+/* ── Minimize, the handoff line and the Move list ── */
+.vc-overlay[hidden] { display: none; }
+.vc-overlay button.vc-icon-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  margin: -4px -6px 0 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--vc-muted);
+  cursor: pointer;
+}
+.vc-overlay button.vc-icon-btn:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.vc-overlay button.vc-icon-btn:focus-visible { outline: 2px solid var(--vc-accent); outline-offset: 2px; }
+.vc-handoff {
+  max-width: 420px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg);
+}
+.vc-handoff[hidden] { display: none; }
+.vc-overlay button.vc-handoff-act {
+  margin-left: 4px;
+  padding: 2px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--vc-line);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.vc-move {
+  flex-shrink: 0;
+  border: 1px solid var(--vc-line);
+  border-radius: 14px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.vc-move[hidden] { display: none; }
+.vc-move-head {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vc-muted);
+  padding: 0 4px;
+}
+.vc-move-list { display: flex; flex-direction: column; gap: 4px; max-height: 32vh; overflow-y: auto; }
+.vc-move-empty { font-size: 13px; color: var(--vc-muted); padding: 4px; line-height: 1.45; }
+.vc-overlay button.vc-move-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--fg) 4%, var(--panel));
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.vc-overlay button.vc-move-item:hover { background: color-mix(in srgb, var(--fg) 9%, var(--panel)); }
+.vc-overlay button.vc-move-item:focus-visible { outline: 2px solid var(--vc-accent); outline-offset: 1px; }
+.vc-move-ico { display: grid; place-items: center; color: var(--vc-muted); }
+.vc-move-text { display: flex; flex-direction: column; min-width: 0; }
+.vc-move-name { font-size: 14px; font-weight: 600; }
+.vc-move-sub { font-size: 12px; color: var(--vc-muted); }
+
+/* ── The minimized call: a pill at the top, clear of the composer and of
+   the phone's notch. Above modals (Settings) so it stays in reach. ── */
+.vc-pill {
+  --vc-level: 0;
+  --vc-accent: var(--red);
+  --vc-muted: color-mix(in srgb, var(--fg) 58%, transparent);
+  --vc-line: color-mix(in srgb, var(--fg) 14%, var(--border));
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12500;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100vw - 16px);
+  padding: 4px 4px 4px 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--vc-line);
+  box-shadow: 0 10px 28px -12px rgba(0, 0, 0, 0.5);
+}
+.vc-pill[hidden] { display: none; }
+/* A desktop has the chat's title and tabs at the top center: the pill sits
+   at the top right, under them. */
+@media (min-width: 601px) {
+  .vc-pill { top: 60px; right: 16px; left: auto; transform: none; }
+}
+.vc-pill.vc-alert { border-color: color-mix(in srgb, var(--red) 60%, transparent); }
+.vc-pill.vc-moving { border-color: color-mix(in srgb, var(--vc-accent) 50%, transparent); }
+.vc-pill button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.vc-pill button:focus-visible { outline: 2px solid var(--vc-accent); outline-offset: 1px; }
+.vc-pill button.vc-pill-main {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 4px 8px 4px 4px;
+  border-radius: 999px;
+  text-align: left;
+}
+.vc-pill button.vc-pill-main:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.vc-pill-lvl {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: color-mix(in srgb, var(--vc-accent) 16%, transparent);
+}
+.vc-pill-lvl i {
+  display: block;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--vc-accent);
+  height: calc(4px + var(--vc-level) * 14px);
+  transition: height 0.08s linear;
+}
+.vc-pill-lvl i:nth-child(2) { height: calc(5px + var(--vc-level) * 18px); }
+.vc-pill-lvl i:nth-child(3) { height: calc(4px + var(--vc-level) * 16px); }
+.vc-pill-lvl i:nth-child(4) { height: calc(3px + var(--vc-level) * 10px); }
+.vc-pill.vc-hearing .vc-pill-lvl { background: color-mix(in srgb, var(--vc-accent) 28%, transparent); }
+.vc-pill[data-state="thinking"] .vc-pill-lvl i { height: 4px; animation: vc-dots 1.2s ease-in-out infinite; }
+.vc-pill[data-state="thinking"] .vc-pill-lvl i:nth-child(2) { animation-delay: 0.15s; }
+.vc-pill[data-state="thinking"] .vc-pill-lvl i:nth-child(3) { animation-delay: 0.3s; }
+.vc-pill[data-state="thinking"] .vc-pill-lvl i:nth-child(4) { animation-delay: 0.45s; }
+.vc-pill[data-state="speaking"] .vc-pill-lvl i { animation: vc-talk 0.9s ease-in-out infinite; }
+.vc-pill[data-state="speaking"] .vc-pill-lvl i:nth-child(2) { animation-delay: 0.2s; }
+.vc-pill[data-state="speaking"] .vc-pill-lvl i:nth-child(3) { animation-delay: 0.4s; }
+.vc-pill[data-state="speaking"] .vc-pill-lvl i:nth-child(4) { animation-delay: 0.1s; }
+.vc-pill[data-state="error"] .vc-pill-lvl,
+.vc-pill[data-state="connecting"] .vc-pill-lvl { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.vc-pill[data-state="error"] .vc-pill-lvl i,
+.vc-pill[data-state="connecting"] .vc-pill-lvl i { background: var(--vc-muted); height: 4px; }
+@keyframes vc-dots { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+@keyframes vc-talk { 0%, 100% { height: 5px; } 50% { height: 16px; } }
+.vc-pill-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.vc-pill-state { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.vc-pill-sub {
+  font-size: 11px;
+  color: var(--vc-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+.vc-pill-timer { font-variant-numeric: tabular-nums; }
+.vc-pill button.vc-pill-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+.vc-pill button.vc-pill-btn svg { width: 18px; height: 18px; }
+.vc-pill button.vc-pill-btn[hidden] { display: none; }
+.vc-pill button.vc-pill-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.vc-pill button.vc-pill-btn:disabled { opacity: 0.4; cursor: default; }
+.vc-pill button.vc-pill-btn.active { color: var(--vc-accent); background: color-mix(in srgb, var(--vc-accent) 14%, transparent); }
+.vc-pill button.vc-pill-talk { width: 44px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.vc-pill button.vc-pill-end { background: var(--red); color: #fff; }
+.vc-pill button.vc-pill-end:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 86%, #000); }
+
+/* ── "Continue your call" on the other device, and "Take it here" ── */
+.vc-offer {
+  --vc-muted: color-mix(in srgb, var(--fg) 58%, transparent);
+  position: fixed;
+  z-index: 12600;
+  left: 50%;
+  top: calc(16px + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  width: min(380px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  border-radius: 18px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, var(--border));
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.55);
+}
+.vc-offer-kicker { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--vc-muted); }
+.vc-offer-title { font-size: 18px; font-weight: 600; line-height: 1.3; }
+.vc-offer-sub { font-size: 13px; color: var(--vc-muted); }
+.vc-offer-warn {
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+.vc-offer-warn[hidden] { display: none; }
+.vc-offer button.vc-offer-go {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 56px;
+  border-radius: 14px;
+  border: 0;
+  background: #1f9d55;
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.vc-offer button.vc-offer-go:hover { background: #1a8a4a; }
+.vc-offer-row { display: flex; align-items: center; justify-content: space-between; }
+.vc-offer button.vc-offer-no {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, var(--border));
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.vc-offer-time { font-size: 12px; color: var(--vc-muted); font-variant-numeric: tabular-nums; }
+.vc-offer button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+
+.vc-pickup {
+  position: fixed;
+  z-index: 12400;
+  left: 50%;
+  top: calc(10px + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  max-width: calc(100vw - 16px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, var(--border));
+  box-shadow: 0 10px 28px -12px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+.vc-pickup-ico { display: grid; place-items: center; opacity: 0.7; }
+.vc-pickup-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.vc-pickup button { font: inherit; cursor: pointer; color: inherit; }
+.vc-pickup button.vc-pickup-go {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 0;
+  background: #1f9d55;
+  color: #fff;
+  font-weight: 600;
+}
+.vc-pickup button.vc-pickup-x {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0.6;
+}
+.vc-toast {
+  position: fixed;
+  z-index: 12600;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 28px -12px rgba(0, 0, 0, 0.5);
+  font-size: 14px;
+}
+
 /* ── Phone: full screen, controls at the thumb ── */
 @media (max-width: 600px) {
   .vc-overlay {
@@ -274,6 +583,9 @@ html.vc-open { overscroll-behavior: none; }
   .vc-controls { gap: 10px; }
   .vc-overlay button.vc-btn { flex: 1; min-width: 0; max-width: 104px; }
   .vc-overlay button.vc-talk { max-width: none; flex: 1.6; }
+  .vc-pill-sub { max-width: 120px; }
+  .vc-pickup { top: calc(60px + env(safe-area-inset-top)); }
+  .vc-pill button.vc-pill-btn { width: 40px; height: 40px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -281,4 +593,5 @@ html.vc-open { overscroll-behavior: none; }
   .vc-ring { transition: none; transform: none; }
   .vc-overlay[data-state] .vc-ring { animation: none; transform: none; }
   .vc-overlay.vc-hearing .vc-ring { border-width: 3px; }
+  .vc-pill-lvl i, .vc-pill[data-state] .vc-pill-lvl i { animation: none; transition: none; }
 }

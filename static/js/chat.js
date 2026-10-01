@@ -202,9 +202,10 @@ import './chatThreads.js';
     _submitText(item.text);
   }
 
-  // Each reply in the chat on screen, announced for the voice call
-  // (voiceCall.js): 'start', then 'delta' with the text so far, then 'done'
-  // (also after an error or Stop). Background streams are not announced.
+  // Each reply, announced for the voice call (voiceCall.js): 'start', then
+  // 'delta' with the text so far, then 'done' (also after an error or Stop).
+  // A reply that went to the background (the user switched chats) is still
+  // announced: a minimized call in that chat is listening for it.
   function _emitReply(phase, sessionId, text) {
     try {
       window.dispatchEvent(new CustomEvent('odysseus:reply', { detail: { phase, sessionId, text: text || '' } }));
@@ -217,9 +218,14 @@ import './chatThreads.js';
     return (s && (s.name || s.title)) || '';
   }
 
-  function _submitText(text) {
+  // sendText(text, {voiceCall: true}): a turn spoken in the voice call, so
+  // the server tells the agent it is in a call (voice_call on chat_stream).
+  let _voiceTurnNext = false;
+
+  function _submitText(text, opts) {
     const ta = document.getElementById('message');
     if (!ta) return;
+    _voiceTurnNext = !!(opts && opts.voiceCall);
     // Whatever is half-typed in the box is put back once the send has read
     // the queued text (see updateSubmitButton's 'streaming' branch).
     _restoreDraft = ta.value && ta.value.trim() ? ta.value : null;
@@ -794,6 +800,8 @@ import './chatThreads.js';
    */
   export async function handleChatSubmit(e) {
     e.preventDefault();
+    const _voiceTurn = _voiceTurnNext;
+    _voiceTurnNext = false;
     // Cancel research clarification timeout if active
     if (window._researchTimeoutTimer) {
       clearTimeout(window._researchTimeoutTimer);
@@ -1345,6 +1353,7 @@ import './chatThreads.js';
       // Ctrl+Enter: stop the reply and send this now. Anything else sent while
       // a reply runs is queued by the server behind it.
       if (_interruptNext) { fd.append('interrupt', '1'); _interruptNext = false; }
+      if (_voiceTurn) fd.append('voice_call', '1');
       // The bell: push a "done" notification from the server (notifyDone.js).
       fd.append('notify', notifyDone.payload());
       // "Use as reference": earlier messages or side threads, for this turn only.
@@ -2011,13 +2020,13 @@ import './chatThreads.js';
                   submitBtn.dataset.phase = 'receiving';
                 }
 
+                _emitReply('delta', streamSessionId, _voiceText);
                 // Update background map if running in background
                 if (_isBg) {
                   var bgEntry = _backgroundStreams.get(streamSessionId);
                   if (bgEntry) bgEntry.accumulated = accumulated;
                   continue; // Skip all DOM writes
                 }
-                _emitReply('delta', streamSessionId, _voiceText);
 
                 // --- Text-fence doc streaming (for models that don't use native tool calls) ---
                 if (!_docFenceOpened && documentModule && roundText.includes('```create_document\n')) {
@@ -2970,7 +2979,9 @@ import './chatThreads.js';
                 }
 
               } else if (json.type === 'ui_control') {
-                if (_isBg) continue;
+                // In the background only for a voice call in that chat:
+                // "open Settings" said from the call opens it now.
+                if (_isBg && !(window.voiceCall && window.voiceCall.boundTo(streamSessionId))) continue;
                 chatStream.handleUIControl(json.data || {});
 
               } else if (json.type === 'ask_user') {
@@ -2990,7 +3001,10 @@ import './chatThreads.js';
                 if (_pu) _setStoredPlan(_pu);
 
               } else if (json.type === 'agent_step') {
-                if (_isBg) continue;
+                if (_isBg) {
+                  if (_voiceText && !_voiceText.endsWith('\n')) { _voiceText += '\n'; _emitReply('delta', streamSessionId, _voiceText); }
+                  continue;
+                }
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 _renderStream();

@@ -1758,6 +1758,14 @@
                 <label class="admin-switch"><input type="checkbox" id="set-vcBargeIn" checked data-goto-keywords="interrupt talk over"><span class="admin-slider"></span></label>
               </div>
               <div class="settings-row">
+                <label class="settings-label" for="set-vcEcho">Echo protection</label>
+                <select id="set-vcEcho" class="settings-select" data-goto-keywords="echo speakers headphones feedback">
+                  <option value="auto">Auto: speakers can't cut the agent off</option>
+                  <option value="headphones">Headphones: off, most responsive</option>
+                  <option value="strict">Strict: not listening while the agent talks</option>
+                </select>
+              </div>
+              <div class="settings-row">
                 <label class="settings-label" for="set-vcStt">Hears with</label>
                 <select id="set-vcStt" class="settings-select" data-goto-keywords="stt speech to text transcription engine whisper microphone voice input">
                   <option value="disabled">Off</option>
@@ -2915,6 +2923,7 @@
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/js/voiceCall.js"></script>
+<script type="module" src="/static/js/callHandoff.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
