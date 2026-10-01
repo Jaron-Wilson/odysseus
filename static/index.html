@@ -1499,6 +1499,9 @@
     new ResizeObserver(scheduleReposition).observe(chatBar);
     new MutationObserver(scheduleUpdateSoon).observe(container, {childList:true, subtree:true});
     window.addEventListener('resize', scheduleReposition);
+    // Workspace (workspace/shell.js) moves the chat between tabs and split
+    // panes without resizing the composer: re-measure, and recheck the scroll.
+    window.addEventListener('odysseus:ws-layout', () => { scheduleReposition(); scheduleUpdate(); });
     reposition();
     update();
   })();
