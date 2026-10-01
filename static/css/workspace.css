@@ -285,6 +285,19 @@ html.ui-workspace .ws-menu button:hover svg,
 html.ui-workspace .ws-menu button:focus-visible svg { color: var(--st-text-2); }
 html.ui-workspace .ws-menu button:active { background: var(--st-press); }
 html.ui-workspace .ws-menu-sep { height: 1px; margin: 5px -6px; background: var(--st-line); }
+/* The "+" launcher: the sidebar's tool groups (toolPages.js), two across */
+html.ui-workspace .ws-menu-groups {
+  display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 2px 6px;
+  margin: 4px 0 0; padding-top: 4px; border-top: 1px solid var(--st-line);
+}
+html.ui-workspace .ws-menu-group { min-width: 0; padding-bottom: 4px; }
+html.ui-workspace .ws-menu-head {
+  padding: 8px 10px 4px; color: var(--st-text-3);
+  font: 600 11px/1.3 var(--st-font); letter-spacing: .06em; text-transform: uppercase;
+}
+@media (max-width: 560px) {
+  html.ui-workspace .ws-menu-groups { grid-template-columns: 1fr; }
+}
 
 /* --- Split divider ---------------------------------------------------------- */
 /* A 1px line between the panes inside an 8px grab area; the accent bar

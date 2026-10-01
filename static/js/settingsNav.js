@@ -1,6 +1,7 @@
 // static/js/settingsNav.js
 //
-// "Take me to..." for Settings: find a setting from plain words and open it.
+// "Take me to..." for Settings and every page: find a setting or a tool page
+// (Devices, Terminal, Calendar, ...) from plain words and open it.
 //
 // Asked for 2026-09-30: "i want to be able to say bring me to the ai voice
 // settings ... i want to be able to ask a small helper model to get it to take
@@ -9,7 +10,9 @@
 //
 // Pieces, in order:
 //   index        every tab, card, labeled control and fold-out in the Settings
-//                modal, read from the DOM each time so it can't go stale
+//                modal, read from the DOM each time so it can't go stale; the
+//                navigation index adds the pages in toolPages.js ("take me to
+//                devices" opens the Devices page, as a tab in Workspace)
 //   matching     a local keyword match with synonyms and typo tolerance; when
 //                that isn't sure, the Utility model picks from the same list
 //                (POST /api/settings/locate) and its pick is checked against it
@@ -23,9 +26,11 @@
 // adds search words, and data-goto-primary="<control id>" on a card says which
 // control a match on the whole card should land on.
 
+import toolPages from './toolPages.js';
+
 // ── Index ───────────────────────────────────────────────────────────────
 
-const KIND_RANK = { tab: 0, card: 1, section: 2, control: 3 };
+const KIND_RANK = { page: -1, tab: 0, card: 1, section: 2, control: 3 };
 
 function _modal() { return document.getElementById('settings-modal'); }
 
@@ -119,6 +124,21 @@ export function buildIndex(root = _modal()) {
     });
   }
   return out;
+}
+
+/** The pages this user can open (toolPages.js), as index entries. */
+export function pageEntries() {
+  return toolPages.PAGES.filter(p => toolPages.isAvailable(p)).map(p => {
+    const g = toolPages.groupOf(p);
+    return { id: 'page:' + p.key, kind: 'page', key: p.key, tab: null, tabLabel: g ? g.label : '',
+      label: p.label, path: p.label, keywords: p.aliases.join(' '), desc: p.desc || '',
+      el: document.querySelector(p.open), parent: null };
+  });
+}
+
+/** Everywhere "take me to ..." can go: the pages, then Settings. */
+export function buildNavIndex(root = _modal()) {
+  return pageEntries().concat(buildIndex(root));
 }
 
 // ── Matching ────────────────────────────────────────────────────────────
@@ -253,10 +273,23 @@ function _within(e, anc) {
 }
 
 /** Index entries ranked for a query, best first: [{entry, score, coverage}]. */
+// "settings" in the request means a place in Settings, not the page of the
+// same name ("devices settings" vs "take me to devices").
+const WANTS_SETTINGS = /\b(?:settings?|preferences|options|configure|config)\b/i;
+
 export function rank(query, index = buildIndex()) {
   const q = _tokens(query, { query: true });
-  if (!q.length) return [];
-  return index.map(entry => ({ entry, ..._score(entry, q) }))
+  if (!q.length) {
+    // Only "take me to settings": the Settings page itself, when it's listed.
+    const s = WANTS_SETTINGS.test(query) && index.find(e => e.id === 'page:settings');
+    return s ? [{ entry: s, score: 3, coverage: 1 }] : [];
+  }
+  const settingsWord = WANTS_SETTINGS.test(query);
+  return index.map(entry => {
+    const r = { entry, ..._score(entry, q) };
+    if (entry.kind === 'page') r.score *= settingsWord ? 0.6 : 1.3;
+    return r;
+  })
     .filter(r => r.score > 0.5)
     .sort((a, b) => (b.score - a.score) || (KIND_RANK[a.entry.kind] - KIND_RANK[b.entry.kind]));
 }
@@ -285,7 +318,7 @@ function _preferBroad(ranked) {
 
 /** The setting a plain request means. Local first; the Utility model only
  *  when that isn't sure. {entry, source: 'local'|'model'|null, ranked, model} */
-export async function locate(query, { useModel = true, index = buildIndex() } = {}) {
+export async function locate(query, { useModel = true, index = buildNavIndex() } = {}) {
   const ranked = _preferBroad(rank(query, index));
   if (isConfident(ranked)) return { entry: ranked[0].entry, source: 'local', ranked, model: null };
   let model = null;
@@ -293,7 +326,8 @@ export async function locate(query, { useModel = true, index = buildIndex() } = 
     try {
       const res = await fetch('/api/settings/locate', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: _clean(query).slice(0, 300), candidates: index.slice(0, 400).map(e => ({ id: e.id, path: e.path })) }),
+        body: JSON.stringify({ query: _clean(query).slice(0, 300), candidates: index.slice(0, 400).map(e => ({
+          id: e.id, path: e.kind === 'page' ? `Page: ${e.label}` : e.path })) }),
       });
       if (res.ok) {
         const j = await res.json();
@@ -385,14 +419,15 @@ async function _reveal(entry) {
   return true;
 }
 
-/** Open Settings at a setting. `target` is an index id ("set-vcStt",
- *  "tab:devices"), an index entry, or plain words ("voice settings").
- *  Resolves to {ok, entry, source, ranked}; when nothing fits, Settings opens
- *  with the Go to box filled in so the user can pick from the list. */
+/** Open Settings at a setting, or open a page. `target` is an index id
+ *  ("set-vcStt", "tab:devices", "page:terminal"), an index entry, or plain
+ *  words ("voice settings", "devices"). Resolves to {ok, entry, source,
+ *  ranked}; when nothing fits, Settings opens with the Go to box filled in
+ *  so the user can pick from the list. */
 export async function goToSetting(target, { useModel = true } = {}) {
-  const index = buildIndex();
+  const index = buildNavIndex();
   let entry = null, source = 'id', ranked = [];
-  if (target && typeof target === 'object' && target.tab) entry = target;
+  if (target && typeof target === 'object' && (target.tab || target.kind === 'page')) entry = target;
   else if (typeof target === 'string') entry = index.find(e => e.id === target || (e.el && e.el.id === target)) || null;
   if (!entry && typeof target === 'string' && _clean(target)) {
     const r = await locate(target, { useModel, index });
@@ -401,6 +436,10 @@ export async function goToSetting(target, { useModel = true } = {}) {
   if (!entry) {
     await showGoto(typeof target === 'string' ? target : '');
     return { ok: false, entry: null, source: null, ranked };
+  }
+  if (entry.kind === 'page') {
+    const ok = await toolPages.openPage(entry.key);
+    return { ok, entry, source, ranked };
   }
   const land = _landing(entry, index);
   const ok = await _reveal(land);
@@ -417,8 +456,10 @@ function _esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-/** Small HTML for one match: the path with its last part in bold. */
+/** Small HTML for one match: the path with its last part in bold, or for a
+ *  page its name and "page". */
 export function pathHtml(entry) {
+  if (entry.kind === 'page') return `<b>${_esc(entry.label)}</b><span class="settings-goto-crumbs"> page</span>`;
   const parts = entry.path.split(' > ');
   const last = parts.pop();
   return (parts.length ? `<span class="settings-goto-crumbs">${_esc(parts.join(' > '))} &gt; </span>` : '')
@@ -471,7 +512,7 @@ async function _gotoSubmit() {
     return;
   }
   _renderGoto(_gotoList, 'Finding it...');
-  const r = await locate(q);
+  const r = await locate(q, { index: buildIndex() });
   if (r.entry) {
     _closeGoto(true);
     goToSetting(r.entry);
@@ -547,14 +588,23 @@ const NAV_RE = new RegExp([
   '^where\\s+(?:is|are)\\s+(?:the\\s+)?.*\\b(?:settings?|options?)\\b',
 ].join('|'), 'i');
 
-/** True when typed text reads as a request to be taken somewhere in Settings. */
+// "open the terminal", "show me devices", "bring up my calendar": the verb
+// and a page's name or alias (toolPages.js), or "... page". Short, so "open
+// a document about tides" or "open the pod bay doors" stays a chat message.
+const OPEN_RE = /^(?:please\s+|can you\s+|could you\s+)?(?:open|show(?:\s+me)?|bring\s+up|pull\s+up|launch|switch\s+to)\s+(?:up\s+)?(?:the\s+|my\s+)?([a-z0-9-]+(?:\s+[a-z0-9-]+){0,2}?)(\s+(?:page|panel|tab|tool|app|window|screen))?(?:\s+please)?[\s.!?]*$/i;
+
+/** True when typed text reads as a request to be taken somewhere: a page,
+ *  or a place in Settings. */
 export function isNavRequest(text) {
   const t = _clean(text);
-  return !!t && t.length <= 160 && !t.includes('\n') && NAV_RE.test(t);
+  if (!t || t.length > 160 || t.includes('\n')) return false;
+  if (NAV_RE.test(t)) return true;
+  const m = OPEN_RE.exec(t);
+  return !!m && (!!m[2] || !!toolPages.page(m[1]));
 }
 
-/** A one-click chip under/over a composer: shows "Open <setting>" while the
- *  text reads as a navigation request with a confident local match. */
+/** A one-click chip under/over a composer: shows "Open <page or setting>"
+ *  while the text reads as a navigation request with a confident local match. */
 export function attachComposerChip(textarea, host) {
   if (!textarea || !host || textarea._gotoChip) return;
   const chip = document.createElement('div');
@@ -567,12 +617,12 @@ export function attachComposerChip(textarea, host) {
     const t = textarea.value;
     entry = null;
     if (isNavRequest(t)) {
-      const index = buildIndex();
+      const index = buildNavIndex();
       const ranked = _preferBroad(rank(t, index));
       if (isConfident(ranked)) entry = _landing(ranked[0].entry, index);
     }
     if (!entry) { chip.hidden = true; chip.innerHTML = ''; return; }
-    chip.innerHTML = `<button type="button" class="settings-goto-chip-btn" title="Open this in Settings">`
+    chip.innerHTML = `<button type="button" class="settings-goto-chip-btn" title="${entry.kind === 'page' ? 'Open this page' : 'Open this in Settings'}">`
       + `<span class="settings-goto-chip-lead">Open</span> ${pathHtml(entry)}</button>`
       + `<button type="button" class="settings-goto-chip-x" aria-label="Dismiss">&times;</button>`;
     chip.hidden = false;
@@ -607,7 +657,7 @@ function _boot() {
   if (msg) attachComposerChip(msg, msg.closest('.chat-input-top') || msg.parentElement);
 }
 
-const settingsNav = { buildIndex, rank, isConfident, locate, goToSetting, openSettings, showGoto, isNavRequest, attachComposerChip, pathHtml };
+const settingsNav = { buildIndex, buildNavIndex, pageEntries, rank, isConfident, locate, goToSetting, openSettings, showGoto, isNavRequest, attachComposerChip, pathHtml };
 window.settingsNav = settingsNav;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _boot, { once: true });
 else _boot();

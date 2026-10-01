@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v338';
+const CACHE_NAME = 'odysseus-v339';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
@@ -46,6 +46,8 @@ const PRECACHE = [
   '/static/js/tts-ai.js',
   '/static/js/voiceCall.js',
   '/static/js/settingsNav.js',
+  '/static/js/toolPages.js',
+  '/static/js/toolGroups.js',
   '/static/js/document.js',
   '/static/js/gallery.js',
   '/static/js/chatRenderer.js',

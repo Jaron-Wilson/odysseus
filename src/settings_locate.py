@@ -18,9 +18,10 @@ MAX_CANDIDATES = 400
 MAX_QUERY = 300
 
 _SYSTEM = (
-    "You help a user find one place in an app's Settings. You get their request and a "
-    "numbered list of places (tab > card > control). Reply with only the number of the "
-    "place that best fits the request, or 0 if none fits. No words, just the number."
+    "You help a user find one place in an app: a place in its Settings, or one of its "
+    "pages. You get their request and a numbered list of places: Settings places are "
+    "tab > card > control, and whole pages are \"Page: <name>\". Reply with only the number "
+    "of the place that best fits the request, or 0 if none fits. No words, just the number."
 )
 
 
