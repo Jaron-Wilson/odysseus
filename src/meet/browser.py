@@ -23,6 +23,16 @@ Meet has no stable DOM API, so everything this reads off the page (the
 join button, the lobby, "the call has ended") is in SELECTORS and
 _STATE_JS below, matched on English text and ARIA labels. When Meet
 changes, this is the one place to fix.
+
+Clicking the name box and the join button goes through the same real X11
+input (xdotool) as a cloud browser take-over, not Playwright's page.mouse/
+page.keyboard, whenever the headful real-Chrome-on-Xvfb path is up: Google's
+own join-time check refused a signed-out guest from a CDP-driven Chrome
+("You can't join this video call") at the moment it pressed "Join now",
+tested 2026-10-01 on both headless and headful Xvfb Chrome, before the X11
+input path existed (session.py's GUEST_DENIED). That matches the same
+Input.dispatchKeyEvent/dispatchMouseEvent block confirmed 2026-10-02 for
+Google sign-in (see src/cloud_browser.py), so the fix is the same one.
 """
 
 import asyncio
@@ -31,8 +41,9 @@ import json
 import logging
 import os
 import re
-from typing import Callable, Dict, Iterable, Optional
+from typing import Callable, Dict, Iterable, Optional, Tuple
 
+from src import cloud_browser
 from src.meet.links import MEET_HOST
 
 logger = logging.getLogger(__name__)
@@ -102,13 +113,17 @@ class MeetBrowser:
         self._own_ctx = False
         self.page = None
         self.remote_tracks = 0
+        # Real X11 input only makes sense against the actual cloud browser
+        # Chrome on its own Xvfb display: a caller-supplied endpoint_fn (the
+        # test suite's own throwaway Chromium, say) is a different browser
+        # that has nothing to do with that display.
+        self._x11_eligible = endpoint_fn is None
 
     # ── open and join ──
 
     async def open(self, url: str, name: str, join_as: str = "guest",
                    tagline: str = "AI assistant: listening and transcribing") -> None:
         if self.endpoint_fn is None:
-            from src import cloud_browser
             if not cloud_browser.enabled():
                 raise RuntimeError("The cloud browser is switched off (ODYSSEUS_CLOUD_BROWSER=0).")
             endpoint = await asyncio.to_thread(cloud_browser.ensure)
@@ -168,15 +183,119 @@ class MeetBrowser:
             logger.debug("[meet] status check failed: %s", type(e).__name__)
             return {"state": "loading", "remote": 0, "audio": "none"}
 
+    async def _window_rect(self, display: str, win_id: str) -> Optional[Tuple[float, float, float, float]]:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "xdotool", "getwindowgeometry", "--shell", win_id,
+                env=dict(os.environ, DISPLAY=display),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+        except Exception:
+            return None
+        vals = dict(line.split("=", 1) for line in out.decode().splitlines() if "=" in line)
+        try:
+            return float(vals["X"]), float(vals["Y"]), float(vals["WIDTH"]), float(vals["HEIGHT"])
+        except (KeyError, ValueError):
+            return None
+
+    async def _window_origin(self, display: str) -> Optional[Tuple[float, float, float]]:
+        """(x, y, height) of the real X11 window showing self.page, on
+        screen: a guest join's own context is a separate real Chrome window
+        (its own incognito profile), generally not at the same screen
+        position, or the same size, as the cloud browser's main window (an
+        emulated viewport on a real, non-headless Chrome resizes the real
+        window to fit it), and there is no window manager on the Xvfb
+        display to ask for "the active window" instead. Found by title
+        (every top-level Chrome window is named "<page title> - Google
+        Chrome"); the largest match wins, in case a helper/IME window shares
+        the WM class. None (falling back to CDP input) on a title collision
+        with another live meeting, or no xdotool."""
+        try:
+            title = await self.page.title()
+        except Exception:
+            return None
+        pattern = "^" + re.escape(f"{title} - Google Chrome") + "$"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "xdotool", "search", "--name", pattern,
+                env=dict(os.environ, DISPLAY=display),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+        except Exception:
+            return None
+        best = None
+        for win_id in out.decode().split():
+            rect = await self._window_rect(display, win_id)
+            if rect and (best is None or rect[2] * rect[3] > best[2] * best[3]):
+                best = rect
+        return (best[0], best[1], best[3]) if best else None
+
+    async def _x11_center(self, display: str, locator) -> Optional[Tuple[float, float]]:
+        """A locator's center, in real X11 screen coordinates, or None to
+        fall back to CDP input (no xdotool window found for this tab)."""
+        try:
+            box = await locator.bounding_box()
+        except Exception:
+            return None
+        if not box:
+            return None
+        origin = await self._window_origin(display)
+        if not origin:
+            return None
+        win_x, win_y, win_h = origin
+        try:
+            inner_h = float(await self.page.evaluate("() => window.innerHeight"))
+        except Exception:
+            inner_h = win_h
+        y_offset = max(0.0, win_h - inner_h)
+        return win_x + box["x"] + box["width"] / 2, win_y + y_offset + box["y"] + box["height"] / 2
+
     async def _click(self, pattern, timeout: float = 1500) -> bool:
         try:
             btn = self.page.get_by_role("button", name=pattern).first
-            if await btn.count() and await btn.is_visible():
-                await btn.click(timeout=timeout)
-                return True
+            if not (await btn.count() and await btn.is_visible()):
+                return False
+            x11 = cloud_browser.x11_display_for_input() if self._x11_eligible else ""
+            if x11:
+                center = await self._x11_center(x11, btn)
+                if center:
+                    cx, cy = center
+                    try:
+                        await self.page.bring_to_front()
+                    except Exception:
+                        pass
+                    await cloud_browser._x11_mouse(x11, "click", cx, cy, 0.0, "left")
+                    return True
+            await btn.click(timeout=timeout)
+            return True
         except Exception:
             pass
         return False
+
+    async def _fill(self, locator, text: str, timeout: float = 3000) -> bool:
+        """Replace a text box's content, as a click plus select-all plus
+        typing through real X11 input (see the module docstring), or
+        Playwright's fill() when there is no headful Chrome to inject into."""
+        try:
+            if not (await locator.count() and await locator.is_visible()):
+                return False
+            x11 = cloud_browser.x11_display_for_input() if self._x11_eligible else ""
+            if x11:
+                center = await self._x11_center(x11, locator)
+                if center:
+                    cx, cy = center
+                    try:
+                        await self.page.bring_to_front()
+                    except Exception:
+                        pass
+                    await cloud_browser._x11_mouse(x11, "click", cx, cy, 0.0, "left")
+                    await cloud_browser._xdotool(x11, "key", "--clearmodifiers", "ctrl+a")
+                    await cloud_browser._x11_text(x11, text)
+                    return True
+            await locator.fill(text, timeout=timeout)
+            return True
+        except Exception:
+            return False
 
     async def join(self, name: str) -> None:
         """On the pre-join screen: the name (as a guest), then Ask to join or
@@ -184,8 +303,7 @@ class MeetBrowser:
         await self._click(SELECTORS["dismiss"])
         try:
             box = self.page.locator(SELECTORS["name_input"]).first
-            if await box.count() and await box.is_visible():
-                await box.fill(name, timeout=3000)
+            await self._fill(box, name)
         except Exception as e:
             logger.debug("[meet] no name box: %s", type(e).__name__)
         if not await self._click(SELECTORS["join"], timeout=5000):
@@ -210,8 +328,13 @@ class MeetBrowser:
             box = self.page.locator(SELECTORS["chat_input"]).first
             if not await box.count():
                 return False
-            await box.fill(text, timeout=3000)
-            await box.press("Enter")
+            if not await self._fill(box, text):
+                return False
+            x11 = cloud_browser.x11_display_for_input() if self._x11_eligible else ""
+            if x11:
+                await cloud_browser._x11_key(x11, "Enter")
+            else:
+                await box.press("Enter")
             return True
         except Exception as e:
             logger.info("[meet] could not post in the meeting chat: %s", type(e).__name__)

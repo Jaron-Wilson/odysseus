@@ -364,7 +364,144 @@ def test_joining_by_phone_keys_in_the_pin_and_takes_notes(env, server):
     assert PIN not in " ".join(h.content for h in hist)
 
 
-# ── Through a browser, end to end ────────────────────────────────────────
+# ── Through a browser, the name box and Join button use real X11 input ──
+
+def test_meet_browser_fills_and_clicks_through_x11_not_cdp(monkeypatch):
+    """The same Google CDP-Input block that stops sign-in (confirmed
+    2026-10-02, src/cloud_browser.py) stops the automated Meet join too: a
+    signed-out guest was turned away at "Join now" from a CDP-driven Chrome
+    even on headful Xvfb (session.py's GUEST_DENIED, tested 2026-10-01,
+    before the X11 input path existed). So the name box and Join button go
+    through real X11 input against the real on-screen window (a guest join's
+    own context is a separate, differently sized and positioned real Chrome
+    window, not the cloud browser's main one), not Playwright's locator
+    fill()/click(), whenever the bot is actually driving the cloud browser's
+    own headful Chrome."""
+    from src import cloud_browser
+    from src.meet import browser as browser_mod
+
+    calls = []
+
+    async def fake_xdotool(display, *args):
+        calls.append((display, args))
+        return True
+
+    monkeypatch.setattr(cloud_browser, "_xdotool", fake_xdotool)
+    monkeypatch.setattr(browser_mod.cloud_browser, "x11_display_for_input", lambda: ":321")
+
+    class _FakeLocator:
+        def __init__(self, box=None, visible=True):
+            self._box = box
+            self._visible = visible
+            self.first = self
+
+        async def count(self):
+            return 1 if self._box else 0
+
+        async def is_visible(self):
+            return self._visible
+
+        async def bounding_box(self):
+            return self._box
+
+        async def click(self, timeout=None):
+            raise AssertionError("CDP click used instead of X11")
+
+        async def fill(self, text, timeout=None):
+            raise AssertionError("CDP fill used instead of X11")
+
+    name_box = {"x": 10, "y": 8, "width": 180, "height": 20}
+    join_box = {"x": 200, "y": 8, "width": 70, "height": 20}
+
+    class _FakePage:
+        def is_closed(self):
+            return False
+
+        def locator(self, sel):
+            if sel == browser_mod.SELECTORS["name_input"]:
+                return _FakeLocator(name_box)
+            return _FakeLocator(None, visible=False)
+
+        def get_by_role(self, role, name=None):
+            if name is browser_mod.SELECTORS["join"]:
+                return _FakeLocator(join_box)
+            return _FakeLocator(None, visible=False)
+
+        async def title(self):
+            return "Meet - fake"
+
+        async def bring_to_front(self):
+            pass
+
+        async def evaluate(self, js, *a):
+            return 712 if "innerHeight" in js else None
+
+    mb = browser_mod.MeetBrowser(lambda b: None, lambda n: None)
+    mb.page = _FakePage()
+    assert mb._x11_eligible is True     # endpoint_fn is None: this is the cloud browser itself
+
+    async def fixed_origin(display):
+        return 20.0, 20.0, 800.0        # a guest join's own window, not at (0, 0)
+
+    monkeypatch.setattr(mb, "_window_origin", fixed_origin)
+
+    asyncio.run(mb.join("Odysseus (AI) Test"))
+
+    args = [c[1] for c in calls]
+    kinds = [a[0] for a in args]
+    assert kinds.count("mousemove") == 2 and kinds.count("click") == 2
+    assert ("key", "--clearmodifiers", "ctrl+a") in args
+    assert ("type", "--clearmodifiers", "--", "Odysseus (AI) Test") in args
+    assert all(c[0] == ":321" for c in calls)                  # targeted the real Xvfb display
+    moves = [a for a in args if a[0] == "mousemove"]
+    # the name box's center (10+90, 8+10), at window origin (20, 20) plus the
+    # tab strip/omnibox chrome (800 window height - 712 reported viewport):
+    assert moves[0][-2:] == ("120", "126")
+    # the Join button's center (200+35, 8+10), same window and chrome offset:
+    assert moves[1][-2:] == ("255", "126")
+
+
+def test_meet_browser_falls_back_to_cdp_when_not_the_cloud_browser(monkeypatch):
+    """A caller-supplied endpoint (the test fixture's own throwaway Chromium,
+    say) is not the cloud browser's Xvfb display: X11 input would hit
+    whatever happens to be on screen there instead, so this must stay on
+    Playwright's own input regardless of whether Xvfb is up for something
+    else entirely."""
+    from src import cloud_browser
+    from src.meet import browser as browser_mod
+
+    monkeypatch.setattr(browser_mod.cloud_browser, "x11_display_for_input", lambda: ":99")
+
+    clicked = []
+
+    class _FakeLocator:
+        first = None
+
+        def __init__(self):
+            self.first = self
+
+        async def count(self):
+            return 1
+
+        async def is_visible(self):
+            return True
+
+        async def click(self, timeout=None):
+            clicked.append("click")
+
+    class _FakePage:
+        def is_closed(self):
+            return False
+
+        def get_by_role(self, role, name=None):
+            return _FakeLocator()
+
+    mb = browser_mod.MeetBrowser(lambda b: None, lambda n: None, endpoint_fn=lambda: "http://127.0.0.1:1")
+    mb.page = _FakePage()
+    assert mb._x11_eligible is False
+    assert asyncio.run(mb._click(browser_mod.SELECTORS["join"])) is True
+    assert clicked == ["click"]
+
 
 def _chromium():
     try:
