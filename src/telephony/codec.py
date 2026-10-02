@@ -60,6 +60,51 @@ def pcm16_to_ulaw(samples: np.ndarray) -> bytes:
     return (uval ^ mask).astype(np.uint8).tobytes()
 
 
+# A-law (G.711 PCMA), for SIP phones that offer it instead of mu-law.
+_A_SEG_END = np.array([0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF])
+
+
+def _build_alaw_table() -> np.ndarray:
+    a = np.arange(256, dtype=np.int32) ^ 0x55
+    t = (a & 0x0F) << 4
+    seg = (a & 0x70) >> 4
+    t = np.where(seg == 0, t + 8, t + 0x108)
+    t = np.where(seg > 1, t << np.maximum(seg - 1, 0), t)
+    return np.where(a & 0x80, t, -t).astype(np.int16)
+
+
+_ALAW_DECODE = _build_alaw_table()
+
+
+def alaw_to_pcm16(data: bytes) -> np.ndarray:
+    """A-law bytes to int16 samples (ITU-T G.711)."""
+    if not data:
+        return np.zeros(0, dtype=np.int16)
+    return _ALAW_DECODE[np.frombuffer(data, dtype=np.uint8)]
+
+
+def pcm16_to_alaw(samples: np.ndarray) -> bytes:
+    """int16 samples to A-law bytes (ITU-T G.711, as the reference g711.c)."""
+    x = np.asarray(samples, dtype=np.int32)
+    if x.size == 0:
+        return b""
+    v = x >> 3
+    mask = np.where(v >= 0, 0xD5, 0x55)
+    v = np.where(v >= 0, v, -v - 1)
+    seg = np.searchsorted(_A_SEG_END, v)
+    low = np.where(seg < 2, (v >> 1) & 0x0F, (v >> np.maximum(seg, 1)) & 0x0F)
+    aval = np.where(seg >= 8, 0x7F, (seg << 4) | low)
+    return (aval ^ mask).astype(np.uint8).tobytes()
+
+
+def ulaw_to_alaw(data: bytes) -> bytes:
+    return pcm16_to_alaw(ulaw_to_pcm16(data))
+
+
+def alaw_to_ulaw(data: bytes) -> bytes:
+    return pcm16_to_ulaw(alaw_to_pcm16(data))
+
+
 def resample(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     """Resample int16 audio. Going down, a windowed-sinc low-pass first keeps
     the phone band free of aliasing (24 kHz speech straight to 8 kHz would

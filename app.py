@@ -221,6 +221,10 @@ if AUTH_ENABLED:
         # (and the WebSockets a one-time token) and 404s otherwise.
         # /meet answers the agent's own call into a Google Meet (src/meet/dialin.py).
         _re.compile(r"^/api/telephony/twilio/(voice|pin|done|recording|health|meet)/?$"),
+        # Linphone fetching its account file from the SIP line's setup QR
+        # code. The one-time token in the path is the credential;
+        # routes/sip_routes.py 404s anything else.
+        _re.compile(r"^/api/telephony/sip/provision/[A-Za-z0-9_-]{32,64}\.xml$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -655,6 +659,8 @@ from routes.sms_routes import setup_sms_routes
 app.include_router(setup_sms_routes(session_manager))
 from routes.telephony_routes import setup_telephony_routes
 app.include_router(setup_telephony_routes())
+from routes.sip_routes import setup_sip_routes
+app.include_router(setup_sip_routes())
 from routes.meet_routes import setup_meet_routes
 app.include_router(setup_meet_routes())
 from routes.special_chat_routes import setup_special_chat_routes
@@ -1057,6 +1063,14 @@ async def _startup_event():
             _startup_tasks.append(asyncio.create_task(mail_listener.run_forever()))
         except Exception as _e:
             logger.warning("Failed to start the mail listener: %s", _e)
+    # The free SIP line (src/telephony/sip_line.py): listens on the Tailscale
+    # addresses only, and only while someone has it turned on.
+    try:
+        from src.telephony import sip_line as _sip_line
+        _sip_line.LINE.app = app
+        _startup_tasks.append(asyncio.create_task(_sip_line.LINE.run_forever()))
+    except Exception as _e:
+        logger.warning("Failed to start the SIP line: %s", _e)
     # Claude Code runs that outlived the previous server process: follow them
     # to the end and post their results (src/claude_code_jobs.py).
     try:
@@ -1314,6 +1328,12 @@ async def _shutdown_event():
         await webhook_manager.close()
     except Exception as e:
         logger.warning(f"Webhook manager shutdown error: {e}")
+    # Hang up SIP calls and close the SIP line's sockets.
+    try:
+        from src.telephony import sip_line as _sip_line
+        await asyncio.wait_for(_sip_line.LINE.shutdown(), 5)
+    except Exception as e:
+        logger.warning(f"SIP line shutdown error: {e}")
     # Hang up any open Terminal sessions (src/terminal.py).
     try:
         from src import terminal as _terminal

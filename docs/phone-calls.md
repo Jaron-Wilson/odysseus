@@ -11,6 +11,12 @@ reply live.
 The number is a telephony provider's number (Twilio), not the Google Voice
 number. Why, and how Google Voice can still be part of it, is below.
 
+**Free and self-hosted instead:** if you only need to call from your own
+devices, the [free SIP line](sip-line.md) does the same over Tailscale with a
+softphone app (Linphone or Zoiper): no number, no provider, no cost, nothing
+public. Odysseus answers the SIP call itself. Setup, Linphone and Zoiper
+settings and troubleshooting: [docs/sip-line.md](sip-line.md).
+
 ## How it works
 
 ```
@@ -258,3 +264,5 @@ python scripts/phone_call_simulator.py --base http://127.0.0.1:7080 \
   (signatures, TwiML, messages, REST), `config.py` (settings, the encrypted
   token), `simulator.py`.
 - `core/middleware.py`: `FunnelGuardMiddleware`.
+- The free SIP line (`sip.py`, `rtp.py`, `sip_server.py`, `sip_line.py`,
+  `sip_simulator.py`, `routes/sip_routes.py`): see [sip-line.md](sip-line.md).

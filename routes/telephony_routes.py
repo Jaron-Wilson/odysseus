@@ -59,6 +59,8 @@ _PENDING: Dict[str, Dict] = {}
 _MESSAGES: Dict[str, Dict] = {}
 # Calls on the line now, by call SID (for the Settings card and tests).
 ACTIVE: Dict[str, Dict] = {}
+# What the agent opens with on a call it started (the call_me tool), by call SID.
+_OUTBOUND_GREETINGS: Dict[str, Tuple[str, float]] = {}
 # Calls into a Google Meet placed and not answered yet: key -> {meet, owner, at}.
 _MEET_DIALS: Dict[str, Dict] = {}
 MEET_DIAL_TTL = 300.0
@@ -115,6 +117,8 @@ def _sweep() -> None:
         _PENDING.pop(k, None)
     for k in [k for k, v in _MESSAGES.items() if now - v["at"] > 3600]:
         _MESSAGES.pop(k, None)
+    for k in [k for k, v in _OUTBOUND_GREETINGS.items() if now - v[1] > 600]:
+        _OUTBOUND_GREETINGS.pop(k, None)
     for k in [k for k, v in _MEET_DIALS.items() if now - v["at"] > MEET_DIAL_TTL]:
         _MEET_DIALS.pop(k, None)
 
@@ -186,9 +190,10 @@ def _connect(request: Request, owner: Optional[str], cfg: Dict, p: Dict[str, str
                                            "Pick one in Settings, Devices, Phone calls. Goodbye."))
     _sweep()
     token = secrets.token_urlsafe(24)
+    opener = _OUTBOUND_GREETINGS.pop(p.get("CallSid", ""), ("", 0))[0] if direction == "outbound" else ""
+    greeting = opener or str(cfg.get("greeting") or "").strip() or config.DEFAULT_GREETING
     _PENDING[token] = {"owner": owner, "sid": sid, "call_sid": p.get("CallSid", ""), "caller": caller,
-                       "engine": engine, "at": time.time()}
-    greeting = str(cfg.get("greeting") or "").strip() or config.DEFAULT_GREETING
+                       "engine": engine, "at": time.time(), "greeting": greeting}
     logger.info("[phone] call %s from %s connected (%s) into chat %s",
                 p.get("CallSid", "")[:12], caller, engine, sid)
     if engine == "relay":
@@ -259,6 +264,31 @@ async def _deliver_message(owner: Optional[str], cfg: Dict, caller: str, rec_url
         await _push_owner(owner, body[:300])
     except Exception:
         pass
+
+
+async def twilio_call_me(user: Optional[str], to: str = "", greeting: str = "") -> Dict:
+    """Have Twilio ring one of the user's allowed numbers (the first unless
+    `to` names another). `greeting`, if given, is what the agent opens with
+    instead of the usual greeting. ValueError: not set up; RuntimeError:
+    Twilio refused."""
+    cfg = config.get_config(user)
+    allowed = config.allowed_numbers(user, cfg)
+    to = config.normalize_number(to or (allowed[0] if allowed else ""))
+    if not cfg.get("enabled"):
+        raise ValueError("Turn phone calls on first.")
+    if not to or to not in allowed:
+        raise ValueError("The agent only calls your allowed numbers.")
+    sid, token, number = str(cfg.get("account_sid") or ""), config.auth_token(cfg), str(cfg.get("phone_number") or "")
+    if not (sid and token and number and _public_base(cfg)):
+        raise ValueError("Save the Twilio account, the agent's number and the public URL first.")
+    try:
+        r = await twilio.create_call(sid, token, number, to, _public_base(cfg) + PREFIX + "voice")
+    except Exception as e:
+        raise RuntimeError(str(e)[:200])
+    if greeting and r.get("sid"):
+        _OUTBOUND_GREETINGS[str(r["sid"])] = (greeting, time.time())
+    logger.info("[phone] calling %s for %s", to, user or "-")
+    return {"ok": True, "to": to, "status": r.get("status", "")}
 
 
 def setup_telephony_routes() -> APIRouter:
@@ -399,7 +429,7 @@ def setup_telephony_routes() -> APIRouter:
                             return
                         call = await meeting.attach_phone(transport)
                     else:
-                        greeting = str(cfg.get("greeting") or "").strip() or config.DEFAULT_GREETING
+                        greeting = entry.get("greeting") or str(cfg.get("greeting") or "").strip() or config.DEFAULT_GREETING
                         call = call_mod.PhoneCall(transport, entry["sid"], greeting=greeting)
                         await call.start()
                 elif call is None:
@@ -676,25 +706,15 @@ def setup_telephony_routes() -> APIRouter:
     @router.post("/api/telephony/call-me")
     async def call_me(request: Request):
         user = require_user(request) or None
-        cfg = config.get_config(user)
         try:
             body = await request.json()
         except Exception:
             body = {}
-        allowed = config.allowed_numbers(user, cfg)
-        to = config.normalize_number((body or {}).get("to") or (allowed[0] if allowed else ""))
-        if not cfg.get("enabled"):
-            raise HTTPException(400, "Turn phone calls on first.")
-        if not to or to not in allowed:
-            raise HTTPException(400, "The agent only calls your allowed numbers.")
-        sid, token, number = str(cfg.get("account_sid") or ""), config.auth_token(cfg), str(cfg.get("phone_number") or "")
-        if not (sid and token and number and _public_base(cfg)):
-            raise HTTPException(400, "Save the Twilio account, the agent's number and the public URL first.")
         try:
-            r = await twilio.create_call(sid, token, number, to, _public_base(cfg) + PREFIX + "voice")
-        except Exception as e:
+            return await twilio_call_me(user, to=str((body or {}).get("to") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except RuntimeError as e:
             raise HTTPException(502, str(e)[:200])
-        logger.info("[phone] calling %s for %s", to, user or "-")
-        return {"ok": True, "to": to, "status": r.get("status", "")}
 
     return router

@@ -1012,6 +1012,27 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "call_me",
+            "description": (
+                "Phone the user and talk with them out loud. Rings the softphone registered on their "
+                "free SIP line (over Tailscale) when there is one, otherwise their first allowed number "
+                "through Twilio. The call opens with `message`, then it is a normal voice call in its own "
+                "chat. Use when they ask you to call or ring them, now or when something finishes. If it "
+                "cannot call, say the reason the tool gives."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string", "description": "What to say first when they answer, short and spoken, e.g. 'Your build finished: all tests pass.'"},
+                    "via": {"type": "string", "enum": ["auto", "sip", "phone"], "description": "auto (default): the SIP line if a softphone is registered, else the phone number."},
+                },
+                "required": ["message"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "notify_device",
             "description": (
                 "Send a notification, or a command, to one of the user's own devices "
