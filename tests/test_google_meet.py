@@ -496,3 +496,182 @@ def test_no_em_dashes_in_what_this_adds():
               "src/meet/browser.py", "src/meet/dialin.py", "src/meet/inject.js", "routes/meet_routes.py",
               "docs/google-meet.md", "tests/fixtures/fake_meet.html"):
         assert "\u2014" not in (ROOT / f).read_text(), f
+
+# ── Phone-first defaulting ───────────────────────────────────────────────
+
+def test_default_via_is_phone():
+    """The default via is 'phone', not 'browser', so the compliant transport
+    (Twilio dial-in) is preferred when available."""
+    assert meet_config.view({})["via"] == "phone"
+    # An explicit setting is still respected.
+    assert meet_config.view({"via": "browser"})["via"] == "browser"
+    assert meet_config.view({"via": "phone"})["via"] == "phone"
+
+
+def test_join_auto_selects_phone_when_dial_in_is_given(env):
+    """start_join picks phone when the caller supplies dial-in info,
+    even if the user's saved default is browser."""
+    env["configure_phone"]()
+    env["configure_meet"](via="browser")
+    c = env["client"]
+    # Providing dial_in + pin without an explicit via= should auto-select phone.
+    r = c.post("/api/meet/join", headers=H,
+               json={"dial_in": "(650) 555-0123", "pin": "123 456 789#", "title": "Auto"})
+    assert r.status_code == 200, r.text
+    assert r.json()["via"] == "phone"
+
+
+def test_join_falls_back_to_config_when_no_dial_in_or_via(env, monkeypatch):
+    """When neither dial_in nor via is given, the user's config default is used."""
+    from src import cloud_browser
+    monkeypatch.setattr(cloud_browser, "enabled", lambda: False)
+    env["configure_meet"](via="browser")
+    c = env["client"]
+    # A bare URL with no dial_in and no explicit via: falls back to the config (browser).
+    r = c.post("/api/meet/join", headers=H, json={"url": "abc-defg-hij"})
+    # This should try via=browser; since the cloud browser is disabled in this test,
+    # it should fail with a browser-unavailable error.
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "browser" in detail.lower() or "chromium" in detail.lower()
+
+
+# ── Safety / Browser Block Guidance & Tool Wording ───────────────────────
+
+def test_unsafe_browser_detection_in_state_js():
+    """_STATE_JS includes regex patterns identifying Google's unsafe-browser block page."""
+    from src.meet.browser import _STATE_JS
+    assert "unsafe_browser" in _STATE_JS
+    assert "this browser or app may not be secure" in _STATE_JS
+    assert "couldn.t verify" in _STATE_JS
+
+
+def test_session_handles_unsafe_browser_guidance():
+    """When the browser encounters unsafe_browser, error_code is set to unsafe_browser
+    and guidance explains the block and recommends dial-in."""
+    from src.meet import session as meet_session
+    m = meet_session.Meeting("alice", {"enabled": True}, "https://meet.google.com/abc-defg-hij",
+                             mode="assistant", via="browser")
+    # Simulate the browser error being assigned
+    m.error = meet_session.UNSAFE_BROWSER_DENIED
+    m.error_code = "unsafe_browser"
+    m.state = "ended"
+    pub = m.public()
+    assert pub["error_code"] == "unsafe_browser"
+    assert "This browser or app may not be secure" in pub["error"]
+    assert "phone" in pub["error"].lower() or "dial-in" in pub["error"].lower()
+
+
+def test_meet_tool_join_wording_does_not_claim_joined():
+    """google_meet tool join action returns clear wording indicating join is initiated
+    and does NOT claim it has already joined."""
+    from src.meet import tool as meet_tool
+    from unittest.mock import AsyncMock, patch, MagicMock
+
+    fake_m = MagicMock()
+    fake_m.id = "meet123"
+    fake_m.via = "phone"
+    fake_m.dial_in = {"number": "(650) 555-0123", "pin": "123#"}
+    fake_m.public.return_value = {"id": "meet123", "state": "joining", "via": "phone"}
+
+    with patch("routes.meet_routes.start_join", new_callable=AsyncMock, return_value=fake_m):
+        res = asyncio.run(meet_tool.run_tool('{"action": "join", "url": "https://meet.google.com/abc-defg-hij", "dial_in": "(650) 555-0123", "pin": "123#"}', owner="alice"))
+        assert res.get("exit_code") == 0
+        assert "not joined yet" in res["output"].lower() or "has not joined yet" in res["output"].lower()
+        assert "phone call" in res["output"].lower() or "dialing" in res["output"].lower()
+
+
+def test_start_join_accepts_dict_dial_in(env):
+    """start_join parses dial_in when passed as a dict with number and pin."""
+    env["configure_phone"]()
+    env["configure_meet"](via="browser")
+    c = env["client"]
+    r = c.post("/api/meet/join", headers=H,
+               json={"dial_in": {"number": "(650) 555-0123", "pin": "123 456 789#"}, "title": "Dict Dial-in"})
+    assert r.status_code == 200, r.text
+    assert r.json()["via"] == "phone"
+
+
+# ── PKCE ─────────────────────────────────────────────────────────────────
+
+def test_pkce_verifier_and_challenge_are_generated():
+    """The PKCE helper produces a valid S256 verifier/challenge pair."""
+    import base64
+    import hashlib
+    from src.google_oauth import _pkce
+    verifier, challenge = _pkce()
+    # The verifier is a URL-safe string between 43 and 128 characters.
+    assert 43 <= len(verifier) <= 128
+    assert all(c.isalnum() or c in "-_" for c in verifier)
+    # The challenge is the S256 hash of the verifier.
+    expected = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    assert challenge == expected
+
+
+def test_authorize_url_includes_pkce_challenge():
+    """authorize_url adds code_challenge + code_challenge_method to the URL
+    and stores the verifier in the state."""
+    import urllib.parse
+    from unittest.mock import MagicMock
+    from src import google_oauth
+    # Provide a configured client.
+    request = MagicMock()
+    request.base_url = "https://example.com/"
+    request.headers = {}
+    orig_cfg = google_oauth.client_config
+    google_oauth.client_config = lambda: {"client_id": "test.apps.googleusercontent.com",
+                                          "client_secret": "s3cr3t", "configured": True}
+    orig_setting = google_oauth._setting
+    google_oauth._setting = lambda key: ""
+    try:
+        url = google_oauth.authorize_url(request, {"purpose": "test"}, scope="openid")
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query)
+        assert "code_challenge" in params
+        assert params["code_challenge_method"] == ["S256"]
+        # The verifier should be in the stored state.
+        state_key = params["state"][0]
+        entry = google_oauth.pop_state(state_key)
+        assert entry is not None
+        assert "code_verifier" in entry
+        # The challenge should match the verifier.
+        import base64, hashlib
+        expected = base64.urlsafe_b64encode(
+            hashlib.sha256(entry["code_verifier"].encode("ascii")).digest()
+        ).rstrip(b"=").decode("ascii")
+        assert params["code_challenge"] == [expected]
+    finally:
+        google_oauth.client_config = orig_cfg
+        google_oauth._setting = orig_setting
+
+
+def test_exchange_code_includes_verifier():
+    """exchange_code sends the code_verifier from the state entry."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from src import google_oauth
+
+    captured = {}
+
+    async def mock_post(self, url, data=None, **kw):
+        captured.update(data or {})
+        resp = AsyncMock()
+        resp.status_code = 200
+        resp.json.return_value = {"access_token": "tok", "token_type": "Bearer"}
+        return resp
+
+    orig_cfg = google_oauth.client_config
+    google_oauth.client_config = lambda: {"client_id": "test.apps.googleusercontent.com",
+                                          "client_secret": "s3cr3t", "configured": True}
+    try:
+        state_entry = {"redirect_uri": "https://example.com/callback",
+                       "code_verifier": "test_verifier_1234"}
+        with patch("httpx.AsyncClient.post", mock_post):
+            asyncio.run(google_oauth.exchange_code("auth_code_abc", state_entry))
+        assert captured.get("code_verifier") == "test_verifier_1234"
+        assert captured.get("code") == "auth_code_abc"
+        assert captured.get("grant_type") == "authorization_code"
+    finally:
+        google_oauth.client_config = orig_cfg

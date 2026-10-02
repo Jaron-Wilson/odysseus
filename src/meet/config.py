@@ -114,7 +114,7 @@ def view(cfg: Dict) -> Dict:
         "display_name": str(cfg.get("display_name") or "").strip() or DEFAULT_NAME,
         "mode": cfg.get("mode") if cfg.get("mode") in MODES else "assistant",
         "join_as": cfg.get("join_as") if cfg.get("join_as") in JOIN_AS else "guest",
-        "via": cfg.get("via") if cfg.get("via") in VIAS else "browser",
+        "via": cfg.get("via") if cfg.get("via") in VIAS else "phone",
         "wake_words": wake_words(cfg),
         "announce": cfg.get("announce", True) is not False,
         "announcement": str(cfg.get("announcement") or ""),

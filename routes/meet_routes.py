@@ -108,6 +108,14 @@ def _upcoming(owner: str, hours: int) -> List[Dict]:
         db.close()
 
 
+PHONE_GUIDANCE = (
+    "This meeting does not have a dial-in number (those need a Google Workspace or Google One plan). "
+    "Your options: (1) open the Meet link with your own Google account and admit Odysseus (AI) from "
+    "the lobby, (2) sign the cloud browser into a separate Google account for the bot and set Join as "
+    "to Signed in, or (3) if the organizer's plan has dial-in, share the number and PIN."
+)
+
+
 async def start_join(user: Optional[str], is_admin: bool, body: Dict) -> "meet_session.Meeting":
     """Send the agent into a meeting: {url, mode, via, title, dial_in, pin}.
     Raises HTTPException with a sentence for the user."""
@@ -116,7 +124,21 @@ async def start_join(user: Optional[str], is_admin: bool, body: Dict) -> "meet_s
     if not cfg["enabled"]:
         raise HTTPException(400, TURN_ON)
     mode = body.get("mode") or cfg["mode"]
-    via = body.get("via") or cfg["via"]
+    # Smart via: when the caller supplies dial-in info, prefer phone even if
+    # the user's default is browser. An explicit via= overrides everything.
+    explicit_via = body.get("via") or ""
+    raw_dial_in = body.get("dial_in")
+    raw_num = raw_dial_in.get("number") if isinstance(raw_dial_in, dict) else raw_dial_in
+    raw_pin = body.get("pin") or (raw_dial_in.get("pin") if isinstance(raw_dial_in, dict) else "")
+    number = links.phone_number(str(raw_num or ""))
+    pin = links.clean_pin(str(raw_pin or ""))
+    has_dial_in = bool(number and pin)
+    if explicit_via:
+        via = explicit_via
+    elif has_dial_in:
+        via = "phone"
+    else:
+        via = cfg["via"]
     if mode not in meet_config.MODES or via not in meet_config.VIAS:
         raise HTTPException(400, "Unknown mode or way to join.")
     url = links.meet_url(str(body.get("url") or ""))
@@ -125,8 +147,6 @@ async def start_join(user: Optional[str], is_admin: bool, body: Dict) -> "meet_s
         if not url:
             raise HTTPException(400, "That is not a Google Meet link (https://meet.google.com/abc-defg-hij).")
     else:
-        number = links.phone_number(str(body.get("dial_in") or ""))
-        pin = links.clean_pin(str(body.get("pin") or ""))
         if not (number and pin):
             raise HTTPException(400, "Joining by phone needs the meeting's US dial-in number and PIN "
                                      "(in the invite under \"Join by phone\").")
@@ -194,7 +214,7 @@ async def create_meeting(user: Optional[str], is_admin: bool, body: Dict) -> Dic
     made["join_error"] = ""
     if join:
         try:
-            m = await start_join(user, is_admin, {"url": made["url"], "via": "browser",
+            m = await start_join(user, is_admin, {"url": made["url"],
                                                   "mode": body.get("mode") or "", "title": made["title"]})
             made["joined"] = m.public()
         except HTTPException as e:

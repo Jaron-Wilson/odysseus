@@ -8,11 +8,15 @@ works for the other. The callback tells the two apart by the state it
 carries (a "purpose" in the remembered payload).
 """
 
+import base64
+import hashlib
 import os
 import secrets
 import time
 import urllib.parse
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
+
+import httpx
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -21,6 +25,14 @@ CALLBACK_PATH = "/api/auth/google/callback"
 STATE_TTL_S = 600
 
 _states: Dict[str, Dict] = {}
+
+
+def _pkce() -> Tuple[str, str]:
+    """A PKCE S256 code_verifier and its code_challenge."""
+    verifier = secrets.token_urlsafe(64)[:128]
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
 
 
 def _setting(key: str) -> str:
@@ -85,11 +97,38 @@ def pop_state(state: str) -> Optional[Dict]:
 
 
 def authorize_url(request, payload: Dict, **params) -> str:
-    """The Google consent URL for a new state carrying `payload`."""
+    """The Google consent URL for a new state carrying `payload`.
+
+    PKCE (S256) is always used: the verifier stays server-side in the state
+    and is handed to the token exchange in exchange_code().
+    """
     cfg = client_config()
     state = secrets.token_urlsafe(24)
     uri = redirect_uri(request)
-    remember_state(state, {**payload, "redirect_uri": uri})
-    q = {"client_id": cfg["client_id"], "redirect_uri": uri, "response_type": "code", "state": state}
+    verifier, challenge = _pkce()
+    remember_state(state, {**payload, "redirect_uri": uri, "code_verifier": verifier})
+    q = {"client_id": cfg["client_id"], "redirect_uri": uri, "response_type": "code", "state": state,
+         "code_challenge": challenge, "code_challenge_method": "S256"}
     q.update(params)
     return AUTH_URL + "?" + urllib.parse.urlencode(q)
+
+
+async def exchange_code(code: str, state_entry: Dict, timeout: float = 20) -> httpx.Response:
+    """Trade an authorization code for tokens, including the PKCE verifier.
+
+    All callers that used to post to TOKEN_URL directly should call this
+    instead so the verifier is always included.
+    """
+    cfg = client_config()
+    data = {
+        "code": code,
+        "client_id": cfg["client_id"],
+        "client_secret": cfg["client_secret"],
+        "redirect_uri": state_entry.get("redirect_uri", ""),
+        "grant_type": "authorization_code",
+    }
+    verifier = state_entry.get("code_verifier")
+    if verifier:
+        data["code_verifier"] = verifier
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        return await client.post(TOKEN_URL, data=data)

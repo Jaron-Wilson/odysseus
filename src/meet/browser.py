@@ -61,7 +61,8 @@ _STATE_JS = r"""
     .map((b) => ((b.getAttribute('aria-label') || '') + ' ' + (b.innerText || '')).trim());
   const has = (re) => labels.some((l) => re.test(l));
   let state = 'loading';
-  if (/you can.t join this (video )?call|denied your request|no one responded to your request|you.ve been removed|removed you from the (meeting|call)|check your meeting code|invalid video call name/i.test(txt)) state = 'denied';
+  if (/this browser or app may not be secure|couldn.t verify (that )?this browser is secure|browser (is|may be) not secure/i.test(txt)) state = 'unsafe_browser';
+  else if (/you can.t join this (video )?call|denied your request|no one responded to your request|you.ve been removed|removed you from the (meeting|call)|check your meeting code|invalid video call name/i.test(txt)) state = 'denied';
   else if (/you left the meeting|you.ve left the (meeting|call)|the call has ended|meeting has ended|return to home screen|rejoin/i.test(txt) && !has(/leave call/i)) state = 'ended';
   else if (has(/leave call/i)) state = /you.re the only one here|no one else is here/i.test(txt) ? 'alone' : 'in';
   else if (/asking to (be let in|join)|please wait until a meeting host|someone in the (meeting|call) will let you in|waiting for the host|you.ll join the call when someone lets you in/i.test(txt)) state = 'lobby';
