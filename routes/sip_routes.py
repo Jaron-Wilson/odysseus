@@ -1,4 +1,4 @@
-"""The free SIP line's settings (Settings > Devices > Phone calls).
+"""The free SIP line's settings (Settings > Calls & Meetings > Phone calls).
 
 Asked for: "im wanting free and possibly localhosted". A softphone on the
 tailnet calls Odysseus directly (src/telephony/sip_line.py); no number, no

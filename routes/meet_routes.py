@@ -4,7 +4,7 @@ Asked for: "could we also do google meets? I have unlimited 4k unlimited
 time on meets." docs/google-meet.md has the research (what each path needs,
 what a Google One or Workspace plan unlocks) and the setup.
 
-Owner side, logged in (Settings > Devices > Google Meet, and /meet):
+Owner side, logged in (Settings > Calls & Meetings > Google Meet, and /meet):
     GET  /api/meet/config              settings, readiness, meetings
     PUT  /api/meet/config              save them
     GET  /api/meet/upcoming            calendar events with a Meet link, soon
@@ -37,7 +37,7 @@ from src.meet import config as meet_config, google_calendar, links, session as m
 
 logger = logging.getLogger(__name__)
 
-TURN_ON = "Switch on Join meetings at the top of the Google Meet card in Settings > Devices first."
+TURN_ON = "Switch on Join meetings at the top of the Google Meet card in Settings > Calls & Meetings first."
 LET_IN = "Open the link with your Google account, then admit Odysseus (AI) when it asks to join."
 
 
@@ -182,7 +182,7 @@ async def create_meeting(user: Optional[str], is_admin: bool, body: Dict) -> Dic
                                  "then join it from Coming up when it starts.")
     if not google_calendar.status(user)["connected"]:
         raise HTTPException(400, "Google Calendar is not connected. Use Connect Google Calendar in the "
-                                 "Google Meet card in Settings > Devices.")
+                                 "Google Meet card in Settings > Calls & Meetings.")
     try:
         made = await google_calendar.create_meeting(
             user, title=str(body.get("title") or ""), start=start,

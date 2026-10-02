@@ -38,13 +38,13 @@ def _status(owner: Optional[str]) -> str:
     lines = []
     if not g["configured"]:
         lines.append("No Google OAuth client is set up on this server, so Odysseus cannot make meetings yet. "
-                     "The Google Meet card in Settings > Devices says what to do.")
+                     "The Google Meet card in Settings > Calls & Meetings says what to do.")
     elif g["connected"]:
         lines.append(f"Google Calendar is connected as {g['email'] or 'a Google account'}: "
                      "Odysseus can make meetings and send invites.")
     else:
         lines.append("Google Calendar is not connected. Use Connect Google Calendar in the Google Meet card "
-                     "in Settings > Devices.")
+                     "in Settings > Calls & Meetings.")
     lines.append("Joining meetings is on." if cfg["enabled"] else
                  "Joining meetings is off (the Join meetings switch at the top of the Google Meet card), so "
                  "Odysseus can make a meeting but not join it.")

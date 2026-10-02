@@ -188,7 +188,7 @@ on this server for nothing per hour.
 ## How it works
 
 ```
-Join a Meet (Settings > Devices > Google Meet, or /meet LINK)
+Join a Meet (Settings > Calls & Meetings > Google Meet, or /meet LINK)
    │
    ├─ browser: cloud browser tab ── inject.js ── meeting audio (16 kHz PCM) ──┐
    │                         <── agent speech into the synthetic mic ─────────┤
@@ -237,7 +237,7 @@ Join a Meet (Settings > Devices > Google Meet, or /meet LINK)
 
 ## Settings
 
-Settings > Devices > Google Meet. **Off by default**; with it off nothing
+Settings > Calls & Meetings > Google Meet. **Off by default**; with it off nothing
 joins. No secrets are stored for Meet: the browser path signs in to nothing
 (or uses the cloud browser's own Google sign-in), and the phone path uses
 the Twilio account saved for phone calls (its auth token stays encrypted
@@ -272,7 +272,7 @@ meeting assistant, `/meet LINK talk` in talk mode, `/meet leave` leaves, and
 
 1. Settings > AI Defaults > Voice call: pick server engines for "Hears with"
    and "Speaks with".
-2. Settings > Devices > Google Meet: turn on Join meetings, put your name in
+2. Settings > Calls & Meetings > Google Meet: turn on Join meetings, put your name in
    "Your name", Save.
 3. Join a meeting: paste its link and press Join (or `/meet LINK`). Let
    "Odysseus (AI)" in when Meet asks.

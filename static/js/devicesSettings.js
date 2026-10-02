@@ -1,7 +1,10 @@
 // Settings > Devices: the registry behind "my phone", editable by hand.
+// Also the cards on Settings > Calls & Meetings (Phone SMS, Phone calls, the
+// free SIP line, Google Meet), which used to sit on the Devices tab.
 //
 // Loaded as its own module and driven by settings.js, which calls load()
-// whenever the Devices tab is opened, so the list is always fresh.
+// whenever the Devices tab is opened and loadCalls() whenever Calls &
+// Meetings is, so each list is always fresh.
 
 const $ = (id) => document.getElementById(id);
 
@@ -834,11 +837,16 @@ function onMeetChange(ev) {
   if (ev.target && ev.target.id === 'meet-via') showDialRow(ev.target.value);
 }
 
-async function load(refresh = false) {
+// The Calls & Meetings tab: each card loads on its own, so a slow one does
+// not hold up the rest.
+function loadCalls() {
   loadSms();
   loadPhone();
   loadSip();
   loadMeet();
+}
+
+async function load(refresh = false) {
   try {
     const [base, overview] = await Promise.all([
       api('GET', '/api/devices'),
@@ -924,15 +932,31 @@ async function showCheckQr(name) {
       <div style="margin-top:4px"><code style="word-break:break-all">${esc(r.url)}</code> ${copyBtn(r.url)}</div></div></div>`;
 }
 
+async function copyFrom(t) {
+  await navigator.clipboard.writeText(t.dataset.copy);
+  const old = t.textContent; t.textContent = 'Copied';
+  setTimeout(() => { t.textContent = old; }, 1500);
+}
+
+// Copy buttons on the Calls & Meetings cards (webhook URLs, the SMS secret).
+async function onCallsCopyClick(ev) {
+  const t = ev.target.closest('[data-copy]');
+  if (!t) return;
+  ev.preventDefault();
+  try {
+    await copyFrom(t);
+  } catch (_) {
+    t.textContent = 'Copy failed';
+  }
+}
+
 async function onEnrollClick(ev) {
   const t = ev.target.closest('[data-enroll],[data-m-check],[data-copy]');
   if (!t) return;
   ev.preventDefault();
   try {
     if (t.dataset.copy !== undefined) {
-      await navigator.clipboard.writeText(t.dataset.copy);
-      const old = t.textContent; t.textContent = 'Copied';
-      setTimeout(() => { t.textContent = old; }, 1500);
+      await copyFrom(t);
     } else if (t.dataset.enroll) {
       await startEnroll(t.dataset.enroll);
     } else if (t.dataset.mCheck) {
@@ -1137,25 +1161,31 @@ async function onClick(ev) {
 
 function init() {
   const panel = document.querySelector('[data-settings-panel="devices"]');
-  if (!panel || panel.dataset.devicesReady) return;
-  panel.addEventListener('click', onClick);
-  panel.addEventListener('click', onComputersClick);
-  panel.addEventListener('click', onMachineClick);
-  panel.addEventListener('click', onEnrollClick);
-  panel.addEventListener('click', onSmsClick);
-  panel.addEventListener('click', onPhoneClick);
-  panel.addEventListener('click', onSipClick);
-  panel.addEventListener('change', onPhoneChange);
-  panel.addEventListener('click', onMeetClick);
-  panel.addEventListener('change', onMeetChange);
-  panel.addEventListener('input', onComputersInput);
-  panel.dataset.devicesReady = '1';
+  if (panel && !panel.dataset.devicesReady) {
+    panel.addEventListener('click', onClick);
+    panel.addEventListener('click', onComputersClick);
+    panel.addEventListener('click', onMachineClick);
+    panel.addEventListener('click', onEnrollClick);
+    panel.addEventListener('input', onComputersInput);
+    panel.dataset.devicesReady = '1';
+  }
+  const calls = document.querySelector('[data-settings-panel="calls"]');
+  if (calls && !calls.dataset.callsReady) {
+    calls.addEventListener('click', onSmsClick);
+    calls.addEventListener('click', onPhoneClick);
+    calls.addEventListener('click', onSipClick);
+    calls.addEventListener('change', onPhoneChange);
+    calls.addEventListener('click', onMeetClick);
+    calls.addEventListener('change', onMeetChange);
+    calls.addEventListener('click', onCallsCopyClick);
+    calls.dataset.callsReady = '1';
+  }
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();
 
-window.devicesSettings = { load };
+window.devicesSettings = { load, loadCalls };
 document.addEventListener('click', async (ev) => {
   const b = ev.target.closest('[data-m-update]');
   if (!b || b.disabled) return;
@@ -1188,4 +1218,4 @@ document.addEventListener('click', async (ev) => {
   }
 });
 
-export default { load };
+export default { load, loadCalls };

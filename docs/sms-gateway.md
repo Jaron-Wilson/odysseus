@@ -98,7 +98,7 @@ URL) the parts go as one notification.
 
 ## 1. In Odysseus
 
-1. Settings > Devices > **Phone SMS**.
+1. Settings > Calls & Meetings > **Phone SMS**.
 2. Under **Your numbers**, enter the number(s) you will text from, for example
    `+15550102000` (`(555) 010-2000` and `15550102000` are the same number).
    Click **Save**.

@@ -17,7 +17,7 @@ proves itself, so these are exempt from login in app.py):
     WS   /api/telephony/twilio/stream      Media Streams: the call's audio both ways
     WS   /api/telephony/twilio/relay       ConversationRelay: the call's words both ways
     GET  /api/telephony/twilio/health      for the public URL check
-Owner side (logged in, Settings > Devices > Phone calls):
+Owner side (logged in, Settings > Calls & Meetings > Phone calls):
     GET  /api/telephony/config             settings (never the token or PIN)
     PUT  /api/telephony/config             save them
     POST /api/telephony/test               check credentials, number, public URL, engines
@@ -187,7 +187,7 @@ def _connect(request: Request, owner: Optional[str], cfg: Dict, p: Dict[str, str
     except Exception as e:
         logger.warning("[phone] no chat for the call: %s", e)
         return _xml(twilio.say_and_hang_up("Odysseus has no model to answer with. "
-                                           "Pick one in Settings, Devices, Phone calls. Goodbye."))
+                                           "Pick one in Settings, Calls and Meetings, Phone calls. Goodbye."))
     _sweep()
     token = secrets.token_urlsafe(24)
     opener = _OUTBOUND_GREETINGS.pop(p.get("CallSid", ""), ("", 0))[0] if direction == "outbound" else ""

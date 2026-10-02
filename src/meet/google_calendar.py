@@ -6,7 +6,7 @@ inserted with conferenceData.createRequest (hangoutsMeet,
 conferenceDataVersion=1) comes back with its hangoutLink, and Google sends
 the invites from the user's account (sendUpdates=all).
 
-Each user connects their own Google account once (Settings > Devices >
+Each user connects their own Google account once (Settings > Calls & Meetings >
 Google Meet > Connect Google Calendar). It uses the server's Google OAuth
 client (src/google_oauth.py, the one Sign in with Google uses) and comes
 back through the same callback, with access_type=offline so there is a
@@ -53,7 +53,7 @@ DEFAULT_MINUTES = 60
 MAX_MINUTES = 24 * 60
 MAX_ATTENDEES = 50
 MAX_TITLE = 200
-RECONNECT = "Connect Google Calendar again in Settings > Devices > Google Meet."
+RECONNECT = "Connect Google Calendar again in Settings > Calls & Meetings > Google Meet."
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
 # Tests swap in an httpx.MockTransport; nothing here talks to Google then.

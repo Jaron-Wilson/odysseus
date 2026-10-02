@@ -29,7 +29,7 @@ CANDS = [
     {"id": "voice-call-settings", "path": "AI Defaults > Voice call"},
     {"id": "set-vcStt", "path": "AI Defaults > Voice call > Hears with"},
     {"id": "set-vcTts", "path": "AI Defaults > Voice call > Speaks with"},
-    {"id": "sms-card", "path": "Devices > Phone SMS"},
+    {"id": "sms-card", "path": "Calls & Meetings > Phone SMS"},
 ]
 
 

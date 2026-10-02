@@ -1607,9 +1607,9 @@
             <span>Search</span>
           </button>
           <div class="settings-sidebar-divider"></div>
-          <!-- Section 2: Comms (Integrations → Email → Reminders).
+          <!-- Section 2: Comms (Integrations → Email → Reminders → Devices → Calls & Meetings).
                Integrations leads here because it's where the underlying
-               accounts the other two tabs depend on actually live. -->
+               accounts Email and Reminders depend on actually live. -->
           <button class="settings-nav-item" data-settings-tab="integrations">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
             <span>Integrations</span>
@@ -1625,6 +1625,10 @@
           <button class="settings-nav-item" data-settings-tab="devices">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
             <span>Devices</span>
+          </button>
+          <button class="settings-nav-item" data-goto-keywords="call meeting calling" data-settings-tab="calls">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            <span>Calls &amp; Meetings</span>
           </button>
           <div class="settings-sidebar-divider"></div>
           <!-- Section 3: UX (Appearance → Shortcuts) -->
@@ -2503,6 +2507,14 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Each browser that turned on notifications (Reminders tab) names itself. Link each one to the device it is, so "notify my phone" reaches it.</div>
             <div id="devices-subs"><div class="admin-toggle-sub">Loading…</div></div>
           </div>
+        </div>
+
+        <!-- ═══ CALLS & MEETINGS TAB ═══
+             Reaching the agent by text, phone, SIP softphone and Google Meet.
+             Not devices, so not on the Devices tab (moved out 2026-10-02).
+             Filled in by devicesSettings.js, which loads these cards when
+             this tab opens. -->
+        <div data-settings-panel="calls" class="hidden">
           <!-- Phone SMS: routes/sms_routes.py, filled in by devicesSettings.js. -->
           <div class="admin-card" id="sms-card" data-goto-keywords="sms text message texting phone gateway">
             <h2>Phone SMS</h2>

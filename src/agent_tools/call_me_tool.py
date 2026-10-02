@@ -4,7 +4,7 @@
 registered on the free SIP line (src/telephony/sip_line.py) when there is
 one, else through Twilio to the user's first allowed number
 (routes/telephony_routes.py), the same plumbing as the Call me buttons in
-Settings > Devices > Phone calls. Either way the call is a new chat and the
+Settings > Calls & Meetings > Phone calls. Either way the call is a new chat and the
 agent opens with `message`, then listens.
 """
 

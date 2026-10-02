@@ -69,7 +69,7 @@ even though SIP and RTP themselves are plain.
 
 ### 1. In Odysseus
 
-Settings > Devices > Phone calls > **Free SIP line (tailnet)**:
+Settings > Calls & Meetings > Phone calls > **Free SIP line (tailnet)**:
 
 1. Type a **Username** (for example `jaron`).
 2. Tap **Generate** for a password and copy it somewhere for a minute (you
@@ -101,7 +101,7 @@ service, then restart):
 Linphone is free, open source and has no account of its own to push. Install
 it from the Play Store or F-Droid, with Tailscale connected on the phone.
 
-**With the QR code (fastest).** Open Settings > Devices > Phone calls on a
+**With the QR code (fastest).** Open Settings > Calls & Meetings > Phone calls on a
 screen through your Tailscale name (`https://<server>.<tailnet>.ts.net`,
 not `localhost`, so the phone can fetch it), and tap **Linphone QR code**.
 In Linphone: on the first screen (or Assistant from the side menu) choose
