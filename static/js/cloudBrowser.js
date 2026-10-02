@@ -61,6 +61,21 @@ function setControl(on, by) {
   if (_control) _win.querySelector('.cb-screen').focus();
 }
 
+// Google and a few others will not sign in a browser driven over CDP; a
+// login exported from an ordinary browser works (src/cloud_browser.py).
+async function importLogin(text) {
+  try {
+    const res = await fetch(`${API}/cookies`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { note(d.detail || `HTTP ${res.status}`); return; }
+    const sites = (d.sites || []).slice(0, 4).join(', ');
+    note(`Imported ${d.count} cookies (${sites}${(d.sites || []).length > 4 ? '…' : ''}). Reload the page to use the login.`);
+  } catch (e) { note(e.message); }
+}
+
 async function control(on) {
   setControl(on);
   try {
@@ -200,7 +215,10 @@ export function open() {
         <button type="button" data-cb="reload" title="Reload">↻</button>
         <form class="cb-go"><input class="cb-url" type="text" placeholder="Type an address or a search" spellcheck="false" autocomplete="off"></form>
         <select class="cb-tabs" title="Tabs" hidden></select>
+        <button type="button" data-cb="close_tab" class="cb-close-tab" title="Close this tab" aria-label="Close this tab">×</button>
         <button type="button" data-cb="new_tab" title="New tab">+</button>
+        <button type="button" class="cb-import" title="Bring in a login from your own browser (a cookies.txt or JSON export), for sites like Google that refuse to sign in here">Import login</button>
+        <input type="file" class="cb-import-file" accept=".txt,.json,text/plain,application/json" hidden>
         <button type="button" class="cb-take">Take over</button>
       </div>
       <div class="cb-screen" tabindex="0"><img class="cb-img" alt="The cloud browser's screen" draggable="false"></div>
@@ -210,6 +228,13 @@ export function open() {
   const panel = _win.querySelector('.cb-panel');
   _win.querySelector('.bg-close').addEventListener('click', close);
   _win.querySelector('.cb-take').addEventListener('click', () => control(!_control));
+  const file = _win.querySelector('.cb-import-file');
+  _win.querySelector('.cb-import').addEventListener('click', () => file.click());
+  file.addEventListener('change', async () => {
+    const f = file.files && file.files[0];
+    file.value = '';
+    if (f) await importLogin(await f.text());
+  });
   _win.querySelectorAll('[data-cb]').forEach((b) => b.addEventListener('click', () => {
     const t = b.dataset.cb;
     send(t === 'new_tab' ? { type: 'new_tab', url: 'about:blank' } : { type: t });
