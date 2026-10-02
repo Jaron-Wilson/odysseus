@@ -83,9 +83,9 @@ the chat. (They could be pulled in later through the REST API, below.)
 
 ### 1. A bot that joins through a browser (built: primary)
 
-The cloud browser (src/cloud_browser.py) is Playwright's Chromium on this
-server, with remote debugging on loopback and a live viewer you can take
-over. A meeting gets a new tab in it:
+The cloud browser (src/cloud_browser.py) is a browser on this server, with
+remote debugging on loopback and a live viewer you can take over. A meeting
+gets a new tab in it:
 
 - **Guest** (default): a fresh browser context with no cookies and nothing
   from the profile. Meet asks for a name; it types the display name and
@@ -95,6 +95,20 @@ over. A meeting gets a new tab in it:
   "Odysseus (AI)" rather than your own. Invited to a meeting, a signed-in
   account skips the lobby, and it can join meetings that only admit signed-in
   users.
+
+**Signing in.** The cloud browser prefers a real, visible Google Chrome on a
+virtual display (Xvfb) over Playwright's bundled, headless Chromium, exactly
+because Google refuses to sign in a headless or CDP-driven browser ("This
+browser or app may not be secure") and refuses cookies imported from another
+browser into one, too (device-bound sessions get dropped within minutes).
+An ordinary Chrome window, even one nobody is sitting in front of, is not
+turned away: confirmed 2026-10-02, the sign-in form at accounts.google.com
+renders normally and `navigator.webdriver` already reads `false`. Open the
+cloud browser, go to accounts.google.com, and sign in there as usual; cookie
+import (below) is kept as a fallback for sites that still object. This needs
+`google-chrome-stable` (or another real Chrome/Chromium) and `Xvfb` installed
+on the server; set `ODYSSEUS_CLOUD_BROWSER_HEADFUL=0` to force the old
+headless Playwright Chromium path on a server that has neither.
 
 **Audio without a sound card.** The server is a headless KVM VM: no sound
 card, no PulseAudio or PipeWire, no GPU. So nothing goes through audio
@@ -106,7 +120,10 @@ into, and a camera that is a card with "Odysseus (AI)" on it. It also wraps
 to the server as 16 kHz 16-bit PCM through a Playwright binding. This was
 measured on this server: headless Chromium with the cloud browser's own
 flags (including `--mute-audio`) carries a tone through a WebRTC loopback at
-full level, and the AudioContext runs. No system packages are needed.
+full level, and the AudioContext runs; the same holds for the headful,
+real-Chrome-on-Xvfb path. No system packages are required for this; the
+audio path works the same whether the cloud browser ends up headful or
+headless.
 
 **What can go wrong.**
 
@@ -115,8 +132,9 @@ full level, and the AudioContext runs. No system packages are needed.
   (`SELECTORS` and `_STATE_JS` in src/meet/browser.py). A Meet redesign can
   break joining until that is updated. The cloud browser viewer shows what
   the tab is doing ("Watch" on the meeting).
-- Meet turns away browsers that call themselves `HeadlessChrome`, so the
-  tab's user agent says `Chrome` (same engine and version).
+- Meet turns away browsers that call themselves `HeadlessChrome`. Real Chrome
+  on Xvfb never does; a fallback to headless Playwright Chromium still has
+  its user agent patched to say `Chrome` (same engine and version).
 - Hosts can block it: a meeting with "Anyone with the meeting link can ask to
   join" off declines guests, and Workspace admins can require signed-in
   users. Then use Signed in, with that account invited.
