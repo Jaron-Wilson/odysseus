@@ -42,7 +42,7 @@ import secrets
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -83,6 +83,7 @@ HELP = ("Odysseus commands:\n"
         "list - your recent chats, numbered\n"
         "say <n> <text> - one text to chat n\n"
         "status - running agents and jobs\n"
+        "call - a link that opens a voice call with this chat\n"
         "help - this message\n"
         "Anything else goes to the chat you are talking to.")
 HINT = ("You are not talking to a chat. Text new to start one, or list and then "
@@ -626,6 +627,24 @@ def _public(cfg: Dict) -> Dict:
     }
 
 
+def _link_base(request: Request) -> str:
+    """The address the phone's forwarder reached us on (Tailscale Serve's
+    https name), for links in replies. Empty for loopback, which a phone
+    cannot open."""
+    from routes.enroll_routes import base_url
+    try:
+        base = base_url(request)
+    except Exception:
+        return ""
+    host = (urlsplit(base).hostname or "").lower()
+    if not host or host in ("localhost", "::1") or host.startswith("127."):
+        return ""
+    if host.endswith(".ts.net") and base.startswith("http://"):
+        # Serve may not say X-Forwarded-Proto; its ts.net names are https.
+        base = "https://" + base[len("http://"):]
+    return base
+
+
 def setup_sms_routes(session_manager) -> APIRouter:
     router = APIRouter(tags=["sms"])
     _install_log_redaction()
@@ -700,7 +719,8 @@ def setup_sms_routes(session_manager) -> APIRouter:
         logger.info("[sms] chat %s switched model for %s", sid, owner or "-")
         return f"{(getattr(sess, 'name', '') or 'This chat')[:40]} now uses {m['name']}."
 
-    async def _handle(owner: Optional[str], cfg: Dict, sender: str, text: str, is_admin: bool = False) -> Dict:
+    async def _handle(owner: Optional[str], cfg: Dict, sender: str, text: str, is_admin: bool = False,
+                      base: str = "") -> Dict:
         words = text.strip().split(None, 1)
         cmd = words[0].lower() if words else ""
         rest = words[1].strip() if len(words) > 1 else ""
@@ -743,6 +763,18 @@ def setup_sms_routes(session_manager) -> APIRouter:
                 reply = "Conversation ended. Text new or chat <n> to start another."
             else:
                 reply = "You are not talking to a chat."
+        elif cmd in ("call", "/call") and (bare or rest.lower() == "me"):
+            # Nothing can ring the phone from here, so the reply is a link that
+            # opens the call in the browser (callHandoff.js reads ?call=).
+            current = _current(session_manager, owner, sender)
+            if not base:
+                reply = "Open Odysseus on your phone and type /call in the chat."
+            elif current:
+                sid = current[0]
+                reply = (f"Tap to start a voice call with {_chat_label(current[1])}:\n"
+                         f"{base}/?call={quote(sid)}#{quote(sid)}")
+            else:
+                reply = f"Tap to start a voice call in a new chat:\n{base}/?call=new"
         elif cmd == "models" and bare:
             current = _current(session_manager, owner, sender)
             reply = cmd_models(owner, is_admin, getattr(current[1], "model", "") if current else "")
@@ -778,7 +810,7 @@ def setup_sms_routes(session_manager) -> APIRouter:
         logger.info("[sms] inbound from %s for %s: accepted (%d chars)", sender or "?", owner or "-", len(text))
         logger.debug("[sms] inbound text: %r", text[:200])
         try:
-            return await _handle(owner, cfg, sender, text, _is_admin(request, owner))
+            return await _handle(owner, cfg, sender, text, _is_admin(request, owner), _link_base(request))
         except Exception as e:
             logger.exception("[sms] command failed: %s", type(e).__name__)
             return {"ok": False, "reply": "Something went wrong on the server. Try again."}
