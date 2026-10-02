@@ -143,11 +143,21 @@ def _discover_calendars(client):
 
 def _writeback_blocking(local_cal_id, ev, delete, url, username, password,
                         owner="", account_id="") -> dict:
-    from src.caldav_sync import _build_dav_client
+    from src.caldav_sync import _build_dav_client, _is_google_calendar_url
     # Redirects disabled here too: the write-back path opens its own DAVClient,
     # so it needs the same SSRF-via-redirect protection as the pull path.
     client = _build_dav_client(url, username, password)
-    calendars = _discover_calendars(client)
+    if _is_google_calendar_url(url):
+        # Google serves each calendar (including a shared/family calendar) at
+        # its own URL, and principal discovery from any one of them only ever
+        # finds the account's own calendar, the same limitation
+        # `caldav_sync._sync_blocking` already works around on the pull side.
+        # Open the stored account URL directly as the calendar instead of
+        # discovering, so write-back lands on the calendar the event is
+        # actually on, not whichever one discovery happens to find.
+        calendars = [client.calendar(url=url)]
+    else:
+        calendars = _discover_calendars(client)
     if not calendars:
         return {"ok": False, "error": "no remote calendars discovered"}
     return push_event(calendars, local_cal_id, ev, delete=delete,

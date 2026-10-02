@@ -5,6 +5,8 @@ manus ai?"
 """
 import asyncio
 import os
+import random
+import shutil
 import signal
 import socket
 import subprocess
@@ -56,12 +58,59 @@ def test_the_address_bar():
     assert a("  ") == ""
 
 
+def test_find_browser_executable(monkeypatch, tmp_path):
+    """$ODYSSEUS_BROWSER_EXECUTABLE first, then PATH, then the common
+    install paths; "" when none of them pan out. No subprocess involved."""
+    monkeypatch.delenv("ODYSSEUS_BROWSER_EXECUTABLE", raising=False)
+    monkeypatch.setattr(cloud_browser, "_REAL_BROWSER_NAMES", ())
+    monkeypatch.setattr(cloud_browser, "_REAL_BROWSER_PATHS", ())
+    assert cloud_browser._find_browser_executable() == ""
+
+    monkeypatch.setenv("ODYSSEUS_BROWSER_EXECUTABLE", "/custom/chrome")
+    assert cloud_browser._find_browser_executable() == "/custom/chrome"   # wins outright
+    monkeypatch.delenv("ODYSSEUS_BROWSER_EXECUTABLE")
+
+    fake = tmp_path / "google-chrome-stable"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setattr(cloud_browser, "_REAL_BROWSER_NAMES", ("google-chrome-stable",))
+    assert cloud_browser._find_browser_executable() == str(fake)
+
+    monkeypatch.setattr(cloud_browser, "_REAL_BROWSER_NAMES", ())     # nothing on PATH now
+    common = tmp_path / "common-chrome"
+    common.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(cloud_browser, "_REAL_BROWSER_PATHS", (str(common),))
+    assert cloud_browser._find_browser_executable() == str(common)
+
+
 def _free_port() -> int:
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+def _free_display() -> str:
+    for _ in range(20):
+        d = f":{random.randint(150, 999)}"
+        if not cloud_browser._xvfb_running(d):
+            return d
+    raise RuntimeError("no free X display found")
+
+
+def _kill_xvfb(display: str) -> None:
+    out = subprocess.run(["pgrep", "-f", f"Xvfb {display} "], capture_output=True, text=True)
+    for pid in out.stdout.split():
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except OSError:
+            pass
+    try:
+        os.remove(cloud_browser._xvfb_socket(display))
+    except OSError:
+        pass
 
 
 @pytest.mark.skipif(not cloud_browser.chromium_path(), reason="Playwright's Chromium is not installed")
@@ -110,6 +159,69 @@ def _kill(port):
             os.kill(int(pid), signal.SIGKILL)
         except OSError:
             pass
+
+
+@pytest.mark.skipif(not (cloud_browser._find_browser_executable() and shutil.which("Xvfb")),
+                    reason="no real Chrome or Xvfb on this machine")
+def test_real_chrome_launches_headful_under_xvfb(tmp_path, monkeypatch):
+    """ensure() launches the real browser on a virtual display, not
+    --headless=new, and it is still a controllable, screencastable tab."""
+    port = _free_port()
+    display = _free_display()
+    monkeypatch.setattr(cloud_browser, "PORT", port)
+    monkeypatch.setattr(cloud_browser, "ENDPOINT", f"http://127.0.0.1:{port}")
+    monkeypatch.setenv("ODYSSEUS_CLOUD_BROWSER_DISPLAY", display)
+    import src.constants as const
+    monkeypatch.setattr(const, "DATA_DIR", str(tmp_path))
+
+    async def go():
+        v = cloud_browser.Viewer()
+        q = await v.subscribe()
+        await v.act({"type": "navigate", "url": "data:text/html,<h1>hi</h1>"})
+        frame = None
+        for _ in range(40):
+            try:
+                m = await asyncio.wait_for(q.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                break
+            if m.get("type") == "frame":
+                frame = m
+                break
+        status = await v.status()
+        v.unsubscribe(q)
+        await v._stop_cast()
+        await v._browser.close()
+        await v._pw.stop()
+        return frame, status
+
+    try:
+        frame, status = asyncio.run(go())
+        assert frame is not None                 # the screencast works the same over this browser
+        assert status["running"] and status["headful"]
+        assert cloud_browser._xvfb_running(display)      # it ran on the virtual display, not --headless
+    finally:
+        _kill(port)
+        _kill_xvfb(display)
+
+
+def test_falls_back_to_headless_chromium_without_a_real_browser(tmp_path, monkeypatch):
+    """Point the executable lookup at a path that does not exist (as a
+    server with no real Chrome would): ensure() still comes up, on
+    Playwright's own Chromium, same as before this feature."""
+    if not cloud_browser.chromium_path():
+        pytest.skip("Playwright's Chromium is not installed")
+    port = _free_port()
+    monkeypatch.setattr(cloud_browser, "PORT", port)
+    monkeypatch.setattr(cloud_browser, "ENDPOINT", f"http://127.0.0.1:{port}")
+    monkeypatch.setenv("ODYSSEUS_BROWSER_EXECUTABLE", "/nonexistent/chrome-that-is-not-there")
+    import src.constants as const
+    monkeypatch.setattr(const, "DATA_DIR", str(tmp_path))
+    try:
+        endpoint = cloud_browser.ensure()
+        assert endpoint == f"http://127.0.0.1:{port}"
+        assert cloud_browser.running()
+    finally:
+        _kill(port)
 
 
 @pytest.mark.skipif(not cloud_browser.chromium_path(), reason="Playwright's Chromium is not installed")

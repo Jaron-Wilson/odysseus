@@ -34,6 +34,10 @@ fi
 # values (APP_PORT / APP_BIND), then built-in defaults.
 PORT="${ODYSSEUS_PORT:-${APP_PORT:-7860}}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
 HOST="${ODYSSEUS_HOST:-${APP_BIND:-127.0.0.1}}" # Set APP_BIND=0.0.0.0 in .env for LAN/Tailscale access.
+# PORT only reaches uvicorn as a flag below, so export it too: everything that
+# builds a URL for this instance (internal_api_base(), companion pairing, the
+# MCP OAuth callback) reads APP_PORT and would otherwise assume 7000.
+export APP_PORT="$PORT"
 PROBE_HOST="$HOST"
 if [ "$PROBE_HOST" = "0.0.0.0" ] || [ "$PROBE_HOST" = "::" ]; then
     PROBE_HOST="127.0.0.1"

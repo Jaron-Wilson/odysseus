@@ -1,4 +1,4 @@
-"""The cloud browser: one Chromium on this server that the agent drives and
+"""The cloud browser: one browser on this server that the agent drives and
 the user can watch live and take over.
 
 Asked for on 2026-09-29: "can we add a cloud browser like chatgpt does and
@@ -6,16 +6,27 @@ manus ai?" The agent already had a browser (the built-in Playwright MCP), but
 it was headless and private to the MCP: nobody could see what it was doing,
 or step in to log in or get past a CAPTCHA.
 
-- This module starts Playwright's Chromium itself, with remote debugging on
-  loopback only and a profile under DATA_DIR/cloud_browser, so logins stay
-  between runs and restarts (the browser outlives a server restart and is
-  picked up again).
+- This module starts a browser itself, with remote debugging on loopback
+  only and a profile under DATA_DIR/cloud_browser, so logins stay between
+  runs and restarts (the browser outlives a server restart and is picked up
+  again).
+- A real, visible Google Chrome on a virtual display (Xvfb) is preferred
+  over Playwright's bundled, headless Chromium: Google refuses to sign in
+  ("This browser or app may not be secure") or accept cookies imported from
+  another browser into a `--headless=new` Chromium, but it is fine with an
+  ordinary Chrome window, even one nobody's sitting in front of (confirmed
+  2026-10-02: the sign-in form renders normally, and navigator.webdriver
+  reads false with no CDP override needed). See _find_browser_executable()
+  and _ensure_xvfb() below, and ODYSSEUS_CLOUD_BROWSER_HEADFUL to turn this
+  off on a server with no real Chrome or Xvfb installed.
 - The Browser MCP connects to it (--cdp-endpoint, src/builtin_mcp.py), so
   the agent's browser_* tools act on this very browser.
 - The viewer attaches over CDP too (Playwright for Python): it streams the
   active tab as JPEG frames (Page.startScreencast) to whoever is watching,
   and replays the user's clicks, scrolling and typing when they take over
-  (routes/cloud_browser_routes.py, static/js/cloudBrowser.js).
+  (routes/cloud_browser_routes.py, static/js/cloudBrowser.js). This and the
+  Meet bot (src/meet/browser.py) connect over CDP the same way whichever
+  browser is actually running underneath.
 """
 import asyncio
 import glob
@@ -23,6 +34,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 import urllib.parse
@@ -36,9 +48,23 @@ ENDPOINT = f"http://127.0.0.1:{PORT}"
 WIDTH, HEIGHT = 1280, 800
 IDLE_STOP_S = 20            # stop the screencast this long after the last viewer leaves
 
+# Real browsers to look for on PATH, in order, then these common install
+# paths. google-chrome-stable first: it is the one Google treats as a real
+# user's browser, so sign-in and cookie import work.
+_REAL_BROWSER_NAMES = ("google-chrome-stable", "google-chrome", "chromium", "chromium-browser")
+_REAL_BROWSER_PATHS = ("/opt/google/chrome/chrome", "/usr/bin/google-chrome-stable",
+                       "/usr/bin/google-chrome", "/usr/bin/chromium-browser", "/usr/bin/chromium")
+
 
 def enabled() -> bool:
     return os.environ.get("ODYSSEUS_CLOUD_BROWSER", "1").lower() not in ("0", "false", "no")
+
+
+def headful_enabled() -> bool:
+    """Whether to prefer a real, visible Chrome on Xvfb over Playwright's
+    bundled, headless Chromium. Off (e.g. a server with no Xvfb and no real
+    Chrome) falls back to the old headless path."""
+    return os.environ.get("ODYSSEUS_CLOUD_BROWSER_HEADFUL", "1").lower() not in ("0", "false", "no")
 
 
 def _profile_dir() -> str:
@@ -46,9 +72,28 @@ def _profile_dir() -> str:
     return os.path.join(DATA_DIR, "cloud_browser", "profile")
 
 
+def _find_browser_executable() -> str:
+    """A real browser installed on this machine: $ODYSSEUS_BROWSER_EXECUTABLE
+    first, then google-chrome-stable/google-chrome/chromium/chromium-browser
+    on PATH, then a few common install paths. "" if none is found, which
+    falls back to Playwright's own Chromium (chromium_path(), below)."""
+    env = os.environ.get("ODYSSEUS_BROWSER_EXECUTABLE", "")
+    if env:
+        return env
+    for name in _REAL_BROWSER_NAMES:
+        found = shutil.which(name)
+        if found:
+            return found
+    for path in _REAL_BROWSER_PATHS:
+        if os.path.exists(path):
+            return path
+    return ""
+
+
 def chromium_path() -> str:
     """Playwright's own Chromium (the newest one installed), or
-    ODYSSEUS_CLOUD_BROWSER_CHROME."""
+    ODYSSEUS_CLOUD_BROWSER_CHROME. The fallback when no real browser is
+    found, or ODYSSEUS_CLOUD_BROWSER_HEADFUL=0."""
     own = os.environ.get("ODYSSEUS_CLOUD_BROWSER_CHROME", "")
     if own:
         return own
@@ -56,6 +101,43 @@ def chromium_path() -> str:
     found = sorted(glob.glob(os.path.join(root, "chromium-*", "chrome-linux*", "chrome")),
                    key=lambda p: int((p.split("chromium-")[1].split(os.sep)[0] or "0")))
     return found[-1] if found else ""
+
+
+def _xvfb_display() -> str:
+    return os.environ.get("ODYSSEUS_CLOUD_BROWSER_DISPLAY", ":99")
+
+
+def _xvfb_socket(display: str) -> str:
+    # ":99" -> /tmp/.X11-unix/X99 (also ":99.0", which Xvfb accepts too).
+    num = display.split(":", 1)[-1].split(".", 1)[0]
+    return f"/tmp/.X11-unix/X{num}"
+
+
+def _xvfb_running(display: str) -> bool:
+    return os.path.exists(_xvfb_socket(display))
+
+
+def _ensure_xvfb(display: str, wait_s: float = 5.0) -> bool:
+    """A virtual display for a real, visible Chrome to run on. Reuses one
+    already listening on `display` (another run of this, or anything else);
+    otherwise starts its own, in its own session so it outlives this process
+    same as the browser does. False (no Xvfb on PATH, or it never came up)
+    means fall back to headless."""
+    if _xvfb_running(display):
+        return True
+    xvfb = shutil.which("Xvfb")
+    if not xvfb:
+        return False
+    log = open(os.path.join(os.path.dirname(_profile_dir()), "xvfb.log"), "ab")
+    subprocess.Popen([xvfb, display, "-screen", "0", f"{WIDTH}x{HEIGHT}x24", "-nolisten", "tcp"],
+                     stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                     start_new_session=True, close_fds=True)
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        if _xvfb_running(display):
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def _version() -> Optional[Dict]:
@@ -79,31 +161,51 @@ def ensure(wait_s: float = 12.0) -> str:
         return ""
     if running():
         return ENDPOINT
-    exe = chromium_path()
-    if not exe or not os.path.exists(exe):
-        logger.warning("[cloud browser] no Chromium found (run: npx playwright install chromium)")
-        return ""
     os.makedirs(_profile_dir(), exist_ok=True)
-    args = [exe, "--headless=new", "--remote-debugging-address=127.0.0.1",
-            f"--remote-debugging-port={PORT}", f"--user-data-dir={_profile_dir()}",
-            f"--window-size={WIDTH},{HEIGHT}", "--no-first-run", "--no-default-browser-check",
-            "--disable-dev-shm-usage", "--hide-scrollbars", "--mute-audio",
+    real_exe = _find_browser_executable() if headful_enabled() else ""
+    if real_exe and not os.path.exists(real_exe):
+        logger.warning("[cloud browser] browser executable not found: %s", real_exe)
+        real_exe = ""
+    display = _xvfb_display()
+    env = None
+    if real_exe and _ensure_xvfb(display):
+        exe = real_exe
+        env = dict(os.environ, DISPLAY=display)
+        # No --headless: a real, visible Chrome on the virtual display is
+        # the one Google lets sign in (see the module docstring). --disable-
+        # gpu: this is a KVM guest with no GPU; confirmed stable under Xvfb.
+        # --disable-blink-features=AutomationControlled: fewer automation
+        # tells (navigator.webdriver already reads false on this combo).
+        mode_args = ["--disable-gpu", "--disable-blink-features=AutomationControlled"]
+    else:
+        if real_exe:
+            logger.warning("[cloud browser] Xvfb did not come up on %s, falling back to headless", display)
+        exe = chromium_path()
+        mode_args = ["--headless=new", "--hide-scrollbars"]
+    if not exe or not os.path.exists(exe):
+        logger.warning("[cloud browser] no browser found (set ODYSSEUS_BROWSER_EXECUTABLE, install "
+                       "google-chrome-stable, or run: npx playwright install chromium)")
+        return ""
+    args = [exe, "--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={PORT}",
+            f"--user-data-dir={_profile_dir()}", f"--window-size={WIDTH},{HEIGHT}",
+            "--no-first-run", "--no-default-browser-check", "--disable-dev-shm-usage",
+            "--mute-audio",
             # Ubuntu 24.04 blocks the user namespaces Chromium's sandbox needs
             # ("No usable sandbox!"). Playwright launches without it by
             # default too, as the MCP's own headless browser did.
-            "--no-sandbox", "about:blank"]
+            "--no-sandbox"] + mode_args + ["about:blank"]
     log = open(os.path.join(os.path.dirname(_profile_dir()), "chromium.log"), "ab")
     # Its own session: it outlives a server restart, and the next server
     # finds it on the port and keeps using it (tabs and logins intact).
     subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                     start_new_session=True, close_fds=True)
+                     start_new_session=True, close_fds=True, env=env)
     deadline = time.time() + wait_s
     while time.time() < deadline:
         if running():
-            logger.info("[cloud browser] started on %s", ENDPOINT)
+            logger.info("[cloud browser] started on %s (%s)", ENDPOINT, "headful" if env else "headless")
             return ENDPOINT
         time.sleep(0.3)
-    logger.warning("[cloud browser] Chromium did not come up on %s", ENDPOINT)
+    logger.warning("[cloud browser] browser did not come up on %s", ENDPOINT)
     return ""
 
 
@@ -394,8 +496,10 @@ class Viewer:
     async def status(self) -> Dict:
         up = await asyncio.to_thread(running)
         tabs = await asyncio.to_thread(_tabs_json) if up else []
+        headful = headful_enabled() and bool(_find_browser_executable())
         return {"enabled": enabled(), "running": up, "endpoint_port": PORT,
-                "chromium": bool(chromium_path()),
+                "chromium": bool(chromium_path() or _find_browser_executable()),
+                "headful": headful,
                 "tabs": [{"url": t.get("url", ""), "title": t.get("title", "")} for t in tabs],
                 "watchers": len(self.subscribers), "taken_over_by": self.taken_over_by}
 

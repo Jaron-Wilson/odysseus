@@ -1,6 +1,7 @@
 # src/llm_core.py
 import httpx
 import asyncio
+import copy
 import os
 import time
 import json
@@ -69,7 +70,7 @@ _host_health_lock = threading.Lock()
 _model_activity: Dict[str, float] = {}
 
 _HARMONY_MARKER_RE = re.compile(
-    r"<\|channel\|>(analysis|final)"
+    r"<\|channel\|>(analysis|commentary|final)"
     r"|<\|start\|>(?:assistant|system|user|tool)?"
     r"|<\|message\|>"
     r"|<\|end\|>"
@@ -78,6 +79,7 @@ _HARMONY_MARKER_RE = re.compile(
 )
 _HARMONY_MARKERS = (
     "<|channel|>analysis",
+    "<|channel|>commentary",
     "<|channel|>final",
     "<|start|>assistant",
     "<|start|>system",
@@ -127,7 +129,10 @@ class _HarmonyStreamRouter:
             out.append((text, False))
             return
         if self._in_message:
-            out.append((text, self._channel == "analysis"))
+            # analysis + commentary (tool-call preambles / function-arg bodies)
+            # are internal, not user-facing — route them to thinking so they
+            # don't leak into the visible answer; only `final` is visible.
+            out.append((text, self._channel in ("analysis", "commentary")))
 
     def _handle_marker(self, match: re.Match[str]) -> None:
         marker = match.group(0)
@@ -420,7 +425,7 @@ def _build_ollama_payload(
     if options:
         payload["options"] = options
     if tools:
-        payload["tools"] = tools
+        payload["tools"] = _alias_harmony_tools(tools, model)
     return payload
 
 
@@ -706,6 +711,52 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
     if status >= 500:
         return f"{provider} is having an outage (HTTP {status})." + (f" {detail}" if detail else "")
     return f"{provider} returned HTTP {status}" + (f": {detail}" if detail else "")
+
+# gpt-oss (harmony) ships BUILT-IN tools named `python` and `browser`, invoked
+# with the raw body as the argument (`to=python` + bare source), while custom
+# functions use `to=functions.NAME` + JSON. A tool we expose under a built-in's
+# name therefore gets called with the built-in convention: the model emits raw
+# code, the server tries to parse it as JSON, and the whole request dies
+# ("error parsing tool call: raw='import sys, ...'"). In streaming mode Ollama
+# does not even report it — it truncates the stream, so the turn looks like an
+# empty response. `bash` collides the same way in practice.
+#
+# So rename the colliding tools on the way out and map the names back on the
+# way in. Confined to the transport layer: callers keep using the real names.
+_HARMONY_TOOL_ALIASES = {
+    "python": "run_python_code",
+    "bash": "run_shell_command",
+    "browser": "web_browser_tool",
+}
+_HARMONY_TOOL_ALIASES_REVERSE = {v: k for k, v in _HARMONY_TOOL_ALIASES.items()}
+
+
+def _is_harmony_model(model: str) -> bool:
+    """True for gpt-oss / harmony-format models, which have built-in tool names."""
+    return "gpt-oss" in (model or "").lower()
+
+
+def _alias_harmony_tools(tools: Optional[List[Dict]], model: str) -> Optional[List[Dict]]:
+    """Rename tools that collide with harmony built-ins. Returns a copy."""
+    if not tools or not _is_harmony_model(model):
+        return tools
+    out = []
+    for t in tools:
+        fn = t.get("function") or {}
+        alias = _HARMONY_TOOL_ALIASES.get(fn.get("name"))
+        if alias:
+            t = copy.deepcopy(t)
+            t["function"]["name"] = alias
+        out.append(t)
+    return out
+
+
+def _unalias_harmony_tool_name(name: str, model: str) -> str:
+    """Map an aliased tool name in a model response back to the real name."""
+    if not _is_harmony_model(model):
+        return name
+    return _HARMONY_TOOL_ALIASES_REVERSE.get(name, name)
+
 
 # Models that require max_completion_tokens instead of max_tokens
 _MAX_COMPLETION_TOKENS_MODELS = {"o1", "o3", "o4", "gpt-4.5", "gpt-5"}
@@ -1725,7 +1776,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         if tools:
-            payload["tools"] = tools
+            payload["tools"] = _alias_harmony_tools(tools, model)
         # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
         # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
@@ -1847,7 +1898,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                         if fn.get("name"):
                             _ollama_tool_calls.append({
                                 "id": tc.get("id") or f"call_{len(_ollama_tool_calls)}",
-                                "name": fn.get("name") or "",
+                                "name": _unalias_harmony_tool_name(fn.get("name") or "", model),
                                 "arguments": json.dumps(fn.get("arguments") or {}),
                             })
                     if j.get("done"):
@@ -2205,7 +2256,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                             if tc.get("extra_content"):
                                                 _tc_acc[idx]["extra_content"] = tc["extra_content"]
                                             if func.get("name"):
-                                                _tc_acc[idx]["name"] = func["name"]
+                                                # Map harmony aliases back to real
+                                                # tool names before anything
+                                                # downstream sees them.
+                                                _tc_acc[idx]["name"] = _unalias_harmony_tool_name(func["name"], model)
                                             if "arguments" in func:
                                                 # Guard against a null arguments delta: `func` can be
                                                 # {"arguments": None} (JSON null), and a raw `+= None`

@@ -512,10 +512,28 @@ def _load_caldav_accounts(owner: str) -> list:
     return []
 
 
+# Owners with a sync currently running: covers both the manual "Sync now"
+# button (POST /api/calendar/sync) and the periodic background loop
+# (src/caldav_background_sync.py), which both call `sync_caldav` for the
+# same owner. Without this, the background loop firing mid-click would run
+# two syncs at once: redundant CalDAV REPORTs, and two writers racing to
+# upsert/prune the same local rows.
+_sync_in_progress: set = set()
+
+
 async def sync_caldav(owner: str) -> dict:
     """Pull CalDAV state into local DB for `owner` across all configured accounts.
-    Returns aggregated counts + per-account errors."""
+    Returns aggregated counts + per-account errors.
+
+    A no-op (single "already syncing" error) if a sync for this owner is
+    already running, instead of running a second one concurrently."""
     from src.secret_storage import decrypt
+
+    if owner in _sync_in_progress:
+        return {
+            "calendars": 0, "events": 0, "deleted": 0,
+            "errors": [], "skipped": "sync already in progress",
+        }
 
     accounts = _load_caldav_accounts(owner)
     if not accounts:
@@ -524,31 +542,35 @@ async def sync_caldav(owner: str) -> dict:
             "errors": ["CalDAV is not configured"],
         }
 
-    totals: dict = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
-    for acc in accounts:
-        url = (acc.get("url") or "").strip()
-        user = (acc.get("username") or "").strip()
-        pw = acc.get("password") or ""
-        account_id = acc.get("id") or ""
-        label = acc.get("label") or url or account_id
-        try:
-            pw = decrypt(pw)
-        except Exception:
-            pass
-        if not (url and user and pw):
-            totals["errors"].append(f"{label}: missing URL, username, or password")
-            continue
-        try:
-            url = validate_caldav_url(url)
-            result = await asyncio.to_thread(_sync_blocking, owner, url, user, pw, account_id)
-        except ValueError as e:
-            result = {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)]}
-        except Exception as e:
-            logger.exception("CalDAV sync raised for account %s", label)
-            result = {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)[:200]]}
-        totals["calendars"] += result.get("calendars", 0)
-        totals["events"] += result.get("events", 0)
-        totals["deleted"] += result.get("deleted", 0)
-        for err in result.get("errors", []):
-            totals["errors"].append(f"{label}: {err}")
-    return totals
+    _sync_in_progress.add(owner)
+    try:
+        totals: dict = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
+        for acc in accounts:
+            url = (acc.get("url") or "").strip()
+            user = (acc.get("username") or "").strip()
+            pw = acc.get("password") or ""
+            account_id = acc.get("id") or ""
+            label = acc.get("label") or url or account_id
+            try:
+                pw = decrypt(pw)
+            except Exception:
+                pass
+            if not (url and user and pw):
+                totals["errors"].append(f"{label}: missing URL, username, or password")
+                continue
+            try:
+                url = validate_caldav_url(url)
+                result = await asyncio.to_thread(_sync_blocking, owner, url, user, pw, account_id)
+            except ValueError as e:
+                result = {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)]}
+            except Exception as e:
+                logger.exception("CalDAV sync raised for account %s", label)
+                result = {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)[:200]]}
+            totals["calendars"] += result.get("calendars", 0)
+            totals["events"] += result.get("events", 0)
+            totals["deleted"] += result.get("deleted", 0)
+            for err in result.get("errors", []):
+                totals["errors"].append(f"{label}: {err}")
+        return totals
+    finally:
+        _sync_in_progress.discard(owner)
