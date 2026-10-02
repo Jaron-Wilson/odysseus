@@ -2677,6 +2677,65 @@
                 <span class="admin-toggle-sub">Someone in the meeting may have to let it in from the lobby.</span>
                 <button class="admin-btn-add" id="meet-join" type="button">Join</button>
               </div>
+              <div class="admin-toggle-label">Make a meeting</div>
+              <div class="admin-toggle-sub">From your own Google account, through Google Calendar: Google makes the Meet link and emails the invites. Making a meeting does not need Join meetings switched on; having Odysseus join it does.</div>
+              <div class="settings-row">
+                <span class="admin-toggle-sub" id="meet-google-state">Loading…</span>
+                <a class="admin-btn-add" id="meet-google-connect" href="/api/meet/google/connect" target="_blank" rel="noopener" hidden>Connect Google Calendar</a>
+                <button class="settings-btn" id="meet-google-disconnect" type="button" style="padding:3px 10px;font-size:12px" hidden>Disconnect</button>
+              </div>
+              <div id="meet-google-setup" class="settings-col" hidden>
+                <div class="admin-toggle-sub">No Google OAuth client is set up on this server yet. One free client covers this and Sign in with Google:</div>
+                <ol class="admin-toggle-sub" style="margin:0;padding-left:18px">
+                  <li>In the <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud Console</a>, make a project (free).</li>
+                  <li>APIs &amp; Services &gt; Library: enable the <strong>Google Calendar API</strong>, and the <strong>Google Meet REST API</strong> (it lets Odysseus set a new meeting's access to Open).</li>
+                  <li>OAuth consent screen: External. Set the publishing status to In production (click past the "unverified app" warning when you connect), or Google drops the connection every 7 days.</li>
+                  <li>Credentials &gt; Create credentials &gt; OAuth client ID &gt; Web application. Under Authorized redirect URIs add exactly: <code id="meet-google-redirect"></code> <button class="settings-btn" id="meet-google-copy" type="button" style="padding:1px 8px;font-size:11px">Copy</button></li>
+                  <li>Paste the client ID and secret here (they are saved in this server's settings, where Sign in with Google reads them too), then press Connect Google Calendar.</li>
+                </ol>
+              </div>
+              <div id="meet-google-client" class="settings-col" hidden>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-google-cid">Client ID</label>
+                  <input id="meet-google-cid" class="settings-select" type="text" autocomplete="off" placeholder="1234-abc.apps.googleusercontent.com" />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-google-secret">Client secret</label>
+                  <input id="meet-google-secret" class="settings-select" type="password" autocomplete="new-password" placeholder="Saved on the server, never shown again" />
+                  <button class="admin-btn-add" id="meet-google-save" type="button">Save client</button>
+                </div>
+              </div>
+              <div id="meet-create" class="settings-col" hidden>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-create-title">Title</label>
+                  <input id="meet-create-title" class="settings-select" type="text" maxlength="200" placeholder="Meeting" />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-create-people">Invite</label>
+                  <input id="meet-create-people" class="settings-select" type="text" autocomplete="off" placeholder="bob@example.com, amy@example.com (optional)" />
+                </div>
+                <div class="settings-row">
+                  <label><input type="checkbox" id="meet-create-open" checked> Set meeting access to Open (anyone with the link can join)</label>
+                </div>
+                <div class="settings-row">
+                  <span class="admin-toggle-sub">Makes the meeting now and Odysseus joins it.</span>
+                  <button class="admin-btn-add" id="meet-create-now" type="button">Start a meeting now</button>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="meet-create-start">Schedule for</label>
+                  <input id="meet-create-start" class="settings-select" type="datetime-local" />
+                  <select id="meet-create-minutes" class="settings-select">
+                    <option value="15">15 minutes</option>
+                    <option value="30" selected>30 minutes</option>
+                    <option value="45">45 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="90">1.5 hours</option>
+                    <option value="120">2 hours</option>
+                  </select>
+                  <button class="admin-btn-add" id="meet-create-schedule" type="button">Schedule a meeting</button>
+                </div>
+                <div id="meet-created" class="admin-toggle-sub"></div>
+              </div>
               <div class="admin-toggle-label">Coming up (from your calendar)</div>
               <div id="meet-upcoming" class="settings-col"><div class="admin-toggle-sub">No meetings with a Meet link in the next day.</div></div>
               <div class="admin-toggle-label">Meetings</div>

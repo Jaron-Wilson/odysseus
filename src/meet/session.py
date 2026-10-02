@@ -47,6 +47,15 @@ DIAL_CONNECT_S = 90.0
 PHONE_ANNOUNCE_S = 15.0
 MAX_CONTEXT_CHARS = 4000
 MAX_SUMMARY_CHARS = 60000
+GUEST_DENIED_S = 60.0
+
+GUEST_DENIED = (
+    "Google would not let a signed-out guest join from the server's browser (\"You can't join this "
+    "video call\"). Google refuses automated signed-out browsers even in open meetings. The fix: sign the "
+    "cloud browser (Browser in the sidebar, accounts.google.com) into a separate Google account for the "
+    "bot, not your own, and set Join as to \"Signed in\" in the Google Meet settings. Also check the "
+    "meeting's host controls: Meeting access set to Open, not Trusted or Restricted."
+)
 
 MEET_NOTE = (
     "You are in a Google Meet video meeting as \"{name}\", an AI assistant there for {owner}. "
@@ -162,6 +171,7 @@ class Meeting:
         self.sid = ""
         self.state = "starting"
         self.error = ""
+        self.error_code = ""
         self.reason = ""
         self.started = time.time()
         self.joined_at = 0.0
@@ -185,7 +195,8 @@ class Meeting:
     def public(self) -> Dict:
         return {
             "id": self.id, "sid": self.sid, "url": self.url, "title": self.title, "mode": self.mode,
-            "via": self.via, "state": self.state, "error": self.error, "reason": self.reason,
+            "via": self.via, "state": self.state, "error": self.error, "error_code": self.error_code,
+            "reason": self.reason,
             "started": self.started, "joined_at": self.joined_at, "ended_at": self.ended_at,
             "lines": len(self.transcript),
             "transcript_tail": [{"at": t, "text": x} for t, x in self.transcript[-8:]],
@@ -308,15 +319,50 @@ class Meeting:
 
     # ── starting ──
 
+    def chat_key(self) -> str:
+        """What makes two joins the same meeting: the Meet code (or the rest
+        of a lookup link), else the dial-in number and PIN."""
+        from src.meet import links
+        if self.url:
+            return "meet:" + (links.meeting_code(self.url) or self.url.rsplit("/", 1)[-1])
+        if self.dial_in.get("number"):
+            return f"phone:{self.dial_in.get('number')}:{self.dial_in.get('pin', '')}"
+        return ""
+
+    def _earlier_chat(self, key: str) -> str:
+        """The chat of the last join of this meeting, if it is still there."""
+        sid = meet_config.chat_for(self.owner, key)
+        if not sid:
+            return ""
+        try:
+            sess = agent._session_manager().get_session(sid)
+        except Exception:
+            return ""
+        if not sess or (self.owner and getattr(sess, "owner", None) not in (None, self.owner)):
+            return ""
+        return sid
+
     def _open_chat(self, is_admin: bool) -> None:
         code = self.url.rsplit("/", 1)[-1] if self.url else (self.dial_in.get("number") or "")
-        stamp = datetime.now().strftime("%H:%M")
-        name = f"Meet: {self.title} {stamp}" if self.title else f"Google Meet {stamp} ({code})"
-        self.sid, _ = agent.new_call_chat(self.owner, self.cfg, code, is_admin=is_admin, name=name[:120])
+        key = self.chat_key()
         how = "by phone" if self.via == "phone" else f"as {self.cfg['display_name']}"
         mode = "meeting assistant: transcribing, answers when called by name" if self.mode == "assistant" \
             else "talk with me: answers every turn"
         where = self.url or self.dial_in.get("number", "")
+        again = self._earlier_chat(key)
+        if again:
+            # The same meeting again (a retry, or back after a break): carry
+            # on in its chat instead of starting a pile of new ones.
+            self.sid = again
+            agent.note(self.sid, f"Joining again: {where} {how} ({mode}).", source=SOURCE)
+            return
+        stamp = datetime.now().strftime("%H:%M")
+        name = f"Meet: {self.title} {stamp}" if self.title else f"Google Meet {stamp} ({code})"
+        self.sid, _ = agent.new_call_chat(self.owner, self.cfg, code, is_admin=is_admin, name=name[:120])
+        try:
+            meet_config.remember_chat(self.owner, key, self.sid)
+        except Exception as e:
+            logger.debug("[meet] could not remember the chat: %s", type(e).__name__)
         agent.note(self.sid, f"Joining {where} {how} ({mode}).", source=SOURCE)
 
     async def start(self, is_admin: bool = False) -> None:
@@ -367,7 +413,15 @@ class Meeting:
                     else:
                         alone_since = 0.0
                 elif st == "denied":
-                    self.error = "Meet did not let it in (denied, removed, or the link is not valid)."
+                    if self.cfg["join_as"] == "guest" and not lobby_since and now - opened < GUEST_DENIED_S:
+                        # Turned away at once, before any lobby. Seen on
+                        # 2026-10-01 even with the meeting open to anyone: at
+                        # "Join now" Google refuses a signed-out browser it
+                        # takes for automation.
+                        self.error_code = "guest_denied"
+                        self.error = GUEST_DENIED
+                    else:
+                        self.error = "Meet did not let it in (denied, removed, or the link is not valid)."
                     break
                 elif st == "ended":
                     reason = "the meeting ended"

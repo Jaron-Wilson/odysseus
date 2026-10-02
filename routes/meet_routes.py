@@ -11,6 +11,15 @@ Owner side, logged in (Settings > Devices > Google Meet, and /meet):
     POST /api/meet/join                join one: {url, mode, via, title, dial_in, pin}
     GET  /api/meet/meetings            the meetings it is in (and just left)
     POST /api/meet/meetings/{id}/leave leave now
+    POST /api/meet/create              make a Meet in the user's Google Calendar
+                                       (now, or scheduled with invites), and
+                                       join it: {title, start, minutes,
+                                       attendees, join, open_access}
+    GET  /api/meet/google              Google Calendar connected or not, and
+                                       what to do when no OAuth client is set
+    GET  /api/meet/google/connect      off to Google's consent screen
+    POST /api/meet/google/disconnect   forget (and revoke) the connection
+    PUT  /api/meet/google/client       admin: the server's OAuth client
 
 Joining by phone goes through the phone call line's Twilio webhook
 (POST /api/telephony/twilio/meet in routes/telephony_routes.py).
@@ -21,11 +30,15 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import RedirectResponse
 
 from src.auth_helpers import require_user
-from src.meet import config as meet_config, links, session as meet_session
+from src.meet import config as meet_config, google_calendar, links, session as meet_session
 
 logger = logging.getLogger(__name__)
+
+TURN_ON = "Switch on Join meetings at the top of the Google Meet card in Settings > Devices first."
+LET_IN = "Open the link with your Google account, then admit Odysseus (AI) when it asks to join."
 
 
 def _is_admin(request: Request, owner: Optional[str]) -> bool:
@@ -93,6 +106,121 @@ def _upcoming(owner: str, hours: int) -> List[Dict]:
         return out[:20]
     finally:
         db.close()
+
+
+async def start_join(user: Optional[str], is_admin: bool, body: Dict) -> "meet_session.Meeting":
+    """Send the agent into a meeting: {url, mode, via, title, dial_in, pin}.
+    Raises HTTPException with a sentence for the user."""
+    raw_cfg = meet_config.get_config(user)
+    cfg = meet_config.view(raw_cfg)
+    if not cfg["enabled"]:
+        raise HTTPException(400, TURN_ON)
+    mode = body.get("mode") or cfg["mode"]
+    via = body.get("via") or cfg["via"]
+    if mode not in meet_config.MODES or via not in meet_config.VIAS:
+        raise HTTPException(400, "Unknown mode or way to join.")
+    url = links.meet_url(str(body.get("url") or ""))
+    dial_in = None
+    if via == "browser":
+        if not url:
+            raise HTTPException(400, "That is not a Google Meet link (https://meet.google.com/abc-defg-hij).")
+    else:
+        number = links.phone_number(str(body.get("dial_in") or ""))
+        pin = links.clean_pin(str(body.get("pin") or ""))
+        if not (number and pin):
+            raise HTTPException(400, "Joining by phone needs the meeting's US dial-in number and PIN "
+                                     "(in the invite under \"Join by phone\").")
+        dial_in = {"number": number, "pin": pin}
+    why = meet_session.can_start(user)
+    if why:
+        raise HTTPException(409, why)
+    ready = _readiness(user, raw_cfg)
+    if ready["engines"]:
+        raise HTTPException(400, " ".join(ready["engines"]))
+    if via == "browser" and not ready["browser"]:
+        raise HTTPException(400, "The cloud browser is not available on this server (no Chromium, or it is "
+                                 "switched off), so it cannot join through a browser.")
+    if via == "phone" and ready["phone"]:
+        raise HTTPException(400, " ".join(ready["phone"]))
+    title = " ".join(str(body.get("title") or "").split())[:100]
+    m = meet_session.Meeting(user, raw_cfg, url, mode=mode, via=via, title=title, dial_in=dial_in)
+    try:
+        await m.start(is_admin)
+    except Exception as e:
+        raise HTTPException(400, str(e)[:200])
+    logger.info("[meet] %s joining %s (%s, %s) for %s", m.id, url or "by phone", mode, via, user or "-")
+    return m
+
+
+def _google_view(request: Request, user: Optional[str]) -> Dict:
+    out = google_calendar.status(user)
+    from src import google_oauth
+    out["redirect_uri"] = google_oauth.redirect_uri(request)
+    admin = _is_admin(request, user)
+    out["can_edit_client"] = admin
+    if admin:
+        out["client_id"] = google_oauth.client_config()["client_id"]
+    return out
+
+
+async def create_meeting(user: Optional[str], is_admin: bool, body: Dict) -> Dict:
+    """Make a Meet in the user's Google Calendar and, when asked, join it.
+
+    body: {title, start ("now", ISO, or words like "tomorrow at 3pm"),
+    minutes, attendees (list or comma separated), join, open_access,
+    description, mode}. Starting now joins by default; a meeting later does
+    not. Making it needs no Join meetings switch; joining does."""
+    try:
+        start = google_calendar.parse_start(str(body.get("start") or "now"))
+        attendees = google_calendar.clean_attendees(body.get("attendees") or [])
+    except google_calendar.GoogleError as e:
+        raise HTTPException(400, str(e))
+    now = start <= datetime.now(start.tzinfo) + timedelta(minutes=5)
+    join = bool(body.get("join", now))
+    if join and not now:
+        raise HTTPException(400, "Odysseus can only join a meeting that starts now. Make this one, "
+                                 "then join it from Coming up when it starts.")
+    if not google_calendar.status(user)["connected"]:
+        raise HTTPException(400, "Google Calendar is not connected. Use Connect Google Calendar in the "
+                                 "Google Meet card in Settings > Devices.")
+    try:
+        made = await google_calendar.create_meeting(
+            user, title=str(body.get("title") or ""), start=start,
+            minutes=body.get("minutes") or google_calendar.DEFAULT_MINUTES, attendees=attendees,
+            description=str(body.get("description") or ""), open_access=body.get("open_access", True) is not False)
+    except google_calendar.GoogleError as e:
+        raise HTTPException(400, str(e))
+    made["joined"] = None
+    made["join_error"] = ""
+    if join:
+        try:
+            m = await start_join(user, is_admin, {"url": made["url"], "via": "browser",
+                                                  "mode": body.get("mode") or "", "title": made["title"]})
+            made["joined"] = m.public()
+        except HTTPException as e:
+            made["join_error"] = str(e.detail)
+    made["access_hint"] = google_calendar.access_hint(made)
+    made["message"] = _created_message(made, now, meet_config.view(meet_config.get_config(user))["join_as"])
+    return made
+
+
+def _created_message(made: Dict, now: bool, join_as: str = "guest") -> str:
+    who = ", ".join(made.get("attendees") or [])
+    parts = [f"Made \"{made['title']}\": {made['url']}"]
+    if who:
+        parts.append(f"Google sent invites to {who}.")
+    if made.get("joined"):
+        parts.append("Odysseus (AI) is joining now. " + LET_IN)
+        if not made.get("open_access"):
+            parts.append(made["access_hint"])
+        if join_as == "guest":
+            parts.append("Google often refuses a signed-out guest from the server's browser; if it does, sign "
+                         "the cloud browser into a Google account for the bot and set Join as to Signed in.")
+    elif made.get("join_error"):
+        parts.append(f"Odysseus did not join: {made['join_error']}")
+    elif not now:
+        parts.append("It is in your Google Calendar.")
+    return " ".join(parts)
 
 
 def setup_meet_routes() -> APIRouter:
@@ -187,44 +315,60 @@ def setup_meet_routes() -> APIRouter:
             body = {}
         if not isinstance(body, dict):
             raise HTTPException(400, "Expected a JSON object.")
-        raw_cfg = meet_config.get_config(user)
-        cfg = meet_config.view(raw_cfg)
-        if not cfg["enabled"]:
-            raise HTTPException(400, "Turn Google Meet on in Settings > Devices first.")
-        mode = body.get("mode") or cfg["mode"]
-        via = body.get("via") or cfg["via"]
-        if mode not in meet_config.MODES or via not in meet_config.VIAS:
-            raise HTTPException(400, "Unknown mode or way to join.")
-        url = links.meet_url(str(body.get("url") or ""))
-        dial_in = None
-        if via == "browser":
-            if not url:
-                raise HTTPException(400, "That is not a Google Meet link (https://meet.google.com/abc-defg-hij).")
-        else:
-            number = links.phone_number(str(body.get("dial_in") or ""))
-            pin = links.clean_pin(str(body.get("pin") or ""))
-            if not (number and pin):
-                raise HTTPException(400, "Joining by phone needs the meeting's US dial-in number and PIN "
-                                         "(in the invite under \"Join by phone\").")
-            dial_in = {"number": number, "pin": pin}
-        why = meet_session.can_start(user)
-        if why:
-            raise HTTPException(409, why)
-        ready = _readiness(user, raw_cfg)
-        if ready["engines"]:
-            raise HTTPException(400, " ".join(ready["engines"]))
-        if via == "browser" and not ready["browser"]:
-            raise HTTPException(400, "The cloud browser is not available on this server (no Chromium, or it is "
-                                     "switched off), so it cannot join through a browser.")
-        if via == "phone" and ready["phone"]:
-            raise HTTPException(400, " ".join(ready["phone"]))
-        title = " ".join(str(body.get("title") or "").split())[:100]
-        m = meet_session.Meeting(user, raw_cfg, url, mode=mode, via=via, title=title, dial_in=dial_in)
-        try:
-            await m.start(_is_admin(request, user))
-        except Exception as e:
-            raise HTTPException(400, str(e)[:200])
-        logger.info("[meet] %s joining %s (%s, %s) for %s", m.id, url or "by phone", mode, via, user or "-")
+        m = await start_join(user, _is_admin(request, user), body)
         return m.public()
+
+    @router.post("/create")
+    async def create(request: Request):
+        user = require_user(request) or None
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected a JSON object.")
+        return await create_meeting(user, _is_admin(request, user), body)
+
+    @router.get("/google")
+    async def google_status(request: Request):
+        user = require_user(request) or None
+        return _google_view(request, user)
+
+    @router.get("/google/connect")
+    async def google_connect(request: Request):
+        """A page navigation, not a fetch: it ends on Google's consent
+        screen, which comes back to /api/auth/google/callback."""
+        user = require_user(request) or None
+        try:
+            return RedirectResponse(google_calendar.connect_url(request, user), status_code=303)
+        except google_calendar.GoogleError as e:
+            raise HTTPException(400, str(e))
+
+    @router.post("/google/disconnect")
+    async def google_disconnect(request: Request):
+        user = require_user(request) or None
+        await google_calendar.disconnect(user)
+        return _google_view(request, user)
+
+    @router.put("/google/client")
+    async def google_client(request: Request):
+        """The server's Google OAuth client (the one Sign in with Google uses
+        too). Admin only; the secret is saved, never sent back."""
+        user = require_user(request) or None
+        if not _is_admin(request, user):
+            raise HTTPException(403, "Only an admin can set the server's Google OAuth client.")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected a JSON object.")
+        cid = str(body.get("client_id") or "").strip()
+        secret = str(body.get("client_secret") or "").strip()
+        if not cid.endswith(".apps.googleusercontent.com"):
+            raise HTTPException(400, "A Google OAuth client ID ends in .apps.googleusercontent.com.")
+        from src import google_oauth
+        if not secret and not google_oauth.client_config()["client_secret"]:
+            raise HTTPException(400, "Paste the client secret too.")
+        google_oauth.save_client(cid, secret)
+        logger.info("[meet] Google OAuth client saved by %s", user or "-")
+        return _google_view(request, user)
 
     return router

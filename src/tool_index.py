@@ -149,6 +149,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "app_api": "Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
     "edit_image": "Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.",
     "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
+    "google_meet": "The way to join or make a Google Meet. Join (or rejoin, 'join again', 'try joining through my browser') a Meet link; start one now from the user's own Google account ('start a meet with bob@x.com'); schedule one with invites Google sends ('set up a meeting tomorrow at 3 with amy'); or check what is set up. It runs in Odysseus's own cloud browser on the server as 'Odysseus (AI)', so it never needs the user's desktop, Chrome or screen tools. Returns the meeting link.",
     "whats_new": "The pull requests merged into Odysseus (this app) and what each changed, newest first: list (with an optional query) or get one by number, with its description, files and whether the running server has it yet. Use for 'what changed with the voice call', 'what's new', 'what did PR 127 do', 'changelog', 'release notes', 'is that fix deployed'.",
     "chat_memory": "This chat's 'Needs to know' list, like memory but per chat, shown to you on every turn. Suggest an item when something worth keeping comes up (the task, a decision, who you are waiting on); the user decides. Add directly when the user says 'remember for this chat' or 'put it in needs to know'. Remove items that are done.",
     "manage_devices": "List, register, control or remove the user's devices (phone, tablet, desktop) and see what each one can be told to do. Use for 'what devices do I have', 'register my phone', 'add a device', or before sending a command so you know the device supports it. To make a device DO something, use action 'control': {\"action\":\"control\",\"name\":\"phone\",\"command\":\"open_app\",\"params\":{\"package\":\"com.bambulab.bambuhandy\"}}. Commands: open_app, open_url, list_apps, install_app, set_timer, set_alarm, speak. Use list_apps first if you do not know the exact package name, rather than guessing one. install_app only opens the store page; the user still has to tap install.",
@@ -403,7 +404,14 @@ class ToolIndex:
                    "price", "prices", "order", "deal", "deals"}):
             {"web_search", "web_fetch"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
-            {"manage_calendar"},
+            {"manage_calendar", "google_meet"},
+        # Making or joining a Google Meet (src/meet/tool.py).
+        frozenset({"google meet", "a meet", "the meet", "meet link", "meet with", "video call",
+                   "video meeting", "meeting link", "start a meeting", "set up a meeting",
+                   "schedule a meeting", "join the meeting", "join this meeting", "join a meeting",
+                   "meet.google.com", "rejoin", "join again", "joining again", "try joining",
+                   "join the call", "through my browser", "google meet"}):
+            {"google_meet"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
             {"manage_notes"},
         # Chat/session management. "rename" alone maps to documents below, so a

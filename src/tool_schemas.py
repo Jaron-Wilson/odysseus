@@ -1043,6 +1043,36 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "google_meet",
+            "description": (
+                "The way to join or make a Google Meet. It runs in Odysseus's own cloud browser on the "
+                "server as 'Odysseus (AI)', so it never needs the user's desktop, Chrome or screen "
+                "tools. 'join' sends the agent into a Meet link (also for 'join again', 'rejoin', 'try "
+                "joining through my browser'); 'start' makes a meeting now from the user's own Google account "
+                "(Google Calendar connected in Settings > Devices > Google Meet), invites attendees and joins "
+                "it; 'schedule' puts one in their calendar for later and Google emails the invites; 'status' "
+                "says what is set up. Give the user the link and tell them to admit Odysseus (AI)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["start", "schedule", "join", "status"],
+                               "description": "'start' (now), 'schedule' (later), 'join' a link, or 'status'."},
+                    "title": {"type": "string", "description": "The meeting's title."},
+                    "start": {"type": "string", "description": "For schedule: when, like 'tomorrow at 3pm' or an ISO time."},
+                    "minutes": {"type": "integer", "description": "How long, in minutes (default 60)."},
+                    "attendees": {"type": "array", "items": {"type": "string"},
+                                  "description": "Email addresses to invite. Google sends the invites."},
+                    "url": {"type": "string", "description": "For join: the Meet link."},
+                    "join": {"type": "boolean", "description": "For start: whether the agent joins (default true)."},
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "whats_new",
             "description": (
                 "The pull requests merged into Odysseus (this app), newest first. 'list' shows them "
