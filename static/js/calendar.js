@@ -9,12 +9,13 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import {
-  WEEKDAYS, MONTHS, MON_SHORT,
+  DOW_NAMES, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
   _trashIcon, _moreIcon, _bellIcon,
   _isCalBgImage, _calBgImageUrl, _calBgCss,
   _calReadableTextColor,
   _ds, _addDays, _shiftDT, _tzOffset, _localDateOf,
+  _dowOffset, weekdayLabels, setWeekStartsOn,
 } from './calendar/utils.js';
 
 const API_BASE = window.location.origin;
@@ -197,6 +198,22 @@ async function _fetchCalendars() {
   }
 }
 
+// Load the "week starts on" pref once per page load, same guard shape as
+// _caldavSyncedOnce above. Applied before the first render so month/week
+// grids don't flash Monday-start then jump to the user's actual setting.
+let _weekStartLoaded = false;
+async function _loadWeekStartPref() {
+  if (_weekStartLoaded) return;
+  _weekStartLoaded = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/prefs/calendar_week_start`, { credentials: 'same-origin' });
+    if (res.ok) {
+      const data = await res.json();
+      setWeekStartsOn(data.value);
+    }
+  } catch (_) { /* keep the Monday-start default */ }
+}
+
 // Trigger a CalDAV pull. `interactive=true` waits for the result and
 // refreshes the UI; false fires-and-forgets (used on first open). Both
 // no-op silently if CalDAV isn't configured.
@@ -360,14 +377,14 @@ function _today() { return _ds(new Date()); }
 function _monthRange(d) {
   const y = d.getFullYear(), m = d.getMonth();
   const first = new Date(y, m, 1);
-  const dow = (first.getDay() + 6) % 7;
+  const dow = _dowOffset(first);
   const gs = new Date(y, m, 1 - dow);
   const ge = new Date(gs); ge.setDate(gs.getDate() + 42);
   return [_ds(gs), _ds(ge)];
 }
 
 function _weekRange(d) {
-  const dow = (d.getDay() + 6) % 7;
+  const dow = _dowOffset(d);
   const s = new Date(d); s.setDate(d.getDate() - dow);
   const e = new Date(s); e.setDate(s.getDate() + 7);
   return [_ds(s), _ds(e)];
@@ -909,11 +926,11 @@ async function _renderMonth() {
   _slideDir = 0;
   let h = _headerHTML() + _filtersRowHTML() + `<div class="cal-grid${slideClass}">`;
   h += '<div class="cal-week-headers">';
-  for (const wd of WEEKDAYS) h += `<div class="cal-weekday">${wd}</div>`;
+  for (const wd of weekdayLabels()) h += `<div class="cal-weekday">${wd}</div>`;
   h += '</div>';
 
   const first = new Date(y, m, 1);
-  const dow = (first.getDay() + 6) % 7;
+  const dow = _dowOffset(first);
   const gs = new Date(y, m, 1 - dow);
 
   const multiDay = _events.filter(e => {
@@ -1179,14 +1196,14 @@ async function _renderWeek() {
 
   // Day columns
   let colsHtml = '<div class="cal-wk-cols">';
-  for (const { d, ds, idx } of days) {
+  for (const { d, ds } of days) {
     const isToday = ds === today;
     const allDayEvents = _eventsForDay(ds).filter(e => _eventVisible(e) && e.all_day);
     const timedEvents  = _eventsForDay(ds).filter(e => _eventVisible(e) && !e.all_day);
 
     const isSun = d.getDay() === 0;
     colsHtml += `<div class="cal-wk-col${isToday ? ' cal-wk-today' : ''}${isSun ? ' cal-wk-sun' : ''}" data-date="${ds}">`;
-    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${WEEKDAYS[idx]}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
+    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${DOW_NAMES[d.getDay()]}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
     // All-day strip
     colsHtml += `<div class="cal-wk-allday">`;
     for (const ev of allDayEvents) {
@@ -1700,9 +1717,9 @@ async function _renderYear() {
   for (let m = 0; m < 12; m++) {
     h += `<div class="cal-year-month" data-month="${m}"><div class="cal-year-month-title">${MON_SHORT[m]}</div>`;
     h += '<div class="cal-year-grid">';
-    for (const wd of ['M', 'T', 'W', 'T', 'F', 'S', 'S']) h += `<div class="cal-year-wd">${wd}</div>`;
+    for (const wd of weekdayLabels()) h += `<div class="cal-year-wd">${wd[0]}</div>`;
     const first = new Date(y, m, 1);
-    const dow = (first.getDay() + 6) % 7;
+    const dow = _dowOffset(first);
     const daysInMonth = new Date(y, m + 1, 0).getDate();
     for (let p = 0; p < dow; p++) h += '<div class="cal-year-cell"></div>';
     for (let d = 1; d <= daysInMonth; d++) {
@@ -2461,6 +2478,20 @@ async function _showCalSettings() {
           </div>
           <div style="font-size:10px;opacity:0.4;margin-top:4px;">Pulls events from your CalDAV server. To connect or change CalDAV credentials, open <a href="#" id="cal-settings-open-caldav" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">Settings → Integrations</a>.</div>
         </div>
+        <div style="border-top:1px solid var(--border);padding-top:12px;">
+          <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Save new events to</div>
+          <select id="cal-settings-default-cal" style="width:100%;background:none;border:1px solid var(--border);border-radius:4px;padding:5px 6px;color:var(--fg);font-size:12px;">
+            ${cals.map(c => `<option value="${_e(c.href)}">${_e(c.name)}</option>`).join('')}
+          </select>
+          <div style="font-size:10px;opacity:0.4;margin-top:4px;">Events created with no calendar picked (new-event button, or the assistant) default here. Pick a CalDAV/Google calendar so they sync to your phone too.</div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:12px;">
+          <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Week starts on</div>
+          <select id="cal-settings-week-start" style="width:100%;background:none;border:1px solid var(--border);border-radius:4px;padding:5px 6px;color:var(--fg);font-size:12px;">
+            <option value="mon">Monday</option>
+            <option value="sun">Sunday</option>
+          </select>
+        </div>
       </div>
     </div>
   `;
@@ -2469,6 +2500,51 @@ async function _showCalSettings() {
   const cleanup = () => overlay.remove();
   overlay.querySelector('#cal-settings-close').addEventListener('click', cleanup);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+
+  // "Save new events to": which calendar new events default onto when none
+  // is picked (bare "+" button, or the assistant's manage_calendar tool).
+  // Backed by the generic per-user prefs store (routes/prefs_routes.py).
+  const defaultCalSelect = overlay.querySelector('#cal-settings-default-cal');
+  if (defaultCalSelect) {
+    fetch(`${API_BASE}/api/prefs/calendar_default_cal_id`, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d && d.value && cals.some(c => c.href === d.value)) defaultCalSelect.value = d.value;
+      })
+      .catch(() => {});
+    defaultCalSelect.addEventListener('change', () => {
+      fetch(`${API_BASE}/api/prefs/calendar_default_cal_id`, {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: defaultCalSelect.value }),
+      }).then(r => {
+        if (!r.ok) { if (window.showError) window.showError('Failed to save default calendar'); return; }
+        if (uiModule?.showToast) uiModule.showToast('Default calendar saved');
+      }).catch(() => { if (window.showError) window.showError('Failed to save default calendar'); });
+    });
+  }
+
+  // Week start day (Sun/Mon). Re-renders the open calendar immediately so
+  // the change is visible without reopening the panel.
+  const weekStartSelect = overlay.querySelector('#cal-settings-week-start');
+  if (weekStartSelect) {
+    fetch(`${API_BASE}/api/prefs/calendar_week_start`, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { weekStartSelect.value = (d && d.value === 'sun') ? 'sun' : 'mon'; })
+      .catch(() => {});
+    weekStartSelect.addEventListener('change', () => {
+      const val = weekStartSelect.value === 'sun' ? 'sun' : 'mon';
+      fetch(`${API_BASE}/api/prefs/calendar_week_start`, {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: val }),
+      }).then(r => {
+        if (!r.ok) { if (window.showError) window.showError('Failed to save week start'); return; }
+        setWeekStartsOn(val);
+        _render();
+      }).catch(() => { if (window.showError) window.showError('Failed to save week start'); });
+    });
+  }
 
   // Create a new (local) calendar. Defaults the name + next palette color, then
   // reopens the panel so the user can rename it inline and pick a color.
@@ -3299,7 +3375,7 @@ function openCalendar() {
     body.querySelector('.cal-loading').appendChild(wp.element);
     body.addEventListener('wheel', _wheelNav, { passive: false });
   }
-  _fetchCalendars().then(() => _render());
+  Promise.all([_loadWeekStartPref(), _fetchCalendars()]).then(() => _render());
 }
 
 // Open the calendar focused on a specific event (by uid) or date.

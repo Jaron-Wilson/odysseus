@@ -1445,7 +1445,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
+    from routes.calendar_routes import _ensure_default_calendar, _get_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
     import uuid as _uuid
 
     try:
@@ -1725,7 +1725,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                            .filter(CalendarCal.id.like(f"{cal_href}%"))
                            .first())
             if not cal:
-                cal = _ensure_default_calendar(db, owner)
+                cal = _get_default_calendar(db, owner)
 
             all_day = bool(args.get("all_day", False))
             try:
@@ -1836,6 +1836,17 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     dtstart_is_utc and not all_day,
                 )
             db.commit()
+            if cal.source == "caldav":
+                # Agent-created events need the same push as the UI's
+                # create_event route (routes/calendar_routes.py), or an event
+                # defaulted onto a CalDAV/Google calendar would only ever
+                # exist locally.
+                from src.caldav_writeback import writeback_event
+                await writeback_event(owner, cal.source, cal.id, {
+                    "uid": uid, "summary": ev.summary, "description": ev.description,
+                    "location": ev.location, "dtstart": ev.dtstart, "dtend": ev.dtend,
+                    "all_day": ev.all_day, "is_utc": ev.is_utc, "rrule": ev.rrule or "",
+                })
             tag_blurb = f" [{event_type}]" if event_type else ""
             if minutes_before is None:
                 reminder_blurb = ""
@@ -1894,6 +1905,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             if args.get("importance") is not None:
                 ev.importance = args["importance"]
             db.commit()
+            if ev.calendar and ev.calendar.source == "caldav":
+                from src.caldav_writeback import writeback_event
+                await writeback_event(owner, ev.calendar.source, ev.calendar.id, {
+                    "uid": ev.uid, "summary": ev.summary, "description": ev.description,
+                    "location": ev.location, "dtstart": ev.dtstart, "dtend": ev.dtend,
+                    "all_day": ev.all_day, "is_utc": ev.is_utc, "rrule": ev.rrule or "",
+                })
             return {"response": f"Updated event {uid}", "exit_code": 0}
 
         elif action == "delete_event":
@@ -1907,8 +1925,15 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
+            # Capture what the remote push needs BEFORE the row is gone.
+            _cal = ev.calendar
+            _is_caldav = bool(_cal and _cal.source == "caldav")
+            _cal_id, _ev_uid = ev.calendar_id, ev.uid
             db.delete(ev)
             db.commit()
+            if _is_caldav:
+                from src.caldav_writeback import writeback_event
+                await writeback_event(owner, "caldav", _cal_id, {"uid": _ev_uid}, delete=True)
             return {"response": f"Deleted event {uid}", "exit_code": 0}
 
         else:

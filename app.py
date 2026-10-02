@@ -1063,6 +1063,14 @@ async def _startup_event():
             _startup_tasks.append(asyncio.create_task(mail_listener.run_forever()))
         except Exception as _e:
             logger.warning("Failed to start the mail listener: %s", _e)
+        # Periodic CalDAV/Google pull for every owner (src/caldav_background_sync.py).
+        # Interval via CALDAV_SYNC_INTERVAL_S (default 300s); dedups against a
+        # manual "Sync now" click or another pass via caldav_sync._sync_in_progress.
+        try:
+            from src.caldav_background_sync import run_forever as _caldav_sync_loop
+            _startup_tasks.append(asyncio.create_task(_caldav_sync_loop()))
+        except Exception as _e:
+            logger.warning("Failed to start the periodic CalDAV sync: %s", _e)
     # The free SIP line (src/telephony/sip_line.py): listens on the Tailscale
     # addresses only, and only while someone has it turned on.
     try:

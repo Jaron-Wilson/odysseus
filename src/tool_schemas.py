@@ -547,7 +547,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "description": {"type": "string", "description": "Event description / notes"},
                     "location": {"type": "string", "description": "Event location"},
                     "uid": {"type": "string", "description": "Event UID (for update/delete)"},
-                    "calendar_href": {"type": "string", "description": "Specific calendar URL (optional; defaults to first calendar)"},
+                    "calendar_href": {"type": "string", "description": "Specific calendar URL (optional; defaults to the user's configured default calendar, set in Calendar Settings)"},
                     "calendar": {"type": "string", "description": "Filter list_events by calendar name or href"},
                     "start": {"type": "string", "description": "list_events range start (ISO datetime); defaults to today. Prefer start; backend also accepts start_date, range_start, from, dtstart, since."},
                     "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days. Prefer end; backend also accepts end_date, range_end, to, dtend, until."},
