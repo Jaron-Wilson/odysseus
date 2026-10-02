@@ -763,12 +763,7 @@ function _renderEmpty() {
     </div>`;
   document.getElementById('cal-goto-settings')?.addEventListener('click', () => {
     closeCalendar();
-    const modal = document.getElementById('settings-modal');
-    if (modal) {
-      modal.classList.remove('hidden');
-      const tab = modal.querySelector('[data-settings-tab="integrations"]');
-      if (tab) tab.click();
-    }
+    _openIntegrations();
   });
   // New / Import open the calendar settings panel; the panel already
   // has the "New calendar" button and the .ics file picker. Import
@@ -784,23 +779,7 @@ function _renderEmpty() {
   document.getElementById('cal-empty-caldav')?.addEventListener('click', (e) => {
     e.preventDefault();
     closeCalendar();
-    // Integrations is an admin tab — settingsModule.open() only sets
-    // the .active class for admin tabs; the actual panel renders via
-    // adminModule.open(). Without the admin-first branch the modal
-    // appears with Integrations highlighted but showing the previous
-    // panel, so the user has to click the tab again to land there.
-    if (window.adminModule && typeof window.adminModule.open === 'function') {
-      try { window.adminModule.open('integrations'); return; } catch (_) {}
-    }
-    if (window.settingsModule && typeof window.settingsModule.open === 'function') {
-      try { window.settingsModule.open('integrations'); return; } catch (_) {}
-    }
-    const modal = document.getElementById('settings-modal');
-    if (modal) {
-      modal.classList.remove('hidden');
-      const tab = modal.querySelector('[data-settings-tab="integrations"]');
-      if (tab) tab.click();
-    }
+    _openIntegrations();
   });
 }
 
@@ -1643,12 +1622,7 @@ async function _renderAgenda() {
   body.querySelector('[data-cal-open-settings]')?.addEventListener('click', (e) => {
     e.preventDefault();
     closeCalendar();
-    const modal = document.getElementById('settings-modal');
-    if (modal) {
-      modal.classList.remove('hidden');
-      const tab = modal.querySelector('[data-settings-tab="integrations"]');
-      if (tab) tab.click();
-    }
+    _openIntegrations();
   });
   body.querySelector('[data-cal-create-event]')?.addEventListener('click', (e) => {
     e.preventDefault();
@@ -2640,16 +2614,21 @@ async function _showCalSettings() {
   overlay.querySelector('#cal-settings-open-caldav')?.addEventListener('click', (e) => {
     e.preventDefault();
     cleanup();
-    if (window.settingsModule && typeof window.settingsModule.open === 'function') {
-      try { window.settingsModule.open('integrations'); return; } catch (_) {}
-    }
-    const modal = document.getElementById('settings-modal');
-    if (modal) {
-      modal.classList.remove('hidden');
-      const tabBtn = modal.querySelector('[data-settings-tab="integrations"]');
-      if (tabBtn) tabBtn.click();
-    }
+    closeCalendar();
+    _openIntegrations();
   });
+}
+
+// Settings > Integrations, through Settings' own opener. Integrations is an
+// admin tab, so adminModule.open renders its panel (settingsModule.open only
+// marks the tab), and either way Settings comes to the front even when it
+// was already open behind the calendar. Un-hiding the modal by hand did
+// neither, and left Settings under the calendar with every click lost.
+function _openIntegrations() {
+  if (window.adminModule && typeof window.adminModule.open === 'function') {
+    try { window.adminModule.open('integrations'); return; } catch (_) { /* fall through */ }
+  }
+  import('./settings.js').then(m => m.default.open('integrations')).catch(() => {});
 }
 
 // ── Event Form ──

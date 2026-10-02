@@ -1193,6 +1193,14 @@ export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, labe
   }
 }
 
+/** Raise an already open window above the others. The auto-stack below
+ *  only fires when a window goes from hidden to shown, so opening one that
+ *  is already up behind another left it there. */
+export function bringToFront(id) {
+  const m = document.getElementById(id);
+  if (m && !m.classList.contains('hidden')) _bringToFront(m);
+}
+
 export function unregister(id) {
   const s = _state.get(id);
   if (s) _setBadge(s.btnIds, false);
@@ -1549,4 +1557,4 @@ document.addEventListener('click', (e) => {
   }
 }, true);
 
-export default { register, unregister, isRegistered, isMinimized, minimize, restore, toggle, close, injectMinimizeButton };
+export default { register, unregister, isRegistered, isMinimized, minimize, restore, toggle, close, injectMinimizeButton, bringToFront };
