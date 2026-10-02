@@ -173,50 +173,20 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     # authentication, and only start belongs on the auth-exempt list.
     # ------------------------------------------------------------------
 
+    # The client and the redirect URI live in src/google_oauth.py, shared
+    # with connecting Google Calendar for Meet (src/meet/google_calendar.py),
+    # which comes back through this same callback with its own state.
+    from src import google_oauth
+
     def _google_cfg() -> dict:
         """Client credentials, from settings first then environment."""
-        try:
-            cid = (get_setting("google_oauth_client_id", "") or "").strip()
-            csec = (get_setting("google_oauth_client_secret", "") or "").strip()
-        except Exception:
-            cid = csec = ""
-        cid = cid or os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
-        csec = csec or os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
-        return {"client_id": cid, "client_secret": csec, "configured": bool(cid and csec)}
+        return google_oauth.client_config()
 
     def _google_redirect_uri(request: Request) -> str:
-        """The callback URL, which must match Google's registered value exactly.
+        return google_oauth.redirect_uri(request)
 
-        Derived from the request by default so it is correct behind Tailscale
-        Serve with no extra configuration, but overridable because a proxy can
-        rewrite the host and Google compares the string, not the intent.
-        """
-        try:
-            override = (get_setting("google_oauth_redirect_uri", "") or "").strip()
-        except Exception:
-            override = ""
-        override = override or os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
-        if override:
-            return override
-        base = str(request.base_url).rstrip("/")
-        # base_url reports http behind a TLS-terminating proxy such as
-        # Tailscale Serve. The registered URI is https, and Google rejects the
-        # mismatch with an error that never mentions the scheme.
-        if request.headers.get("x-forwarded-proto", "") == "https" and base.startswith("http://"):
-            base = "https://" + base[len("http://"):]
-        return base + "/api/auth/google/callback"
-
-    _google_states: dict = {}
-
-    def _remember_state(state: str, payload: dict) -> None:
-        now = time.time()
-        for key, val in list(_google_states.items()):
-            if now - val.get("at", 0) > 600:
-                _google_states.pop(key, None)
-        payload["at"] = now
-        _google_states[state] = payload
-
-    def _google_page(title: str, message: str, ok: bool = False) -> HTMLResponse:
+    def _google_page(title: str, message: str, ok: bool = False,
+                     back: str = "/login", back_label: str = "Back to sign in") -> HTMLResponse:
         safe_title = html.escape(title)
         safe_message = html.escape(message)
         accent = "#2e7d32" if ok else "#b3542b"
@@ -229,7 +199,7 @@ display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0
 h1{{margin:0 0 .5rem;font-size:1.25rem;color:{accent}}}
 p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
 <body><div class="card"><h1>{safe_title}</h1><p>{safe_message}</p>
-<p><a href="/login">Back to sign in</a></p></div></body></html>""",
+<p><a href="{html.escape(back)}">{html.escape(back_label)}</a></p></div></body></html>""",
             status_code=200 if ok else 400,
         )
 
@@ -260,22 +230,15 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
         if not cfg["configured"]:
             raise HTTPException(400, "Google sign-in is not configured. Add a client ID "
                                      "and secret in Settings first.")
-        state = secrets.token_urlsafe(24)
-        redirect_uri = _google_redirect_uri(request)
-        _remember_state(state, {"link_for": link_for, "redirect_uri": redirect_uri})
-        params = {
-            "client_id": cfg["client_id"],
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "state": state,
+        url = google_oauth.authorize_url(
+            request, {"link_for": link_for},
+            scope="openid email profile",
             # Online only: this proves who you are once. It is not given
             # standing permission to act on the Google account afterwards.
-            "access_type": "online",
-            "prompt": "select_account",
-        }
-        return RedirectResponse(
-            "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params))
+            access_type="online",
+            prompt="select_account",
+        )
+        return RedirectResponse(url)
 
     @router.get("/google/start")
     async def google_start(request: Request):
@@ -304,7 +267,7 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
         cfg = _google_cfg()
         if not cfg["configured"]:
             return _google_page("Not configured", "Google sign-in is not set up on this server.")
-        entry = _google_states.pop((state or ""), None)
+        entry = google_oauth.pop_state(state or "")
         if not entry:
             # Unknown state also catches a replayed or bookmarked callback,
             # which is the point of carrying one.
@@ -315,6 +278,13 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
             return _google_page("Sign-in failed", "Google did not return an authorization code.")
 
         redirect_uri = entry.get("redirect_uri") or _google_redirect_uri(request)
+        if entry.get("purpose") == "calendar":
+            # Connecting Google Calendar for Meet, started from the Meet card
+            # by a signed-in user: not a sign-in, no session is made here.
+            from src.meet import google_calendar
+            ok, message = await google_calendar.finish_connect(entry.get("user") or "", code, redirect_uri)
+            return _google_page("Google Calendar connected" if ok else "Could not connect Google Calendar",
+                                message, ok=ok, back="/", back_label="Back to Odysseus")
         try:
             async with httpx.AsyncClient(timeout=20) as client:
                 tok = await client.post("https://oauth2.googleapis.com/token", data={

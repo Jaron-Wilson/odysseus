@@ -15,6 +15,9 @@ phone line.
                  into, and the meeting's audio captured off WebRTC
     dialin.py    joining by phone instead: the Twilio line from
                  src/telephony/ dials the meeting's number and keys in the PIN
+    google_calendar.py  making a meeting from the user's own Google account
+                 (Calendar API with a Meet, invites, meeting access set to Open)
+    tool.py      the agent's google_meet tool: start, schedule, join, status
 
 routes/meet_routes.py wires these to the Settings card and the Join a Meet
 panel. docs/google-meet.md is the research behind the choice of paths and

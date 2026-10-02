@@ -12,6 +12,8 @@ from typing import Dict, List, Optional
 from routes import prefs_routes
 
 PREF_KEY = "google_meet"
+CHATS_KEY = "google_meet_chats"     # meeting code (or dial-in) -> its chat
+MAX_CHATS = 50
 MODES = ("assistant", "talk")
 JOIN_AS = ("guest", "signed_in")
 VIAS = ("browser", "phone")
@@ -40,6 +42,30 @@ def get_config(user: Optional[str]) -> Dict:
 def save_config(user: Optional[str], cfg: Dict) -> None:
     prefs = prefs_routes._load_for_user(user)
     prefs[PREF_KEY] = cfg
+    prefs_routes._save_for_user(user, prefs)
+
+
+def chat_for(user: Optional[str], key: str) -> str:
+    """The chat of an earlier join of this meeting, or ""."""
+    chats = prefs_routes._load_for_user(user).get(CHATS_KEY)
+    return str(chats.get(key) or "") if isinstance(chats, dict) and key else ""
+
+
+def is_meet_chat(user: Optional[str], sid: str) -> bool:
+    chats = prefs_routes._load_for_user(user).get(CHATS_KEY)
+    return bool(sid) and isinstance(chats, dict) and sid in chats.values()
+
+
+def remember_chat(user: Optional[str], key: str, sid: str) -> None:
+    """Keep the meeting's chat, so joining it again (or after a restart)
+    goes on in the same chat. The newest MAX_CHATS meetings are kept."""
+    if not (key and sid):
+        return
+    prefs = prefs_routes._load_for_user(user)
+    chats = prefs.get(CHATS_KEY) if isinstance(prefs.get(CHATS_KEY), dict) else {}
+    chats.pop(key, None)
+    chats[key] = sid
+    prefs[CHATS_KEY] = dict(list(chats.items())[-MAX_CHATS:])
     prefs_routes._save_for_user(user, prefs)
 
 

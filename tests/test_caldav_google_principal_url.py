@@ -163,3 +163,28 @@ def test_google_sync_pulls_events_instead_of_empty(monkeypatch):
         assert ev is not None and ev.summary == "Standup"
     finally:
         db.close()
+
+
+_FAMILY_EVENTS = ("https://apidata.googleusercontent.com/caldav/v2/"
+                  "family01234567890@group.calendar.google.com/events")
+
+
+def test_a_shared_google_calendar_url_is_synced_as_itself(monkeypatch):
+    # A family calendar has its own URL. Discovery from it finds only the
+    # account's own calendar, so it must not run: the URL is the calendar.
+    _install_fake_caldav(monkeypatch)
+    _clear_db()
+    asked = []
+    monkeypatch.setattr(_FakeClient, "principal", lambda self: asked.append(1) or _FakePrincipal())
+    opened = []
+    real = _FakeClient.calendar
+    monkeypatch.setattr(_FakeClient, "calendar", lambda self, url=None: opened.append(url) or real(self, url))
+
+    result = caldav_sync._sync_blocking("alice", _FAMILY_EVENTS, "me@gmail.com", "app-pw")
+
+    assert result["events"] == 1 and not result["errors"], result
+    assert opened == [_FAMILY_EVENTS] and asked == []
+    assert caldav_sync._is_google_calendar_url(_FAMILY_EVENTS)
+    assert caldav_sync._is_google_calendar_url("https://www.google.com/calendar/dav/x@group.calendar.google.com/events/")
+    assert not caldav_sync._is_google_calendar_url(_GOOGLE_PRINCIPAL)
+    assert not caldav_sync._is_google_calendar_url("https://dav.example.com/cal/events")

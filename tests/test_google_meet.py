@@ -259,7 +259,7 @@ def test_settings_are_off_by_default_and_validated(env):
     cfg = c.get("/api/meet/config", headers=H).json()
     assert cfg["enabled"] is False and cfg["display_name"] == "Odysseus (AI)" and cfg["mode"] == "assistant"
     r = c.post("/api/meet/join", headers=H, json={"url": "abc-defg-hij"})
-    assert r.status_code == 400 and "Turn Google Meet on" in r.json()["detail"]
+    assert r.status_code == 400 and "Switch on Join meetings" in r.json()["detail"]
     assert c.put("/api/meet/config", headers=H, json={"display_name": "Jaron"}).status_code == 400
     assert c.put("/api/meet/config", headers=H, json={"mode": "spy"}).status_code == 400
     assert c.put("/api/meet/config", headers=H, json={"wake_words": "hey there, x"}).status_code == 400

@@ -273,6 +273,10 @@ _DOMAIN_RULES = {
 - On Windows, anything started over SSH (Start-Process, explorer, start) runs in a hidden session and never appears on the user's screen. To show something on their PC, use the desktop tools (after approval), or an interactive scheduled task (`schtasks /create ... /it`, then `/run`). Do not claim a window opened because an SSH command succeeded.
 - Never click taskbar icons or press Win+number to switch windows: those open whatever app is pinned in that slot, and the order is not what you think. Do not fight overlapping windows either; if what you need is hidden, say so and ask the user.
 - Never take screenshots back to back without acting in between. If two tries have not got you there, stop and tell the user what you see, rather than trying again.""",
+    "meet": """\
+## Google Meet rules
+- Joining, rejoining or making a Google Meet is `google_meet` (action join, start, schedule or status). It runs in Odysseus's own cloud browser on the server as "Odysseus (AI)": it never needs the user's desktop, their Chrome, or the screen tools (launch_app, focus_app, click). "Join again", "rejoin", "try joining through my browser" in a meeting chat all mean `google_meet` join with that meeting's link.
+- After a join or a new meeting, tell the user to open the link with their own Google account and admit Odysseus (AI).""",
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
@@ -290,6 +294,7 @@ _DOMAIN_TOOL_MAP = {
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
+    "meet": {"google_meet"},
 }
 
 # Tools that act on the user's own devices, or the invisible browser that
@@ -301,6 +306,20 @@ _SCREEN_TOOL_SUFFIXES = ("__launch_app", "__focus_app", "__screenshot", "__click
 def _touches_devices(names: set) -> bool:
     return bool(names & {"manage_devices", "notify_device"}) or any(
         n.endswith(_SCREEN_TOOL_SUFFIXES) or n.startswith("mcp__builtin_browser__") for n in names)
+
+
+def _is_meet_chat(session_id: str, owner: Optional[str]) -> bool:
+    """Whether this chat was made for a Google Meet (src/meet/session.py)."""
+    try:
+        from src.meet import config as meet_config
+        if meet_config.is_meet_chat(owner, session_id):
+            return True
+        from src.ai_interaction import get_session_manager
+        sess = get_session_manager().sessions.get(session_id)
+        name = str(getattr(sess, "name", "") or "")
+        return name.startswith(("Google Meet ", "Meet: "))
+    except Exception:
+        return False
 
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -518,6 +537,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <page>` (any page or tool: {pages}), `open_panel settings <what>` (opens Settings scrolled to that setting, e.g. `open_panel settings speech to text engine`), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open library\" / \"show gallery\" / \"open inbox\" / \"take me to devices\" / \"open the terminal\" all map to `open_panel <page>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
     "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
+    "google_meet": "- ```google_meet```: The way to join or make a Google Meet, in Odysseus's own cloud browser on the server (never the user's desktop or Chrome). {\"action\": \"start\", \"attendees\": [\"bob@x.com\"], \"title\": \"Quick sync\"} makes a meeting now, invites people, and the agent joins it; {\"action\": \"schedule\", \"title\": \"Planning\", \"start\": \"tomorrow at 3pm\", \"minutes\": 30, \"attendees\": [\"amy@y.com\"]} puts one in their Google Calendar and Google emails the invites; {\"action\": \"join\", \"url\": \"https://meet.google.com/abc-defg-hij\"} sends the agent into an existing one; {\"action\": \"status\"}. Give the user the link from the result. Use for 'start a meet with bob', 'set up a meeting tomorrow at 3', 'make a Google Meet', 'join this meet'.",
     "whats_new": "- ```whats_new```: The pull requests merged into Odysseus (this app), newest first, read-only. {\"action\": \"list\", \"query\": \"voice call\"} finds the PRs about something (omit query for the latest); {\"action\": \"get\", \"pr\": 127} gives one PR's description, files and whether the running server has it. Use for 'what changed with X', 'what's new', 'what was in PR #N', 'is that fix live yet'.",
     "chat_memory": "- ```chat_memory``` — This chat's \"Needs to know\": a short list of facts kept for this chat, which you see on every turn (like memory, but per chat). {\"action\": \"suggest\", \"text\": \"Waiting on Will to merge PR #3\"} proposes an item: the user is asked to add it or not, and it is kept only if they accept, so do not ask again in your reply. Suggest when something worth keeping comes up (the task, a decision, who or what you are waiting on, a branch or folder that matters), one fact per item. {\"action\": \"add\", \"text\": \"...\"} only when the user asked you to put something in Needs to know. {\"action\": \"remove\", \"id\": \"...\"} when an item is done or wrong. {\"action\": \"list\"}.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
@@ -958,6 +978,13 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("web")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
+    # Making or joining a Google Meet (google_meet): "start a meet with bob",
+    # "set up a meeting tomorrow at 3".
+    if has(r"\b(google meet|meet link|meets?|video (?:call|meeting)|meeting link|start a meeting|"
+           r"set up a meeting|schedule a meeting|invite|rejoin(?:ing)?|join(?:ing)? (?:it |back )?again|"
+           r"try joining|join(?:ing)? (?:the |this |that |my )?(?:meeting|call|meet)|"
+           r"through (?:my|the) browser)\b"):
+        domains.add("meet")
     # What changed in Odysseus itself: the merged PRs (whats_new). "what
     # changed with the voice call?" otherwise reads as a plain chat message.
     if has(r"\b(what'?s new|what is new|what (?:has )?changed|changelog|change log|release notes|merged|"
@@ -2299,6 +2326,11 @@ async def stream_agent_loop(
             _relevant_tools.add("ui_control")
         if "changes" in (_intent.get("domains") or set()):
             _relevant_tools.add("whats_new")
+        # A chat made for a meeting always has the Meet tool: its follow-ups
+        # ("join again", "try through my browser") name no meeting at all,
+        # and without it the model reached for the desktop tools instead.
+        if session_id and _is_meet_chat(session_id, owner):
+            _relevant_tools.add("google_meet")
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
@@ -3407,6 +3439,9 @@ async def stream_agent_loop(
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
+            if result.get("needs_approval"):
+                # Not a failure: the card says it is waiting on the user.
+                tool_output_data["needs_approval"] = True
             if "ui_event" in result:
                 tool_output_data["ui_event"] = result["ui_event"]
                 for k in ("toggle_name", "state", "mode", "model", "endpoint_url", "theme_name", "colors"):
@@ -3529,6 +3564,8 @@ async def stream_agent_loop(
                 "output": output_text,
                 "exit_code": result.get("exit_code"),
             }
+            if result.get("needs_approval"):
+                tool_event["needs_approval"] = True
             if result.get("engine_label"):
                 # claude_code runs name the engine that ran (OpenCode or
                 # Claude Code) instead of showing the tool's own name.

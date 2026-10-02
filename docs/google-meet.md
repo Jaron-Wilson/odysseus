@@ -286,6 +286,58 @@ meeting assistant, `/meet LINK talk` in talk mode, `/meet leave` leaves, and
    calendar event that has them). The Funnel path already covers
    `/api/telephony/twilio/meet`.
 
+## Making a meeting
+
+Odysseus can also make the meeting, from your own Google account
+(src/meet/google_calendar.py). The calendar it syncs is CalDAV, which cannot
+ask for a Meet link, so this uses the Google Calendar API: an event inserted
+with `conferenceData.createRequest` (`hangoutsMeet`, `conferenceDataVersion=1`)
+comes back with its `hangoutLink`, and with attendees Google emails the
+invites from your account (`sendUpdates=all`).
+
+- Start a meeting now: makes the meeting, and Odysseus joins it as
+  "Odysseus (AI)" (when Join meetings is on). Open the link with your Google
+  account, then admit Odysseus (AI) when it asks to join.
+- Schedule a meeting: title, start, length, people to invite.
+- In a chat, a call or by SMS: the `google_meet` tool ("start a meet with
+  bob@example.com", "set up a meeting tomorrow at 3").
+
+Meeting access: Meet turns a signed-out guest away at once when the
+meeting's access is Trusted or Restricted. The Calendar API has no field for
+that, so after making the event Odysseus asks the Meet REST API to set the
+new meeting's space to OPEN (`spaces.patch` with `config.accessType`, scope
+`meetings.space.settings`). That is best effort: when the Meet REST API is
+not enabled in the Cloud project, the permission was not granted, or Google
+refuses, the meeting is still made and the reply says to set Meeting access
+to Open in Meet's host controls.
+
+Signed-out guests: tested on 2026-10-01, Google refused a signed-out guest
+from a CDP-driven Chrome ("You can't join this video call") at the moment it
+pressed "Join now", even with the meeting open to anyone, headless or headful
+on Xvfb, with or without inject.js, fake media devices, or a Chrome user
+agent. That is Google's own join-time check, not the meeting's settings. So
+a join turned away within seconds, before any lobby, says to sign the cloud
+browser into a separate Google account for the bot and set Join as to Signed
+in, and only then to check the meeting's access. (In an open meeting the
+button is "Join now", not "Ask to join"; the bot matches both.)
+
+Setup, once per server (the same OAuth client Sign in with Google uses):
+
+1. Google Cloud Console: make a project, enable the Google Calendar API and
+   the Google Meet REST API.
+2. OAuth consent screen: External, publishing status In production (Testing
+   drops refresh tokens after 7 days; the "unverified app" warning can be
+   clicked past for your own account).
+3. Credentials > OAuth client ID > Web application, with the redirect URI the
+   Google Meet card shows (`https://<your host>/api/auth/google/callback`,
+   the same one Sign in with Google uses).
+4. Paste the client ID and secret in the Google Meet card (admins), or set
+   `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`.
+
+Then each user presses Connect Google Calendar. The refresh token is kept in
+`DATA_DIR/google_calendar/`, encrypted with the app key, never sent to the
+browser and never logged.
+
 ## Testing
 
 tests/test_google_meet.py, with no Google or Twilio account:

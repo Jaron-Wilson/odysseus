@@ -343,6 +343,34 @@ function _showPickup(c) {
   });
 }
 
+// ── A call link from a text ─────────────────────────────────────────────
+
+// One tap to start: a phone gives the mic and audio only inside a gesture.
+function _showCallLink(sid) {
+  if (voiceCall.isActive()) return;
+  _hidePickup();
+  const el = document.createElement('div');
+  el.className = 'vc-pickup vc-call-link';
+  el.setAttribute('role', 'status');
+  el.innerHTML = `
+    <span class="vc-pickup-ico">${ICON_DEV_PHONE}</span>
+    <span class="vc-pickup-text">Voice call with Odysseus</span>
+    <button type="button" class="vc-pickup-go">Start call</button>
+    <button type="button" class="vc-pickup-x" aria-label="Hide" title="Hide">×</button>`;
+  document.body.appendChild(el);
+  el.querySelector('.vc-pickup-x').addEventListener('click', () => el.remove());
+  el.querySelector('.vc-pickup-go').addEventListener('click', () => {
+    el.remove();
+    if (sid === 'new') { voiceCall.open(); return; }
+    try {
+      const sm = window.sessionModule;
+      if (sm && sm.selectSession) sm.selectSession(sid);
+    } catch (_) { /* the call is bound to its chat either way */ }
+    voiceCall.open({ sessionId: sid });
+  });
+  try { el.querySelector('.vc-pickup-go').focus({ preventScroll: true }); } catch (_) { /* fine */ }
+}
+
 // ── Presence answers ────────────────────────────────────────────────────
 
 function _onPresence(d) {
@@ -399,6 +427,14 @@ function _start() {
     const q = params.toString();
     try { history.replaceState(history.state, '', location.pathname + (q ? '?' + q : '') + location.hash); } catch (_) { /* fine */ }
     _openFromLink(linked);
+  }
+  // The link a texted "call" answers with (routes/sms_routes.py).
+  const callLink = params.get('call');
+  if (callLink) {
+    params.delete('call');
+    const q = params.toString();
+    try { history.replaceState(history.state, '', location.pathname + (q ? '?' + q : '') + location.hash); } catch (_) { /* fine */ }
+    _showCallLink(callLink);
   }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', (ev) => {
