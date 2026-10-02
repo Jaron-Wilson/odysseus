@@ -32,8 +32,21 @@ _ENGINE = create_engine(
 )
 cdb.Base.metadata.create_all(_ENGINE)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
-croutes.SessionLocal = _TS
-cdb.SessionLocal = _TS
+
+
+@pytest.fixture(autouse=True)
+def _bind_temp_db(monkeypatch):
+    # Scoped (monkeypatch, not a bare module-level assignment) so this only
+    # applies for the duration of each test in this file and is reverted
+    # automatically afterward. A bare `croutes.SessionLocal = _TS` at import
+    # time (as some other calendar test files do) sticks for the rest of the
+    # pytest session once this module is collected, which can silently point
+    # an unrelated, later-collected test file's route calls at THIS file's
+    # database instead of its own (see test_caldav_writeback_route.py, which
+    # does exactly that and got bitten when this file was added after it).
+    monkeypatch.setattr(croutes, "SessionLocal", _TS)
+    monkeypatch.setattr(cdb, "SessionLocal", _TS)
+    yield
 
 
 @pytest.fixture
