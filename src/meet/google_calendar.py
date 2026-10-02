@@ -373,7 +373,9 @@ async def create_meeting(user: Optional[str], title: str = "", start: Optional[d
             "conferenceDataVersion": "1", "sendUpdates": "all" if people else "none"})
         if r.status_code not in (200, 201):
             why = _google_reason(r)
-            logger.warning("[meet] Calendar events.insert said %s", r.status_code)
+            # Google's reason says what is wrong (an API switched off, a
+            # scope not granted); it carries no token or event content.
+            logger.warning("[meet] Calendar events.insert said %s: %s", r.status_code, why.strip()[:300])
             if "SERVICE_DISABLED" in why or "accessNotConfigured" in why:
                 raise GoogleError("The Google Calendar API is not enabled in the Google Cloud project "
                                   "(APIs & Services > Library > Google Calendar API > Enable).")

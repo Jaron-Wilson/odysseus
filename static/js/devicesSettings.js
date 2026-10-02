@@ -596,7 +596,7 @@ function renderMeetings(list) {
       `${why ? ` · ${esc(why)}` : ''}${m.summary_posted ? ' · notes posted' : ''}</span>
       ${m.sid ? `<button ${BTN} data-meet-open="${esc(m.sid)}">Open chat</button>` : ''}
       ${live && m.via === 'browser' ? `<button ${BTN} data-meet-watch="1">Watch</button>` : ''}
-      ${live ? `<button ${BTN} data-meet-leave="${esc(m.id)}">Leave</button>` : ''}}</div>${tail}</div>`;
+      ${live ? `<button ${BTN} data-meet-leave="${esc(m.id)}">Leave</button>` : ''}</div>${tail}</div>`;
   }).join('');
   if (list.some((m) => !['ended', 'failed'].includes(m.state))) scheduleMeetPoll();
 }

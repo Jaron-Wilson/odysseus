@@ -1174,8 +1174,13 @@ document.addEventListener('click', function(e) {
   if (!href.startsWith('#')) {
     try {
       const u = new URL(href, window.location.origin);
+      // Sign-in links (Connect Google Calendar, Link a Google account, an
+      // MCP server's Authorize) send the browser to the provider's consent
+      // page; fetched as a file they only ever said "download failed".
       if (u.origin === window.location.origin
-          && u.pathname.startsWith('/api/')) {
+          && u.pathname.startsWith('/api/')
+          && !/\/(connect|link|authorize|oauth|login|callback)(\/|$)/.test(u.pathname)
+          && !a.hasAttribute('data-navigate')) {
         // Our own API: a file, not a page. Navigating there drops the
         // chat the reader was in.
         e.preventDefault();
