@@ -22,10 +22,18 @@ or step in to log in or get past a CAPTCHA.
 - The Browser MCP connects to it (--cdp-endpoint, src/builtin_mcp.py), so
   the agent's browser_* tools act on this very browser.
 - The viewer attaches over CDP too (Playwright for Python): it streams the
-  active tab as JPEG frames (Page.startScreencast) to whoever is watching,
-  and replays the user's clicks, scrolling and typing when they take over
-  (routes/cloud_browser_routes.py, static/js/cloudBrowser.js). This and the
-  Meet bot (src/meet/browser.py) connect over CDP the same way whichever
+  active tab as JPEG frames (Page.startScreencast) to whoever is watching.
+  When the headful real-Chrome path is up, a take-over's clicks/scrolling/
+  typing are replayed as real X11 input (xdotool against the Xvfb display,
+  see x11_display_for_input()) instead of through CDP: Google blocks sign-in
+  specifically on Input.dispatchKeyEvent/dispatchMouseEvent traffic, even in
+  a real, visible Chrome (confirmed 2026-10-02: a screencast-only CDP
+  session with X11-driven input takes an email with no "may not be secure"
+  warning; the same input replayed through Playwright's page.mouse/keyboard
+  does trigger it). The headless fallback has no real X11 display to inject
+  into and falls back to the old CDP input path (routes/cloud_browser_routes.py,
+  static/js/cloudBrowser.js). This and the Meet bot (src/meet/browser.py)
+  still connect over CDP the same way whichever
   browser is actually running underneath.
 """
 import asyncio
@@ -115,6 +123,95 @@ def _xvfb_socket(display: str) -> str:
 
 def _xvfb_running(display: str) -> bool:
     return os.path.exists(_xvfb_socket(display))
+
+
+# Google refuses to sign in over CDP-driven input ("This browser or app may
+# not be secure") even in a real, visible Chrome: it is specifically the
+# Input.dispatchKeyEvent/dispatchMouseEvent traffic that trips it, not the
+# CDP connection itself (confirmed 2026-10-02: a screencast-only CDP session
+# with zero Input.* calls, driven instead by real X11 events via xdotool,
+# reaches the sign-in form and takes an email with no warning at all, same
+# as a human sitting at the real display; the same input over Playwright's
+# page.mouse/page.keyboard does not). So when a real Chrome is up on Xvfb,
+# the viewer replays clicks/keys/typing through xdotool against that X
+# display instead of through CDP, and only falls back to CDP input in the
+# headless path (no real X11 display to inject into, and headless was
+# already known-blocked for sign-in regardless of input method).
+def x11_display_for_input() -> str:
+    """The X11 display to inject real input into, or "" to use CDP input
+    instead (headless fallback, Xvfb never came up, or no xdotool: without
+    it every input call would silently no-op rather than fall back)."""
+    if not headful_enabled() or not shutil.which("xdotool"):
+        return ""
+    display = _xvfb_display()
+    return display if _xvfb_running(display) else ""
+
+
+async def _xdotool(display: str, *args: str) -> bool:
+    xdotool = shutil.which("xdotool")
+    if not xdotool:
+        return False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            xdotool, *args, env=dict(os.environ, DISPLAY=display),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+        return proc.returncode == 0
+    except Exception:
+        logger.debug("[cloud browser] xdotool %s failed", args, exc_info=True)
+        return False
+
+
+_X11_BUTTON = {"left": "1", "middle": "2", "right": "3"}
+
+# JS KeyboardEvent.key names that are not themselves valid X11 keysym names.
+# Printable characters (letters, digits, and most punctuation) either match
+# their own keysym name already or arrive as a "text" event (insert_text)
+# instead of a "key" press, so they are not listed here.
+_KEY_TO_X11 = {
+    "Enter": "Return", "Escape": "Escape", "Backspace": "BackSpace", "Tab": "Tab",
+    "ArrowUp": "Up", "ArrowDown": "Down", "ArrowLeft": "Left", "ArrowRight": "Right",
+    "Delete": "Delete", "Home": "Home", "End": "End", "PageUp": "Prior", "PageDown": "Next",
+    " ": "space", "Space": "space", "Shift": "Shift_L", "Control": "Control_L",
+    "Alt": "Alt_L", "Meta": "Super_L", "CapsLock": "Caps_Lock",
+}
+
+
+async def _x11_mouse(display: str, kind: str, x: float, y: float, y_offset: float, button: str) -> None:
+    ix, iy = str(int(x)), str(int(y + y_offset))
+    btn = _X11_BUTTON.get(button, "1")
+    if kind == "move":
+        await _xdotool(display, "mousemove", "--sync", ix, iy)
+    elif kind == "down":
+        await _xdotool(display, "mousemove", "--sync", ix, iy)
+        await _xdotool(display, "mousedown", btn)
+    elif kind == "up":
+        await _xdotool(display, "mousemove", "--sync", ix, iy)
+        await _xdotool(display, "mouseup", btn)
+    elif kind == "click":
+        await _xdotool(display, "mousemove", "--sync", ix, iy)
+        await _xdotool(display, "click", btn)
+    elif kind == "dblclick":
+        await _xdotool(display, "mousemove", "--sync", ix, iy)
+        await _xdotool(display, "click", "--repeat", "2", "--delay", "60", btn)
+
+
+async def _x11_wheel(display: str, x: float, y: float, y_offset: float, dy: float) -> None:
+    await _xdotool(display, "mousemove", "--sync", str(int(x)), str(int(y + y_offset)))
+    clicks = max(1, min(8, int(abs(dy) // 60) or 1))
+    button = "5" if dy > 0 else "4"
+    await _xdotool(display, "click", "--repeat", str(clicks), button)
+
+
+async def _x11_key(display: str, key: str) -> None:
+    mapped = _KEY_TO_X11.get(key, key if len(key) == 1 else "")
+    if mapped:
+        await _xdotool(display, "key", "--clearmodifiers", mapped)
+
+
+async def _x11_text(display: str, text: str) -> None:
+    if text:
+        await _xdotool(display, "type", "--clearmodifiers", "--", text)
 
 
 def _ensure_xvfb(display: str, wait_s: float = 5.0) -> bool:
@@ -560,10 +657,14 @@ class Viewer:
             if not page or page.is_closed():
                 raise RuntimeError("No tab is open.")
         # Outside the lock: a navigation can take seconds, and frames must keep flowing.
+        x11 = x11_display_for_input()
         if kind in ("click", "down", "up", "move", "dblclick"):
             x, y = self._xy(ev)
             button = ev.get("button") if ev.get("button") in ("left", "right", "middle") else "left"
-            if kind == "click":
+            if x11:
+                y_offset = max(0, HEIGHT - self._size[1])
+                await _x11_mouse(x11, kind, x, y, y_offset, button)
+            elif kind == "click":
                 await page.mouse.click(x, y, button=button)
             elif kind == "dblclick":
                 await page.mouse.dblclick(x, y, button=button)
@@ -577,16 +678,27 @@ class Viewer:
                 await page.mouse.up(button=button)
         elif kind == "wheel":
             x, y = self._xy(ev)
-            await page.mouse.move(x, y)
-            await page.mouse.wheel(float(ev.get("dx") or 0), float(ev.get("dy") or 0))
+            dy = float(ev.get("dy") or 0)
+            if x11:
+                y_offset = max(0, HEIGHT - self._size[1])
+                await _x11_wheel(x11, x, y, y_offset, dy)
+            else:
+                await page.mouse.move(x, y)
+                await page.mouse.wheel(float(ev.get("dx") or 0), dy)
         elif kind == "key":
             key = str(ev.get("key") or "")[:40]
             if key:
-                await page.keyboard.press(key)
+                if x11:
+                    await _x11_key(x11, key)
+                else:
+                    await page.keyboard.press(key)
         elif kind == "text":
             text = str(ev.get("text") or "")[:5000]
             if text:
-                await page.keyboard.insert_text(text)
+                if x11:
+                    await _x11_text(x11, text)
+                else:
+                    await page.keyboard.insert_text(text)
         elif kind == "navigate":
             url = address(str(ev.get("url") or ""))
             if url:
