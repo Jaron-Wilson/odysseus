@@ -294,6 +294,32 @@ function _wireToastSwipe(el) {
 }
 
 /**
+ * Append a small × button that dismisses the toast immediately instead of
+ * waiting for its auto-hide timer. Shared by showToast and showError so
+ * every toast (plain, action, or error) gets the same dismiss affordance.
+ */
+function _appendToastCloseBtn(el) {
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'toast-close-btn';
+  closeBtn.setAttribute('aria-label', 'Dismiss');
+  closeBtn.title = 'Dismiss';
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    clearTimeout(el._hideTimer);
+    el.classList.add('exiting');
+    el.classList.remove('show');
+    // Action toasts set pointer-events:auto on #toast for their clickable
+    // button — reset it here too, or the invisible toast keeps intercepting
+    // clicks in the top-right corner after a manual dismiss.
+    el.style.pointerEvents = '';
+  });
+  el.appendChild(closeBtn);
+}
+
+/**
  * Show success toast message
  */
 export function showToast(msg, durationOrOpts) {
@@ -372,30 +398,15 @@ export function showToast(msg, durationOrOpts) {
 
     toastEl.appendChild(stack);
 
-    // Small × to dismiss the toast without taking the action. Useful when
-    // the user already acted (or just doesn't want the banner sitting there).
-    const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.setAttribute('aria-label', 'Dismiss');
-    closeBtn.title = 'Dismiss';
-    closeBtn.textContent = '×';
-    closeBtn.style.cssText = 'margin-left:8px;padding:0;width:20px;height:20px;line-height:1;border:none;background:none;color:var(--fg);opacity:0.55;cursor:pointer;font-size:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;pointer-events:auto;';
-    closeBtn.addEventListener('mouseenter', () => { closeBtn.style.opacity = '1'; });
-    closeBtn.addEventListener('mouseleave', () => { closeBtn.style.opacity = '0.55'; });
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      clearTimeout(toastEl._hideTimer);
-      toastEl.classList.add('exiting');
-      toastEl.classList.remove('show');
-    });
-    toastEl.appendChild(closeBtn);
-
     toastEl.style.pointerEvents = 'auto';
   } else {
     // No action — restore the default non-blocking behavior.
     toastEl.style.pointerEvents = '';
   }
+
+  // Dismiss (×) button for all toasts — removes it immediately instead of
+  // waiting for the auto-hide timer.
+  _appendToastCloseBtn(toastEl);
 
   // Pin to top-right via CSS — clear any legacy inline overrides so the
   // slide-in-from-right / slide-out-to-left transition can run cleanly.
@@ -427,13 +438,20 @@ export function showError(msg) {
     toastEl = document.getElementById('toast');
   }
   _wireToastSwipe(toastEl);
-  toastEl.textContent = msg;
+  toastEl.textContent = '';
   toastEl.classList.add('error');
   toastEl.style.left = '';
   toastEl.style.transform = '';
   toastEl.classList.remove('exiting');
   toastEl.classList.add('show');
   clearTimeout(toastEl._hideTimer);
+
+  const textSpan = document.createElement('span');
+  textSpan.textContent = msg;
+  toastEl.appendChild(textSpan);
+
+  _appendToastCloseBtn(toastEl);
+
   toastEl._hideTimer = setTimeout(() => {
     toastEl.classList.add('exiting');
     toastEl.classList.remove('show');

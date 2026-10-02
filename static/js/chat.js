@@ -3558,9 +3558,14 @@ import './chatThreads.js';
           if (!(_isRecoverableStreamErr(err) && _tryAutoRecover(holder, accumulated, streamSessionId))) {
             const errorHolder = document.querySelector('.msg-ai:last-of-type .body');
             if (errorHolder) {
-              let errMsg = `Error: ${err.message}`;
-              // Add hint for tool-call errors
-              if (err.message && (err.message.includes('tool') || err.message.includes('auto'))) {
+              // classifyStreamError() turns the raw error into a clearer,
+              // more actionable message (connection dropped, model/server
+              // error, empty reply, etc.) instead of a bare "Error: <message>".
+              let errMsg = chatStream.classifyStreamError(err, accumulated);
+              // "auto" in the message (e.g. some providers' tool-call errors)
+              // isn't covered by classifyStreamError's tool/unsupported check —
+              // keep the same hint for it here.
+              if (err.message && err.message.includes('auto') && !/tool|unsupported/i.test(err.message)) {
                 errMsg += '\n\nThis model may not support tools — try switching to Chat mode.';
               }
               typewriterInto(errorHolder, errMsg);
@@ -5303,6 +5308,8 @@ import './chatThreads.js';
    * Delete an AI message and its preceding user message from the conversation.
    */
   export async function deleteMessage(msgElement) {
+    if (!await uiModule.styledConfirm('Delete this message?', { confirmText: 'Delete', danger: true })) return;
+
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const clickedIndex = allMsgs.indexOf(msgElement);

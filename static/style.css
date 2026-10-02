@@ -219,6 +219,23 @@ html {
 :root.density-spacious .list-item { padding: 8px 12px; }
 :root.density-spacious .sidebar .section { padding: 0; }
 
+/* ── UI text-size scale (accessibility) ──
+   Density only changes the root font-size, which can't move the many
+   hard-coded px sizes across the app. `zoom` scales the whole UI uniformly
+   (px text included) while keeping layout intact, unlike `transform: scale`. */
+:root.ui-scale-125 { zoom: 1.25; }
+/* `zoom` makes the 100dvh shell render taller than the real viewport, which
+   pushes bottom-pinned rows (sidebar account/settings) below the fold. Shrink
+   the shell by the same factor so it fits the viewport exactly. */
+:root.ui-scale-125 body { height: calc(100dvh / 1.25); }
+/* Modals/panels under the 1.25x scale: zoom renders a centered, viewport-sized
+   panel ~1.25x taller, which can push its header and close button off-screen.
+   Divide each known max-height by the same factor to keep the original
+   on-screen footprint. */
+:root.ui-scale-125 .modal-content { max-height: calc(85dvh / 1.25); }
+:root.ui-scale-125 .cal-modal-content { max-height: calc(88dvh / 1.25); }
+:root.ui-scale-125 #theme-popup { max-height: min(calc(85dvh / 1.25), 600px); }
+
 /* ── Background Patterns ── */
 
 :root { --bg-effect-intensity: 1; }
@@ -4053,6 +4070,31 @@ body.bg-pattern-sparkles {
     }
     @keyframes toastCheckDraw {
       to { stroke-dashoffset: 0; }
+    }
+    .toast-close-btn {
+      margin-left: 8px;
+      padding: 0;
+      width: 22px;
+      height: 22px;
+      line-height: 1;
+      border: none;
+      background: none;
+      color: var(--fg);
+      opacity: 0.5;
+      cursor: pointer;
+      font-size: 16px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      flex-shrink: 0;
+      transition: transform 0.22s ease, opacity 0.15s ease, background 0.15s ease;
+    }
+    .toast-close-btn:hover {
+      opacity: 1;
+      transform: rotate(90deg);
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
     }
     .toast.exiting {
       opacity: 0;

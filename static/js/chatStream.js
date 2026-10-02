@@ -11,6 +11,55 @@ import sessionModule from './sessions.js';
 var OPENS_SOMETHING = ['open_panel', 'open_email_reply', 'highlight', 'screen_control_request'];
 
 /**
+ * Turn a raw stream failure into a clearer, more actionable message for the
+ * user. This only classifies text for display — it does not change whether
+ * the error is recoverable/auto-retried (see _isRecoverableStreamErr in
+ * chat.js, which the caller already ran before falling back to this).
+ *
+ * @param {Error} err - the error thrown out of the SSE read loop.
+ * @param {string} [accumulated] - any assistant text that streamed in before
+ *   the failure, so a failure with zero output can be called out as such.
+ * @returns {string} a one- or two-sentence message meant for display inline.
+ */
+export function classifyStreamError(err, accumulated) {
+  if (!err) return 'The response failed for an unknown reason. Try again.';
+  var message = err.message || String(err);
+  var m = message.toLowerCase();
+  var gotNothing = !accumulated || !accumulated.trim();
+
+  // Deterministic failures (bad request, server-side error, malformed
+  // payload) — these won't fix themselves on retry without a change, so say
+  // what actually happened rather than a generic network message.
+  if (/\b4\d\d\b/.test(m)) {
+    return 'The model rejected the request (' + message + '). Check the prompt or switch models.';
+  }
+  if (/\b5\d\d\b/.test(m)) {
+    return 'The model server hit an internal error (' + message + '). Try again in a moment.';
+  }
+  if (/json|parse/.test(m)) {
+    return 'Received a malformed response from the server. Try again.';
+  }
+  if (/tool|unsupported/.test(m)) {
+    return 'This model may not support tools — try switching to Chat mode.';
+  }
+
+  // Connection-class failures — these are the ones auto-recovery already
+  // retries, so if we're here the retry budget was exhausted or recovery was
+  // skipped. Call out that the connection itself dropped.
+  if (/network|fetch|connection|reset|closed|aborted|stream|tim(?:e|ed)\s?out|econn|eof/.test(m)) {
+    return gotNothing
+      ? 'The connection dropped before any reply arrived. Try again.'
+      : 'The connection dropped partway through the reply. What streamed in is kept above.';
+  }
+
+  if (gotNothing) {
+    return 'The model returned an empty reply. Try again or rephrase your message.';
+  }
+
+  return 'Error: ' + message;
+}
+
+/**
  * Handle a ui_control SSE event — AI-driven UI manipulation.
  * Extracted from the duplicated ui_control + tool_output.ui_event handlers.
  */
@@ -266,6 +315,7 @@ const chatStream = {
   notifyStreamComplete,
   insertStreamDoneToast,
   notifyResearchComplete,
+  classifyStreamError,
 };
 
 export default chatStream;
