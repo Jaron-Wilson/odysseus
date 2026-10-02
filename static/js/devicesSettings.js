@@ -481,7 +481,7 @@ function renderMeetings(list) {
       `${why ? ` · ${esc(why)}` : ''}${m.summary_posted ? ' · notes posted' : ''}</span>
       ${m.sid ? `<button ${BTN} data-meet-open="${esc(m.sid)}">Open chat</button>` : ''}
       ${live && m.via === 'browser' ? `<button ${BTN} data-meet-watch="1">Watch</button>` : ''}
-      ${live ? `<button ${BTN} data-meet-leave="${esc(m.id)}">Leave</button>` : ''}</div>${tail}</div>`;
+      ${live ? `<button ${BTN} data-meet-leave="${esc(m.id)}">Leave</button>` : ''}}</div>${tail}</div>`;
   }).join('');
   if (list.some((m) => !['ended', 'failed'].includes(m.state))) scheduleMeetPoll();
 }
@@ -570,8 +570,58 @@ function meetBody() {
   };
 }
 
+// ── Making a meeting: Google Calendar for this user (src/meet/google_calendar.py) ──
+
+let meetGoogle = {};
+
+function renderGoogle(g) {
+  meetGoogle = g || {};
+  if (!$('meet-google-state')) return;
+  const connected = !!g.connected;
+  $('meet-google-state').textContent = !g.configured
+    ? 'Not set up: this server has no Google OAuth client yet.'
+    : connected ? `Google Calendar connected as ${g.email || 'your Google account'}.`
+      : 'Google Calendar is not connected.';
+  $('meet-google-connect').hidden = !g.configured || connected;
+  $('meet-google-disconnect').hidden = !connected;
+  $('meet-google-setup').hidden = !!g.configured;
+  $('meet-google-redirect').textContent = g.redirect_uri || '';
+  // The client form: admins only, open while nothing is set up.
+  $('meet-google-client').hidden = !(g.can_edit_client && !g.configured);
+  if (g.can_edit_client && g.client_id && !$('meet-google-cid').value) $('meet-google-cid').value = g.client_id;
+  if (!g.can_edit_client && !g.configured) {
+    $('meet-google-state').textContent += ' Ask an admin of this server to add one.';
+  }
+  $('meet-create').hidden = !connected;
+  if (connected && g.can_open_access === false) {
+    $('meet-create-open').checked = false;
+    $('meet-create-open').disabled = true;
+    $('meet-create-open').parentElement.title = 'Connect Google Calendar again and allow Meet settings to use this.';
+  }
+}
+
+async function loadGoogle() {
+  try {
+    renderGoogle(await api('GET', '/api/meet/google'));
+  } catch (e) {
+    $('meet-google-state').textContent = `Could not check Google Calendar: ${e.message}`;
+  }
+}
+
+function meetCreated(made) {
+  const box = $('meet-created');
+  box.innerHTML = '';
+  const link = document.createElement('a');
+  link.href = made.url;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = made.url;
+  box.append(`${made.title}: `, link, ` ${(made.message || '').replace(/^Made "[^"]*": \S+\s*/, '')}`);
+}
+
 async function loadMeet() {
   if (!$('meet-card')) return;
+  loadGoogle();
   try {
     renderMeet(await api('GET', '/api/meet/config'));
   } catch (e) {
@@ -591,7 +641,8 @@ async function openChat(sid) {
 }
 
 async function onMeetClick(ev) {
-  const t = ev.target.closest('#meet-save,#meet-join,[data-meet-leave],[data-meet-open],[data-meet-pick],[data-meet-watch]');
+  const t = ev.target.closest('#meet-save,#meet-join,[data-meet-leave],[data-meet-open],[data-meet-pick],[data-meet-watch],' +
+    '#meet-google-disconnect,#meet-google-save,#meet-google-copy,#meet-create-now,#meet-create-schedule');
   if (!t) return;
   ev.preventDefault();
   try {
@@ -607,6 +658,34 @@ async function onMeetClick(ev) {
       meetSay(m.via === 'phone' ? 'Calling the meeting…' : 'Opening Meet in the cloud browser…');
       $('meet-url').dataset.title = '';
       renderMeetings((await api('GET', '/api/meet/meetings')).meetings);
+    } else if (t.id === 'meet-google-disconnect') {
+      renderGoogle(await api('POST', '/api/meet/google/disconnect'));
+      meetSay('Disconnected from Google Calendar.');
+    } else if (t.id === 'meet-google-save') {
+      renderGoogle(await api('PUT', '/api/meet/google/client', {
+        client_id: $('meet-google-cid').value.trim(), client_secret: $('meet-google-secret').value.trim() }));
+      $('meet-google-secret').value = '';
+      meetSay('Saved. Now press Connect Google Calendar.');
+    } else if (t.id === 'meet-google-copy') {
+      await navigator.clipboard.writeText($('meet-google-redirect').textContent);
+      meetSay('Copied the redirect URI.');
+    } else if (t.id === 'meet-create-now' || t.id === 'meet-create-schedule') {
+      const now = t.id === 'meet-create-now';
+      const when = $('meet-create-start').value;
+      if (!now && !when) { meetSay('Pick when it starts.', true); return; }
+      const body = {
+        title: $('meet-create-title').value.trim(),
+        attendees: $('meet-create-people').value.trim(),
+        open_access: $('meet-create-open').checked,
+        start: now ? 'now' : new Date(when).toISOString(),
+        minutes: now ? 60 : Number($('meet-create-minutes').value),
+        join: now,
+      };
+      meetSay(now ? 'Making the meeting…' : 'Scheduling…');
+      const made = await api('POST', '/api/meet/create', body);
+      meetCreated(made);
+      meetSay(made.join_error ? `Made it, but Odysseus did not join: ${made.join_error}` : '', !!made.join_error);
+      if (made.joined) renderMeetings((await api('GET', '/api/meet/meetings')).meetings);
     } else if (t.dataset.meetLeave) {
       await api('POST', `/api/meet/meetings/${encodeURIComponent(t.dataset.meetLeave)}/leave`);
       meetSay('Leaving…');
@@ -629,6 +708,12 @@ async function onMeetClick(ev) {
     meetSay(e.message, true);
   }
 }
+
+window.addEventListener('focus', () => {
+  if ($('meet-card') && $('meet-card').offsetParent) {
+    loadGoogle();
+  }
+});
 
 function onMeetChange(ev) {
   if (ev.target && ev.target.id === 'meet-via') showDialRow(ev.target.value);
