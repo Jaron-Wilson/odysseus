@@ -236,6 +236,30 @@ def _digest_windows(now):
     ]
 
 
+def _checkin_calendar_events(db, owner, start, end):
+    """Calendar events in [start, end] for ONE owner, for the check-in digest.
+
+    Ownership lives on CalendarCal.owner; events inherit it via calendar_id.
+    The digest query previously had no owner scope, so it pulled EVERY user's
+    events into one user's check-in (a cross-tenant leak of summaries and
+    locations). Scope it by joining CalendarCal, mirroring
+    routes/calendar_routes.list_events.
+    """
+    from core.database import CalendarEvent as _CE, CalendarCal as _CC
+    return (
+        db.query(_CE)
+        .join(_CC, _CE.calendar_id == _CC.id)
+        .filter(
+            _CC.owner == owner,
+            _CE.dtstart >= start,
+            _CE.dtstart <= end,
+            _CE.status != "cancelled",
+        )
+        .order_by(_CE.dtstart)
+        .all()
+    )
+
+
 # Four is not a capacity estimate, just a point past which a misread setting
 # stops being a preference and starts being a way to fall over.
 _MAX_TASK_CONCURRENCY = 4
@@ -1217,18 +1241,14 @@ class TaskScheduler:
         # Calendar: today+tomorrow, this week, month ahead
         # Pull directly from DB so we can include event_type and importance.
         try:
-            from core.database import SessionLocal as _SL, CalendarEvent as _CE
+            from core.database import SessionLocal as _SL
             _db = _SL()
             try:
                 for label, start, end in _digest_windows(now):
                     # Strip timezone for naive DB comparison
                     _s = start.replace(tzinfo=None) if start.tzinfo else start
                     _e = end.replace(tzinfo=None) if end.tzinfo else end
-                    evs = _db.query(_CE).filter(
-                        _CE.dtstart >= _s,
-                        _CE.dtstart <= _e,
-                        _CE.status != "cancelled",
-                    ).order_by(_CE.dtstart).all()
+                    evs = _checkin_calendar_events(_db, task.owner, _s, _e)
                     if not evs:
                         continue
                     # Group by importance for richer output
@@ -1676,7 +1696,7 @@ class TaskScheduler:
             msg["X-Odysseus-Ref"] = str(task.id)
             msg.set_content(result or "")
             _send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
-            logger.info("Task %s emailed result to %s (%sb)", task.id, to_addr, len(result or ""))
+            logger.info("Task %s emailed result (recipient_set=%s, %sb)", task.id, bool(to_addr), len(result or ""))
         except Exception as e:
             logger.error("Task %s email delivery failed: %s", task.id, e, exc_info=True)
             raise
@@ -2036,7 +2056,7 @@ class TaskScheduler:
                 # silent SMTP failure is easier to spot in the logs.
                 logger.info(
                     f"Task {task.id} delivered via MCP tool {tool_name} "
-                    f"(to={recipient or '<unset>'}, body={body_len}b, reply={stdout[:200]!r})"
+                    f"(recipient_set={bool(recipient)}, body={body_len}b, reply={stdout[:200]!r})"
                 )
         except Exception as e:
             logger.error(f"Task {task.id} MCP delivery failed: {e}")

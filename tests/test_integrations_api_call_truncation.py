@@ -4,6 +4,7 @@ Covers:
   (a) Large JSON list response -> sentinel appended, valid JSON returned
   (b) Small response -> returned unchanged, no truncation
 """
+import ipaddress
 import json
 import sys
 import os
@@ -83,6 +84,10 @@ async def _call(json_data, status=200):
     with (
         patch.object(integrations, "_find_integration", return_value=DUMMY_INTEGRATION),
         patch("httpx.AsyncClient", return_value=mock_client),
+        # api.example.com doesn't resolve; the SSRF guard would fail closed.
+        # These tests are about truncation, so stub the guard open.
+        patch("src.url_safety.resolve_and_check",
+              return_value=(True, "ok", [ipaddress.ip_address("93.184.216.34")])),
     ):
         return await integrations.execute_api_call("test_integ", "GET", "/items")
 

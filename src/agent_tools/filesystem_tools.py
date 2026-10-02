@@ -303,6 +303,7 @@ class LsTool:
 class GlobTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import (
+                    _is_sensitive_path,
                     _resolve_tool_path,
                     _resolve_tool_path_in_workspace,
                     _resolve_search_root,
@@ -336,6 +337,12 @@ class GlobTool:
                 for p in base.rglob(pattern):
                     if set(p.relative_to(base).parts) & _CODENAV_SKIP_DIRS:
                         continue
+                    # Skip deny-listed sensitive files (.env, .ssh/id_rsa,
+                    # known_hosts, …) the same way grep does — otherwise glob
+                    # would surface secret paths that read_file/grep already
+                    # refuse to touch.
+                    if _is_sensitive_path(os.path.realpath(str(p))):
+                        continue
                     try:
                         mtime = p.stat().st_mtime
                     except OSError:
@@ -361,6 +368,9 @@ class GlobTool:
 class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import (
+                    _SENSITIVE_BASENAMES,
+                    _SENSITIVE_FILE_PATTERNS,
+                    _is_sensitive_path,
                     _resolve_tool_path,
                     _resolve_tool_path_in_workspace,
                     _resolve_search_root,
@@ -402,6 +412,12 @@ class GrepTool:
                     cmd.append("--ignore-case")
                 if glob_pat:
                     cmd += ["--glob", glob_pat]
+                # --iglob (not --glob) so the exclusion is case-insensitive: on a
+                # case-insensitive filesystem "ID_RSA"/"Known_Hosts" resolve to
+                # the same secret as their lowercase forms, and the Python
+                # fallback below already folds case via _is_sensitive_path.
+                for _pat in _SENSITIVE_FILE_PATTERNS:
+                    cmd += ["--iglob", f"!*{_pat}*"]
                 for _d in _CODENAV_SKIP_DIRS:
                     cmd += ["--glob", f"!**/{_d}/**"]
                 cmd += ["--regexp", pattern, root]
@@ -419,12 +435,18 @@ class GrepTool:
             except _re.error as _e:
                 return None, f"grep: bad pattern: {_e}"
             hits = []
+            _sensitive_dirs_cf = {b.casefold() for b in _SENSITIVE_BASENAMES}
             if os.path.isfile(root):
                 file_iter = [root]
             else:
                 file_iter = []
                 for dp, dns, fns in os.walk(root):
-                    dns[:] = [d for d in dns if d not in _CODENAV_SKIP_DIRS]
+                    # Sensitive dirs (.ssh, .gnupg, …) are pruned too so grep
+                    # never opens the keys/tokens inside them.
+                    dns[:] = [
+                        d for d in dns
+                        if d not in _CODENAV_SKIP_DIRS and d.casefold() not in _sensitive_dirs_cf
+                    ]
                     for fn in fns:
                         if glob_pat and not fnmatch.fnmatch(fn, glob_pat):
                             continue
@@ -432,6 +454,8 @@ class GrepTool:
             for fp in file_iter:
                 if len(hits) >= max_hits:
                     break
+                if _is_sensitive_path(os.path.realpath(fp)):
+                    continue
                 try:
                     with open(fp, "r", encoding="utf-8", errors="strict") as f:
                         for i, line in enumerate(f, 1):

@@ -33,6 +33,7 @@ import subprocess
 import time
 from typing import Dict, List, Optional, Tuple
 
+from core.log_safety import scrub
 from src.telephony import agent, call as call_mod, codec, config, sip
 from src.telephony.sip_server import Account, SipCall, SipServer
 
@@ -109,7 +110,7 @@ def bind_addresses() -> List[str]:
         try:
             out.append(sip.check_bind_address(a))
         except sip.SipError as e:
-            logger.warning("[sip] %s", e)
+            logger.warning("[sip] %s", scrub(str(e)))
     return out
 
 
@@ -346,7 +347,7 @@ class SipLine:
         try:
             sid, _ = agent.new_call_chat(owner, cfg, label, call.direction, self._is_admin(owner))
         except Exception as e:
-            logger.warning("[sip] no chat for the call: %s", e)
+            logger.warning("[sip] no chat for the call: %s", scrub(str(e)))
             await self._say(call, "Odysseus has no model to answer with. Pick one in Settings, Calls and Meetings, Phone calls. Goodbye.")
             return
         if scfg.get("require_pin") and cfg.get("pin_hash") and call.direction == "inbound":
@@ -394,7 +395,7 @@ class SipLine:
             try:
                 c = await srv.call_out(user)
             except (LookupError, RuntimeError) as e:
-                logger.info("[sip] calling %s: %s", user, e)
+                logger.info("[sip] calling %s: %s", user, scrub(str(e)))
                 return
             await srv.run_call(c, lambda cc: self._on_call(cc, greeting))
 

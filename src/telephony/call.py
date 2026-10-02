@@ -35,6 +35,7 @@ from typing import Awaitable, Callable, List, Optional, Pattern, Protocol
 
 import numpy as np
 
+from core.log_safety import scrub
 from src.telephony import codec, speech
 
 logger = logging.getLogger(__name__)
@@ -441,7 +442,7 @@ class PhoneCall:
                 audio = await asyncio.to_thread(self.tts, text)
                 ulaw = self.fmt.encode(audio) if audio else b""
             except Exception as e:
-                logger.warning("[phone] text to speech failed: %s", e)
+                logger.warning("[phone] text to speech failed: %s", scrub(str(e)))
                 ulaw = b""
             if gen != self._gen or self.ended:
                 continue
