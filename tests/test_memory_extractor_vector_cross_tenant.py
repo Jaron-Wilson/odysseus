@@ -67,6 +67,9 @@ class FakeMemoryManager:
     def load_all(self):
         return list(self.rows)
 
+    def load_all_for_update(self):
+        return list(self.rows)
+
     def load(self, owner=None):
         return [r for r in self.rows if r.get("owner") == owner]
 

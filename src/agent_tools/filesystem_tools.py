@@ -168,6 +168,19 @@ class ReadFileTool:
             data = data[:MAX_READ_CHARS] + f"\n... [truncated at {MAX_READ_CHARS} chars]"
         return {"output": data, "exit_code": 0}
 
+class _EmptyBodyWouldTruncate(Exception):
+    """Raised inside the write thread when an empty/whitespace-only body is about
+    to replace a file that already holds bytes. That shape is far more likely a
+    lost content section (a parser/model error) than a deliberate clear, so the
+    write is refused instead of silently truncating the file. Carries the size at
+    risk so the caller can be told what it would have destroyed."""
+
+    def __init__(self, path: str, existing_bytes: int):
+        super().__init__(path)
+        self.path = path
+        self.existing_bytes = existing_bytes
+
+
 class WriteFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import (
@@ -176,6 +189,7 @@ class WriteFileTool:
                     _resolve_search_root,
                     _truncate
                 )
+        from core.atomic_io import atomic_write_text
         workspace = ctx.get("workspace")
         lines = content.split("\n", 1)
         raw_path = lines[0].strip()
@@ -193,13 +207,34 @@ class WriteFileTool:
                         old = f.read()
                 except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError, OSError):
                     old = ""
-                d = os.path.dirname(path)
-                if d:
-                    os.makedirs(d, exist_ok=True)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(body)
+                if not body.strip():
+                    # Why size on disk rather than `old`: the read above answers ""
+                    # for a file it cannot decode, so a non-UTF-8 target holding real
+                    # bytes would otherwise look empty here and still get truncated.
+                    # An empty/whitespace body is fine for a new or already-empty
+                    # file (there's nothing to lose).
+                    existing_bytes = os.path.getsize(path) if os.path.isfile(path) else 0
+                    if existing_bytes > 0:
+                        raise _EmptyBodyWouldTruncate(path, existing_bytes)
+                # Stage in a sibling temp file and rename into place rather than
+                # writing in-place, so a crash/kill mid-write can't leave a
+                # half-written or empty file at `path` (os.replace is atomic on
+                # the same filesystem).
+                atomic_write_text(path, body)
                 return old, len(body)
             old_content, size = await asyncio.to_thread(_write)
+        except _EmptyBodyWouldTruncate as e:
+            return {
+                "error": (
+                    f"write_file: refused an empty body for {e.path}; it holds "
+                    f"{e.existing_bytes} bytes that this write would have destroyed, "
+                    f"which looks like a lost content section rather than an "
+                    f"intentional clear, so the file is unchanged. To deliberately "
+                    f"empty an existing file, use edit_file to replace its full "
+                    f"content with an empty string instead."
+                ),
+                "exit_code": 1,
+            }
         except PermissionError:
             return {"error": f"write_file: {path}: permission denied", "exit_code": 1}
         except OSError as e:

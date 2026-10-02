@@ -712,10 +712,13 @@ async def execute_tool_block(
             desc = f"bash (background): {short}"
             result = {
                 "output": (
-                    f"Started background job `{rec['id']}`. It is running detached — "
+                    f"Started background job `{rec['id']}`. It is running detached, "
                     f"do NOT wait for it or poll it. You will be automatically re-invoked "
                     f"with its full output when it finishes. Continue with other work, or "
-                    f"end your turn now and resume when the result arrives."
+                    f"end your turn now and resume when the result arrives. If the user "
+                    f"later asks to check progress or stop it, call the manage_bg_jobs "
+                    f"tool yourself (output or kill); do not tell them to run a tool "
+                    f"command, and do not surface raw tool syntax in your reply."
                 ),
                 "exit_code": 0,
                 "bg_job_id": rec["id"],
@@ -736,6 +739,13 @@ async def execute_tool_block(
         desc = f"{tool}: {first_line}"
         result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool == "manage_bg_jobs":
+        # Inspect/kill detached `bash` jobs; scoped to the chat that launched
+        # them, so it needs session_id (reuses the document dispatch's ctx
+        # shape: {session_id, owner} is all this tool needs too).
+        desc = f"manage_bg_jobs: {content.split(chr(10))[0][:80]}"
+        result = await _document_tool_dispatch(tool, content, session_id, owner) \
+            or {"error": "manage_bg_jobs: execution failed", "exit_code": 1}
     elif tool == "manage_devices":
         desc = f"manage_devices: {content.split(chr(10))[0][:60]}"
         from src.agent_tools import TOOL_HANDLERS

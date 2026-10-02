@@ -156,6 +156,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "notify_device": "Send a notification or a command to one of the user's own devices (phone, tablet, desktop) as a browser push notification. Use for 'send it to my phone', 'notify me', 'text me when it is done', 'remind me on my phone', 'push this to my phone', or to tell a device to do something it already knows how to do. This only SHOWS a notification. To OPEN a link or an app on a device, use manage_devices action 'control' (open_url / open_app) instead: it acts immediately, with no tap. Pass device to pick which one; omitting it sends to every device.",
     "call_me": "Phone the user and talk out loud: rings the softphone on their free SIP line (Linphone or Zoiper over Tailscale), else their phone number through Twilio, and opens the call with your message, then listens and answers like a voice call. Use for 'call me', 'ring me', 'phone me when it is done', 'give me a call'. Each call is its own chat. Only the user's own devices and numbers are ever called.",
     "claude_code": "Hand a CODING or SOFTWARE task to the Claude Code agent on this host: writing code, editing code, adding a feature, fixing a bug, refactoring, rebuilding or rebranding a website, building a new project, debugging failing tests, reviewing a codebase, explaining how code works. It reads the project, edits files, runs commands and uses its own subagents, streaming its console live. Use for 'claude code', 'claude agent', 'use claude', 'code this', 'build me', 'fix the bug', 'refactor', 'rebrand the site', 'work on my repo'. Plans first and waits for the user to approve before changing anything.",
+    "manage_bg_jobs": "Inspect and control detached background `bash` jobs (the ones started with a background marker like `#!bg`). action='list' shows this chat's jobs (id/status/age/command); action='output' returns a job's captured output so far (check on a long-running job, or re-read a finished one); action='kill' stops a runaway job by id. Use for 'is the background job done', 'check on that job', 'show the build output', 'kill the background job', 'stop the bg task'. output/kill need a job_id from list.",
 }
 
 
@@ -418,6 +419,12 @@ class ToolIndex:
             {"google_meet"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
             {"manage_notes"},
+        # Detached background `bash` jobs (#!bg): check on / read output / kill.
+        frozenset({"background job", "background jobs", "bg job", "bg jobs",
+                   "background task", "is the job done", "check the job",
+                   "check on that job", "job output", "kill the job",
+                   "kill the background", "stop the background", "running job"}):
+            {"manage_bg_jobs"},
         # Chat/session management. "rename" alone maps to documents below, so a
         # request like "rename the last 12 sessions/chats" needs these session
         # keywords to surface the right tools (NOT app_api — /api/sessions is

@@ -26,6 +26,7 @@ from .claude_code_tool import ClaudeCodeTool
 from .notify_tool import NotifyDeviceTool
 from .call_me_tool import CallMeTool
 from .devices_tool import ManageDevicesTool
+from .bg_job_tools import ManageBgJobsTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -47,6 +48,7 @@ TOOL_HANDLERS = {
     "edit_document": EditDocumentTool().execute,
     "suggest_document": SuggestDocumentTool().execute,
     "manage_documents": ManageDocumentTool().execute,
+    "manage_bg_jobs": ManageBgJobsTool().execute,
 }
 
 # ---------------------------------------------------------------------------
@@ -59,7 +61,7 @@ PYTHON_TIMEOUT = 30
 
 # Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
-             "grep", "glob", "ls",
+             "grep", "glob", "ls", "manage_bg_jobs",
              "create_document", "update_document", "edit_document",
              "search_chats",
              "chat_with_model", "create_session", "list_sessions",
