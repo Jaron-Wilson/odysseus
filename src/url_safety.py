@@ -200,6 +200,7 @@ class PinnedAsyncTransport(httpx.AsyncBaseTransport):
     """
 
     def __init__(self, ips: List["ipaddress._BaseAddress"]):
+        self._pinned_ips = list(ips)
         self._pool = httpcore.AsyncConnectionPool(
             # Reuse the CA trust a default httpx client would build (certifi
             # plus SSL_CERT_FILE / SSL_CERT_DIR when trust_env is set) so

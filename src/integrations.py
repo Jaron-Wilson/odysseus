@@ -358,6 +358,31 @@ async def execute_api_call(
     url = base_url + path
     method = method.upper()
 
+    # SSRF guard — execute_api_call is reachable by the LLM through the
+    # api_call agent tool, and joins the integration's user-configured
+    # base_url with an LLM-controlled path, so this is a model/
+    # prompt-injection-reachable outbound request. Matches the pattern used
+    # by the reminder webhook/ntfy senders, gallery endpoint, embeddings, and
+    # CardDAV: link-local/metadata is always rejected; set
+    # INTEGRATION_API_BLOCK_PRIVATE_IPS=true to also block RFC-1918/loopback
+    # for locked-down deployments. Private stays allowed by default because
+    # LAN integrations (Home Assistant, Miniflux, ntfy) are the primary use
+    # case.
+    #
+    # Resolve the host exactly once and remember the IPs the guard validated
+    # so the request below can be pinned to them — a plain httpx client would
+    # otherwise re-resolve the host at connect time, reopening a
+    # DNS-rebinding TOCTOU where a base_url host that answers with a public IP
+    # for the guard flips to 169.254.169.254 for the connect and reaches cloud
+    # metadata with the integration's auth headers attached.
+    from src.url_safety import resolve_and_check, PinnedAsyncTransport
+    block_private = os.getenv(
+        "INTEGRATION_API_BLOCK_PRIVATE_IPS", "false"
+    ).lower() == "true"
+    ssrf_ok, ssrf_reason, pinned_ips = resolve_and_check(url, block_private=block_private)
+    if not ssrf_ok:
+        return {"error": f"URL rejected: {ssrf_reason}", "exit_code": 1}
+
     # Build headers
     headers: Dict[str, str] = {}
     if extra_headers:
@@ -394,7 +419,9 @@ async def execute_api_call(
             auth = httpx.BasicAuth(parts[0], parts[1])
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, transport=PinnedAsyncTransport(pinned_ips)
+        ) as client:
             response = await client.request(
                 method,
                 url,
