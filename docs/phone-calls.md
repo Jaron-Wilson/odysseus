@@ -127,8 +127,8 @@ What you do (nothing here was signed up for, bought, or switched on for you):
    - Agent's number (the Twilio number), Account SID and Auth token (Console >
      Account info).
    - Your numbers: your cell's own number **and** the Google Voice number
-     (+15713104883), since a call placed from the Google Voice app shows the
-     Google Voice number as caller ID.
+     (e.g. `+15550102000`), since a call placed from the Google Voice app shows
+     the Google Voice number as caller ID.
    - Public URL: `https://<server>.<tailnet>.ts.net:8443` (no path).
    - Speech: Odysseus engines (pick "Hears with" and "Speaks with" in AI
      Defaults > Voice call first), or Twilio.
