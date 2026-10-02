@@ -3407,6 +3407,9 @@ async def stream_agent_loop(
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
+            if result.get("needs_approval"):
+                # Not a failure: the card says it is waiting on the user.
+                tool_output_data["needs_approval"] = True
             if "ui_event" in result:
                 tool_output_data["ui_event"] = result["ui_event"]
                 for k in ("toggle_name", "state", "mode", "model", "endpoint_url", "theme_name", "colors"):
@@ -3529,6 +3532,8 @@ async def stream_agent_loop(
                 "output": output_text,
                 "exit_code": result.get("exit_code"),
             }
+            if result.get("needs_approval"):
+                tool_event["needs_approval"] = True
             if result.get("engine_label"):
                 # claude_code runs name the engine that ran (OpenCode or
                 # Claude Code) instead of showing the tool's own name.
