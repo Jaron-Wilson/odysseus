@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Any
 import httpx
 
 from core.atomic_io import atomic_write_json
+from core.log_safety import scrub
 from core.platform_compat import safe_chmod
 from src.secret_storage import decrypt, encrypt, is_encrypted
 from src.constants import DATA_DIR, INTEGRATIONS_FILE, SETTINGS_FILE
@@ -525,7 +526,11 @@ async def execute_api_call(
     except httpx.RequestError as exc:
         return {"error": f"Request failed: {exc}", "exit_code": 1}
     except Exception as exc:
-        log.exception("Unexpected error in execute_api_call")
+        # Avoid log.exception()'s traceback here: its last line renders
+        # str(exc), which for an httpx/requests-style failure can embed the
+        # full request URL (and any query-string secret) this call just
+        # validated and pinned. Log a scrubbed summary instead.
+        log.error("Unexpected error in execute_api_call: %s", scrub(str(exc)))
         return {"error": f"Unexpected error: {exc}", "exit_code": 1}
 
 

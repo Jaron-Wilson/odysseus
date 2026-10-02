@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import httpcore
 import httpx
 
+from core.log_safety import scrub
 from src.database import SessionLocal, Webhook
 
 logger = logging.getLogger(__name__)
@@ -400,7 +401,7 @@ class WebhookManager:
             validate_webhook_url(url)
             pinned_ips = _validated_public_ips(url)
         except ValueError as e:
-            logger.warning(f"Webhook {webhook_id} has invalid URL, skipping: {e}")
+            logger.warning(f"Webhook {webhook_id} has invalid URL, skipping: {scrub(str(e))}")
             return
 
         body = json.dumps({"event": event, "timestamp": _utcnow().isoformat(), "data": payload})

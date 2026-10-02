@@ -43,6 +43,7 @@ from urllib.parse import urlencode, urlsplit
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 
+from core.log_safety import scrub
 from src.auth_helpers import require_user
 from src.telephony import agent, call as call_mod, codec, config, speech, twilio
 
@@ -185,7 +186,7 @@ def _connect(request: Request, owner: Optional[str], cfg: Dict, p: Dict[str, str
     try:
         sid, _sess = agent.new_call_chat(owner, cfg, caller, direction, _is_admin(request.app, owner))
     except Exception as e:
-        logger.warning("[phone] no chat for the call: %s", e)
+        logger.warning("[phone] no chat for the call: %s", scrub(str(e)))
         return _xml(twilio.say_and_hang_up("Odysseus has no model to answer with. "
                                            "Pick one in Settings, Calls and Meetings, Phone calls. Goodbye."))
     _sweep()
