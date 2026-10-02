@@ -147,3 +147,53 @@ def test_tabs_close_and_the_last_one_leaves_a_blank_tab(tmp_path, monkeypatch):
         assert len(last) == 1 and last[0]["url"] == "about:blank" and last[0]["active"]
     finally:
         _kill(port)
+
+
+def test_cookies_txt_and_json_exports_parse():
+    txt = ("# Netscape HTTP Cookie File\n"
+           ".google.com\tTRUE\t/\tTRUE\t1893456000\tSID\tabc\n"
+           "#HttpOnly_.google.com\tTRUE\t/\tTRUE\t0\tHSID\tdef\n"
+           "garbage line\n")
+    got = cloud_browser.parse_cookies(txt)
+    assert [c["name"] for c in got] == ["SID", "HSID"]
+    assert got[0]["expires"] == 1893456000 and got[0]["secure"] and not got[0]["httpOnly"]
+    assert got[1]["httpOnly"] and "expires" not in got[1]           # 0 = a session cookie
+    js = ('[{"domain": ".google.com", "name": "NID", "value": "x", "path": "/", "secure": false,'
+          ' "httpOnly": true, "sameSite": "no_restriction", "expirationDate": 1893456000.5}]')
+    (c,) = cloud_browser.parse_cookies(js)
+    assert c["sameSite"] == "None" and c["secure"]                  # Chrome wants Secure with None
+    assert c["httpOnly"] and c["expires"] == 1893456000.5
+    for bad in ("", "hello", "[]", "{not json"):
+        with pytest.raises(ValueError):
+            cloud_browser.parse_cookies(bad)
+
+
+def test_the_cookie_import_route_is_admin_only():
+    import routes.cloud_browser_routes as r
+    src = open(r.__file__, encoding="utf-8").read()
+    block = src.split('@router.post("/cookies")', 1)[1].split("@router.", 1)[0]
+    assert "_user(request)" in block
+
+
+@pytest.mark.skipif(not cloud_browser.chromium_path(), reason="Playwright's Chromium is not installed")
+def test_an_imported_login_lands_in_the_profile(tmp_path, monkeypatch):
+    port = _free_port()
+    monkeypatch.setattr(cloud_browser, "PORT", port)
+    monkeypatch.setattr(cloud_browser, "ENDPOINT", f"http://127.0.0.1:{port}")
+    import src.constants as const
+    monkeypatch.setattr(const, "DATA_DIR", str(tmp_path))
+
+    async def go():
+        v = cloud_browser.Viewer()
+        r = await v.import_cookies("example.com\tFALSE\t/\tFALSE\t1893456000\tlogin\tyes\n")
+        names = [c["name"] for c in await v._browser.contexts[0].cookies("http://example.com/")]
+        await v._browser.close()
+        await v._pw.stop()
+        return r, names
+
+    try:
+        r, names = asyncio.run(go())
+        assert r == {"ok": True, "count": 1, "sites": ["example.com"]}
+        assert names == ["login"]
+    finally:
+        _kill(port)

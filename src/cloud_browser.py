@@ -134,6 +134,66 @@ def address(text: str) -> str:
     return "https://duckduckgo.com/?q=" + urllib.parse.quote(text)
 
 
+# Some sites (Google first) refuse to sign in a browser that is driven over
+# CDP: "This browser or app may not be secure". The way round is to sign in
+# on an ordinary browser and bring the login over as cookies, exported by an
+# extension as cookies.txt (Netscape format) or Cookie-Editor's JSON.
+MAX_COOKIES = 3000
+_SAME_SITE = {"strict": "Strict", "lax": "Lax", "none": "None", "no_restriction": "None"}
+
+
+def parse_cookies(text: str) -> List[Dict]:
+    """Playwright cookies from cookies.txt or a JSON export. ValueError if
+    neither format yields any."""
+    text = (text or "").strip()
+    out: List[Dict] = []
+    if text.startswith("[") or text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except ValueError as e:
+            raise ValueError(f"That JSON does not parse: {e}") from None
+        if isinstance(data, dict):
+            data = data.get("cookies") or []
+        for c in data if isinstance(data, list) else []:
+            if not isinstance(c, dict) or not c.get("name") or not c.get("domain"):
+                continue
+            ck = {"name": str(c["name"]), "value": str(c.get("value") or ""),
+                  "domain": str(c["domain"]), "path": str(c.get("path") or "/"),
+                  "secure": bool(c.get("secure")), "httpOnly": bool(c.get("httpOnly"))}
+            exp = c.get("expirationDate", c.get("expires"))
+            if isinstance(exp, (int, float)) and exp > 0 and not c.get("session"):
+                ck["expires"] = float(exp)
+            ss = _SAME_SITE.get(str(c.get("sameSite") or "").lower())
+            if ss:
+                ck["sameSite"] = ss
+            out.append(ck)
+    else:
+        for line in text.splitlines():
+            http_only = line.startswith("#HttpOnly_")
+            if http_only:
+                line = line[len("#HttpOnly_"):]
+            if not line.strip() or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 7:
+                continue
+            domain, _sub, path, secure, expires, name, value = parts[:7]
+            ck = {"name": name, "value": value.rstrip("\r\n"), "domain": domain, "path": path or "/",
+                  "secure": secure.upper() == "TRUE", "httpOnly": http_only}
+            try:
+                if int(float(expires)) > 0:
+                    ck["expires"] = float(expires)
+            except ValueError:
+                pass
+            out.append(ck)
+    for ck in out:
+        if ck.get("sameSite") == "None":
+            ck["secure"] = True     # Chrome drops SameSite=None without Secure
+    if not out:
+        raise ValueError("No cookies found. Export them as cookies.txt or as JSON.")
+    return out[:MAX_COOKIES]
+
+
 class Viewer:
     """Watches the browser's active tab and replays the user's input on it."""
 
@@ -338,6 +398,18 @@ class Viewer:
                 "chromium": bool(chromium_path()),
                 "tabs": [{"url": t.get("url", ""), "title": t.get("title", "")} for t in tabs],
                 "watchers": len(self.subscribers), "taken_over_by": self.taken_over_by}
+
+    async def import_cookies(self, text: str) -> Dict:
+        """Add an exported login to the browser's own profile, where it is
+        kept (and where a signed-in Meet join looks). Never logs values."""
+        cookies = parse_cookies(text)
+        async with self._lock:
+            await self._connect()
+            ctx = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
+            await ctx.add_cookies(cookies)
+        sites = sorted({c["domain"].lstrip(".") for c in cookies})
+        logger.info("[cloud-browser] imported %d cookies for %d sites", len(cookies), len(sites))
+        return {"ok": True, "count": len(cookies), "sites": sites[:20]}
 
     async def take_over(self, user: str, on: bool) -> Dict:
         self.taken_over_by = (user or "you") if on else ""
