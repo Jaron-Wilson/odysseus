@@ -376,18 +376,28 @@ def test_meet_browser_fills_and_clicks_through_x11_not_cdp(monkeypatch):
     own context is a separate, differently sized and positioned real Chrome
     window, not the cloud browser's main one), not Playwright's locator
     fill()/click(), whenever the bot is actually driving the cloud browser's
-    own headful Chrome."""
+    own headful Chrome. The name itself goes in one keystroke at a time (not
+    xdotool's own near-instant default pace: typed that fast, Meet's own
+    join-time check still kicked it, 2026-10-02), and Join is not pressed
+    until the box reports back the text that was actually typed."""
     from src import cloud_browser
     from src.meet import browser as browser_mod
 
+    name = "Odysseus (AI) Test"
     calls = []
+    typed = {"value": ""}
 
     async def fake_xdotool(display, *args):
         calls.append((display, args))
+        if args and args[0] == "type":
+            typed["value"] += args[-1]
+        elif args and args[0] == "key" and args[-1] == "ctrl+a":
+            typed["value"] = ""     # select-all: the next keystroke replaces it
         return True
 
     monkeypatch.setattr(cloud_browser, "_xdotool", fake_xdotool)
     monkeypatch.setattr(browser_mod.cloud_browser, "x11_display_for_input", lambda: ":321")
+    monkeypatch.setattr(browser_mod.MeetBrowser, "_TYPE_DELAY_S", (0.0, 0.0))
 
     class _FakeLocator:
         def __init__(self, box=None, visible=True):
@@ -409,6 +419,9 @@ def test_meet_browser_fills_and_clicks_through_x11_not_cdp(monkeypatch):
 
         async def fill(self, text, timeout=None):
             raise AssertionError("CDP fill used instead of X11")
+
+        async def input_value(self):
+            return typed["value"]
 
     name_box = {"x": 10, "y": 8, "width": 180, "height": 20}
     join_box = {"x": 200, "y": 8, "width": 70, "height": 20}
@@ -445,13 +458,17 @@ def test_meet_browser_fills_and_clicks_through_x11_not_cdp(monkeypatch):
 
     monkeypatch.setattr(mb, "_window_origin", fixed_origin)
 
-    asyncio.run(mb.join("Odysseus (AI) Test"))
+    asyncio.run(mb.join(name))
 
     args = [c[1] for c in calls]
     kinds = [a[0] for a in args]
     assert kinds.count("mousemove") == 2 and kinds.count("click") == 2
-    assert ("key", "--clearmodifiers", "ctrl+a") in args
-    assert ("type", "--clearmodifiers", "--", "Odysseus (AI) Test") in args
+    assert kinds.count("key") == 1 and ("key", "--clearmodifiers", "ctrl+a") in args
+    type_calls = [a for a in args if a[0] == "type"]
+    assert len(type_calls) == len(name)                        # one xdotool call per keystroke
+    assert all(a[:3] == ("type", "--clearmodifiers", "--") for a in type_calls)
+    assert "".join(a[3] for a in type_calls) == name
+    assert typed["value"] == name          # settled before Join was pressed, below
     assert all(c[0] == ":321" for c in calls)                  # targeted the real Xvfb display
     moves = [a for a in args if a[0] == "mousemove"]
     # the name box's center (10+90, 8+10), at window origin (20, 20) plus the
@@ -459,6 +476,84 @@ def test_meet_browser_fills_and_clicks_through_x11_not_cdp(monkeypatch):
     assert moves[0][-2:] == ("120", "126")
     # the Join button's center (200+35, 8+10), same window and chrome offset:
     assert moves[1][-2:] == ("255", "126")
+
+
+def test_meet_browser_types_the_name_slowly_with_jitter(monkeypatch):
+    """xdotool's own default pace still got a guest kicked at "Join now"
+    (2026-10-01); typing the same name by hand, slowly, in a take-over never
+    did (2026-10-02). So each keystroke waits a human-sized, jittered gap,
+    not a fixed one."""
+    from src.meet import browser as browser_mod
+
+    typed = []
+    sleeps = []
+
+    async def fake_xdotool(display, *args):
+        if args and args[0] == "type":
+            typed.append(args[-1])
+        return True
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(browser_mod.cloud_browser, "_xdotool", fake_xdotool)
+    monkeypatch.setattr(browser_mod.asyncio, "sleep", fake_sleep)
+
+    mb = browser_mod.MeetBrowser(lambda b: None, lambda n: None)
+    asyncio.run(mb._x11_type_slowly(":321", "Hi!"))
+
+    assert typed == ["H", "i", "!"]
+    assert len(sleeps) == 3                            # one gap before each keystroke
+    lo, hi = browser_mod.MeetBrowser._TYPE_DELAY_S
+    assert all(lo <= s <= hi for s in sleeps)
+    assert len(set(sleeps)) > 1                         # jittered, not the same gap every time
+
+
+def test_meet_browser_settle_waits_for_the_box_to_catch_up(monkeypatch):
+    """Join is not pressed off a fixed wait: it waits for the box's own
+    value to actually become what was typed (a React-controlled input can
+    lag the last keystroke by a frame or two), and gives up if it never
+    does rather than hanging the join forever."""
+    from src.meet import browser as browser_mod
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(browser_mod.asyncio, "sleep", fake_sleep)
+
+    class _LaggyLocator:
+        def __init__(self, delay_reads: int, value: str):
+            self._left = delay_reads
+            self._value = value
+
+        async def input_value(self):
+            if self._left > 0:
+                self._left -= 1
+                return ""
+            return self._value
+
+    mb = browser_mod.MeetBrowser(lambda b: None, lambda n: None)
+    asyncio.run(mb._settle(_LaggyLocator(2, "Odysseus (AI)"), "Odysseus (AI)"))
+    assert len(sleeps) == 2                             # polled twice before it caught up
+
+
+def test_meet_browser_settle_gives_up_rather_than_hang(monkeypatch):
+    """A box that never settles (Meet's own layout never got to it, say)
+    must not hang the join forever: a real, short timeout, with the real
+    clock, so it is not entangled with asyncio's own internal scheduling the
+    way monkeypatching time.monotonic() would be."""
+    from src.meet import browser as browser_mod
+
+    class _StuckLocator:
+        async def input_value(self):
+            return ""
+
+    mb = browser_mod.MeetBrowser(lambda b: None, lambda n: None)
+    started = time.monotonic()
+    asyncio.run(mb._settle(_StuckLocator(), "Odysseus (AI)", timeout=0.15))
+    assert time.monotonic() - started < 2.0              # gave up, did not hang
 
 
 def test_meet_browser_falls_back_to_cdp_when_not_the_cloud_browser(monkeypatch):
