@@ -5277,13 +5277,27 @@ function syncAdminVisibility() {
 /* ═══════════════════════════════════════════
    PUBLIC API
    ═══════════════════════════════════════════ */
+// Opening Settings while it is already open (a link in the calendar, email
+// or anywhere else) has to bring it forward. Left where it was, it stayed
+// behind the window that asked for it: in Workspace a background tab, in
+// Classic and Studio under the calendar, and every click on it was lost.
+function _surface() {
+  if (modalEl.classList.contains('ws-away')) {
+    import('./workspace/shell.js').then(m => m.openTool('settings')).catch(() => {});
+  } else {
+    import('./modalManager.js').then(m => m.bringToFront('settings-modal')).catch(() => {});
+  }
+}
+
 export function open(tab) {
   if (!initialized) initAll();
   syncAppearanceCheckboxes();
-  if (modalEl.classList.contains('hidden')) {
+  const wasOpen = !modalEl.classList.contains('hidden');
+  if (!wasOpen) {
     resetWindowPlacement();
   }
   modalEl.classList.remove('hidden');
+  if (wasOpen) _surface();
   syncAdminVisibility();
   const content = modalEl.querySelector('.settings-modal-content');
   if (tab) {
