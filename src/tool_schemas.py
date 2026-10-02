@@ -1070,7 +1070,7 @@ FUNCTION_TOOL_SCHEMAS = [
                 "server as 'Odysseus (AI)', so it never needs the user's desktop, Chrome or screen "
                 "tools. 'join' sends the agent into a Meet link (also for 'join again', 'rejoin', 'try "
                 "joining through my browser'); 'start' makes a meeting now from the user's own Google account "
-                "(Google Calendar connected in Settings > Devices > Google Meet), invites attendees and joins "
+                "(Google Calendar connected in Settings > Calls & Meetings > Google Meet), invites attendees and joins "
                 "it; 'schedule' puts one in their calendar for later and Google emails the invites; 'status' "
                 "says what is set up. Give the user the link and tell them to admit Odysseus (AI)."
             ),

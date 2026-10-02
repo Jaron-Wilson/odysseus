@@ -28,10 +28,10 @@ def ready(owner) -> List[str]:
     cfg = tconfig.get_config(owner)
     out = []
     if not (cfg.get("account_sid") and cfg.get("auth_token") and cfg.get("phone_number")):
-        out.append("Joining by phone uses the Twilio number from Settings > Devices > Phone calls: "
+        out.append("Joining by phone uses the Twilio number from Settings > Calls & Meetings > Phone calls: "
                    "save the account SID, auth token and the agent's number there.")
     if not cfg.get("public_url"):
-        out.append("Save the public URL in Settings > Devices > Phone calls, so Twilio can reach this server.")
+        out.append("Save the public URL in Settings > Calls & Meetings > Phone calls, so Twilio can reach this server.")
     out.extend(call_mod.engines_ready())
     return out
 

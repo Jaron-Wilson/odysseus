@@ -23,6 +23,7 @@ The real settingsNav.js, search-chat.js and (for Workspace) shell.js run in
 Chromium over a page holding the real Settings modal from index.html; the
 modal's open and tab-switch behavior is a small stand-in for settings.js.
 """
+from html import unescape
 import json
 import re
 from pathlib import Path
@@ -198,7 +199,7 @@ def test_the_index_is_read_from_the_real_settings_page(make_page):
     assert len(paths) == len(idx), "ids are unique"
     assert paths["set-vcStt"] == "AI Defaults > Voice call > Hears with"
     assert paths["voice-call-settings"] == "AI Defaults > Voice call"
-    assert paths["sms-card"] == "Devices > Phone SMS"
+    assert paths["sms-card"] == "Calls & Meetings > Phone SMS"
     assert paths["tab:system"] == "System"
     # Cards the page hides (the old Text to Speech card) are not places to go.
     assert not any(p.startswith("AI Defaults > Text to Speech") for p in paths.values())
@@ -286,7 +287,7 @@ def test_workspace_brings_a_background_settings_tab_forward(make_page):
     pg.evaluate("() => window.__nav.goToSetting('open sms settings')")
     _wait_landed(pg)
     got = _landed(pg)
-    assert got["open"] and got["panel"] == "devices" and got["card"] == "sms-card"
+    assert got["open"] and got["panel"] == "calls" and got["card"] == "sms-card"
     assert pg.evaluate("document.querySelector('.ws-tab.active').dataset.tab") == "tool:settings"
     assert pg.evaluate("document.querySelectorAll('.ws-tab[data-tab=\"tool:settings\"]').length") == 1
 
@@ -420,7 +421,8 @@ def test_the_agents_open_panel_settings_lands_there(make_page):
 # ── Pointers in the app's own messages ──────────────────────────────────
 
 def _tab_labels():
-    return dict(re.findall(r'data-settings-tab="([a-z]+)">\s*<svg.*?</svg>\s*<span>([^<]+)</span>', _INDEX, re.S))
+    found = re.findall(r'data-settings-tab="([a-z]+)">\s*<svg.*?</svg>\s*<span>([^<]+)</span>', _INDEX, re.S)
+    return {tab: unescape(label) for tab, label in found}          # "Calls &amp; Meetings"
 
 
 def test_the_voice_call_points_at_a_real_place_and_links_it():

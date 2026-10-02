@@ -39,6 +39,7 @@ function initTabs() {
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
       if (tab === 'devices') window.devicesSettings?.load();
+      if (tab === 'calls') window.devicesSettings?.loadCalls?.();
       if (tab === 'email') window.mailListenerSettings?.load();
     });
   });
@@ -5295,6 +5296,9 @@ export function open(tab) {
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
   if (activeTab === 'ai') refreshAiModelEndpoints();
+  // Opened straight at Calls & Meetings (/settings calls): its cards load
+  // the same as when the tab is clicked.
+  if (tab === 'calls') window.devicesSettings?.loadCalls?.();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }

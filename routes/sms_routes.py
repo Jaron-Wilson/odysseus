@@ -10,7 +10,7 @@ a command is a turn in it, and models / model <n|name> pick its model.
 
 Phone side (the secret in the path is the credential, like the task webhooks):
     POST /api/sms/inbound/{secret}      one incoming text from the forwarder app
-Owner side (logged in, Settings > Devices > Phone SMS):
+Owner side (logged in, Settings > Calls & Meetings > Phone SMS):
     GET  /api/sms/config                numbers, reply URL, whether a secret exists
     PUT  /api/sms/config                save numbers and reply URL
     POST /api/sms/secret                mint a new secret (shown once), drops the old one

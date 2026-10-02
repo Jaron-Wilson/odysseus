@@ -37505,7 +37505,7 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .email-html-frame { display: block; width: 100%; min-height: 60px; border: 0; border-radius: 8px; background: #fff; }
 .email-html-frame[hidden] { display: none; }
 
-/* Settings > Devices > Phone SMS (static/js/devicesSettings.js) */
+/* Settings > Calls & Meetings > Phone SMS (static/js/devicesSettings.js) */
 .sms-url {
   flex: 1;
   min-width: 0;

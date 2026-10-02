@@ -347,7 +347,7 @@ class SipLine:
             sid, _ = agent.new_call_chat(owner, cfg, label, call.direction, self._is_admin(owner))
         except Exception as e:
             logger.warning("[sip] no chat for the call: %s", e)
-            await self._say(call, "Odysseus has no model to answer with. Pick one in Settings, Devices, Phone calls. Goodbye.")
+            await self._say(call, "Odysseus has no model to answer with. Pick one in Settings, Calls and Meetings, Phone calls. Goodbye.")
             return
         if scfg.get("require_pin") and cfg.get("pin_hash") and call.direction == "inbound":
             if not await self._pin_gate(call, cfg):

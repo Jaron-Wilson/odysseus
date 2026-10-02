@@ -57,12 +57,12 @@ your phone ──call──> Twilio number ──webhook (signed)──> Odysseu
   stops it.
 - **Hanging up.** Hang up, or say "bye" (or "goodbye", "hang up", "end the
   call") on its own. Calls end after 30 minutes.
-- **Call me.** Settings > Devices > Phone calls > Call me rings your first
+- **Call me.** Settings > Calls & Meetings > Phone calls > Call me rings your first
   number; when you answer, it is a call like any other (no PIN).
 
 ## Who gets through
 
-- Only **your numbers** (Settings > Devices > Phone calls). Left blank, they
+- Only **your numbers** (Settings > Calls & Meetings > Phone calls). Left blank, they
   are your Phone SMS numbers. Blank in both places means no one, not everyone.
 - **Other callers** either hear "this number only takes calls from its owner"
   and are hung up on, or (Take a message) leave a message of up to a minute,
@@ -123,7 +123,7 @@ What you do (nothing here was signed up for, bought, or switched on for you):
      named tunnel on a jaronwilson.dev subdomain instead, with one ingress
      rule `path: ^/api/telephony/` to `http://127.0.0.1:7000` and a final
      `service: http_status:404`. Free, and WebSockets work.
-4. **In Odysseus**, Settings > Devices > Phone calls:
+4. **In Odysseus**, Settings > Calls & Meetings > Phone calls:
    - Agent's number (the Twilio number), Account SID and Auth token (Console >
      Account info).
    - Your numbers: your cell's own number **and** the Google Voice number
