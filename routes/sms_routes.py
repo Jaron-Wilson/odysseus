@@ -75,15 +75,16 @@ _LAST_MODELS: Dict[str, Tuple[float, List[Dict]]] = {}
 _PENDING: set = set()
 
 HELP = ("Odysseus commands:\n"
-        "new [model] - start a chat and talk to it\n"
-        "chat <n> - talk to chat n from the last list\n"
+        "new [model] - start a chat\n"
+        "chat <n> - talk to chat n from list\n"
         "end - stop talking to it\n"
         "models - models you can use, numbered\n"
-        "model <n|name> - switch this chat's model\n"
+        "model <n|name> - switch the model\n"
         "list - your recent chats, numbered\n"
+        "find <word> - look up a chat by name\n"
         "say <n> <text> - one text to chat n\n"
         "status - running agents and jobs\n"
-        "call - a link that opens a voice call with this chat\n"
+        "call - a link for a voice call with this chat\n"
         "help - this message\n"
         "Anything else goes to the chat you are talking to.")
 HINT = ("You are not talking to a chat. Text new to start one, or list and then "
@@ -284,6 +285,27 @@ def cmd_list(session_manager, owner: Optional[str]) -> str:
     lines = [f"{i}. {(s.name or 'Untitled')[:40]} ({getattr(s, 'model', '') or 'no model'}, {_ago(ts)})"
              for i, (sid, s, ts) in enumerate(rows, 1)]
     return "\n".join(lines) + "\nReply: chat <n> to talk to one, or say <n> <text>"
+
+
+def cmd_find(session_manager, owner: Optional[str], sender: str, keyword: str) -> str:
+    """Chats whose name holds `keyword`. One match switches straight to it,
+    like chat <n>; more than one lists them, numbered the same way list
+    does, so chat <n> or say <n> <text> still works off this list."""
+    needle = keyword.strip().lower()
+    rows = [(sid, s, ts) for sid, s, ts in _recent_sessions(session_manager, owner)
+            if needle in (s.name or "").lower()]
+    if not rows:
+        return f'No chat matches "{keyword}". Send list to see them all.'
+    if len(rows) == 1:
+        sid, sess, _ = rows[0]
+        set_conversation(owner, sender, sid)
+        return f"Now talking to {_chat_label(sess)}. Text anything to send it, end to stop."
+    rows = rows[:LIST_LIMIT]
+    _LAST_LIST[_owner_key(owner)] = (time.time(), [sid for sid, _, _ in rows])
+    lines = [f"{i}. {(s.name or 'Untitled')[:40]} ({getattr(s, 'model', '') or 'no model'}, {_ago(ts)})"
+             for i, (sid, s, ts) in enumerate(rows, 1)]
+    return (f'Chats matching "{keyword}":\n' + "\n".join(lines)
+            + "\nReply: chat <n> to talk to one, or say <n> <text>")
 
 
 def _resolve_n(session_manager, owner: Optional[str], n: int):
@@ -733,6 +755,8 @@ def setup_sms_routes(session_manager) -> APIRouter:
             reply = HELP + (f"\nNow talking to: {_chat_label(current[1])}" if current else "")
         elif cmd == "list" and bare:
             reply = cmd_list(session_manager, owner)
+        elif cmd in ("find", "search") and rest:
+            reply = cmd_find(session_manager, owner, sender, rest)
         elif cmd == "status" and bare:
             current = _current(session_manager, owner, sender)
             reply = cmd_status(session_manager, owner)
