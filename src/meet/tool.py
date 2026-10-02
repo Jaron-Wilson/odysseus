@@ -65,8 +65,13 @@ async def run_tool(content: str, owner: Optional[str] = None, is_admin: bool = F
             m = await meet_routes.start_join(owner, is_admin, {
                 "url": args.get("url") or "", "mode": args.get("mode") or "", "via": args.get("via") or "",
                 "title": args.get("title") or "", "dial_in": args.get("dial_in") or "", "pin": args.get("pin") or ""})
-            return {"output": (f"Odysseus (AI) is joining {m.url or 'by phone'}. Someone in the meeting may "
-                               "have to let it in from the lobby."), "meeting": m.public(), "exit_code": 0}
+            if m.via == "phone":
+                output = (f"Join initiated: Odysseus (AI) is placing a phone call to join {m.dial_in.get('number', 'the meeting')}. "
+                          "It has NOT joined yet (call in progress). Do NOT claim it has already joined.")
+            else:
+                output = (f"Join initiated: Odysseus (AI) is opening {m.url} via browser. It has NOT joined yet. "
+                          "Do NOT claim it has joined; if joining as guest, someone in the meeting may need to admit it from the lobby.")
+            return {"output": output, "meeting": m.public(), "exit_code": 0}
         if action in ("start", "now", "create", "schedule"):
             body = {
                 "title": args.get("title") or "",

@@ -157,20 +157,22 @@ def _client(timeout: float = 20) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout, transport=_transport)
 
 
-async def finish_connect(user: str, code: str, redirect_uri: str) -> Tuple[bool, str]:
-    """Trade the code for tokens and keep the refresh token. (ok, message)."""
+async def finish_connect(user: str, code: str, state_entry: Dict) -> Tuple[bool, str]:
+    """Trade the code for tokens and keep the refresh token. (ok, message).
+
+    state_entry is the full payload from google_oauth.pop_state(), which
+    carries the PKCE code_verifier and the redirect_uri.
+    """
     cfg = google_oauth.client_config()
     if not cfg["configured"]:
         return False, "No Google OAuth client is set up on this server."
     try:
-        async with _client() as client:
-            r = await client.post(google_oauth.TOKEN_URL, data={
-                "code": code, "client_id": cfg["client_id"], "client_secret": cfg["client_secret"],
-                "redirect_uri": redirect_uri, "grant_type": "authorization_code"})
-    except httpx.HTTPError as e:
+        r = await google_oauth.exchange_code(code, state_entry)
+    except Exception as e:
         logger.warning("[meet] Google Calendar connect: %s", type(e).__name__)
         return False, "Could not reach Google to finish connecting."
     if r.status_code != 200:
+        redirect_uri = state_entry.get("redirect_uri", "")
         logger.warning("[meet] Google Calendar connect: token endpoint said %s", r.status_code)
         return False, ("Google turned the connection down. The redirect URI must match the one "
                        f"registered in the Google console exactly: {redirect_uri}")

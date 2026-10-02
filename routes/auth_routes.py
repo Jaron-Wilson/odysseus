@@ -282,18 +282,11 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
             # Connecting Google Calendar for Meet, started from the Meet card
             # by a signed-in user: not a sign-in, no session is made here.
             from src.meet import google_calendar
-            ok, message = await google_calendar.finish_connect(entry.get("user") or "", code, redirect_uri)
+            ok, message = await google_calendar.finish_connect(entry.get("user") or "", code, entry)
             return _google_page("Google Calendar connected" if ok else "Could not connect Google Calendar",
                                 message, ok=ok, back="/", back_label="Back to Odysseus")
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                tok = await client.post("https://oauth2.googleapis.com/token", data={
-                    "code": code,
-                    "client_id": cfg["client_id"],
-                    "client_secret": cfg["client_secret"],
-                    "redirect_uri": redirect_uri,
-                    "grant_type": "authorization_code",
-                })
+            tok = await google_oauth.exchange_code(code, entry)
         except Exception as e:
             logger.error("Google token exchange failed: %s", e)
             return _google_page("Sign-in failed", "Could not reach Google to complete sign-in.")

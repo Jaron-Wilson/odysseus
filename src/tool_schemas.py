@@ -1066,13 +1066,15 @@ FUNCTION_TOOL_SCHEMAS = [
         "function": {
             "name": "google_meet",
             "description": (
-                "The way to join or make a Google Meet. It runs in Odysseus's own cloud browser on the "
-                "server as 'Odysseus (AI)', so it never needs the user's desktop, Chrome or screen "
-                "tools. 'join' sends the agent into a Meet link (also for 'join again', 'rejoin', 'try "
-                "joining through my browser'); 'start' makes a meeting now from the user's own Google account "
-                "(Google Calendar connected in Settings > Calls & Meetings > Google Meet), invites attendees and joins "
-                "it; 'schedule' puts one in their calendar for later and Google emails the invites; 'status' "
-                "says what is set up. Give the user the link and tell them to admit Odysseus (AI)."
+                "The way to join or make a Google Meet. 'join' initiates joining: by phone "
+                "(dial-in number and PIN from the invite) when available, or through the cloud browser as a "
+                "fallback. Phone is the default and most reliable way. IMPORTANT: 'join' only initiates "
+                "the connection; you have NOT joined yet. NEVER falsely claim you have joined. If the meeting has no dial-in "
+                "(free personal Meet links usually do not), tell the user their options: admit Odysseus (AI) "
+                "from the lobby in their own browser, or share the dial-in number and PIN. 'start' makes a "
+                "meeting now from the user's Google account (Google Calendar connected in Settings > Calls & "
+                "Meetings > Google Meet), invites attendees and joins it; 'schedule' puts one in their "
+                "calendar for later; 'status' says what is set up. Give the user the link."
             ),
             "parameters": {
                 "type": "object",
@@ -1085,6 +1087,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "attendees": {"type": "array", "items": {"type": "string"},
                                   "description": "Email addresses to invite. Google sends the invites."},
                     "url": {"type": "string", "description": "For join: the Meet link."},
+                    "dial_in": {"type": "string", "description": "For join by phone: the US dial-in number from the invite."},
+                    "pin": {"type": "string", "description": "For join by phone: the meeting PIN from the invite."},
                     "join": {"type": "boolean", "description": "For start: whether the agent joins (default true)."},
                 },
                 "required": []

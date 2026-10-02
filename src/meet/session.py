@@ -57,6 +57,12 @@ GUEST_DENIED = (
     "meeting's host controls: Meeting access set to Open, not Trusted or Restricted."
 )
 
+UNSAFE_BROWSER_DENIED = (
+    "Google blocked the cloud browser as an unverified or automated browser (\"This browser or app may "
+    "not be secure\"). Joining by browser is blocked by Google. To attend this meeting, join by phone "
+    "instead using the dial-in number and PIN from the calendar invite."
+)
+
 MEET_NOTE = (
     "You are in a Google Meet video meeting as \"{name}\", an AI assistant there for {owner}. "
     "Other people are in the meeting and hear everything you say; they were told an AI is "
@@ -412,6 +418,10 @@ class Meeting:
                             break
                     else:
                         alone_since = 0.0
+                elif st == "unsafe_browser":
+                    self.error_code = "unsafe_browser"
+                    self.error = UNSAFE_BROWSER_DENIED
+                    break
                 elif st == "denied":
                     if self.cfg["join_as"] == "guest" and not lobby_since and now - opened < GUEST_DENIED_S:
                         # Turned away at once, before any lobby. Seen on
