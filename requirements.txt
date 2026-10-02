@@ -3,6 +3,10 @@ uvicorn
 python-multipart
 python-dotenv
 httpx
+# httpcore is already a transitive dependency of httpx; declare it directly
+# because services/memory/skill_importer.py imports it to pin the skill-bundle
+# fetch socket to one SSRF-validated IP (DNS-rebinding defense).
+httpcore>=1.0,<2.0
 # WebSockets: uvicorn needs it to accept WebSocket upgrades at all, and the
 # code editor proxy (routes/ide_routes.py) uses its client to reach
 # code-server; the Terminal (routes/terminal_routes.py) needs it too.

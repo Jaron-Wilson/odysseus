@@ -972,8 +972,12 @@ def test_mcp_oauth_page_escapes_reflected_values():
     src = Path(__file__).resolve().parents[1] / "routes" / "mcp_routes.py"
     text = src.read_text()
     body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
-    for var in ("auth_url", "server_id", "host"):
+    for var in ("auth_url", "server_id", "redirect_uri"):
         assert f"{var} = html.escape({var}" in body, var
+    # The request Host header is no longer reflected into the page at all
+    # (the paste-back form action is now a relative path the browser resolves
+    # itself), so there is nothing to escape; assert its absence instead.
+    assert "host" not in body
 
 
 def _import_mcp_routes():
