@@ -138,3 +138,93 @@ def test_read_file_plain_path_backcompat(repo):
     r = _run("read_file", os.path.join(repo, "a.py"))
     assert r["exit_code"] == 0
     assert "needle" in r["output"]
+
+
+# ── sensitive-file deny-list applies during recursive search ──────────────
+#
+# read_file/write_file/edit_file already refuse to touch a deny-listed path
+# (.ssh, .gnupg, id_rsa, authorized_keys, known_hosts, .env, shell rc files).
+# grep and glob must honor the SAME deny-list while recursively walking a
+# directory, not just on a root path handed to _resolve_search_root — an
+# otherwise-legitimate search root (e.g. a workspace or an opted-in extra
+# root) can still contain a sensitive subpath, and a prompt-injected model
+# could use grep/glob as a read oracle for it.
+
+@pytest.fixture
+def repo_with_secrets(repo):
+    with open(os.path.join(repo, ".env"), "w") as f:
+        f.write("needle AWS_SECRET=xxxxx\n")
+    with open(os.path.join(repo, "id_rsa"), "w") as f:
+        f.write("needle PRIVATE KEY\n")
+    with open(os.path.join(repo, "known_hosts"), "w") as f:
+        f.write("needle host-key\n")
+    os.mkdir(os.path.join(repo, ".ssh"))
+    with open(os.path.join(repo, ".ssh", "authorized_keys"), "w") as f:
+        f.write("needle ssh-rsa AAAA\n")
+    return repo
+
+
+def test_grep_skips_sensitive_files_rg(repo_with_secrets):
+    r = _run("grep", f'{{"pattern": "needle", "path": "{repo_with_secrets}"}}')
+    assert r["exit_code"] == 0
+    assert "a.py:2:" in r["output"]
+    for leak in (".env", "id_rsa", "known_hosts", "authorized_keys"):
+        assert leak not in r["output"], f"grep leaked sensitive file: {leak}"
+
+
+def test_grep_skips_sensitive_files_python_fallback(repo_with_secrets, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    r = _run("grep", f'{{"pattern": "needle", "path": "{repo_with_secrets}"}}')
+    assert r["exit_code"] == 0
+    assert "a.py:2:" in r["output"]
+    for leak in (".env", "id_rsa", "known_hosts", "authorized_keys"):
+        assert leak not in r["output"], f"grep leaked sensitive file: {leak}"
+
+
+def test_grep_skips_case_variant_sensitive_files(repo_with_secrets, monkeypatch):
+    # _is_sensitive_path must fold case: a case-variant filename (ID_RSA,
+    # Known_Hosts) is the same secret on a case-insensitive filesystem and
+    # must be excluded the same way the lowercase form is.
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    with open(os.path.join(repo_with_secrets, "ID_RSA"), "w") as f:
+        f.write("needle PRIVATE KEY UPPER\n")
+    with open(os.path.join(repo_with_secrets, "Known_Hosts"), "w") as f:
+        f.write("needle host-key mixed-case\n")
+    r = _run("grep", f'{{"pattern": "needle", "path": "{repo_with_secrets}"}}')
+    assert r["exit_code"] == 0
+    assert "a.py:2:" in r["output"]
+    assert "ID_RSA" not in r["output"]
+    assert "Known_Hosts" not in r["output"]
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="targets the ripgrep fast-path")
+def test_grep_skips_case_variant_sensitive_files_rg(repo_with_secrets):
+    with open(os.path.join(repo_with_secrets, "ID_RSA"), "w") as f:
+        f.write("needle PRIVATE KEY UPPER\n")
+    r = _run("grep", f'{{"pattern": "needle", "path": "{repo_with_secrets}"}}')
+    assert r["exit_code"] == 0
+    assert "a.py:2:" in r["output"]
+    assert "ID_RSA" not in r["output"]
+
+
+def test_glob_skips_sensitive_files(repo_with_secrets):
+    r = _run("glob", f'{{"pattern": "**/*", "path": "{repo_with_secrets}"}}')
+    assert r["exit_code"] == 0
+    assert "a.py" in r["output"]
+    for leak in (".env", "id_rsa", "known_hosts", "authorized_keys"):
+        assert leak not in r["output"], f"glob leaked sensitive file: {leak}"
+
+
+def test_glob_skips_sensitive_files_case_insensitive(repo_with_secrets):
+    with open(os.path.join(repo_with_secrets, "ID_RSA"), "w") as f:
+        f.write("PRIVATE KEY UPPER\n")
+    r = _run("glob", f'{{"pattern": "**/*", "path": "{repo_with_secrets}"}}')
+    assert r["exit_code"] == 0
+    assert "ID_RSA" not in r["output"]
+
+
+def test_glob_direct_sensitive_pattern_returns_no_match(repo_with_secrets):
+    for pat in ("id_rsa", "**/authorized_keys"):
+        r = _run("glob", f'{{"pattern": "{pat}", "path": "{repo_with_secrets}"}}')
+        assert r["exit_code"] == 0
+        assert "No files" in r["output"], f"glob matched a sensitive pattern: {pat}"
