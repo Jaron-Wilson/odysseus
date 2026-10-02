@@ -171,6 +171,30 @@ def _ensure_default_calendar(db, owner: str = None) -> CalendarCal:
     return cal
 
 
+def _get_default_calendar(db, owner: str = None) -> CalendarCal:
+    """The calendar a new event lands on when none is specified: create_event
+    without a calendar_href, and the `manage_calendar` agent tool's
+    create_event action without a calendar/calendar_href arg.
+
+    Honors the "Save new events to" pref set in Calendar Settings (a calendar
+    id) so events can default onto a CalDAV/Google calendar instead of the
+    local-only one. Falls back to `_ensure_default_calendar` when unset,
+    deleted, or (defense in depth) owned by someone else.
+    """
+    from routes.prefs_routes import _load_for_user
+
+    prefs = _load_for_user(owner) or {}
+    default_id = prefs.get("calendar_default_cal_id")
+    if default_id:
+        q = db.query(CalendarCal).filter(CalendarCal.id == default_id)
+        if owner is not None:
+            q = q.filter(CalendarCal.owner == owner)
+        cal = q.first()
+        if cal:
+            return cal
+    return _ensure_default_calendar(db, owner)
+
+
 # Per-request user time context. chat_routes sets this from browser timezone
 # headers so natural-language times the LLM emits ("today at 9pm") are parsed
 # in the user's timezone, not the server's clock. None = unknown, fall back to
@@ -973,7 +997,7 @@ def setup_calendar_routes() -> APIRouter:
                 if cal and (cal.owner is None or cal.owner != owner):
                     raise HTTPException(404, "Calendar not found")
             if not cal:
-                cal = _ensure_default_calendar(db, owner)
+                cal = _get_default_calendar(db, owner)
 
             uid = str(uuid.uuid4())
             # Use the tz-detecting parser so events posted with an offset
