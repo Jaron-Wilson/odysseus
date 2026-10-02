@@ -271,6 +271,20 @@ def setup_device_routes() -> APIRouter:
             raise HTTPException(404, str(e))
         return {"ok": True, "device": devices.public(rec)}
 
+    @router.delete("/api/devices/subscriptions/{index}")
+    async def remove_subscription(index: int, request: Request):
+        """Drop a stale push subscription (an old/replaced phone or browser
+        profile): there is no re-link path once the browser that made it is
+        gone, so the subscriptions list otherwise accumulates dead rows
+        forever. Indexed into the same load_subscriptions() order _subscriptions_view
+        renders, not the truncated endpoint shown to the client."""
+        require_admin(request)
+        subs = webpush.load_subscriptions()
+        if index < 0 or index >= len(subs):
+            raise HTTPException(404, "no subscription at that index")
+        webpush.remove_subscription(subs[index]["endpoint"])
+        return {"ok": True}
+
     @router.post("/api/devices/{name}/token")
     async def reveal_token(name: str, request: Request):
         """The full token, on request, to paste into the device's listener.

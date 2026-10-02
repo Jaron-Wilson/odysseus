@@ -190,6 +190,8 @@ function renderSubs() {
         <select class="settings-select" id="devices-link-${i}" style="max-width:190px">${options}</select>
         <button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-link="${i}" type="button">${s.linked_to ? 'Move' : 'Link'}</button>
         ${s.linked_to ? `<button class="settings-btn" style="padding:3px 10px;font-size:12px" data-dev-unlink="${esc(s.linked_to)}" data-alias="${esc(s.device)}" type="button">Unlink</button>` : ''}` : ''}
+      <button class="settings-btn" style="padding:3px 10px;font-size:12px" data-sub-remove="${i}" type="button"
+        title="Drop this subscription entirely, for a browser profile or phone that is gone for good, not just unused for now">Remove</button>
     </div>`).join('');
   state.subscriptions.forEach((s, i) => {
     const sel = $(`devices-link-${i}`);
@@ -1086,14 +1088,18 @@ async function onComputersClick(ev) {
 
 async function onClick(ev) {
   const t = ev.target.closest('[data-dev-test],[data-dev-token],[data-dev-rename],[data-dev-endpoint],' +
-    '[data-dev-remove],[data-dev-unlink],[data-dev-link],#devices-add-btn');
+    '[data-dev-remove],[data-dev-unlink],[data-dev-link],[data-sub-remove],#devices-add-btn');
   if (!t) return;
   ev.preventDefault();
   const name = t.dataset.devTest || t.dataset.devToken || t.dataset.devRename ||
     t.dataset.devEndpoint || t.dataset.devRemove || t.dataset.devUnlink;
   const path = name ? `/api/devices/${encodeURIComponent(name)}` : '';
   try {
-    if (t.id === 'devices-add-btn') {
+    if (t.dataset.subRemove !== undefined) {
+      const sub = state.subscriptions[Number(t.dataset.subRemove)];
+      if (!confirm(`Remove the "${sub.device || '(unnamed)'}" subscription? Only the browser/phone that made it can re-add it.`)) return;
+      await api('DELETE', `/api/devices/subscriptions/${t.dataset.subRemove}`);
+    } else if (t.id === 'devices-add-btn') {
       const commands = [...document.querySelectorAll('#devices-add-commands input:checked')].map((i) => i.value);
       await api('POST', '/api/devices', {
         name: $('devices-add-name').value.trim(),
