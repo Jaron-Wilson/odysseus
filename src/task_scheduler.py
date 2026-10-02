@@ -674,11 +674,21 @@ class TaskScheduler:
 
         try:
             if bypass_model_slot or not self._task_needs_model_slot(task_id):
-                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+                await self._execute_task_locked(
+                    task_id,
+                    run_id,
+                    release_executing=release_executing,
+                    gate_foreground=not bypass_model_slot,
+                )
                 return
 
             async with self._run_semaphore:
-                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+                await self._execute_task_locked(
+                    task_id,
+                    run_id,
+                    release_executing=release_executing,
+                    gate_foreground=True,
+                )
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
             # _execute_task_locked never runs and cannot update the Activity row.
@@ -692,7 +702,14 @@ class TaskScheduler:
                 async with self._executing_lock:
                     self._executing.discard(task_id)
 
-    async def _execute_task_locked(self, task_id: str, run_id: str, *, release_executing: bool = True):
+    async def _execute_task_locked(
+        self,
+        task_id: str,
+        run_id: str,
+        *,
+        release_executing: bool = True,
+        gate_foreground: bool = True,
+    ):
         from core.database import SessionLocal, ScheduledTask, TaskRun
 
         db = SessionLocal()
@@ -708,6 +725,18 @@ class TaskScheduler:
                     stale.error = f"Task no longer active (status={task.status if task else 'deleted'})"
                     db.commit()
                 return
+
+            if gate_foreground:
+                # The user interacting with Odysseus (open chat, an active
+                # stream, recent API traffic) gets GPU/model capacity first.
+                # Background/cron tasks wait out a quiet window before they
+                # even start; see src/interactive_gate.py.
+                waiting = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+                if waiting and waiting.status == "queued":
+                    waiting.result = "Queued, waiting for Odysseus to be idle…"
+                    db.commit()
+                from src.interactive_gate import wait_for_interactive_quiet
+                await wait_for_interactive_quiet(f"scheduled task {task.name}")
 
             # Flip the run from queued → running. Reset started_at to the
             # actual execution start so queue wait time is visible from
@@ -739,6 +768,29 @@ class TaskScheduler:
             # previous llm/research run's model. The executors set it once the
             # model is resolved.
             self._last_run_model = None
+            foreground_cancel = {"hit": False}
+            foreground_monitor = None
+            if gate_foreground:
+                current_task = asyncio.current_task()
+
+                async def _cancel_if_foreground_active():
+                    # Give the just-finished quiet gate a tiny grace window,
+                    # then keep enforcing "background means background" while
+                    # a long-running action is already in flight: if the user
+                    # shows back up mid-run, free the GPU/model for them
+                    # instead of waiting out the whole task.
+                    await asyncio.sleep(1.0)
+                    from src.interactive_gate import has_foreground_activity
+                    while True:
+                        await asyncio.sleep(1.0)
+                        if has_foreground_activity():
+                            foreground_cancel["hit"] = True
+                            logger.info("Task '%s' interrupted because Odysseus became active", task.name)
+                            if current_task:
+                                current_task.cancel()
+                            return
+
+                foreground_monitor = asyncio.create_task(_cancel_if_foreground_active())
             try:
                 if task_type == "action":
                     result, success = await self._execute_action(task, run_id=run_id)
@@ -778,15 +830,24 @@ class TaskScheduler:
                 db.commit()
                 return
             except asyncio.CancelledError:
-                logger.info("Task '%s' stopped by user", task.name)
+                msg = (
+                    "Paused because Odysseus became active"
+                    if foreground_cancel.get("hit")
+                    else "Stopped by user"
+                )
+                logger.info("Task '%s' %s", task.name, msg)
                 run_obj = db.query(TaskRun).filter(TaskRun.id == run_id).first()
                 if run_obj:
                     run_obj.status = "aborted"
-                    run_obj.error = "Stopped by user"
-                    run_obj.result = run_obj.result or "Stopped by user"
+                    run_obj.error = msg
+                    run_obj.result = run_obj.result or msg
                     run_obj.finished_at = _utcnow()
                 task.last_run = _utcnow()
-                if (task.trigger_type or "schedule") == "schedule":
+                if foreground_cancel.get("hit"):
+                    # Resume shortly after the user goes idle again rather
+                    # than waiting out the task's normal cron schedule.
+                    task.next_run = _utcnow() + timedelta(minutes=15)
+                elif (task.trigger_type or "schedule") == "schedule":
                     task.next_run = compute_next_run(
                         task.schedule, task.scheduled_time,
                         task.scheduled_day, task.scheduled_date,
@@ -821,6 +882,13 @@ class TaskScheduler:
                     task.next_run = None
                 db.commit()
                 return
+            finally:
+                if foreground_monitor and not foreground_monitor.done():
+                    foreground_monitor.cancel()
+                    try:
+                        await foreground_monitor
+                    except asyncio.CancelledError:
+                        pass
 
             run.finished_at = _utcnow()
 

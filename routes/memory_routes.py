@@ -21,7 +21,7 @@ def _strip_list_prefix(text: str) -> str:
         return text
     return _LIST_PREFIX_RE.sub("", text, count=1).strip()
 
-from services.memory import MemoryManager
+from services.memory import MemoryManager, MemoryStoreUnreadable
 from core.session_manager import SessionManager
 from src.request_models import MemoryAddRequest
 from core.database import SessionLocal
@@ -32,6 +32,20 @@ from src.endpoint_resolver import resolve_endpoint
 from src.upload_limits import read_upload_limited, MEMORY_IMPORT_MAX_BYTES
 
 logger = logging.getLogger(__name__)
+
+
+def _load_for_update(memory_manager: MemoryManager) -> List[Dict[str, Any]]:
+    """Load the whole store for a read-modify-write cycle.
+
+    A transient read failure must not look like an empty store: the caller
+    would append to ``[]`` and save that back, atomically destroying every
+    existing memory. Surface it as a 503 and change nothing.
+    """
+    try:
+        return memory_manager.load_all_for_update()
+    except MemoryStoreUnreadable as e:
+        logger.error("Refusing to rewrite the memory store: %s", e)
+        raise HTTPException(503, "Memory store is temporarily unreadable; no changes were made.")
 
 
 def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionManager, memory_vector=None):
@@ -108,7 +122,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category, owner=user)
         if memory_data.session_id:
             new_entry["session_id"] = memory_data.session_id
-        all_mem = memory_manager.load_all()
+        all_mem = _load_for_update(memory_manager)
         all_mem.append(new_entry)
         memory_manager.save(all_mem)
         # Sync vector index
@@ -484,7 +498,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     def pin_memory(request: Request, memory_id: str, pinned: bool = Form(True)):
         """Pin or unpin a memory. Pinned memories are always included in context."""
         user = _owner(request)
-        all_mem = memory_manager.load_all()
+        all_mem = _load_for_update(memory_manager)
         for i, memory in enumerate(all_mem):
             if memory["id"] == memory_id:
                 _verify_memory_owner(memory, user)
@@ -509,7 +523,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     def update_memory(request: Request, memory_id: str, text: str = Form(...), category: str = Form(None)):
         """Update an existing memory item with new text and optional category."""
         user = _owner(request)
-        all_mem = memory_manager.load_all()
+        all_mem = _load_for_update(memory_manager)
         for i, memory in enumerate(all_mem):
             if memory["id"] == memory_id:
                 _verify_memory_owner(memory, user)
@@ -531,7 +545,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     def delete_memory(request: Request, memory_id: str):
         """Delete a memory item by its ID."""
         user = _owner(request)
-        all_mem = memory_manager.load_all()
+        all_mem = _load_for_update(memory_manager)
 
         # Find and verify ownership before deleting
         target = next((m for m in all_mem if m["id"] == memory_id), None)

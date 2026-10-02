@@ -111,7 +111,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if not text:
             return [TextContent(type="text", text="Error: Memory text cannot be empty")]
         entry = _memory_manager.add_entry(text, source="ai_agent", category=category)
-        memories = _memory_manager.load_all()
+        # Strict load: this is a read-modify-write. Degrading an unreadable
+        # store to [] here would save just this one entry over everything
+        # already stored.
+        from src.memory import MemoryStoreUnreadable
+        try:
+            memories = _memory_manager.load_all_for_update()
+        except MemoryStoreUnreadable as e:
+            return [TextContent(type="text", text=f"Error: Memory store is temporarily unreadable; nothing was saved. ({e})")]
         memories.append(entry)
         _memory_manager.save(memories)
         if _memory_vector and _memory_vector.healthy:
