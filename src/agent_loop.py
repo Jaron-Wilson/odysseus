@@ -292,7 +292,7 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls"},
+    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "manage_bg_jobs"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "meet": {"google_meet"},
 }
@@ -418,7 +418,10 @@ Read a file and return its contents.""",
 <file path>
 <file contents>
 ```
-Write content to a file. First line is the path, rest is the content.""",
+Write content to a file. First line is the path, rest is the content. An empty or
+whitespace-only body is refused when the target already holds data, to avoid
+truncating a file whose content was lost in transit. To deliberately empty an
+existing file, use edit_file to replace its full content with an empty string.""",
 
     "edit_file": """\
 ```edit_file
@@ -973,6 +976,12 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
            r"my computer|machines?|devices?|remote|deploy|docker|containers?|wrangler|install)\b"):
         domains.add("files")
     if has(r"\b(phones?|my phone|tablets?|pixel|android|iphone|tailnet)\b"):
+        domains.add("files")
+    # Managing detached bash jobs: "kill the background job", "stop the job",
+    # "kill that job", "check the job output", "is the bg job done".
+    if (has(r"\b(background|bg)\s+(jobs?|task)\b")
+            or has(r"\b(kill|stop|cancel|terminate|check|tail|show|list)\b.{0,16}\bjobs?\b")
+            or has(r"\bjobs?\b.{0,16}\b(output|status|done|finished|running)\b")):
         domains.add("files")
     if has(r"\b(amazon|buy|shop|shopping|products?|prices?|deals?)\b"):
         domains.add("web")
@@ -3182,6 +3191,22 @@ async def stream_agent_loop(
             logger.info("[agent] running %d read-only tools concurrently: %s",
                         len(tool_blocks), [b.tool_type for b in tool_blocks])
 
+        # If the SSE client disconnects (or this generator is otherwise
+        # closed) while we're suspended awaiting a progress event or a
+        # prefetched result below, GeneratorExit is thrown in right there:
+        # the task (and any subprocess execute_tool_block spawned for
+        # bash/python tools) would otherwise keep running orphaned with
+        # nothing left to await or cancel it. Cancel it and await the
+        # cancellation so the existing subprocess-kill path in
+        # subprocess_tools.py actually runs.
+        async def _cancel_pending_task(task):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
         # Execute each tool block
         tool_results = []
         tool_result_texts = []  # plain text for native tool role messages
@@ -3297,21 +3322,26 @@ async def stream_agent_loop(
                     # Started before the loop alongside its siblings; it may
                     # already be finished. Read-only tools of this kind emit no
                     # progress, so there is nothing to drain.
-                    desc, result = await _prefetched[i]
-                    _tool_task = None
+                    _tool_task = _prefetched[i]
+                    try:
+                        desc, result = await _tool_task
+                    finally:
+                        await _cancel_pending_task(_tool_task)
                 else:
                     _tool_task = asyncio.create_task(_run_tool())
-                # Drain progress events as they arrive — block until the
-                # next event OR the tool finishes (sentinel = None).
-                while _tool_task is not None:
-                    evt = await _progress_q.get()
-                    if evt is None:
-                        break
-                    yield (
-                        f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
-                    )
-                if _tool_task is not None:
-                    desc, result = await _tool_task
+                    try:
+                        # Drain progress events as they arrive — block until the
+                        # next event OR the tool finishes (sentinel = None).
+                        while True:
+                            evt = await _progress_q.get()
+                            if evt is None:
+                                break
+                            yield (
+                                f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
+                            )
+                        desc, result = await _tool_task
+                    finally:
+                        await _cancel_pending_task(_tool_task)
 
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"

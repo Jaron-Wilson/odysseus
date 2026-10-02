@@ -175,6 +175,9 @@ _TOOL_NAME_MAP = {
     "notes": "manage_notes",
     "todo": "manage_notes",
     "todos": "manage_notes",
+    "manage_bg_jobs": "manage_bg_jobs",
+    "bg_jobs": "manage_bg_jobs",
+    "background_jobs": "manage_bg_jobs",
 }
 
 _MISFENCED_WEB_TOOL_NAMES = {
@@ -187,6 +190,30 @@ _MISFENCED_WEB_TOOL_NAMES = {
     "webfetch": "web_fetch",
     "fetch_url": "web_fetch",
 }
+
+_RAW_WEB_JSON_TOOL_RE = re.compile(
+    r"\b(?:web_search|websearch|google_search|google_search_retrieval|google_search_grounding)\b",
+    re.IGNORECASE,
+)
+_RAW_WEB_JSON_ALLOWED_KEYS = {"query", "queries", "time_filter", "freshness", "max_pages"}
+
+# Pattern 4b: Gemma-style <|tool_call|> call:tool_name{args} <tool_call|>
+_GEMMA_TOOL_CALL_RE = re.compile(
+    r"<\|?tool_call\|?>\s*call:([\w\d_-]+)\s*(\{[\s\S]*?\})\s*<\|?tool_call\|?>",
+    re.IGNORECASE,
+)
+
+# Qwen chat-template turn markers that occasionally leak into visible text
+# around a tool call, e.g. `<|assistant|>`, `</|end|>`. At least one pipe is
+# required around a bare `end`/`assistant` marker so this never eats a lone
+# `end` closing a Ruby/Lua/shell block, or the ordinary word "assistant" in
+# prose — only `|end`, `end|`, `|end|` and `/|end|` strip.
+_QWEN_ROLE_MARKER_RE = re.compile(r"</?\|(?:assistant|assistan|user|system|tool)\|>?|</\|end\|>?", re.IGNORECASE)
+_QWEN_BARE_MARKER_RE = re.compile(
+    r"(?:^|[\t\r\n ])(?:/?\|end\||\|end|end\|)(?=[\t\r\n ]|$)|"
+    r"(?:^|[\t\r\n ])assistan(?:t)?(?=[\t\r\n ]|$)",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +305,239 @@ def _parse_misfenced_web_lookup(content: str) -> Optional[ToolBlock]:
     if not url:
         return None
     return ToolBlock("web_fetch", url)
+
+
+def _parse_misfenced_read_file_lookup(content: str, *, allow_shell_style: bool = False) -> Optional[ToolBlock]:
+    """Recover simple read_file calls wrapped in python/bash fences.
+
+    Mirrors `_parse_misfenced_web_lookup` for the other common miswrite: a
+    model fences `read_file("path.py")` as if it were code instead of using
+    the real tool-call syntax. `allow_shell_style` additionally recovers a
+    bare `read_file <path>` line (optionally with a JSON args blob), which
+    only makes sense inside a ```bash fence.
+    """
+    stripped = content.strip()
+    if not stripped:
+        return None
+
+    try:
+        module = ast.parse(stripped, mode="exec")
+    except SyntaxError:
+        module = None
+    if module and len(module.body) == 1 and isinstance(module.body[0], ast.Expr):
+        call = module.body[0].value
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
+            if call.func.id.lower() != "read_file" or len(call.args) > 1:
+                return None
+            args = {}
+            if call.args:
+                path = _literal_string(call.args[0])
+                if not path:
+                    return None
+                args["path"] = path
+            allowed = {"path", "file", "file_path", "offset", "limit"}
+            for keyword in call.keywords:
+                if keyword.arg not in allowed:
+                    return None
+                key = "path" if keyword.arg in ("file", "file_path") else keyword.arg
+                if key == "path":
+                    path = _literal_string(keyword.value)
+                    if not path:
+                        return None
+                    args["path"] = path
+                    continue
+                try:
+                    value = ast.literal_eval(keyword.value)
+                except (ValueError, SyntaxError, TypeError):
+                    return None
+                if not isinstance(value, int) or value < 0:
+                    return None
+                args[key] = value
+            if not args.get("path"):
+                return None
+            from src.tool_schemas import function_call_to_tool_block
+            return function_call_to_tool_block("read_file", json.dumps(args))
+
+    if not allow_shell_style:
+        return None
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if len(lines) != 1:
+        return None
+    match = re.fullmatch(r"read_file\s+(.+)", lines[0], re.IGNORECASE)
+    if not match:
+        return None
+    path = match.group(1).strip()
+    if not path:
+        return None
+    if path.startswith("{"):
+        try:
+            args = json.loads(path)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(args, dict):
+            return None
+        normalized = {}
+        raw_path = args.get("path") or args.get("file") or args.get("file_path")
+        if isinstance(raw_path, str) and raw_path.strip():
+            normalized["path"] = raw_path.strip()
+        for key in ("offset", "limit"):
+            value = args.get(key)
+            if isinstance(value, int) and value >= 0:
+                normalized[key] = value
+        if not normalized.get("path"):
+            return None
+        from src.tool_schemas import function_call_to_tool_block
+        return function_call_to_tool_block("read_file", json.dumps(normalized))
+    if len(path) >= 2 and path[0] == path[-1] and path[0] in "'\"":
+        path = path[1:-1].strip()
+    if not path:
+        return None
+    return ToolBlock("read_file", path)
+
+
+def _coerce_raw_web_query(value) -> Optional[str]:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+    return None
+
+
+def _raw_web_json_to_tool_block(payload) -> Optional[ToolBlock]:
+    if not isinstance(payload, dict):
+        return None
+    if set(payload) - _RAW_WEB_JSON_ALLOWED_KEYS:
+        return None
+
+    query = _coerce_raw_web_query(payload.get("query"))
+    if not query:
+        query = _coerce_raw_web_query(payload.get("queries"))
+    if not query:
+        return None
+
+    content = {"query": query}
+    for key in ("time_filter", "freshness"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip().lower() in ("day", "week", "month", "year"):
+            content[key] = value.strip().lower()
+
+    max_pages = payload.get("max_pages")
+    if isinstance(max_pages, int) and 1 <= max_pages <= 10:
+        content["max_pages"] = max_pages
+
+    if len(content) == 1:
+        return ToolBlock("web_search", query)
+    return ToolBlock("web_search", json.dumps(content))
+
+
+def _parse_raw_web_json_lookup(text: str):
+    """Recover local text-model web_search calls emitted as prose + bare JSON.
+
+    Some non-native tool models leak the intended call as:
+
+        Need to do web_search for ...
+        {"query": "...", "time_filter": "week"}
+
+    Keep this narrower than fenced/tool markup: it only runs when a known web
+    tool name appears shortly before a JSON object shaped like web_search args.
+    Returns `(ToolBlock, (start, end))` — the span is used by `strip_tool_blocks`
+    to remove exactly the matched JSON, or `None` if nothing matched.
+    """
+    if not isinstance(text, str):
+        return None
+
+    decoder = json.JSONDecoder()
+    for mention in _RAW_WEB_JSON_TOOL_RE.finditer(text):
+        search_start = mention.end()
+        search_end = min(len(text), search_start + 1200)
+        for brace in re.finditer(r"\{", text[search_start:search_end]):
+            start = search_start + brace.start()
+            try:
+                parsed, end = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                continue
+            block = _raw_web_json_to_tool_block(parsed)
+            if block:
+                return block, (start, start + end)
+    return None
+
+
+def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
+    """Parse a Gemma-style call:tool_name{...} block into a ToolBlock."""
+    tool_name = tool_name.strip().lower().replace("-", "_")
+    body = body.strip()
+    if not body:
+        return None
+
+    # Replace custom Gemma string delimiters with standard quotes
+    body = body.replace('<|"|>', '"').replace('<|"', '"').replace('"|>', '"')
+
+    # Try standard JSON parsing
+    params = {}
+    try:
+        params = json.loads(body)
+        if not isinstance(params, dict):
+            params = {}
+    except json.JSONDecodeError:
+        # Try unquoted keys repair: e.g. {query: "..."} -> {"query": "..."}
+        try:
+            repaired = re.sub(r'([{,]\s*)(\w+)\s*:', r'\1"\2":', body)
+            params = json.loads(repaired)
+            if not isinstance(params, dict):
+                params = {}
+        except Exception:
+            # Simple regex key-value extraction fallback
+            params = {}
+            for m in re.finditer(r'(\w+)\s*:\s*["\']?(.*?)["\']?(?=\s*,\s*\w+\s*:|\s*\})', body):
+                k = m.group(1)
+                v = m.group(2).strip()
+                params[k] = v
+
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(tool_name, json.dumps(params))
+
+
+def _looks_like_json_body(body: str) -> bool:
+    """True when a <tool_call> wrapper body is JSON, not XML markup."""
+    return body.lstrip()[:1] in ("{", "[")
+
+
+def _parse_json_tool_call_body(body: str) -> Optional[ToolBlock]:
+    """Parse a Qwen/Hermes text-mode wrapper body: bare JSON inside <tool_call>.
+
+      <tool_call>
+      {"name": "bash", "arguments": {"command": "mkdir -p agent-test"}}
+      </tool_call>
+
+    Strict by design: the body must decode to an object with a string "name",
+    and "arguments" — when present — must itself be an object. Anything else
+    returns None rather than being coerced, so a malformed call is dropped
+    instead of dispatching with mangled arguments. `raw_decode` tolerates
+    trailing chatter after the JSON object; the trailing text is never
+    scanned for tool markup. Conversion goes through
+    `function_call_to_tool_block` so aliases and per-tool argument formatting
+    stay identical to the XML invoke path.
+    """
+    stripped = body.strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        parsed, _end = json.JSONDecoder().raw_decode(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    name = parsed.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    if "arguments" in parsed and not isinstance(parsed["arguments"], dict):
+        return None
+    args = parsed.get("arguments", {})
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(name.strip().lower(), json.dumps(args))
+
 
 def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
     """Parse a [TOOL_CALL] block into a ToolBlock.
@@ -433,9 +693,14 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     Supports multiple formats:
     1. ```bash ... ``` fenced code blocks (standard)
     2. [TOOL_CALL] ... [/TOOL_CALL] blocks (some models)
-    3. XML-style <tool_call>/<invoke> blocks
+    3. XML-style <tool_call>/<invoke> blocks, including a Hermes/Qwen
+       text-mode body that is bare JSON (`{"name": ..., "arguments": {...}}`)
+       instead of <invoke> markup
     4. <tool_code> blocks (MiniMax-M2.5 style)
+    4b. Gemma 3/4 `<|tool_call|>call:name{...}<|tool_call|>` tokens
     5. DeepSeek DSML markup (normalized to <invoke> first)
+    6. Non-native local model fallback: prose mentioning web_search followed by
+       bare JSON args, e.g. {"query":"...", "time_filter":"week"}
 
     `skip_fenced`: when True, Pattern 1 (fenced ```bash/```python/```json code
     blocks) is not matched at all. Native function-calling models (GPT/Claude/
@@ -474,7 +739,8 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                 # _XML_INVOKE_RE's \w+ can't match would otherwise be executed as code.
                 continue
             if tag in ("python", "bash"):
-                block = _parse_misfenced_web_lookup(content)
+                block = (_parse_misfenced_web_lookup(content)
+                         or _parse_misfenced_read_file_lookup(content, allow_shell_style=(tag == "bash")))
                 if block:
                     blocks.append(block)
                     continue
@@ -490,13 +756,29 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     # Pattern 3: XML-style <tool_call>/<invoke> blocks
     if not blocks:
         # Try wrapped: <tool_call><invoke ...>...</invoke></tool_call>
+        # A wrapper body that is JSON (Qwen/Hermes text mode: a bare
+        # {"name": ..., "arguments": {...}} object instead of <invoke> markup)
+        # is parsed as JSON or dropped — never scanned by the XML iterator
+        # below, so XML-like text inside a JSON argument value stays data
+        # instead of selecting a different tool.
+        json_body_seen = False
         for m in _XML_TOOL_CALL_RE.finditer(text):
-            for inv in _XML_INVOKE_RE.finditer(m.group(1)):
+            body = m.group(1)
+            if _looks_like_json_body(body):
+                json_body_seen = True
+                block = _parse_json_tool_call_body(body)
+                if block:
+                    blocks.append(block)
+                continue
+            for inv in _XML_INVOKE_RE.finditer(body):
                 block = _parse_xml_invoke(inv)
                 if block:
                     blocks.append(block)
-        # Try bare <invoke> without wrapper
-        if not blocks:
+        # Try bare <invoke> without wrapper. Skipped when a JSON wrapper body
+        # was seen but produced no block: this rescan covers the full text,
+        # wrapper bodies included, and <invoke> markup inside a (possibly
+        # malformed) JSON payload must stay data rather than dispatch.
+        if not blocks and not json_body_seen:
             for inv in _XML_INVOKE_RE.finditer(text):
                 block = _parse_xml_invoke(inv)
                 if block:
@@ -508,6 +790,21 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             block = _parse_tool_code_block(m.group(1))
             if block:
                 blocks.append(block)
+
+    # Pattern 4b: Gemma-style <|tool_call|> call:tool_name{args} <tool_call|>
+    if not blocks:
+        for m in _GEMMA_TOOL_CALL_RE.finditer(text):
+            tool_name = m.group(1)
+            body = m.group(2)
+            block = _parse_gemma_tool_call(tool_name, body)
+            if block:
+                blocks.append(block)
+
+    # Pattern 6: local text-model web_search call leaked as prose + bare JSON.
+    if not blocks and not skip_fenced:
+        raw_web_json = _parse_raw_web_json_lookup(text)
+        if raw_web_json:
+            blocks.append(raw_web_json[0])
 
     return blocks
 
@@ -532,6 +829,14 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     cleaned = _TOOL_CALL_RE.sub('', cleaned)
     cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _TOOL_CODE_RE.sub('', cleaned)
+    cleaned = _GEMMA_TOOL_CALL_RE.sub('', cleaned)
+    cleaned = _QWEN_ROLE_MARKER_RE.sub('', cleaned)
+    cleaned = _QWEN_BARE_MARKER_RE.sub(' ', cleaned)
+    if not skip_fenced:
+        raw_web_json = _parse_raw_web_json_lookup(cleaned)
+        if raw_web_json:
+            _, (start, end) = raw_web_json
+            cleaned = cleaned[:start] + cleaned[end:]
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = re.sub(r'<invoke\s+name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)

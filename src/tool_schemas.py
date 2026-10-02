@@ -547,7 +547,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "description": {"type": "string", "description": "Event description / notes"},
                     "location": {"type": "string", "description": "Event location"},
                     "uid": {"type": "string", "description": "Event UID (for update/delete)"},
-                    "calendar_href": {"type": "string", "description": "Specific calendar URL (optional; defaults to first calendar)"},
+                    "calendar_href": {"type": "string", "description": "Specific calendar URL (optional; defaults to the user's configured default calendar, set in Calendar Settings)"},
                     "calendar": {"type": "string", "description": "Filter list_events by calendar name or href"},
                     "start": {"type": "string", "description": "list_events range start (ISO datetime); defaults to today. Prefer start; backend also accepts start_date, range_start, from, dtstart, since."},
                     "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days. Prefer end; backend also accepts end_date, range_end, to, dtend, until."},
@@ -1372,6 +1372,21 @@ FUNCTION_TOOL_SCHEMAS = [
                     "account": {"type": "string", "description": "Account name/email/id from list_email_accounts"},
                 },
                 "required": ["uid"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_bg_jobs",
+            "description": "Inspect and control detached background `bash` jobs (started with a background marker like `#!bg`). action='list' shows this chat's jobs with id/status/age/command; action='output' returns a job's captured output so far (use for a still-running job, or to re-read a finished one); action='kill' terminates a runaway job's process tree instead of waiting out its max-runtime. output and kill need job_id from list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "output", "kill"], "description": "list | output | kill (default: list)"},
+                    "job_id": {"type": "string", "description": "Background job id (required for output/kill; from action='list')"},
+                },
+                "required": ["action"]
             }
         }
     },

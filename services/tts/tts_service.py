@@ -4,6 +4,7 @@ OpenAI-compatible API (OpenAI, Kokoro-FastAPI, ...), or the browser."""
 
 import hashlib
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -11,12 +12,24 @@ from typing import Optional, Dict, Any
 import httpx
 
 from src.constants import TTS_CACHE_DIR
+from src.upload_limits import read_byte_limit_env
 from services.tts.kokoro_local import (
     KOKORO_MODELS, PIP, VOICES, KokoroEngine, TTSError, cpu_has_vnni, cpu_threads,
     default_model, missing_packages, model_status, models_dir, resolve_model, resolve_voice,
 )
 
 logger = logging.getLogger(__name__)
+
+# Total on-disk cache cap, single-sourced here like the upload limits in
+# src/upload_limits.py. Applies to every provider that lands in cache_dir
+# (local Kokoro and the OpenAI-compatible API path alike, since both go
+# through _put_cache below), not just a hypothetical cloud-TTS cache.
+DEFAULT_TTS_CACHE_MAX_BYTES = 500 * 1024 * 1024  # 500 MB
+TTS_CACHE_MAX_BYTES_ENV = "ODYSSEUS_TTS_CACHE_MAX_BYTES"
+
+
+def get_tts_cache_max_bytes() -> int:
+    return read_byte_limit_env(TTS_CACHE_MAX_BYTES_ENV, DEFAULT_TTS_CACHE_MAX_BYTES)
 
 
 def _safe_speed(value, default: float = 1.0) -> float:
@@ -95,12 +108,69 @@ class TTSService:
         for ext in (".mp3", ".wav"):
             path = self.cache_dir / f"{key}{ext}"
             if path.exists():
-                return path.read_bytes()
+                data = path.read_bytes()
+                # Bump the access time (without touching mtime) so cache
+                # eviction below evicts by actual last-use, not just write
+                # order: a re-requested line stays warm longer.
+                try:
+                    st = path.stat()
+                    os.utime(path, (time.time(), st.st_mtime))
+                except OSError:
+                    pass
+                return data
         return None
 
     def _put_cache(self, key: str, data: bytes):
         ext = ".mp3" if (len(data) >= 3 and (data[:3] == b'ID3' or (data[0] == 0xff and (data[1] & 0xe0) == 0xe0))) else ".wav"
         (self.cache_dir / f"{key}{ext}").write_bytes(data)
+        self._enforce_cache_limit()
+
+    def _enforce_cache_limit(self):
+        """Evict the least-recently-accessed cache files once the cache
+        directory exceeds ODYSSEUS_TTS_CACHE_MAX_BYTES. Runs after every
+        write, for every provider (local Kokoro included, since it has no
+        cache of its own; synthesized audio always lands here via _put_cache)."""
+        try:
+            max_bytes = get_tts_cache_max_bytes()
+        except ValueError as e:
+            logger.warning(f"Skipping TTS cache eviction, bad {TTS_CACHE_MAX_BYTES_ENV}: {e}")
+            return
+
+        try:
+            files = []
+            total_size = 0
+            for f in self.cache_dir.iterdir():
+                try:
+                    if f.is_file() and f.suffix.lower() in (".mp3", ".wav"):
+                        files.append(f)
+                        total_size += f.stat().st_size
+                except OSError:
+                    continue  # deleted mid-scan
+
+            if total_size <= max_bytes:
+                return
+
+            logger.info(
+                f"TTS cache ({total_size} bytes) exceeded limit ({max_bytes} bytes); evicting oldest-accessed files."
+            )
+
+            # Oldest-accessed first (atime), so frequently replayed lines
+            # survive even if they were first synthesized long ago.
+            files.sort(key=lambda f: f.stat().st_atime)
+
+            # Trim down to 80% of the cap so we are not re-triggering this
+            # on every single synthesis once the cache is near the limit.
+            target_size = max_bytes * 0.8
+            while files and total_size > target_size:
+                f = files.pop(0)
+                try:
+                    size = f.stat().st_size
+                    f.unlink()
+                    total_size -= size
+                except OSError as e:
+                    logger.warning(f"Failed to evict TTS cache file {f}: {e}")
+        except Exception as e:
+            logger.warning(f"Error enforcing TTS cache limit: {e}", exc_info=True)
 
     def clear_cache(self):
         count = 0

@@ -5,6 +5,41 @@
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+// Weekday names indexed by JS Date.getDay() (0 = Sunday .. 6 = Saturday).
+export const DOW_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// Week-start-day preference: 0 = Sunday, 1 = Monday. Defaults to Monday to
+// match the calendar's historical (pre-setting) layout; calendar.js loads
+// the user's actual pref from /api/prefs/calendar_week_start on calendar
+// open and calls setWeekStartsOn() to apply it. Module-level so every grid
+// helper below (and calendar.js's own date-range helpers) reads one source
+// of truth without threading the setting through every call.
+let _weekStartsOn = 1;
+
+export function setWeekStartsOn(pref) {
+  _weekStartsOn = (pref === 0 || pref === 'sun') ? 0 : 1;
+}
+
+export function getWeekStartsOn() {
+  return _weekStartsOn;
+}
+
+// Days between the configured week start and `date` (0..6). Replaces the old
+// hardcoded "(date.getDay() + 6) % 7" (always Monday-start) throughout the
+// month/week grid builders.
+export function _dowOffset(date) {
+  return (date.getDay() - _weekStartsOn + 7) % 7;
+}
+
+// Weekday header labels (Mon..Sun or Sun..Sat) in the configured start-day
+// order, for the month-grid header row where there's no specific date per
+// column to read a name off of.
+export function weekdayLabels() {
+  const out = [];
+  for (let i = 0; i < 7; i++) out.push(DOW_NAMES[(_weekStartsOn + i) % 7]);
+  return out;
+}
+
 export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 

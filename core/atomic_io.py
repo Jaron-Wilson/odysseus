@@ -30,7 +30,17 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
         json.dump(data, f, indent=indent)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        # The target is untouched (replace never happened); don't leave the
+        # temp file behind too. A hard kill can't reach this except clause,
+        # so this only helps the recoverable case (disk full, permissions).
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def atomic_write_text(path: str, text: str) -> None:
@@ -40,4 +50,14 @@ def atomic_write_text(path: str, text: str) -> None:
         f.write(text)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        # The target is untouched (replace never happened); don't leave the
+        # temp file behind too. A hard kill can't reach this except clause,
+        # so this only helps the recoverable case (disk full, permissions).
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

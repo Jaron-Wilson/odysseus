@@ -159,7 +159,19 @@ class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
             )
 
 
+class _InteractiveActivityMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        from src.interactive_gate import should_track_interactive_request, track_interactive_request
+
+        path = request.url.path or ""
+        if not should_track_interactive_request(path, request.method):
+            return await call_next(request)
+        async with track_interactive_request(path, request.method):
+            return await call_next(request)
+
+
 app.add_middleware(_RequestTimeoutMiddleware)
+app.add_middleware(_InteractiveActivityMiddleware)
 
 # ========= AUTH =========
 from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
@@ -1063,6 +1075,14 @@ async def _startup_event():
             _startup_tasks.append(asyncio.create_task(mail_listener.run_forever()))
         except Exception as _e:
             logger.warning("Failed to start the mail listener: %s", _e)
+        # Periodic CalDAV/Google pull for every owner (src/caldav_background_sync.py).
+        # Interval via CALDAV_SYNC_INTERVAL_S (default 300s); dedups against a
+        # manual "Sync now" click or another pass via caldav_sync._sync_in_progress.
+        try:
+            from src.caldav_background_sync import run_forever as _caldav_sync_loop
+            _startup_tasks.append(asyncio.create_task(_caldav_sync_loop()))
+        except Exception as _e:
+            logger.warning("Failed to start the periodic CalDAV sync: %s", _e)
     # The free SIP line (src/telephony/sip_line.py): listens on the Tailscale
     # addresses only, and only while someone has it turned on.
     try:
@@ -1091,9 +1111,11 @@ async def _startup_event():
         except BaseException as e:
             logger.warning(f"Built-in MCP registration failed (non-critical): {type(e).__name__}: {e}")
         try:
-            await asyncio.wait_for(mcp_manager.connect_all_enabled(), timeout=20)
-        except asyncio.TimeoutError:
-            logger.warning("User MCP startup timed out (non-critical)")
+            # connect_all_enabled() already connects every server concurrently
+            # with its own per-server timeout, so one slow/dead server can no
+            # longer eat the whole budget (and block the others) under a
+            # single outer deadline here.
+            await mcp_manager.connect_all_enabled()
         except BaseException as e:
             logger.warning(f"MCP startup failed (non-critical): {type(e).__name__}: {e}")
 
