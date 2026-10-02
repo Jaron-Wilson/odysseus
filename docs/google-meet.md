@@ -110,6 +110,15 @@ import (below) is kept as a fallback for sites that still object. This needs
 on the server; set `ODYSSEUS_CLOUD_BROWSER_HEADFUL=0` to force the old
 headless Playwright Chromium path on a server that has neither.
 
+Typing your password still has to actually reach the page without tripping
+the same warning: Google blocks sign-in specifically on CDP
+`Input.dispatchKeyEvent`/`dispatchMouseEvent` traffic, even in a real,
+visible Chrome (confirmed 2026-10-02). So a take-over's clicks and typing are
+replayed as real X11 input (`xdotool` against the Xvfb display) instead of
+through Playwright, whenever the headful path is up; install `xdotool` on
+the server too, or take-over input silently falls back to the old CDP path
+(still blocked for sign-in specifically, though fine for everything else).
+
 **Audio without a sound card.** The server is a headless KVM VM: no sound
 card, no PulseAudio or PipeWire, no GPU. So nothing goes through audio
 devices. Before Meet's scripts run, src/meet/inject.js (added with

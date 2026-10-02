@@ -36,6 +36,71 @@ def test_a_click_on_the_picture_lands_on_the_page():
     assert v._xy({"fx": 2, "fy": -1}) == (1280.0, 0.0)        # clamped to the page
 
 
+def test_x11_display_for_input_respects_headful_flag_and_xvfb_state(monkeypatch):
+    monkeypatch.setattr(cloud_browser.shutil, "which", lambda name: "/usr/bin/xdotool")
+    monkeypatch.setattr(cloud_browser, "_xvfb_display", lambda: ":321")
+    monkeypatch.setattr(cloud_browser, "_xvfb_running", lambda d: d == ":321")
+    monkeypatch.setattr(cloud_browser, "headful_enabled", lambda: True)
+    assert cloud_browser.x11_display_for_input() == ":321"
+    monkeypatch.setattr(cloud_browser, "headful_enabled", lambda: False)
+    assert cloud_browser.x11_display_for_input() == ""           # headless mode: use CDP input
+    monkeypatch.setattr(cloud_browser, "headful_enabled", lambda: True)
+    monkeypatch.setattr(cloud_browser, "_xvfb_running", lambda d: False)
+    assert cloud_browser.x11_display_for_input() == ""           # Xvfb never came up: use CDP input
+    monkeypatch.setattr(cloud_browser, "_xvfb_running", lambda d: True)
+    monkeypatch.setattr(cloud_browser.shutil, "which", lambda name: None)
+    assert cloud_browser.x11_display_for_input() == ""           # no xdotool: use CDP input, not a silent no-op
+
+
+def test_act_replays_input_through_x11_not_cdp_when_headful_display_is_up(monkeypatch):
+    """Google blocks sign-in on CDP Input.* traffic even in a real Chrome
+    (2026-10-02); the take-over path must use real X11 input (xdotool)
+    instead whenever the headful display is actually up, not Playwright's
+    page.mouse/page.keyboard."""
+    calls = []
+
+    async def fake_xdotool(display, *args):
+        calls.append((display, args))
+        return True
+
+    monkeypatch.setattr(cloud_browser, "_xdotool", fake_xdotool)
+    monkeypatch.setattr(cloud_browser, "x11_display_for_input", lambda: ":321")
+
+    class _FakeMouse:
+        async def click(self, *a, **k): raise AssertionError("CDP mouse.click used instead of X11")
+        async def move(self, *a, **k): raise AssertionError("CDP mouse.move used instead of X11")
+
+    class _FakeKeyboard:
+        async def press(self, *a, **k): raise AssertionError("CDP keyboard.press used instead of X11")
+        async def insert_text(self, *a, **k): raise AssertionError("CDP keyboard.insert_text used instead of X11")
+
+    class _FakePage:
+        is_closed = lambda self: False
+        mouse = _FakeMouse()
+        keyboard = _FakeKeyboard()
+        url = "https://accounts.google.com/"
+
+    async def go():
+        v = cloud_browser.Viewer()
+        v._page = _FakePage()
+        v._size = (1280, 720)
+
+        async def _noop_connect():
+            return None
+        v._connect = _noop_connect
+        await v.act({"type": "click", "fx": 0.5, "fy": 0.5})
+        await v.act({"type": "key", "key": "Enter"})
+        await v.act({"type": "text", "text": "someone@example.com"})
+        return calls
+
+    recorded = asyncio.run(go())
+    kinds = [c[1][0] for c in recorded]
+    assert "mousemove" in kinds and "click" in kinds
+    assert ("key", "--clearmodifiers", "Return") in [c[1] for c in recorded]
+    assert ("type", "--clearmodifiers", "--", "someone@example.com") in [c[1] for c in recorded]
+    assert all(c[0] == ":321" for c in recorded)      # targeted the real Xvfb display
+
+
 def test_it_is_wired_and_admin_only():
     routes = open(os.path.join(ROOT, "routes", "cloud_browser_routes.py"), encoding="utf-8").read()
     assert routes.count("_user(request)") >= 4 and "require_admin(request)" in routes
