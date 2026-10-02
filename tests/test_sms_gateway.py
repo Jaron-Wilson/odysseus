@@ -432,6 +432,28 @@ def test_reply_falls_back_to_the_owners_web_push(env):
     assert env["pushed"][0]["body"] == "Nothing is running."
 
 
+def test_test_reply_reaches_every_configured_number_with_a_reply_url(env):
+    h = {"x-test-user": "alice"}
+    env["setup"]("alice", [ALICE_NUM, BOB_NUM], reply_url="http://sms:pw@100.64.0.9:8080/message")
+    r = env["client"].post("/api/sms/test", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert [x["to"] for x in body["results"]] == [ALICE_NUM, BOB_NUM]
+    assert [p["phoneNumbers"] for _, p in env["posted"]] == [[ALICE_NUM], [BOB_NUM]]
+
+
+def test_test_reply_pushes_only_once_for_multiple_numbers_without_a_reply_url(env):
+    h = {"x-test-user": "alice"}
+    env["setup"]("alice", [ALICE_NUM, BOB_NUM])
+    r = env["client"].post("/api/sms/test", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert [x["to"] for x in body["results"]] == [ALICE_NUM]
+    assert len(env["pushed"]) == 1
+
+
 def test_slow_say_answers_later_through_the_reply_channel(env, monkeypatch):
     import asyncio
     import src.llm_core
