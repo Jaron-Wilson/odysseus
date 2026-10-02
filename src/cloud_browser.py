@@ -361,6 +361,21 @@ class Viewer:
                     except Exception:
                         pass
                 return {"ok": True}
+            if kind == "close_tab":
+                pages = self._pages()
+                i = int(ev.get("index", -1))
+                target = pages[i] if 0 <= i < len(pages) else page
+                if target is None or target.is_closed():
+                    return {"ok": True}
+                if len(pages) <= 1:
+                    # Keep one blank tab, so there is still a screen to show.
+                    await self._switch(await self._new_page())
+                elif target is self._page:
+                    # Its neighbor, like closing a tab in a browser does.
+                    k = pages.index(target)
+                    await self._switch(pages[k + 1] if k + 1 < len(pages) else pages[k - 1])
+                await target.close()
+                return {"ok": True}
             if kind == "new_tab":
                 p = await self._new_page()
                 await self._switch(p)

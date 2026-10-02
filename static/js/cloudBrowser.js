@@ -200,6 +200,7 @@ export function open() {
         <button type="button" data-cb="reload" title="Reload">↻</button>
         <form class="cb-go"><input class="cb-url" type="text" placeholder="Type an address or a search" spellcheck="false" autocomplete="off"></form>
         <select class="cb-tabs" title="Tabs" hidden></select>
+        <button type="button" data-cb="close_tab" class="cb-close-tab" title="Close this tab" aria-label="Close this tab">×</button>
         <button type="button" data-cb="new_tab" title="New tab">+</button>
         <button type="button" class="cb-take">Take over</button>
       </div>

@@ -100,9 +100,50 @@ def test_it_starts_streams_and_takes_input(tmp_path, monkeypatch):
         assert frames >= 1 and status["running"]
         assert os.path.isdir(tmp_path / "cloud_browser" / "profile")   # logins are kept
     finally:
-        out = subprocess.run(["pgrep", "-f", f"remote-debugging-port={port}"], capture_output=True, text=True)
-        for pid in out.stdout.split():
-            try:
-                os.kill(int(pid), signal.SIGKILL)
-            except OSError:
-                pass
+        _kill(port)
+
+
+def _kill(port):
+    out = subprocess.run(["pgrep", "-f", f"remote-debugging-port={port}"], capture_output=True, text=True)
+    for pid in out.stdout.split():
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except OSError:
+            pass
+
+
+@pytest.mark.skipif(not cloud_browser.chromium_path(), reason="Playwright's Chromium is not installed")
+def test_tabs_close_and_the_last_one_leaves_a_blank_tab(tmp_path, monkeypatch):
+    port = _free_port()
+    monkeypatch.setattr(cloud_browser, "PORT", port)
+    monkeypatch.setattr(cloud_browser, "ENDPOINT", f"http://127.0.0.1:{port}")
+    import src.constants as const
+    monkeypatch.setattr(const, "DATA_DIR", str(tmp_path))
+
+    async def go():
+        v = cloud_browser.Viewer()
+        q = await v.subscribe()
+        await v.act({"type": "navigate", "url": "data:text/html,one"})
+        await v.act({"type": "new_tab", "url": "data:text/html,two"})
+        before = len(v.tabs())
+        await v.act({"type": "close_tab"})
+        await asyncio.sleep(0.3)
+        after = v.tabs()
+        for _ in range(len(after)):
+            await v.act({"type": "close_tab"})
+            await asyncio.sleep(0.3)
+        last = v.tabs()
+        v.unsubscribe(q)
+        await v._stop_cast()
+        await v._browser.close()
+        await v._pw.stop()
+        return before, after, last
+
+    try:
+        before, after, last = asyncio.run(go())
+        assert len(after) == before - 1
+        assert all("two" not in t["url"] for t in after)      # the active one went
+        assert any(t["active"] for t in after)                # and a neighbor took over
+        assert len(last) == 1 and last[0]["url"] == "about:blank" and last[0]["active"]
+    finally:
+        _kill(port)
