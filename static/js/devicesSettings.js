@@ -293,8 +293,15 @@ async function onSmsClick(ev) {
       smsSay('New secret made. The old forward URL no longer works.');
     } else if (t.id === 'sms-test') {
       const r = await api('POST', '/api/sms/test');
-      smsSay(r.ok ? `Test reply sent (${r.via === 'push' ? 'web push' : 'reply URL'}).`
-        : 'The test reply did not go through. Check the reply URL, or turn on notifications.', !r.ok);
+      const results = r.results || [];
+      if (results.length <= 1) {
+        const via = results[0] && results[0].via === 'push' ? 'web push' : 'reply URL';
+        smsSay(r.ok ? `Test reply sent (${via}).`
+          : 'The test reply did not go through. Check the reply URL, or turn on notifications.', !r.ok);
+      } else {
+        const lines = results.map((x) => `${x.ok ? 'sent to' : 'FAILED for'} ${x.to}`);
+        smsSay(`Test replies: ${lines.join(', ')}.`, !r.ok);
+      }
     } else if (t.id === 'sms-disable') {
       if (!confirm('Turn the SMS gateway off? Texts are ignored until you generate a new secret.')) return;
       renderSms(await api('DELETE', '/api/sms/secret'));

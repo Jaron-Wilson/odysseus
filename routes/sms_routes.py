@@ -865,10 +865,17 @@ def setup_sms_routes(session_manager) -> APIRouter:
     async def test_reply(request: Request):
         user = require_user(request) or None
         cfg = get_config(user)
-        to = (cfg.get("numbers") or [""])[0]
-        if not to:
+        numbers = cfg.get("numbers") or []
+        if not numbers:
             raise HTTPException(400, "Add your number first.")
-        via = await deliver(user, cfg, to, "Odysseus: the SMS gateway can reach you.")
-        return {"ok": via != "failed", "via": via}
+        # A reply URL sends a distinct outbound text per phone, so test each
+        # one; a web push just reaches the owner's devices regardless of
+        # "to", so testing more than one number would only duplicate it.
+        to_test = numbers if str(cfg.get("reply_url") or "").strip() else numbers[:1]
+        results = []
+        for to in to_test:
+            via = await deliver(user, cfg, to, "Odysseus: the SMS gateway can reach you.")
+            results.append({"to": to, "ok": via != "failed", "via": via})
+        return {"ok": all(r["ok"] for r in results), "results": results}
 
     return router
