@@ -139,6 +139,23 @@ def test_routes_add_list_link_remove(registry, monkeypatch):
     assert c.get("/api/devices").json()["devices"] == []
 
 
+def test_remove_subscription_drops_it_by_index(registry, monkeypatch):
+    # android-phone (index 0) is an old, gone-for-good phone; removing it
+    # must not disturb windows-desktop (index 1).
+    removed = []
+    monkeypatch.setattr(webpush, "remove_subscription", lambda endpoint: removed.append(endpoint) or True)
+    c = _client(monkeypatch)
+    r = c.delete("/api/devices/subscriptions/0")
+    assert r.status_code == 200, r.text
+    assert removed == ["https://fcm.example/phone"]
+
+
+def test_remove_subscription_rejects_out_of_range_index(registry, monkeypatch):
+    c = _client(monkeypatch)
+    assert c.delete("/api/devices/subscriptions/99").status_code == 404
+    assert c.delete("/api/devices/subscriptions/-1").status_code == 404
+
+
 def test_routes_refuse_bad_input(registry, monkeypatch):
     c = _client(monkeypatch)
     assert c.post("/api/devices", json={"name": "bad/name"}).status_code == 400
