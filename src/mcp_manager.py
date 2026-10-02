@@ -5,6 +5,7 @@ Manages connections to MCP (Model Context Protocol) tool servers.
 Each server exposes tools that are made available to the agent loop.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -326,7 +327,6 @@ class McpManager:
         """Begin a Streamable HTTP connect in the background. Returns within
         `wait` seconds: True if it connected (cached-token path), otherwise the
         flow is awaiting browser authorization and status becomes 'needs_auth'."""
-        import asyncio
         self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
         task = asyncio.create_task(self._connect_http(server_id, name, url))
         self._connect_tasks[server_id] = task
@@ -437,16 +437,35 @@ class McpManager:
             await self.disconnect_server(sid)
 
     async def connect_all_enabled(self):
-        """Connect to all enabled MCP servers from the database."""
+        """Connect to all enabled MCP servers from the database.
+
+        Each server connects independently and concurrently (asyncio.gather),
+        each bounded by its own timeout, so one slow or dead server cannot
+        delay, or block entirely, the others from coming up. Previously these
+        connected one at a time, so a single hung server stalled every server
+        configured after it.
+        """
         from src.database import McpServer, SessionLocal
 
         db = SessionLocal()
         try:
             servers = db.query(McpServer).filter(McpServer.is_enabled == True).all()
-            for srv in servers:
-                args = json.loads(srv.args) if srv.args else []
-                env = json.loads(srv.env) if srv.env else {}
-                await self.connect_server(
+        finally:
+            db.close()
+
+        await asyncio.gather(*(self._connect_with_timeout(srv) for srv in servers))
+
+    async def _connect_with_timeout(self, srv, timeout: float = 20.0):
+        """Connect to one configured server, bounded by `timeout`.
+
+        Used by connect_all_enabled() so independent servers run concurrently
+        under asyncio.gather without one slow/dead server holding up the rest.
+        """
+        args = json.loads(srv.args) if srv.args else []
+        env = json.loads(srv.env) if srv.env else {}
+        try:
+            await asyncio.wait_for(
+                self.connect_server(
                     server_id=srv.id,
                     name=srv.name,
                     transport=srv.transport,
@@ -454,9 +473,26 @@ class McpManager:
                     args=args,
                     env=env,
                     url=srv.url,
-                )
-        finally:
-            db.close()
+                ),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Timed out connecting to MCP server {srv.name} ({srv.id}) after {timeout:.0f}s")
+            self._connections[srv.id] = {
+                "status": "error",
+                "error": f"Timed out connecting after {timeout:.0f} seconds",
+                "name": srv.name,
+            }
+            self._generation += 1
+        except Exception as e:
+            # connect_server() already catches its own errors and returns
+            # False, so this should not normally fire. It is a safety net:
+            # asyncio.gather cancels its sibling tasks as soon as one of them
+            # raises, so letting an unexpected exception escape here would
+            # take down every other server's concurrent connect along with it.
+            logger.error(f"Unexpected error connecting to MCP server {srv.name} ({srv.id}): {e}")
+            self._connections[srv.id] = {"status": "error", "error": str(e), "name": srv.name}
+            self._generation += 1
 
     async def call_tool(self, qualified_name: str, arguments: Dict) -> Dict:
         """Call an MCP tool by its qualified name (mcp__{server_id}__{tool_name}).
@@ -619,7 +655,6 @@ class McpManager:
         after an update) still says "connected" but is dead, and kept the old
         tool list: seen live, the PC's new Bluetooth tools stayed unseen until
         someone pressed Reconnect by hand."""
-        import asyncio
         session = self._sessions.get(server_id)
         if session is None:
             return {"alive": False, "changed": False}
@@ -670,7 +705,7 @@ class McpManager:
     async def _reconnect_builtin(self, server_id: str) -> bool:
         """Tear down and reconnect a crashed builtin MCP server."""
         import sys
-        from src.builtin_mcp import _BUILTIN_SERVERS
+        from src.builtin_mcp import _BUILTIN_SERVERS, builtin_python_env
 
         if server_id not in _BUILTIN_SERVERS:
             return False
@@ -689,7 +724,7 @@ class McpManager:
                 transport="stdio",
                 command=sys.executable,
                 args=[script_path],
-                env={"PYTHONPATH": base_dir},
+                env=builtin_python_env(base_dir),
             )
             if ok:
                 logger.info(f"Reconnected builtin MCP server: {name}")
