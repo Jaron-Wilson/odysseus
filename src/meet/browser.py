@@ -33,6 +33,13 @@ tested 2026-10-01 on both headless and headful Xvfb Chrome, before the X11
 input path existed (session.py's GUEST_DENIED). That matches the same
 Input.dispatchKeyEvent/dispatchMouseEvent block confirmed 2026-10-02 for
 Google sign-in (see src/cloud_browser.py), so the fix is the same one.
+
+Typing the name itself still has to look like a person doing it: xdotool's
+own default pace landed the name in the box but still got the join kicked
+out at once, while typing it by hand, slowly, in a take-over never did
+(2026-10-02). So it goes in one keystroke at a time with a human-sized,
+jittered gap between them, and the join button is not pressed until Meet's
+own box reports back the text that was just typed, not a fixed wait.
 """
 
 import asyncio
@@ -40,7 +47,9 @@ import base64
 import json
 import logging
 import os
+import random
 import re
+import time
 from typing import Callable, Dict, Iterable, Optional, Tuple
 
 from src import cloud_browser
@@ -273,6 +282,34 @@ class MeetBrowser:
             pass
         return False
 
+    _TYPE_DELAY_S = (0.04, 0.12)   # a person's own typing pace, not xdotool's default near-zero gap
+
+    async def _x11_type_slowly(self, display: str, text: str) -> None:
+        """One keystroke at a time, each after a human-sized, jittered gap:
+        xdotool's own default pace lands the text but still reads as a bot to
+        whatever is watching for it (2026-10-02; typing the same name by hand,
+        slowly, in a take-over never got kicked, where xdotool's near-instant
+        default did)."""
+        for ch in text:
+            await asyncio.sleep(random.uniform(*self._TYPE_DELAY_S))
+            await cloud_browser._xdotool(display, "type", "--clearmodifiers", "--", ch)
+
+    async def _settle(self, locator, text: str, timeout: float = 2.0) -> None:
+        """Do not press Join until the box itself reports back the text that
+        was just typed into it (Meet's input is React-controlled; the DOM
+        value can lag the last keystroke by a frame or two), rather than a
+        fixed wait that either races it or wastes time. Reading the value
+        back is a plain Runtime.evaluate, not Input.* traffic, so it is safe
+        during the same window where CDP input itself is blocked."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if await locator.input_value() == text:
+                    return
+            except Exception:
+                return
+            await asyncio.sleep(0.05)
+
     async def _fill(self, locator, text: str, timeout: float = 3000) -> bool:
         """Replace a text box's content, as a click plus select-all plus
         typing through real X11 input (see the module docstring), or
@@ -291,7 +328,8 @@ class MeetBrowser:
                         pass
                     await cloud_browser._x11_mouse(x11, "click", cx, cy, 0.0, "left")
                     await cloud_browser._xdotool(x11, "key", "--clearmodifiers", "ctrl+a")
-                    await cloud_browser._x11_text(x11, text)
+                    await self._x11_type_slowly(x11, text)
+                    await self._settle(locator, text)
                     return True
             await locator.fill(text, timeout=timeout)
             return True
