@@ -2348,10 +2348,10 @@ export function addMessage(role, content, modelName, metadata) {
               evDiffHtml = `<details class="agent-tool-output agent-tool-diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre">${rows}</pre></details>`;
             }
             const node = document.createElement('div');
-            node.className = 'agent-thread-node' + (ok ? '' : ' error');
+            node.className = 'agent-thread-node' + (ok ? '' : (ev.needs_approval ? ' waiting' : ' error'));
             // Hide the raw JSON command when a diff says it better (same as live).
             const evCmdHtml = (ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
-            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(toolDisplayName(ev))}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
+            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : (ev.needs_approval ? '\u23F8' : '\u2717')}</span><span class="agent-thread-tool">${esc(toolDisplayName(ev))}</span><span class="agent-thread-status">${ok ? 'done' : (ev.needs_approval ? 'waiting for approval' : 'failed')}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
             // A Needs to know suggestion: offer Add / No thanks again here, so

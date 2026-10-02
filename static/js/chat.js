@@ -2872,8 +2872,8 @@ import './chatThreads.js';
                   // click again. Click handling is delegated (see init at
                   // bottom of file) so no per-node listener needed.
                   const _wasOpen = currentToolBubble.classList.contains('open');
-                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '');
-                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
+                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : (json.needs_approval ? ' waiting' : ' error')) + (_wasOpen ? ' open' : '');
+                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : (json.needs_approval ? '\u23F8' : '\u2717')}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : (json.needs_approval ? 'waiting for approval' : 'failed')}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
                   uiModule.scrollHistory();
