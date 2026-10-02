@@ -3,7 +3,13 @@
 A stub resolver is injected so the tests never touch real DNS.
 """
 
-from src.url_safety import check_outbound_url
+import asyncio
+import http.server
+import ipaddress
+import socketserver
+import threading
+
+from src.url_safety import check_outbound_url, resolve_and_check, PinnedAsyncTransport
 
 
 def _resolver(mapping):
@@ -68,3 +74,77 @@ def test_unresolvable_host_blocked():
     ok, reason = check_outbound_url("http://does-not-resolve.invalid", resolver=PUBLIC)
     assert ok is False
     assert "resolve" in reason
+
+
+# ---------------------------------------------------------------------------
+# resolve_and_check + PinnedAsyncTransport — DNS-rebinding defense
+#
+# check_outbound_url only reports (ok, reason); a plain httpx client that then
+# posts to the same URL re-resolves the host independently at connect time. A
+# low-TTL DNS record can pass the check as a public IP and then flip to an
+# internal address (169.254.169.254, 127.0.0.1, LAN) for the actual connect.
+# resolve_and_check returns the exact IPs that were validated so the caller can
+# pin the connect to them instead of letting the client re-resolve.
+# ---------------------------------------------------------------------------
+
+def test_resolve_and_check_returns_validated_ips_on_success():
+    ok, reason, ips = resolve_and_check("https://example.com/v1", resolver=PUBLIC)
+    assert ok is True, reason
+    assert ips == [ipaddress.ip_address("93.184.216.34")]
+
+
+def test_resolve_and_check_rejects_metadata_and_returns_no_ips():
+    ok, reason, ips = resolve_and_check("http://evil.example/", resolver=METADATA)
+    assert ok is False
+    assert "link-local" in reason
+    assert ips == []
+
+
+def test_resolve_and_check_dedupes_repeated_addresses():
+    dup_resolver = _resolver({"multi.example": [
+        "93.184.216.34", "93.184.216.34", "93.184.216.34",
+    ]})
+    ok, reason, ips = resolve_and_check("https://multi.example/", resolver=dup_resolver)
+    assert ok is True, reason
+    assert ips == [ipaddress.ip_address("93.184.216.34")]
+
+
+def _serve(handler):
+    srv = socketserver.TCPServer(("127.0.0.1", 0), handler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, port
+
+
+def test_pinned_transport_connects_to_pinned_ip_not_the_url_host():
+    """A request whose URL host would never resolve is still delivered to the
+    pinned loopback IP - proving the socket destination comes from the pin,
+    not from the HTTP client re-resolving the URL host (the DNS-rebinding
+    window this transport closes)."""
+    import httpx
+
+    hits = []
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            hits.append(self.path)
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv, port = _serve(_Handler)
+    try:
+        ip = ipaddress.ip_address("127.0.0.1")
+        transport = PinnedAsyncTransport([ip])
+
+        async def go():
+            async with httpx.AsyncClient(transport=transport, timeout=5) as client:
+                return await client.get(f"http://unresolvable.invalid:{port}/probe")
+
+        resp = asyncio.run(go())
+        assert resp.status_code == 204
+        assert hits == ["/probe"]
+    finally:
+        srv.shutdown()

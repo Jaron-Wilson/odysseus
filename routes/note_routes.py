@@ -442,15 +442,20 @@ async def dispatch_reminder(
                         # CalDAV, search, and embeddings. Blocks link-local / metadata
                         # addresses (169.254.x.x) by default; set
                         # REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS=true to also block
-                        # RFC-1918 ranges for locked-down deployments.
+                        # RFC-1918 ranges for locked-down deployments. Resolves once
+                        # and pins the connect to the validated IP(s), so a low-TTL
+                        # DNS record can't flip to an internal address between the
+                        # check and the actual connect (DNS rebinding).
                         import os as _os
-                        from src.url_safety import check_outbound_url as _chk
+                        from src.url_safety import resolve_and_check as _resolve_chk, PinnedAsyncTransport as _PinnedTransport
                         _block = _os.getenv("REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS", "false").lower() == "true"
-                        _ok, _reason = _chk(url, block_private=_block)
+                        _ok, _reason, _pinned_ips = _resolve_chk(url, block_private=_block)
                         if not _ok:
                             webhook_error = f"Webhook URL rejected: {_reason}"
                         else:
-                            async with httpx.AsyncClient(timeout=10.0) as client:
+                            async with httpx.AsyncClient(
+                                timeout=10.0, transport=_PinnedTransport(_pinned_ips)
+                            ) as client:
                                 resp = await client.post(url, content=rendered.encode(), headers=hdrs)
                                 webhook_sent = resp.is_success
                                 if not webhook_sent:
@@ -478,11 +483,27 @@ async def dispatch_reminder(
                 api_key = intg.get("api_key", "")
                 if api_key:
                     hdrs["Authorization"] = f"Bearer {api_key}"
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(f"{base}/{topic}", content=ntfy_body, headers=hdrs)
-                    ntfy_sent = resp.is_success
-                    if not ntfy_sent:
-                        ntfy_error = f"ntfy returned HTTP {resp.status_code}"
+                # SSRF guard — same check (and env knob) as the webhook branch
+                # above: link-local / metadata addresses are always rejected;
+                # REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS=true also blocks RFC-1918
+                # so a ntfy base_url can't be pointed at internal services.
+                # Resolves once and pins the connect to the validated IP(s) to
+                # defeat DNS rebinding between the check and the connect.
+                import os as _os
+                from src.url_safety import resolve_and_check as _resolve_chk, PinnedAsyncTransport as _PinnedTransport
+                _ntfy_url = f"{base}/{topic}"
+                _block = _os.getenv("REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS", "false").lower() == "true"
+                _ok, _reason, _pinned_ips = _resolve_chk(_ntfy_url, block_private=_block)
+                if not _ok:
+                    ntfy_error = f"ntfy URL rejected: {_reason}"
+                else:
+                    async with httpx.AsyncClient(
+                        timeout=10.0, transport=_PinnedTransport(_pinned_ips)
+                    ) as client:
+                        resp = await client.post(_ntfy_url, content=ntfy_body, headers=hdrs)
+                        ntfy_sent = resp.is_success
+                        if not ntfy_sent:
+                            ntfy_error = f"ntfy returned HTTP {resp.status_code}"
             else:
                 ntfy_error = "No enabled ntfy integration"
         except Exception as e:
