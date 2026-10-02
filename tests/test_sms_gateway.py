@@ -286,6 +286,32 @@ def test_chat_n_picks_a_listed_chat_as_the_conversation(env):
     assert "no chat 7" in env["text"](secret, ALICE_NUM, "chat 7").json()["reply"]
 
 
+def test_call_texts_back_a_link_that_opens_the_call_and_never_reaches_the_model(env):
+    # A texted "/call" used to go to the model, which said "call started"
+    # and nothing rang. Nothing can ring from here: the answer is a link.
+    secret = env["setup"]("alice", ALICE_NUM)
+
+    def text(body, host=None):
+        h = {"host": host} if host else {}
+        r = env["client"].post(f"/api/sms/inbound/{secret}", json={"from": ALICE_NUM, "text": body}, headers=h)
+        env["client"].portal.call(sms_routes.wait_pending)
+        return r.json()["reply"]
+
+    assert text("call").endswith("http://testserver/?call=new")
+    env["text"](secret, ALICE_NUM, "list")
+    env["text"](secret, ALICE_NUM, "chat 2")
+    reply = text("/call", host="jaron-dev-server.tail1234.ts.net")
+    assert reply.startswith("Tap to start a voice call with Groceries (llama):")
+    assert reply.endswith("https://jaron-dev-server.tail1234.ts.net/?call=a2#a2")
+    assert text("Call me").endswith("/?call=a2#a2")
+    # A phone cannot open loopback, so no link to it.
+    assert "type /call" in text("call", host="127.0.0.1:7000")
+    assert env["llm"] == []
+    # "call" inside a sentence is a turn, like "stop".
+    assert text("call mom about dinner?") == "answer from llama"
+    assert "call - a link" in sms_routes.HELP
+
+
 def test_models_lists_the_owners_models_and_model_switches_the_chat(env):
     secret = env["setup"]("alice", ALICE_NUM)
     env["text"](secret, ALICE_NUM, "new")
