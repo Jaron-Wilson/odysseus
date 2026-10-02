@@ -71,6 +71,21 @@ def setup_cloud_browser_routes() -> APIRouter:
             # A navigation that times out or a closed tab: say so, keep going.
             return {"ok": False, "error": str(e).splitlines()[0][:300]}
 
+    @router.post("/cookies")
+    async def import_cookies(request: Request):
+        """A login exported from an ordinary browser (cookies.txt or JSON),
+        for sites that will not sign in a driven browser."""
+        _user(request)
+        from src.cloud_browser import viewer
+        body = await request.json()
+        text = str(body.get("text") or "")
+        if len(text) > 2_000_000:
+            raise HTTPException(413, "That file is too big for a cookie export.")
+        try:
+            return await viewer.import_cookies(text)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
     @router.post("/control")
     async def control(request: Request):
         user = _user(request)

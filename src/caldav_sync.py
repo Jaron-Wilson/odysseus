@@ -205,6 +205,22 @@ def _google_caldav_events_url(url: str) -> str | None:
     return urlunparse(parts._replace(path=new_path))
 
 
+def _is_google_calendar_url(url: str) -> bool:
+    """A Google CalDAV URL for one calendar (``…/<calendar id>/events``).
+
+    Google serves each calendar on its own (a shared family calendar is
+    ``…/caldav/v2/<id>@group.calendar.google.com/events``), and principal
+    discovery from any of them finds only the account's own calendar. So a
+    URL naming a calendar is used as that calendar, without discovery.
+    """
+    parts = urlparse(url)
+    host = (parts.hostname or "").lower()
+    path = parts.path.rstrip("/")
+    is_google = host.endswith("googleusercontent.com") or (
+        host in ("www.google.com", "google.com") and "/calendar/dav/" in path)
+    return is_google and path.endswith("/events")
+
+
 def _open_url_as_calendar(client, url: str):
     """Open ``url`` as a single calendar collection.
 
@@ -273,8 +289,11 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
     # back to treating the URL as a single calendar.
     calendars = []
     try:
-        principal = client.principal()
-        calendars = principal.calendars()
+        if _is_google_calendar_url(url):
+            calendars = [client.calendar(url=url)]
+        else:
+            principal = client.principal()
+            calendars = principal.calendars()
     except (AuthorizationError, NotFoundError) as e:
         result["errors"].append(f"Discovery failed: {e}")
         return result
