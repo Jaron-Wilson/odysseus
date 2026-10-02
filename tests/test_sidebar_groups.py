@@ -41,7 +41,7 @@ _TAXONOMY = json.loads(re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-p
 _TOOL_IDS = ["tool-memory-btn", "tool-calendar-btn", "tool-compare-btn", "tool-cookbook-btn", "tool-research-btn",
              "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-tasks-btn", "tool-bg-btn",
              "tool-devops-btn", "tool-code-btn", "tool-browser-btn", "tool-devices-btn", "tool-terminal-btn",
-             "tool-odysseus-dev-btn", "tool-theme-btn"]
+             "tool-odysseus-dev-btn", "tool-theme-btn", "tool-whats-new-btn"]
 
 
 def _sidebar_markup():
@@ -223,7 +223,7 @@ def test_the_groups_render_in_every_design(make_page, design):
         ["tool-calendar-btn", "tool-tasks-btn", "tool-notes-btn", "tool-memory-btn"],
         ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn"],
         ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-devops-btn", "tool-odysseus-dev-btn"],
-        ["tool-devices-btn", "tool-cookbook-btn", "tool-theme-btn"]]
+        ["tool-devices-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-whats-new-btn"]]
     assert all(not g["folded"] and g["expanded"] == "true" and g["shown"] == g["items"] for g in gs)
     # Headers are on screen, in order, each above its own rows.
     tops = pg.evaluate("""() => [...document.querySelectorAll('.tool-group')].map(g => {
@@ -242,7 +242,7 @@ def test_a_group_folds_says_whats_inside_and_stays_folded(make_page, browser):
     pg.click('.tool-group[data-tool-group="system"] .tool-group-head')
     g = {x["id"]: x for x in _groups(pg)}["system"]
     assert g["folded"] and g["expanded"] == "false" and g["shown"] == []
-    assert g["summary"] == "Devices, Cookbook, Theme"
+    assert g["summary"] == "Devices, Cookbook, Theme, What's new"
     assert pg.is_visible('.tool-group[data-tool-group="system"] .tool-group-summary')
     assert json.loads(pg.evaluate("localStorage.getItem('odysseus-tool-groups')")) == {"system": "closed"}
     pg.reload()
@@ -278,7 +278,7 @@ def test_non_admins_lose_the_admin_tools_and_empty_groups_hide(make_page):
     assert g["build"]["items"] == ["tool-browser-btn", "tool-bg-btn"]
     assert g["build"]["folded"], "Build starts folded for someone who isn't an admin"
     assert g["build"]["summary"] == "Browser, Background"
-    assert g["system"]["items"] == ["tool-cookbook-btn", "tool-theme-btn"]
+    assert g["system"]["items"] == ["tool-cookbook-btn", "tool-theme-btn", "tool-whats-new-btn"]
     # A tool that removes its own button (Terminal does) and a group left empty.
     pg.evaluate("""() => { document.getElementById('tool-browser-btn').style.display = 'none';
                            document.getElementById('tool-bg-btn').remove(); }""")
@@ -315,7 +315,7 @@ def test_the_new_tab_menu_lists_the_tools_in_the_same_groups(make_page):
         ["Organize", ["Calendar", "Tasks", "Notes", "Brain"]],
         ["Create & research", ["Library", "Gallery", "Deep Research", "Compare"]],
         ["Build", ["Code", "Terminal", "Browser", "Background", "DevOps", "Odysseus dev"]],
-        ["System", ["Devices", "Cookbook", "Theme"]]]
+        ["System", ["Devices", "Cookbook", "Theme", "What's new"]]]
     pg.click(".ws-menu-group button:has-text('Devices')")
     pg.wait_for_function("() => [...document.querySelectorAll('.ws-tab')].some(t => t.dataset.tab === 'tool:devices')")
     assert "tool-devices-btn" in pg.evaluate("calls")

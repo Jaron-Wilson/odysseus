@@ -90,6 +90,8 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "edit_image", "trigger_research", "manage_research",
              "claude_code", "notify_device", "manage_devices", "call_me",
              "chat_memory",
+             # The merged PRs (src/whats_new.py), read-only.
+             "whats_new",
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.

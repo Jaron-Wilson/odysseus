@@ -1,0 +1,104 @@
+<!doctype html>
+<!-- A stand-in for a Google Meet page, for tests/test_google_meet.py: the
+     pre-join screen (a name box and "Ask to join"), a lobby, the call (a
+     "Leave call" button, a chat), and the end screen. The "room" is the far
+     end of a WebRTC loopback in this page: it talks (roomSay) with a tone
+     the bot hears through its hooks, and it measures what the bot says
+     (botPeak) through the bot's synthetic microphone. -->
+<html><head><meta charset="utf-8"><title>Meet - fake</title></head>
+<body>
+<div id="prejoin">
+  <input type="text" aria-label="Your name" placeholder="Your name" id="name">
+  <button id="ask">Ask to join</button>
+</div>
+<div id="status"></div>
+<div id="call" hidden>
+  <button aria-label="Chat with everyone" id="chatbtn">Chat</button>
+  <button aria-label="Leave call" id="leave">Leave</button>
+  <textarea aria-label="Send a message" id="msg" hidden></textarea>
+</div>
+<script>
+window.chatLog = [];
+window.botPeak = 0;
+window.joinedName = '';
+const roomCtx = new AudioContext({ sampleRate: 48000 });
+const roomDest = roomCtx.createMediaStreamDestination();
+const osc = roomCtx.createOscillator();
+const lfo = roomCtx.createOscillator();
+const lfoGain = roomCtx.createGain();
+const wobble = roomCtx.createGain();
+const voice = roomCtx.createGain();
+osc.frequency.value = 300;
+lfo.frequency.value = 4;
+lfoGain.gain.value = 0.3;
+wobble.gain.value = 0.7;
+voice.gain.value = 0;
+lfo.connect(lfoGain);
+lfoGain.connect(wobble.gain);
+osc.connect(wobble);
+wobble.connect(voice);
+voice.connect(roomDest);
+osc.start();
+lfo.start();
+let talking = 0;
+window.roomSay = (seconds) => {
+  roomCtx.resume();
+  talking += 1;
+  voice.gain.value = 0.3;
+  setTimeout(() => { talking -= 1; if (!talking) voice.gain.value = 0; }, seconds * 1000);
+};
+
+async function enterCall() {
+  document.getElementById('status').textContent = '';
+  document.getElementById('call').hidden = false;
+  const mine = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+  const far = new RTCPeerConnection({ odysseusFarEnd: true });
+  const me = new RTCPeerConnection();
+  far.onicecandidate = (e) => e.candidate && me.addIceCandidate(e.candidate);
+  me.onicecandidate = (e) => e.candidate && far.addIceCandidate(e.candidate);
+  me.addTrack(mine.getAudioTracks()[0], mine);
+  far.addTrack(roomDest.stream.getAudioTracks()[0], roomDest.stream);
+  far.ontrack = (e) => {
+    if (e.track.kind !== 'audio') return;
+    const ms = new MediaStream([e.track]);
+    const a = new Audio(); a.muted = true; a.srcObject = ms; a.play().catch(() => {});
+    const an = roomCtx.createAnalyser();
+    an.fftSize = 2048;
+    roomCtx.createMediaStreamSource(ms).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    setInterval(() => {
+      an.getFloatTimeDomainData(buf);
+      let s = 0; for (const v of buf) s += v * v;
+      window.botPeak = Math.max(window.botPeak, Math.sqrt(s / buf.length));
+    }, 50);
+  };
+  const offer = await me.createOffer();
+  await me.setLocalDescription(offer);
+  await far.setRemoteDescription(offer);
+  const answer = await far.createAnswer();
+  await far.setLocalDescription(answer);
+  await me.setRemoteDescription(answer);
+}
+
+document.getElementById('ask').onclick = () => {
+  roomCtx.resume();
+  window.joinedName = document.getElementById('name').value;
+  document.getElementById('prejoin').remove();
+  document.getElementById('status').textContent = 'Asking to be let in...';
+  setTimeout(enterCall, 600);
+};
+document.getElementById('chatbtn').onclick = () => { document.getElementById('msg').hidden = false; };
+document.getElementById('msg').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { window.chatLog.push(e.target.value); e.target.value = ''; e.preventDefault(); }
+});
+document.getElementById('leave').onclick = () => {
+  document.getElementById('call').remove();
+  document.getElementById('status').textContent = 'You left the meeting';
+};
+window.endMeeting = () => {
+  const c = document.getElementById('call');
+  if (c) c.remove();
+  document.getElementById('status').textContent = 'The call has ended';
+};
+</script>
+</body></html>

@@ -744,6 +744,14 @@ async def execute_tool_block(
         except Exception as e:
             logger.warning("manage_devices failed: %s", e, exc_info=True)
             result = {"error": f"manage_devices: {type(e).__name__}: {e}"[:400], "exit_code": 1}
+    elif tool == "whats_new":
+        desc = f"whats_new: {content.split(chr(10))[0][:60]}"
+        from src import whats_new
+        try:
+            result = await asyncio.to_thread(whats_new.run_tool, content)
+        except Exception as e:
+            logger.warning("whats_new failed: %s", e, exc_info=True)
+            result = {"error": f"whats_new: {type(e).__name__}: {e}"[:400], "exit_code": 1}
     elif tool == "chat_memory":
         desc = "chat_memory"
         from src import chat_memory

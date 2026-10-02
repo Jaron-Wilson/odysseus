@@ -85,15 +85,17 @@ def _event(ev: str) -> Optional[Dict]:
     return None
 
 
-async def reply(sid: str, text: str) -> AsyncIterator[Tuple[str, str]]:
+async def reply(sid: str, text: str, *, source: str = SOURCE, note: str = "",
+                voice_call: bool = True) -> AsyncIterator[Tuple[str, str]]:
     """Send `text` into chat `sid` and yield the reply as it streams:
     ("delta", text) pieces of the answer (reasoning left out), then
     ("error", message) if the run failed. A reply still running from the
     turn before is stopped first (it keeps what it said), the way a new
-    message in the web app cuts the old one off."""
+    message in the web app cuts the old one off. A Google Meet passes its
+    own `source` and a `note` on who else is in the meeting."""
     from src import agent_runs, chat_queue
     await _wait_idle(sid)
-    if not await chat_queue.run_headless(sid, text, source=SOURCE, voice_call=True):
+    if not await chat_queue.run_headless(sid, text, source=source, voice_call=voice_call, note=note):
         yield ("error", "The chat could not take the message.")
         return
     async for ev in agent_runs.subscribe(sid):
@@ -115,13 +117,15 @@ def stop(sid: str) -> None:
         pass
 
 
-def note(sid: str, text: str) -> None:
+def note(sid: str, text: str, source: str = SOURCE, **meta) -> None:
     """A line in the call's chat that is not a turn (a call that ended, a
-    message from an unknown caller), saved as an assistant note."""
+    message from an unknown caller), saved as an assistant note. Extra
+    `meta` goes on the message (a meeting's transcript lines carry
+    excluded=True: shown in the chat, not read by the model)."""
     try:
         from core.models import ChatMessage
         sm = _session_manager()
-        sm.add_message(sid, ChatMessage("assistant", text, metadata={"source": SOURCE, "note": True}))
+        sm.add_message(sid, ChatMessage("assistant", text, metadata={"source": source, "note": True, **meta}))
         sm.save_sessions()
     except Exception as e:
         logger.warning("[phone] could not save a note in %s: %s", sid, type(e).__name__)

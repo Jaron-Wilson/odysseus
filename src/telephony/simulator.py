@@ -39,6 +39,7 @@ class Twiml:
     say: List[str] = field(default_factory=list)
     gather_action: str = ""
     redirect: str = ""
+    digits: str = ""
     raw: str = ""
 
 
@@ -61,6 +62,8 @@ def parse_twiml(xml: str) -> Twiml:
             out.gather_action = el.get("action", "")
         elif el.tag == "Redirect":
             out.redirect = (el.text or "").strip()
+        elif el.tag == "Play" and el.get("digits"):
+            out.digits += el.get("digits", "")
     return out
 
 
@@ -119,6 +122,14 @@ class FakeTwilio:
                   "CallStatus": "ringing", "ApiVersion": "2010-04-01"}
         r = self.webhook(client, path, params, **kw)
         return call_sid, r
+
+    def answered(self, client, url: str, to: str, call_sid: str = "", **kw):
+        """An outbound call the agent placed (the REST call's Url) was
+        answered by `to`: Twilio asks that URL what to do."""
+        call_sid = call_sid or "CA" + secrets.token_hex(16)
+        params = {"CallSid": call_sid, "From": self.agent_number, "To": to, "Direction": "outbound-api",
+                  "CallStatus": "in-progress", "ApiVersion": "2010-04-01"}
+        return call_sid, self.webhook(client, url, params, **kw)
 
 
 @dataclass

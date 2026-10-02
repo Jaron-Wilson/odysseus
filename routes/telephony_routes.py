@@ -12,6 +12,8 @@ proves itself, so these are exempt from login in app.py):
     POST /api/telephony/twilio/pin         the digits the caller entered
     POST /api/telephony/twilio/done        after an unknown caller's message
     POST /api/telephony/twilio/recording   that message is ready
+    POST /api/telephony/twilio/meet        the agent's call into a Google Meet was
+                                           answered (src/meet/dialin.py): key in the PIN
     WS   /api/telephony/twilio/stream      Media Streams: the call's audio both ways
     WS   /api/telephony/twilio/relay       ConversationRelay: the call's words both ways
     GET  /api/telephony/twilio/health      for the public URL check
@@ -59,6 +61,9 @@ _MESSAGES: Dict[str, Dict] = {}
 ACTIVE: Dict[str, Dict] = {}
 # What the agent opens with on a call it started (the call_me tool), by call SID.
 _OUTBOUND_GREETINGS: Dict[str, Tuple[str, float]] = {}
+# Calls into a Google Meet placed and not answered yet: key -> {meet, owner, at}.
+_MEET_DIALS: Dict[str, Dict] = {}
+MEET_DIAL_TTL = 300.0
 _TASKS: set = set()
 
 
@@ -114,6 +119,16 @@ def _sweep() -> None:
         _MESSAGES.pop(k, None)
     for k in [k for k, v in _OUTBOUND_GREETINGS.items() if now - v[1] > 600]:
         _OUTBOUND_GREETINGS.pop(k, None)
+    for k in [k for k, v in _MEET_DIALS.items() if now - v["at"] > MEET_DIAL_TTL]:
+        _MEET_DIALS.pop(k, None)
+
+
+def register_meet_dial(meet_id: str, owner: Optional[str]) -> str:
+    """A one-time key for the webhook of an outbound call into a meeting."""
+    _sweep()
+    key = secrets.token_urlsafe(18)
+    _MEET_DIALS[key] = {"meet": meet_id, "owner": owner, "at": time.time()}
+    return key
 
 
 async def _verified(request: Request) -> Optional[Tuple[Optional[str], Dict, Dict[str, str]]]:
@@ -349,6 +364,27 @@ def setup_telephony_routes() -> APIRouter:
                              p.get("RecordingSid", ""), p.get("RecordingDuration", "?"), entry.get("admin", False)))
         return {"ok": True}
 
+    @router.post(PREFIX + "meet")
+    async def meet_dial(request: Request):
+        """The agent's call into a Google Meet's dial-in number was answered."""
+        found = await _verified(request)
+        if not found:
+            return _not_found()
+        owner, cfg, p = found
+        _sweep()
+        entry = _MEET_DIALS.pop(request.query_params.get("m") or "", None)
+        from src.meet import dialin, session as meet_session
+        meeting = meet_session.get(entry["meet"]) if entry else None
+        if (not entry or entry["owner"] != owner or not meeting
+                or not p.get("Direction", "").startswith("outbound")):
+            return _xml(twilio.say_and_hang_up("Goodbye."))
+        token = secrets.token_urlsafe(24)
+        _PENDING[token] = {"owner": owner, "sid": meeting.sid, "call_sid": p.get("CallSid", ""),
+                           "caller": dialin.describe(meeting.dial_in), "engine": "odysseus",
+                           "meet": meeting.id, "at": time.time()}
+        logger.info("[phone] call %s into a Google Meet answered", p.get("CallSid", "")[:12])
+        return _xml(dialin.twiml(meeting, _ws_url(cfg, "stream"), token))
+
     @router.get(PREFIX + "health")
     async def health():
         return {"ok": True, "service": "odysseus-telephony"}
@@ -382,11 +418,20 @@ def setup_telephony_routes() -> APIRouter:
                         return
                     cfg = _owner_cfg(entry["owner"])
                     transport = twilio.MediaStreamTransport(ws.send_text, str(msg.get("streamSid") or start.get("streamSid") or ""), close)
-                    greeting = entry.get("greeting") or str(cfg.get("greeting") or "").strip() or config.DEFAULT_GREETING
-                    call = call_mod.PhoneCall(transport, entry["sid"], greeting=greeting)
                     ACTIVE[call_sid] = {"owner": entry["owner"], "sid": entry["sid"], "caller": entry["caller"],
-                                        "since": time.time(), "engine": "odysseus"}
-                    await call.start()
+                                        "since": time.time(), "engine": "meet" if entry.get("meet") else "odysseus"}
+                    if entry.get("meet"):
+                        # A Google Meet's dial-in line: the meeting runs the call.
+                        from src.meet import session as meet_session
+                        meeting = meet_session.get(entry["meet"])
+                        if not meeting:
+                            await close()
+                            return
+                        call = await meeting.attach_phone(transport)
+                    else:
+                        greeting = entry.get("greeting") or str(cfg.get("greeting") or "").strip() or config.DEFAULT_GREETING
+                        call = call_mod.PhoneCall(transport, entry["sid"], greeting=greeting)
+                        await call.start()
                 elif call is None:
                     continue            # "connected" comes before "start"
                 elif ev == "media":
@@ -410,6 +455,11 @@ def setup_telephony_routes() -> APIRouter:
             if call is not None:
                 await call.end("stream closed")
                 logger.info("[phone] call %s ended after %d turn(s)", call_sid[:12], call.turns)
+            if entry and entry.get("meet"):
+                from src.meet import session as meet_session
+                meeting = meet_session.get(entry["meet"])
+                if meeting:
+                    meeting.phone_closed()
             await close()
 
     # ── ConversationRelay: Twilio's speech engines, our agent ──

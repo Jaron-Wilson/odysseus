@@ -518,6 +518,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <page>` (any page or tool: {pages}), `open_panel settings <what>` (opens Settings scrolled to that setting, e.g. `open_panel settings speech to text engine`), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open library\" / \"show gallery\" / \"open inbox\" / \"take me to devices\" / \"open the terminal\" all map to `open_panel <page>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
     "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
+    "whats_new": "- ```whats_new```: The pull requests merged into Odysseus (this app), newest first, read-only. {\"action\": \"list\", \"query\": \"voice call\"} finds the PRs about something (omit query for the latest); {\"action\": \"get\", \"pr\": 127} gives one PR's description, files and whether the running server has it. Use for 'what changed with X', 'what's new', 'what was in PR #N', 'is that fix live yet'.",
     "chat_memory": "- ```chat_memory``` — This chat's \"Needs to know\": a short list of facts kept for this chat, which you see on every turn (like memory, but per chat). {\"action\": \"suggest\", \"text\": \"Waiting on Will to merge PR #3\"} proposes an item: the user is asked to add it or not, and it is kept only if they accept, so do not ask again in your reply. Suggest when something worth keeping comes up (the task, a decision, who or what you are waiting on, a branch or folder that matters), one fact per item. {\"action\": \"add\", \"text\": \"...\"} only when the user asked you to put something in Needs to know. {\"action\": \"remove\", \"id\": \"...\"} when an item is done or wrong. {\"action\": \"list\"}.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
@@ -957,6 +958,12 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("web")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
+    # What changed in Odysseus itself: the merged PRs (whats_new). "what
+    # changed with the voice call?" otherwise reads as a plain chat message.
+    if has(r"\b(what'?s new|what is new|what (?:has )?changed|changelog|change log|release notes|merged|"
+           r"pull requests?|prs?|pr\s*#?\d+|deployed|is (?:it|that|this) live|new features?|"
+           r"(?:latest|recent) changes)\b"):
+        domains.add("changes")
 
     low_signal = not continuation and not domains
     if low_signal:
@@ -2290,6 +2297,8 @@ async def stream_agent_loop(
             _relevant_tools.update({"web_search", "web_fetch"})
         if "ui" in (_intent.get("domains") or set()):
             _relevant_tools.add("ui_control")
+        if "changes" in (_intent.get("domains") or set()):
+            _relevant_tools.add("whats_new")
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran

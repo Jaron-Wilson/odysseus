@@ -219,7 +219,8 @@ if AUTH_ENABLED:
         # Twilio's phone call webhooks. routes/telephony_routes.py checks the
         # X-Twilio-Signature of each against the called user's auth token
         # (and the WebSockets a one-time token) and 404s otherwise.
-        _re.compile(r"^/api/telephony/twilio/(voice|pin|done|recording|health)/?$"),
+        # /meet answers the agent's own call into a Google Meet (src/meet/dialin.py).
+        _re.compile(r"^/api/telephony/twilio/(voice|pin|done|recording|health|meet)/?$"),
         # Linphone fetching its account file from the SIP line's setup QR
         # code. The one-time token in the path is the credential;
         # routes/sip_routes.py 404s anything else.
@@ -660,6 +661,8 @@ from routes.telephony_routes import setup_telephony_routes
 app.include_router(setup_telephony_routes())
 from routes.sip_routes import setup_sip_routes
 app.include_router(setup_sip_routes())
+from routes.meet_routes import setup_meet_routes
+app.include_router(setup_meet_routes())
 from routes.special_chat_routes import setup_special_chat_routes
 app.include_router(setup_special_chat_routes(session_manager))
 from routes.mail_listener_routes import setup_mail_listener_routes
@@ -687,6 +690,9 @@ from routes.deploy_routes import setup_deploy_routes
 app.include_router(setup_deploy_routes())
 from routes.devops_routes import setup_devops_routes
 app.include_router(setup_devops_routes())
+# What's new: the merged PRs, and chats about them (routes/whats_new_routes.py).
+from routes.whats_new_routes import setup_whats_new_routes
+app.include_router(setup_whats_new_routes(session_manager))
 # The integrated IDE: /ide/ proxies code-server, /api/ide/* backs the Code panel.
 from routes.ide_routes import setup_ide_routes
 app.include_router(setup_ide_routes())
@@ -1285,6 +1291,12 @@ async def _startup_event():
     # removes the feature.
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
+    # What's new: refresh the merged-PR list from git and GitHub now and then.
+    try:
+        from src import whats_new
+        _startup_tasks.append(asyncio.create_task(whats_new.refresh_forever()))
+    except Exception as _e:
+        logger.warning("Could not start the What's new refresh: %s", _e)
 
     logger.info("Application startup complete")
 

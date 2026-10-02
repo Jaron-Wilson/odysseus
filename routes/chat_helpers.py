@@ -642,6 +642,19 @@ async def build_chat_context(
     messages, context_length, was_compacted = await maybe_compact(
         sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
     )
+    # A chat started from What's new ("Ask about this"): the PRs it is about,
+    # every turn, after the system preface. Added after compaction so it is
+    # never summarized away, and protected so trimming keeps it.
+    try:
+        from src import whats_new as _wn
+        _pr_ctx = _wn.chat_context(session_id)
+        if _pr_ctx:
+            _pr_msg = untrusted_context_message("odysseus pull requests", _pr_ctx)
+            _pr_msg["_protected"] = True
+            _at = next((i for i, m in enumerate(messages) if m.get("role") != "system"), len(messages))
+            messages.insert(_at, _pr_msg)
+    except Exception:
+        logger.debug("What's new context skipped", exc_info=True)
     messages = trim_for_context(messages, context_length)
 
     return ChatContext(

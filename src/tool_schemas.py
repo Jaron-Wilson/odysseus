@@ -1064,6 +1064,27 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "whats_new",
+            "description": (
+                "The pull requests merged into Odysseus (this app), newest first. 'list' shows them "
+                "(pass query to find the ones about something, e.g. 'voice call'); 'get' gives one "
+                "PR's description, files changed and whether the running server has it yet. Read-only."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "get"], "description": "'list' (default) or 'get' one PR."},
+                    "query": {"type": "string", "description": "For list: words to match in titles, descriptions and file names."},
+                    "pr": {"type": "integer", "description": "For get: the PR number."},
+                    "limit": {"type": "integer", "description": "For list: how many (default 15, at most 50)."},
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "chat_memory",
             "description": (
                 "This chat's 'Needs to know': a short list of facts kept for this chat and shown to "
