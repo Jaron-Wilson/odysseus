@@ -66,6 +66,8 @@ Vendored in `static/lib/` and served directly:
 | [html2canvas](https://github.com/niklasvh/html2canvas) (bundled in html2pdf) | DOM → canvas rasterization | MIT |
 | [node-qrcode](https://github.com/soldair/node-qrcode) (`qrcode.min.js`) | QR-code rendering (2FA setup) | MIT |
 | [xterm.js](https://github.com/xtermjs/xterm.js) v6.0.0 with addon-fit 0.11.0 and addon-web-links 0.12.0 (`lib/xterm/`, licenses beside them) | The Terminal | MIT |
+| [KaTeX](https://github.com/KaTeX/KaTeX) 0.16.22 (`lib/katex/`) | Math typesetting, works offline | MIT, [full text](licenses/KaTeX-MIT-LICENSE.txt) |
+| [Mermaid](https://github.com/mermaid-js/mermaid) 11 (`lib/mermaid.min.js`) | Diagrams from text, works offline | MIT, [full text](licenses/Mermaid-MIT-LICENSE.txt) |
 
 ## Front-end libraries loaded at runtime (CDN)
 
@@ -73,8 +75,6 @@ Referenced from `cdn.jsdelivr.net` / `cdnjs.cloudflare.com` at runtime — not v
 
 | Library | Purpose | License |
 |---|---|---|
-| [KaTeX](https://github.com/KaTeX/KaTeX) 0.16.22 | Math typesetting | MIT |
-| [Mermaid](https://github.com/mermaid-js/mermaid) 11 | Diagrams from text | MIT |
 | [Pyodide](https://github.com/pyodide/pyodide) 0.27.5 | In-browser Python runtime | MPL-2.0 |
 | [PDFObject](https://github.com/pipwerks/PDFObject) 2.1.1 | Inline PDF embedding | MIT |
 
@@ -87,6 +87,7 @@ Bundled in `static/fonts/`:
 | [Fira Code](https://github.com/tonsky/FiraCode) | SIL Open Font License 1.1 | Nikita Prokopov & contributors |
 | [Inter](https://github.com/rsms/inter) | SIL Open Font License 1.1 | Rasmus Andersson |
 | [GohuFont](https://font.gohu.org/) (`fonts/custom/GohuFont.ttf`) | WTFPL | Hugo Chargois |
+| [OpenDyslexic](https://opendyslexic.org/) | SIL Open Font License 1.1, [full text](licenses/OpenDyslexic-OFL.txt) | Abbie Gonzalez & contributors |
 
 ## Python dependencies
 

@@ -63,6 +63,7 @@ const FONT_MAP = {
   mono: "'Fira Code', monospace",
   sans: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
+  opendyslexic: "'OpenDyslexic', sans-serif",
 };
 const DEFAULT_FONT = 'sans';
 const DEFAULT_DENSITY = 'comfortable';
@@ -409,6 +410,21 @@ export function applyFontDensity(font, density) {
   document.documentElement.style.setProperty('--font-family', family);
   document.documentElement.classList.remove('density-compact', 'density-spacious');
   if (d !== 'comfortable') document.documentElement.classList.add('density-' + d);
+}
+
+// UI text-size scale (accessibility). Global and independent of the active
+// theme, so the chosen size persists across theme switches. Stored as a plain
+// percentage string ('100' | '125').
+const UI_SCALE_KEY = 'odysseus-ui-scale';
+const DEFAULT_UI_SCALE = '100';
+
+export function applyUiScale(scale) {
+  const s = scale || DEFAULT_UI_SCALE;
+  // Only one non-default scale ('125') is offered today. Remove it
+  // unconditionally first so an older stored value can't leave a stale
+  // zoom applied.
+  document.documentElement.classList.remove('ui-scale-125');
+  if (s === '125') document.documentElement.classList.add('ui-scale-125');
 }
 
 const _BG_CLASSES = ['bg-pattern-dots',
@@ -1163,6 +1179,18 @@ export function initThemeUI() {
     np.addEventListener('change', () => {
       applyBgPattern(np.value);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+  const textSizeSelect = document.getElementById('theme-text-size-select');
+  if (textSizeSelect) {
+    const nts = textSizeSelect.cloneNode(true); textSizeSelect.parentNode.replaceChild(nts, textSizeSelect);
+    let initScale = DEFAULT_UI_SCALE;
+    try { initScale = localStorage.getItem(UI_SCALE_KEY) || DEFAULT_UI_SCALE; } catch (e) {}
+    nts.value = initScale;
+    applyUiScale(initScale);
+    nts.addEventListener('change', () => {
+      applyUiScale(nts.value);
+      try { localStorage.setItem(UI_SCALE_KEY, nts.value); } catch (e) {}
     });
   }
 
@@ -2069,7 +2097,7 @@ function _initEmbers() {
 }
 
 const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
-                       THEMES, applyColors, applyFontDensity, applyBgPattern,
+                       THEMES, applyColors, applyFontDensity, applyUiScale, applyBgPattern,
                        applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize,
                        applyFrostedGlass,
                        save, getSaved, saveCustomTheme, deleteCustomTheme,

@@ -7,7 +7,20 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v363';
+const CACHE_NAME = 'odysseus-v364';
+
+// KaTeX resolves these from its own stylesheet, so caching the CSS without them
+// gives offline math fallback glyphs instead of proper typesetting.
+const KATEX_FONTS = [
+  'AMS-Regular', 'Caligraphic-Bold', 'Caligraphic-Regular',
+  'Fraktur-Bold', 'Fraktur-Regular',
+  'Main-Bold', 'Main-BoldItalic', 'Main-Italic', 'Main-Regular',
+  'Math-BoldItalic', 'Math-Italic',
+  'SansSerif-Bold', 'SansSerif-Italic', 'SansSerif-Regular',
+  'Script-Regular',
+  'Size1-Regular', 'Size2-Regular', 'Size3-Regular', 'Size4-Regular',
+  'Typewriter-Regular',
+].map(name => `/static/lib/katex/fonts/KaTeX_${name}.woff2`);
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
@@ -91,6 +104,24 @@ const PRECACHE = [
   '/static/lib/xterm/xterm.css',
   '/static/lib/xterm/addon-fit.mjs',
   '/static/lib/xterm/addon-web-links.mjs',
+  // Math turns up in ordinary answers and KaTeX is small, so precaching it and
+  // its fonts keeps formulas typeset offline. Mermaid is deliberately NOT
+  // precached: at 3.5 MB it would re-download on every CACHE_NAME bump, a poor
+  // trade for a library most sessions never touch. The network-first JS rule
+  // below still caches it the first time a diagram renders, which is also
+  // when it starts mattering offline.
+  '/static/lib/katex/katex.min.js',
+  '/static/lib/katex/katex.min.css',
+  ...KATEX_FONTS,
+  // OpenDyslexic is small (two woff2 files, ~230 KB total) — precache it so
+  // the dyslexia-friendly font option works offline from the first install,
+  // same reasoning as the KaTeX fonts above.
+  '/static/fonts/OpenDyslexic-Regular.woff2',
+  '/static/fonts/OpenDyslexic-Bold.woff2',
+  // Proper PWA icons (manifest.json + apple-touch-icon + push notifications).
+  '/static/icons/icon-192.png',
+  '/static/icons/icon-512.png',
+  '/static/icons/icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (e) => {
