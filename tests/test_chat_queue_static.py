@@ -26,6 +26,23 @@ def test_enter_mid_reply_with_text_queues_before_the_stop_path():
     assert "clearQueue(sessionModule.getCurrentSessionId());" not in submit[:submit.index("abortCurrentRequest(true)")]
 
 
+def test_clicking_the_stop_button_always_stops_even_with_text_in_the_box():
+    # 2026-10-02: typing anything (including the word "stop") and clicking
+    # the button that is showing the Stop icon only queued that text and let
+    # the reply keep going — the button that says Stop did not stop. Enter
+    # in the textarea mid-reply should still queue (someone still typing
+    # while a reply comes in shouldn't get cut off by it), but an explicit
+    # click on the button, which is the Stop icon right then, must always
+    # reach the real stop path regardless of what is in the box.
+    js = _read("static", "js", "chat.js")
+    submit = js[js.index("export async function handleChatSubmit"):]
+    guard_at = submit.index("const _clickedTheButton = e.submitter === submitBtn;")
+    queue_if_at = submit.index("if (isStreaming && !_clickedTheButton) {")
+    queue_at = submit.index("queueMessage(_typed)")
+    assert guard_at < queue_if_at < queue_at, \
+        "an explicit button click must bypass the queue-and-return path"
+
+
 def test_a_finished_reply_sends_the_next_queued_message():
     js = _read("static", "js", "chat.js")
     idle = js[js.index("} else if (state === 'idle') {"):]

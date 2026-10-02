@@ -819,9 +819,16 @@ import './chatThreads.js';
       return;
     }
 
-    // Mid-reply with text in the box: queue it rather than stopping. (Files
-    // are left in the attachments strip for the next normal send.)
-    if (isStreaming) {
+    // Mid-reply, Enter in a box with text queues it rather than stopping, so
+    // a reply in progress isn't cut off by someone still typing. (Files are
+    // left in the attachments strip for the next normal send.) An explicit
+    // click on the button does not queue, even with text left in the box:
+    // that button is showing the Stop icon right now, and a click on it has
+    // to stop. Before this, typing "stop" and clicking the (visually Stop)
+    // button only queued the word "stop" as the next message and let the
+    // reply keep going, which is exactly backwards.
+    const _clickedTheButton = e.submitter === submitBtn;
+    if (isStreaming && !_clickedTheButton) {
       const _ta = document.getElementById('message');
       const _typed = _ta ? (_ta.value || '').trim() : '';
       if (_typed && queueMessage(_typed)) {
