@@ -348,6 +348,19 @@ browser into a separate Google account for the bot and set Join as to Signed
 in, and only then to check the meeting's access. (In an open meeting the
 button is "Join now", not "Ask to join"; the bot matches both.)
 
+That block turned out to be the same one sign-in trips on (confirmed
+2026-10-02, above): CDP `Input.dispatchKeyEvent`/`dispatchMouseEvent`
+traffic, not headless, not the CDP connection itself. The name box and the
+Join button (src/meet/browser.py) now go through the same real X11 input
+(`xdotool`) as a take-over, whenever the bot is actually driving the cloud
+browser's own headful Chrome (a caller-supplied endpoint, such as the test
+suite's own throwaway Chromium, stays on CDP input, since X11 input would
+otherwise land on whatever happens to be on the cloud browser's own Xvfb
+display instead). A guest join's own context is a separate, incognito-style
+Chrome window with its own screen position and size, not the cloud browser's
+main window, so this looks the window actually showing the meeting up on
+screen each time rather than assuming it is at (0, 0).
+
 Setup, once per server (the same OAuth client Sign in with Google uses):
 
 1. Google Cloud Console: make a project, enable the Google Calendar API and
