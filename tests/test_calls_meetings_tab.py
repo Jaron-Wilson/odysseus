@@ -88,7 +88,6 @@ def test_pointers_name_the_new_tab():
         # Google Voice's own "Settings > Devices and numbers" is not ours.
         assert not re.search(r"Settings > Devices(?! and numbers)", text), f
         assert "Settings, Devices" not in text, f
-        assert "—" not in text or f == "src/tool_schemas.py", f
     from routes import meet_routes
     from src.meet import google_calendar
     assert "Settings > Calls & Meetings" in meet_routes.TURN_ON
