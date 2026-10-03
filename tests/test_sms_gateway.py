@@ -286,6 +286,30 @@ def test_chat_n_picks_a_listed_chat_as_the_conversation(env):
     assert "no chat 7" in env["text"](secret, ALICE_NUM, "chat 7").json()["reply"]
 
 
+def test_find_with_one_match_switches_straight_to_it(env):
+    secret = env["setup"]("alice", ALICE_NUM)
+    r = env["text"](secret, ALICE_NUM, "find trip")
+    assert r.json()["reply"].startswith("Now talking to Trip plans (qwen).")
+    assert env["text"](secret, ALICE_NUM, "where are we going?").json()["reply"] == "answer from qwen"
+    assert [m.content for m in env["mgr"].sessions["a1"].history] == ["where are we going?", "answer from qwen"]
+
+
+def test_find_with_no_match_says_so(env):
+    secret = env["setup"]("alice", ALICE_NUM)
+    assert 'No chat matches "zzz"' in env["text"](secret, ALICE_NUM, "find zzz").json()["reply"]
+    assert env["llm"] == []
+
+
+def test_find_with_several_matches_lists_them_and_chat_n_still_works(env):
+    env["mgr"].create_session("a3", "Trip to NYC", "http://llm/a", "mixtral", owner="alice")
+    secret = env["setup"]("alice", ALICE_NUM)
+    reply = env["text"](secret, ALICE_NUM, "find trip").json()["reply"]
+    assert 'Chats matching "trip":' in reply
+    assert "1. Trip plans" in reply and "2. Trip to NYC" in reply
+    r = env["text"](secret, ALICE_NUM, "chat 2")
+    assert r.json()["reply"].startswith("Now talking to Trip to NYC (mixtral).")
+
+
 def test_call_texts_back_a_link_that_opens_the_call_and_never_reaches_the_model(env):
     # A texted "/call" used to go to the model, which said "call started"
     # and nothing rang. Nothing can ring from here: the answer is a link.
