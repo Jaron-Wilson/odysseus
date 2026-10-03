@@ -447,6 +447,8 @@ async function loadEndpoints() {
       const keyLabel = ep.has_key
         ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
         : '';
+      const toolsState = ep.supports_tools === true ? 'true' : ep.supports_tools === false ? 'false' : 'auto';
+      const toolsLabel = { true: 'Tools: On', false: 'Tools: Off', auto: 'Tools: Auto' }[toolsState];
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
@@ -461,6 +463,7 @@ async function loadEndpoints() {
             <div style="display:flex;gap:4px;align-items:center;">
               <button class="admin-btn-sm" data-adm-rename-ep="${ep.id}" data-adm-ep-name="${esc(ep.name)}" title="Give this server a nickname: it is how its models are labeled in the model list and the chat">Rename</button>
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
+              <button class="admin-btn-sm" data-adm-tools-ep="${ep.id}" data-adm-tools-state="${toolsState}" title="Whether chats on this server's models get real tool-calling (file access, searches, etc). Auto guesses from the model name and URL; set it explicitly if a chat here answers in plain prose instead of using a tool, or the model hallucinates tool-call syntax.">${toolsLabel}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
             </div>
@@ -521,6 +524,21 @@ async function loadEndpoints() {
     });
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    // Cycles auto -> on -> off -> auto. "Auto" guesses from the model name
+    // and URL (see agent_loop.py); this is the explicit override for when
+    // that guess is wrong for a particular server.
+    queryAll('[data-adm-tools-ep]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const next = { auto: true, true: false, false: null }[btn.dataset.admToolsState];
+        const r = await fetch(`/api/model-endpoints/${btn.dataset.admToolsEp}`, {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ supports_tools: next }),
+        });
+        if (!r.ok) { uiModule.showToast('Could not change that'); return; }
+        loadEndpoints();
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
