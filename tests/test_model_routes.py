@@ -847,6 +847,28 @@ def test_get_models_returns_pinned_when_probe_empty(monkeypatch):
     assert result[0]["is_pinned"] is True
 
 
+def test_toggle_endpoint_supports_tools_cycles_through_auto_on_off(monkeypatch):
+    ep = _make_endpoint(supports_tools=None)
+    db = _PinnedFakeDb([ep])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    endpoint = _get_route("/api/model-endpoints/{ep_id}", "PATCH")
+
+    def patch(value):
+        body = json.dumps({"supports_tools": value})
+        request = _PinnedFakeRequest(body={"supports_tools": value},
+                                      headers={"content-length": str(len(body))})
+        return asyncio.run(endpoint("ep1", request))
+
+    result = patch(True)
+    assert ep.supports_tools is True and result["supports_tools"] is True
+    result = patch(False)
+    assert ep.supports_tools is False and result["supports_tools"] is False
+    # None (the UI's "auto") drops the override back to the guess in agent_loop.py.
+    result = patch(None)
+    assert ep.supports_tools is None and result["supports_tools"] is None
+
+
 def test_reprobe_preserves_pinned_models(monkeypatch):
     ep = _make_endpoint(pinned_models=json.dumps(["deploy-1"]))
     db = _PinnedFakeDb([ep])
