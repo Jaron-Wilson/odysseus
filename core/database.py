@@ -1843,7 +1843,14 @@ def _migrate_backfill_task_folders():
 
 
 def _migrate_chat_messages_fts():
-    """Create and backfill the session transcript FTS index for SQLite."""
+    """Create and backfill the session transcript FTS index for SQLite.
+
+    A tool's console output (e.g. a coding agent's full run transcript) is
+    stashed in metadata.tool_events[].output rather than the message's own
+    content, so without folding it in here it is invisible to
+    search_chats/list_sessions no matter how specific the question asked
+    about it — only the short assistant-facing summary is ever findable.
+    """
     if not DATABASE_URL.startswith("sqlite"):
         return
 
@@ -1860,8 +1867,34 @@ def _migrate_chat_messages_fts():
             logging.getLogger(__name__).warning(f"chat_messages FTS migration skipped; FTS5 unavailable: {e}")
             return
 
+        # json_valid()/json_each() need the JSON1 extension. Virtually every
+        # SQLite build has it (compiled in by default since 3.9), and every
+        # chat_messages table has had a metadata column for a long time, but
+        # fall back to content-only indexing rather than breaking every chat
+        # message insert if either one is missing.
+        has_metadata_col = any(
+            row[1] == "metadata" for row in conn.execute("PRAGMA table_info(chat_messages)")
+        )
+        tool_output_sql = "''"
+        if has_metadata_col:
+            try:
+                conn.execute("SELECT json_valid('[]')").fetchone()
+                tool_output_sql = (
+                    "COALESCE((SELECT group_concat(json_extract(je.value, '$.output'), ' ') "
+                    "FROM json_each(CASE WHEN json_valid({col}) "
+                    "THEN COALESCE(json_extract({col}, '$.tool_events'), '[]') ELSE '[]' END) je), '')"
+                )
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"chat_messages FTS tool-output indexing unavailable: {e}")
+
+        indexed_text_new = f"COALESCE(new.content, '') || ' ' || {tool_output_sql.format(col='new.metadata')}"
+        indexed_text_cm = f"COALESCE(cm.content, '') || ' ' || {tool_output_sql.format(col='cm.metadata')}"
+
+        # DROP + CREATE (not IF NOT EXISTS) so upgrading to the tool-output
+        # indexing above actually replaces a trigger body from before it
+        # existed, instead of silently keeping the old content-only one.
         conn.executescript(
-            """
+            f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(
                 content,
                 message_id UNINDEXED,
@@ -1869,29 +1902,32 @@ def _migrate_chat_messages_fts():
                 role UNINDEXED
             );
 
-            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ai
+            DROP TRIGGER IF EXISTS chat_messages_fts_ai;
+            CREATE TRIGGER chat_messages_fts_ai
             AFTER INSERT ON chat_messages BEGIN
                 INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+                VALUES ({indexed_text_new}, new.id, new.session_id, new.role);
             END;
 
-            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ad
+            DROP TRIGGER IF EXISTS chat_messages_fts_ad;
+            CREATE TRIGGER chat_messages_fts_ad
             AFTER DELETE ON chat_messages BEGIN
                 DELETE FROM chat_messages_fts WHERE message_id = old.id;
             END;
 
-            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_au
+            DROP TRIGGER IF EXISTS chat_messages_fts_au;
+            CREATE TRIGGER chat_messages_fts_au
             AFTER UPDATE ON chat_messages BEGIN
                 DELETE FROM chat_messages_fts WHERE message_id = old.id;
                 INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+                VALUES ({indexed_text_new}, new.id, new.session_id, new.role);
             END;
             """
         )
         conn.execute(
-            """
+            f"""
             INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-            SELECT COALESCE(cm.content, ''), cm.id, cm.session_id, cm.role
+            SELECT {indexed_text_cm}, cm.id, cm.session_id, cm.role
             FROM chat_messages cm
             WHERE NOT EXISTS (
                 SELECT 1 FROM chat_messages_fts fts
@@ -1899,6 +1935,28 @@ def _migrate_chat_messages_fts():
             )
             """
         )
+        # Messages indexed by an older version of this migration (content
+        # only) that do carry tool_events: reindex them so the upgrade
+        # actually surfaces their tool output, not just new messages.
+        if tool_output_sql != "''":
+            conn.execute(
+                """
+                DELETE FROM chat_messages_fts WHERE message_id IN (
+                    SELECT cm.id FROM chat_messages cm
+                    WHERE json_valid(cm.metadata)
+                    AND json_array_length(COALESCE(json_extract(cm.metadata, '$.tool_events'), '[]')) > 0
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                SELECT {indexed_text_cm}, cm.id, cm.session_id, cm.role
+                FROM chat_messages cm
+                WHERE json_valid(cm.metadata)
+                AND json_array_length(COALESCE(json_extract(cm.metadata, '$.tool_events'), '[]')) > 0
+                """
+            )
         conn.commit()
     except Exception as e:
         logging.getLogger(__name__).warning(f"chat_messages FTS migration failed: {e}")
