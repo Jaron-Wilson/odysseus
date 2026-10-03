@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable
 
-from sqlalchemy import text
+from sqlalchemy import or_, text
 
 from core.database import ChatMessage as DBChatMessage
 from core.database import Session as DBSession
@@ -74,6 +75,19 @@ def _snippet(content: str, query: str, radius: int = 60) -> str:
     start = max(0, idx - radius)
     end = min(len(content), idx + len(query) + radius)
     return ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+
+
+def _tool_output_text(meta_data: str | None) -> str:
+    """The text of metadata.tool_events[].output, same convention the FTS
+    migration indexes (core.database._migrate_chat_messages_fts) — a tool's
+    console transcript lives here, not in the message's own content."""
+    if not meta_data:
+        return ""
+    try:
+        events = json.loads(meta_data).get("tool_events") or []
+    except Exception:
+        return ""
+    return " ".join(str(ev.get("output") or "") for ev in events if isinstance(ev, dict))
 
 
 def _sanitize_fts_query(query: str) -> str | None:
@@ -197,11 +211,18 @@ def _search_like(
     include_legacy_owner: bool,
 ) -> list[SessionSearchResult]:
     safe_q = _escape_like(query)
+    # A tool's console transcript lives in the metadata JSON, not content —
+    # a raw ilike on that column is a cruder match (no word boundaries) than
+    # the FTS path's indexed text, but keeps this portable to non-SQLite
+    # backends that don't have json_extract available the same way.
     q = (
         db.query(DBChatMessage, DBSession.name)
         .join(DBSession, DBChatMessage.session_id == DBSession.id)
         .filter(
-            DBChatMessage.content.ilike(f"%{safe_q}%", escape="\\"),
+            or_(
+                DBChatMessage.content.ilike(f"%{safe_q}%", escape="\\"),
+                DBChatMessage.meta_data.ilike(f"%{safe_q}%", escape="\\"),
+            ),
             DBChatMessage.role.in_(SEARCH_ROLES),
         )
     )
@@ -210,7 +231,19 @@ def _search_like(
     if restrict_owner:
         q = _owner_filter(q, owner, include_legacy_owner)
     rows = q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
-    shaped = ((msg, session_name, _snippet(msg.content or "", query)) for msg, session_name in rows)
+
+    def _shape(msg, session_name):
+        content = msg.content or ""
+        snippet = _snippet(content, query)
+        # The match was in metadata.tool_events, not content: a snippet of
+        # content wouldn't show the text that actually matched.
+        if query.lower() not in content.lower():
+            tool_text = _tool_output_text(msg.meta_data)
+            if query.lower() in tool_text.lower():
+                snippet = _snippet(tool_text, query)
+        return msg, session_name, snippet
+
+    shaped = (_shape(msg, session_name) for msg, session_name in rows)
     return _rows_to_results(db, shaped, query, context_messages)
 
 

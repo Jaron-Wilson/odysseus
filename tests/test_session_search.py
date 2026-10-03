@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from core.database import Base
 from core.database import ChatMessage as DbChatMessage
 from core.database import Session as DbSession
-from src.session_search import SessionSearchResult, search_session_messages
+from src.session_search import SessionSearchResult, _tool_output_text, search_session_messages
 
 
 def _db(with_fts=True):
@@ -43,12 +43,16 @@ def _add_session(db, sid, owner="alice", archived=False, name=None):
     )
 
 
-def _add_message(db, sid, mid, role, content, when):
-    db.add(DbChatMessage(id=mid, session_id=sid, role=role, content=content, timestamp=when))
+def _add_message(db, sid, mid, role, content, when, meta_data=None):
+    db.add(DbChatMessage(id=mid, session_id=sid, role=role, content=content, timestamp=when,
+                          meta_data=meta_data))
     if _has_fts(db):
+        # Mirrors core.database._migrate_chat_messages_fts's real trigger body:
+        # the indexed text is content plus any metadata.tool_events[].output.
+        indexed = (content + " " + _tool_output_text(meta_data)).strip()
         db.connection().exec_driver_sql(
             "INSERT INTO chat_messages_fts(content, message_id, session_id, role) VALUES (?, ?, ?, ?)",
-            (content, mid, sid, role),
+            (indexed, mid, sid, role),
         )
 
 
@@ -78,6 +82,45 @@ def test_session_search_uses_fts_and_returns_context():
         assert results[0].context_before[0]["message_id"] == "m1"
         assert results[0].context_after[0]["message_id"] == "m3"
         assert "modal" in results[0].content_snippet.lower()
+    finally:
+        db.close()
+
+
+def test_session_search_finds_a_coding_agents_tool_output_via_fts():
+    # A background coding-agent job's own console transcript lives in
+    # metadata.tool_events[].output, not the posted message's short summary
+    # (see src/agent_tools/claude_code_tool.py) — it must still be findable.
+    db = _db(with_fts=True)
+    try:
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        _add_session(db, "s1", owner="alice", name="Clevernode work")
+        _add_message(db, "s1", "m1", "assistant", "Background job finished.", base,
+                     meta_data='{"tool_events": [{"output": "grepped clevernode.org for the license key bug"}]}')
+        db.commit()
+
+        results = search_session_messages("clevernode.org", owner="alice", db=db)
+
+        assert [r.message_id for r in results] == ["m1"]
+        assert "clevernode.org" in results[0].content_snippet.lower()
+    finally:
+        db.close()
+
+
+def test_session_search_finds_a_coding_agents_tool_output_via_like_fallback():
+    db = _db(with_fts=False)
+    try:
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        _add_session(db, "s1", owner="alice", name="Clevernode work")
+        _add_message(db, "s1", "m1", "assistant", "Background job finished.", base,
+                     meta_data='{"tool_events": [{"output": "grepped clevernode.org for the license key bug"}]}')
+        db.commit()
+
+        results = search_session_messages("clevernode.org", owner="alice", db=db)
+
+        assert [r.message_id for r in results] == ["m1"]
+        # The match is in metadata, not the message's own content, so the
+        # snippet must come from the tool output, not a blind content slice.
+        assert "clevernode.org" in results[0].content_snippet.lower()
     finally:
         db.close()
 
@@ -263,6 +306,60 @@ def test_chat_messages_fts_migration_backfills_and_tracks_inserts(tmp_path, monk
         )
         triggered = conn.execute(
             "SELECT message_id FROM chat_messages_fts WHERE chat_messages_fts MATCH 'triggered'"
+        ).fetchall()
+        assert triggered == [("m2",)]
+    finally:
+        conn.close()
+
+
+def test_chat_messages_fts_migration_indexes_and_reindexes_tool_output(tmp_path, monkeypatch):
+    from core import database as cdb
+
+    db_path = tmp_path / "app.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE chat_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            metadata TEXT
+        );
+        -- An old-style index, content-only, predating tool-output indexing:
+        -- the migration must upgrade this trigger and reindex this row, not
+        -- just leave it as it was.
+        CREATE VIRTUAL TABLE chat_messages_fts USING fts5(
+            content, message_id UNINDEXED, session_id UNINDEXED, role UNINDEXED
+        );
+        CREATE TRIGGER chat_messages_fts_ai AFTER INSERT ON chat_messages BEGIN
+            INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+            VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+        END;
+        INSERT INTO chat_messages(id, session_id, role, content, metadata) VALUES
+            ('m1', 's1', 'assistant', 'Background job finished.',
+             '{"tool_events": [{"output": "clevernode license key bug"}]}');
+        """
+    )
+    conn.close()
+
+    monkeypatch.setattr(cdb, "DATABASE_URL", f"sqlite:///{db_path}")
+    cdb._migrate_chat_messages_fts()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        reindexed = conn.execute(
+            "SELECT message_id FROM chat_messages_fts WHERE chat_messages_fts MATCH 'clevernode'"
+        ).fetchall()
+        assert reindexed == [("m1",)]
+
+        conn.execute(
+            "INSERT INTO chat_messages(id, session_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)",
+            ("m2", "s1", "assistant", "Another job finished.",
+             '{"tool_events": [{"output": "freshly indexed tool output"}]}'),
+        )
+        triggered = conn.execute(
+            "SELECT message_id FROM chat_messages_fts WHERE chat_messages_fts MATCH 'freshly'"
         ).fetchall()
         assert triggered == [("m2",)]
     finally:
