@@ -1521,7 +1521,9 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 unowned = _or(_EA.owner == None, _EA.owner == "")  # noqa: E711
                 same_mailbox = _or(_EA.imap_user == owner, _EA.from_address == owner)
                 q = q.filter(_or(_EA.owner == owner, _and(unowned, same_mailbox)))
-            accounts = q.all()
+            # Each inbox once, even when two rows log in to it.
+            from routes.email_helpers import _distinct_mailboxes
+            accounts = _distinct_mailboxes(q.all())
         finally:
             db.close()
         if not accounts:

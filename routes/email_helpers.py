@@ -700,6 +700,35 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
     return cfg
 
 
+def _distinct_mailboxes(rows):
+    """Keep one account per mailbox, for the loops that READ mail.
+
+    Two account rows can log in to the same inbox - e.g. a second row that
+    only exists to send as an alias (alerts@clevernode.org through the same
+    Gmail login). Sending must see both; a background pass over the inbox must
+    see it once, or every email is summarised, replied to and scored twice.
+    Rows are kept in the order given (default first), so the first row for a
+    mailbox is the one that is read. Only an exact repeat (same IMAP host and
+    user) is skipped; a row with no IMAP host is passed through untouched, as
+    before. Works on ORM rows or dicts.
+    """
+    seen = set()
+    out = []
+    for row in rows or []:
+        get = row.get if isinstance(row, dict) else (lambda k, _r=row: getattr(_r, k, None))
+        host = str(get("imap_host") or "").strip().lower()
+        user = str(get("imap_user") or "").strip().lower()
+        if not host:
+            out.append(row)
+            continue
+        key = (host, user)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
 def _list_email_accounts() -> list[dict]:
     """Return all enabled accounts in creation order. Used by background loops
     that iterate over every account (auto-summarize, urgency, etc.)."""
@@ -713,7 +742,7 @@ def _list_email_accounts() -> list[dict]:
                 .order_by(_EA.is_default.desc(), _EA.created_at.asc())
                 .all()
             )
-            return [_get_email_config(r.id) for r in rows]
+            return [_get_email_config(r.id) for r in _distinct_mailboxes(rows)]
         finally:
             db.close()
     except Exception as e:
