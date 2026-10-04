@@ -38,6 +38,12 @@ _JOB_ID_RE = re.compile(r"^[0-9a-f]{8}$")
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 500
 
+# Memo of the finished-run history file, keyed by (path, mtime). The list
+# endpoint touches this once per request (not once per run), and the detail
+# endpoint reuses it too -- so a large history file is read at most once per
+# cache-miss, not N times.
+_HISTORY_MEMO = {"path": None, "mtime": None, "by_id": None}
+
 
 def _require_user(request: Request) -> str:
     user = get_current_user(request)
@@ -46,6 +52,43 @@ def _require_user(request: Request) -> str:
             return ""
         raise HTTPException(401, "Not authenticated")
     return user
+
+
+def _history_by_id() -> Dict[str, Dict]:
+    """The finished-run history (one line per run), keyed by run id.
+
+    Loaded once for the lifetime of the memo and re-read only when the file's
+    mtime (or path) changes. Mirrors the memo shape in src/devops_stats.py's
+    ``_history()`` while reusing it across multiple endpoints in one request.
+    Never raises -- a broken history file degrades to "no history rows" (the
+    live-job and on-disk run-directory paths still work).
+    """
+    path = jobs.HISTORY_FILE
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        _HISTORY_MEMO.update(path=path, mtime=None, by_id={})
+        return {}
+    if _HISTORY_MEMO["path"] == path and _HISTORY_MEMO["mtime"] == mtime:
+        return _HISTORY_MEMO["by_id"] or {}
+    by_id: Dict[str, Dict] = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and rec.get("id"):
+                    by_id[rec["id"]] = rec
+    except OSError as e:
+        logger.debug("transcript history read failed: %s", e)
+        by_id = {}
+    _HISTORY_MEMO.update(path=path, mtime=mtime, by_id=by_id)
+    return by_id
 
 
 def _record_for(run_id: str) -> Optional[Dict]:
@@ -62,30 +105,19 @@ def _record_for(run_id: str) -> Optional[Dict]:
             "status": job.status, "chat_session_id": job.chat_session_id,
             "chat_name": jobs._chat_name(job.chat_session_id),
         }
-    try:
-        with open(jobs.HISTORY_FILE, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if rec.get("id") == run_id:
-                    return {
-                        "id": rec["id"], "owner": rec.get("owner") or "",
-                        "action": rec.get("action") or "",
-                        "cwd": "", "model": rec.get("model") or "",
-                        "engine": rec.get("engine") or "",
-                        "started": rec.get("started"), "finished": rec.get("finished"),
-                        "status": rec.get("status") or "done",
-                        "chat_session_id": rec.get("chat_session_id") or "",
-                        "chat_name": jobs._chat_name(rec.get("chat_session_id") or ""),
-                    }
-    except (OSError, ValueError):
-        pass
-    return None
+    rec = _history_by_id().get(run_id)
+    if not rec:
+        return None
+    return {
+        "id": rec["id"], "owner": rec.get("owner") or "",
+        "action": rec.get("action") or "",
+        "cwd": "", "model": rec.get("model") or "",
+        "engine": rec.get("engine") or "",
+        "started": rec.get("started"), "finished": rec.get("finished"),
+        "status": rec.get("status") or "done",
+        "chat_session_id": rec.get("chat_session_id") or "",
+        "chat_name": jobs._chat_name(rec.get("chat_session_id") or ""),
+    }
 
 
 def _owns(record: Optional[Dict], user: str) -> bool:
@@ -128,31 +160,22 @@ def _row_for(run_id: str, record: Dict) -> Optional[Dict]:
 
 
 def _run_ids_in_listing() -> List[str]:
-    """Every candidate run id, newest first: live jobs, then the finished-run
-    history (read reversed so recent rows come first -- the file is append-
-    only), then any run directory on disk (covers pre-history runs, as the
-    DevOps page already does)."""
+    """Every candidate run id, newest first: live jobs, then the history
+    (recent rows first -- the file is append-only), then any run directory on
+    disk (covers pre-history runs, as the DevOps page already does)."""
     ids: List[str] = []
     seen = set()
     for j in jobs.list_jobs(""):
         if j.id not in seen:
             ids.append(j.id)
             seen.add(j.id)
-    try:
-        with open(jobs.HISTORY_FILE, encoding="utf-8") as f:
-            for line in reversed(f):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rid = json.loads(line).get("id")
-                except (ValueError, AttributeError):
-                    continue
-                if rid and rid not in seen:
-                    ids.append(rid)
-                    seen.add(rid)
-    except OSError:
-        pass
+    hist = _history_by_id()
+    # The history file is append-only, so dict-order is insertion-order; walk
+    # it reversed to surface the most recent first.
+    for rid in reversed(list(hist.keys())):
+        if rid not in seen:
+            ids.append(rid)
+            seen.add(rid)
     try:
         for name in sorted(os.listdir(jobs.RUNS_DIR), reverse=True):
             if os.path.isdir(os.path.join(jobs.RUNS_DIR, name)) and name not in seen:
