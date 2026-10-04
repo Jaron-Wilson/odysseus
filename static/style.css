@@ -37471,6 +37471,57 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 .dv-foot { font-size: 11px; opacity: .5; margin: 14px 0 4px; }
 @media (max-width: 700px) { .dv-table th:nth-child(n+5), .dv-table td:nth-child(n+5) { display: none; } }
 
+/* The transcript viewer (inside DevOps — a read-only look at a run's out.jsonl).
+   Collapsed by default (the thinking section is the same .thinking-section the
+   chat uses, but here it starts closed and carries the "… N chars total"
+   note for the safe cap). Only existing CSS variables are used (no new colors,
+   per CONTRIBUTING.md's visual gate). */
+.dv-transcript-overlay { margin: 8px 0 4px; padding: 10px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); max-height: 60vh; overflow: auto; }
+.dv-transcript { display: block; }
+.dv-transcript-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin-bottom: 8px; }
+.dv-transcript-head .bg-close { margin-left: auto; }
+.dv-transcript-body { display: block; }
+.dv-final { margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); }
+/* List-row buttons (smaller than the transcript-header ones; the .dv-run
+   context is what distinguishes them). */
+.dv-run .dv-transcript, .dv-run .dv-resume {
+  font: inherit; font-size: 11px; padding: 2px 7px; border-radius: 6px;
+  background: none; color: inherit; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent); }
+.dv-run .dv-transcript:hover, .dv-run .dv-resume:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.dv-run .dv-transcript { margin-left: 8px; }
+.dv-run .dv-resume { margin-left: 6px; font-family: var(--mono, ui-monospace, monospace); max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Transcript header: the resume command is a monospace pill so the user can
+   scan which CLI and which flag it is. */
+.dv-transcript-head .dv-resume { font-family: var(--mono, ui-monospace, monospace); font-size: 12px;
+  max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dv-note { font-size: 11px; opacity: .55; margin: 2px 0 4px; }
+/* Per-block. Same layout vocabulary as the chat's .msg / .agent-thread where
+   possible so the two read the same way. */
+.dv-msg, .dv-tool { margin: 4px 0; padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 6%, transparent); }
+.dv-msg-body { margin: 0; font-family: var(--mono, ui-monospace, monospace); font-size: 12px;
+  white-space: pre-wrap; overflow-wrap: anywhere; }
+.dv-tool-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.dv-tool-name { font-weight: 600; font-size: 13px; }
+.dv-tool-hint { margin: 4px 0; font-size: 12px; opacity: .85; }
+.dv-tool-hint code { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; opacity: .85;
+  word-break: break-all; }
+.dv-tool-output { margin: 4px 0 0; background: color-mix(in srgb, var(--fg) 5%, transparent);
+  padding: 6px 8px; border-radius: 6px; font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere;
+  border: 1px solid color-mix(in srgb, var(--fg) 6%, transparent); }
+.dv-tool-output.err { border-color: color-mix(in srgb, #e0715c 45%, transparent);
+  background: color-mix(in srgb, #e0715c 8%, transparent); }
+.dv-tool.err { border-color: color-mix(in srgb, #e0715c 35%, transparent); }
+
 /* The cloud browser (cloudBrowser.js): a window with no backdrop, so the chat
    keeps working beside it. */
 .cb-backdrop { position: fixed; inset: 0; z-index: 900; pointer-events: none; }

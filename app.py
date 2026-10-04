@@ -685,6 +685,9 @@ app.include_router(setup_cloud_browser_routes())
 # claude_code plan approvals — the only path that can authorise an execute run.
 from routes.claude_code_routes import setup_claude_code_routes
 app.include_router(setup_claude_code_routes())
+# Read-only transcript viewer: parsed coder-run out.jsonl (routes/transcript_routes.py).
+from routes.transcript_routes import setup_transcript_routes
+app.include_router(setup_transcript_routes())
 from routes.chat_media_routes import setup_chat_media_routes
 app.include_router(setup_chat_media_routes())
 from routes.pdf_view_routes import setup_pdf_view_routes

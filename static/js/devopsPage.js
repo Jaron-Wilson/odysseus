@@ -17,6 +17,84 @@ function esc(s) {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function toast(msg) {
+  if (window.showToast) { window.showToast(msg); return; }
+  import('./ui.js').then((m) => m.default?.showToast?.(msg)).catch(() => {});
+}
+
+// "view transcript": open a detail overlay within the DevOps panel with the
+// parsed blocks (thinking collapsed and capped server-side, tool calls with
+// their results, the parsed counts) and a copy-able resume command.
+async function openTranscript(jobId) {
+  if (!jobId || !_panel) return;
+  const panel = _panel.querySelector('.dv-panel') || _panel;
+  const existing = panel.querySelector('.dv-transcript-overlay');
+  if (existing) {
+    // A second click on the same row closes the overlay.
+    if (existing.dataset.job === jobId) { existing.remove(); return; }
+    existing.remove();
+  }
+  const ov = document.createElement('div');
+  ov.className = 'dv-transcript-overlay';
+  ov.dataset.job = jobId;
+  ov.innerHTML = '<div class="dv-transcript"><div class="bg-empty">Loading…</div></div>';
+  // Live in the panel header area (a sibling of .dv-body), not inside it, so
+  // the 5-second refresh (which rewrites .dv-body) does not wipe it out.
+  panel.querySelector('.dv-body')?.before(ov);
+  let d;
+  try {
+    const res = await fetch(`/api/transcript/runs/${encodeURIComponent(jobId)}`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+    d = await res.json();
+  } catch (e) {
+    ov.querySelector('.dv-transcript').innerHTML = `<div class="bg-empty">Could not open the transcript: ${esc(e.message)}</div>`;
+    return;
+  }
+  ov.querySelector('.dv-transcript').innerHTML = renderTranscript(d);
+}
+
+function renderTranscript(d) {
+  const c = d.counts || {};
+  const countBits = [
+    c.messages != null ? `${c.messages} msgs` : '',
+    c.tool_calls != null ? `${c.tool_calls} tools` : '',
+    c.thinking_blocks ? `${c.thinking_blocks} thought` : '',
+    c.turns != null ? `${c.turns} turns` : '',
+  ].filter(Boolean).join(' · ');
+  const resume = d.resume_command
+    ? `<button type="button" class="dv-resume" data-resume="${esc(d.resume_command)}" title="Copy the resume command">${esc(d.resume_command)}</button>`
+    : '';
+  const head = `<div class="dv-transcript-head"><div><b>${esc(d.engine || '')}</b> · ${esc(d.status || '')} · ${esc(d.model || '')}
+    <span class="dv-meta">${countBits}</span></div>${resume}
+    <button type="button" class="bg-close dv-transcript-close" aria-label="Close">×</button></div>`;
+  const blocks = (d.blocks || []).map(_blockHtml).join('');
+  const truncated = d.truncated ? '<div class="dv-note">Showing the last blocks — this run is long.</div>' : '';
+  const final = d.final_text ? `<div class="dv-final"><div class="bg-section">Final answer</div><pre class="dv-msg-body">${esc(d.final_text)}</pre></div>` : '';
+  return head + `<div class="dv-transcript-body">${truncated}${blocks || '<div class="bg-empty">No readable blocks in this transcript.</div>'}</div>` + final;
+}
+
+function _blockHtml(b, i) {
+  if (b.kind === 'thinking') {
+    const note = b.clipped ? ` · ${b.fullLen || '?'} chars total` : '';
+    return `<div class="thinking-section dv-thinking">
+      <div class="thinking-header" data-thinking-id="dv-${i}"><div class="thinking-header-left"><span>View reasoning${note}</span></div>
+      <div class="thinking-toggle" aria-label="Expand reasoning"></div></div>
+      <div class="thinking-content" id="dv-${i}"><div class="thinking-content-inner">${esc(b.text)}</div></div></div>`;
+  }
+  if (b.kind === 'text') {
+    const note = b.clipped ? '<div class="dv-note">… (message clipped for the viewer)</div>' : '';
+    return `<div class="dv-msg"><pre class="dv-msg-body">${esc(b.text)}</pre>${note}</div>`;
+  }
+  if (b.kind === 'tool_call') {
+    const hint = b.hint ? `<div class="dv-tool-hint"><code>${esc(b.hint)}</code></div>` : '';
+    const out = b.output ? `<pre class="dv-tool-output${b.error ? ' err' : ''}">${esc(b.output)}</pre>` : (b.error ? '<pre class="dv-tool-output err">(no output)</pre>' : '');
+    const n = b.tool_result_count || 0;
+    return `<div class="dv-tool${b.error ? ' err' : ''}"><div class="dv-tool-head"><span class="dv-tool-name">${esc(b.name)}</span>
+      <span class="dv-meta">${n ? `${n} result${n === 1 ? '' : 's'}` : 'no result yet'}${b.error ? ' · failed' : ''}</span></div>${hint}${out}</div>`;
+  }
+  return '';
+}
+
 const fmtN = (n) => (n == null ? '–' : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M`
   : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
 const fmtS = (s) => (s == null ? '–' : s < 60 ? `${Math.round(s)}s`
@@ -104,10 +182,23 @@ function paintCoders(k) {
     <td>${c.runs}${c.running ? ` <span class="dv-meta">(${c.running} now)</span>` : ''}</td><td>${pct(c.success_rate)}</td>
     <td>${c.done} / ${c.failed} / ${c.cut_off}</td><td>${c.avg_minutes == null ? '–' : `${c.avg_minutes}m`}</td>
     <td>${fmtN(c.output_tokens)}</td><td>${fmtTps(c.tokens_per_s)}</td><td>${c.cost_usd ? `$${c.cost_usd.toFixed(2)}` : '–'}</td></tr>`).join('');
-  const recent = (k.recent || []).map((r) => `<div class="dv-run"><span class="bg-dot ${r.status === 'running' ? 'running' : r.status === 'done' ? 'ok' : 'bad'}"></span>
+  const recent = (k.recent || []).map((r) => {
+    const ts = r.transcript || {};
+    const c = ts.counts || {};
+    const countBits = [
+      c.messages != null ? `${c.messages} msgs` : '',
+      c.tool_calls != null ? `${c.tool_calls} tools` : '',
+      c.thinking_blocks != null && c.thinking_blocks ? `${c.thinking_blocks} thought` : '',
+      c.turns != null ? `${c.turns} turns` : '',
+    ].filter(Boolean).join(' · ');
+    const resume = ts.resume_command ? `<button type="button" class="dv-resume" data-resume="${esc(ts.resume_command)}" data-job="${esc(r.id)}" title="Copy the resume command">copy resume</button>` : '';
+    return `<div class="dv-run"><span class="bg-dot ${r.status === 'running' ? 'running' : r.status === 'done' ? 'ok' : 'bad'}"></span>
     <b>${esc(r.engine === 'claude' ? 'Claude Code' : r.engine === 'opencode' ? 'OpenCode' : r.engine === 'antigravity' ? 'Antigravity' : r.engine)}</b> ${esc(r.action)}
-    ${r.model ? `<span class="dv-chip">${esc(r.model)}</span>` : ''} <span class="dv-meta">${esc(r.status)} · ${fmtS(r.seconds)} · ${esc(when(r.started))}${r.output_tokens ? ` · ${fmtN(r.output_tokens)} tokens` : ''}</span>
-    ${r.chat_session_id ? `<a href="#" data-chat="${esc(r.chat_session_id)}">open chat</a>` : ''}</div>`).join('');
+    ${r.model ? `<span class="dv-chip">${esc(r.model)}</span>` : ''} <span class="dv-meta">${esc(r.status)} · ${fmtS(r.seconds)} · ${esc(when(r.started))}${r.output_tokens ? ` · ${fmtN(r.output_tokens)} tokens` : ''}${countBits ? ` · ${countBits}` : ''}</span>
+    ${r.chat_session_id ? `<a href="#" data-chat="${esc(r.chat_session_id)}">open chat</a>` : ''}
+    ${r.has_transcript ? `<button type="button" class="dv-transcript" data-job="${esc(r.id)}" title="Open the parsed transcript">view transcript</button>` : ''}
+    ${resume}</div>`;
+  }).join('');
   return `<div class="dv-tiles">
       ${tile('Most picked', fav ? name(fav) : '–', fav ? `${fav.runs} runs` : 'no runs yet')}
       ${tile('Most reliable', best ? name(best) : '–', best ? `${pct(best.success_rate)} finished OK` : `needs ${3} finished runs`)}
@@ -154,9 +245,39 @@ export function open() {
       </div>`;
     document.body.appendChild(_panel);
     _panel.addEventListener('click', (ev) => {
-      if (ev.target === _panel || ev.target.closest('.bg-close')) { close(); return; }
+      if (ev.target === _panel) { close(); return; }
+      // "close transcript" inside the DevOps panel: just drop the overlay.
+      // Checked before the generic .bg-close so it does not close the page.
+      if (ev.target.closest('.dv-transcript-close')) {
+        ev.preventDefault(); ev.stopPropagation();
+        _panel.querySelector('.dv-transcript-overlay')?.remove();
+        return;
+      }
+      // The page-level close button (top-right ×) still closes the whole page.
+      if (ev.target.closest('.bg-close')) { close(); return; }
+      // "open chat" rows jump to that session.
       const a = ev.target.closest('[data-chat]');
-      if (a) { ev.preventDefault(); close(); window.sessionModule?.selectSession(a.dataset.chat); }
+      if (a) { ev.preventDefault(); close(); window.sessionModule?.selectSession(a.dataset.chat); return; }
+      // "copy resume": copy the resume command to the clipboard, toast confirmation.
+      // The command is display-only from the viewer's point of view: we copy a
+      // string, we never send it anywhere.
+      const rr = ev.target.closest('.dv-resume');
+      if (rr) {
+        ev.preventDefault();
+        const cmd = rr.getAttribute('data-resume') || '';
+        (navigator.clipboard ? navigator.clipboard.writeText(cmd) : Promise.reject())
+          .then(() => toast('Copied resume command'))
+          .catch(() => toast('Could not copy'));
+        return;
+      }
+      // "view transcript": fetch the parsed detail and render an overlay within
+      // the DevOps panel. The panel just shows what the server already parses;
+      // no route, no engine call.
+      const tv = ev.target.closest('.dv-transcript');
+      if (tv) {
+        ev.preventDefault();
+        openTranscript(tv.getAttribute('data-job'));
+      }
     });
     _panel.querySelector('.dv-window').addEventListener('change', (ev) => {
       _hours = parseInt(ev.target.value, 10) || 24;

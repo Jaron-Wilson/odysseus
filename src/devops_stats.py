@@ -234,8 +234,15 @@ def _history() -> Dict[str, Dict]:
 
 
 def coder_runs(since: float, owner: str = "") -> List[Dict]:
-    """Every coder run started since `since`, newest first."""
+    """Every coder run started since `since`, newest first.
+
+    Each row also carries the parsed transcript summary (counts, preview,
+    resume_command) -- pulled from src/transcript_summaries' persistent on-disk
+    cache so the listing stays fast on the first call after a restart, when
+    only the in-process memory cache is not available.
+    """
     from src import claude_code_jobs as jobs
+    from src import transcript_summaries as summaries
     hist = _history()
     live = {j.id: j for j in jobs.list_jobs("")}
     ids = set(hist) | set(live)
@@ -265,14 +272,36 @@ def coder_runs(since: float, owner: str = "") -> List[Dict]:
         secs = log.get("secs") or ((finished - started) if finished else time.time() - started)
         engine = (j.engine if j else "") or h.get("engine") or log.get("engine") or "claude"
         model = (j.model if j else "") or h.get("model") or log.get("model") or ""
-        runs.append({
+        row = {
             "id": rid, "engine": engine, "model": model,
             "action": (j.action if j else "") or h.get("action") or "",
             "status": status, "started": started, "finished": finished,
             "seconds": round(max(0.0, secs), 1), "output_tokens": int(log.get("out") or 0),
             "cost_usd": round(log.get("cost") or 0.0, 4),
             "chat_session_id": (j.chat_session_id if j else "") or h.get("chat_session_id") or "",
-        })
+            "chat_name": jobs._chat_name((j.chat_session_id if j else "") or h.get("chat_session_id") or ""),
+        }
+        # The transcript viewer's parsed counts and preview, cached on disk.
+        # Fail-safe: the cache is a convenience; a broken summary file (disk
+        # unwriteable, mid-write, version mismatch) must not take the DevOps
+        # page down. We fall back to a row without a `transcript` key, and
+        # the viewer shows "no transcript yet".
+        try:
+            detail = summaries.get_summary(os.path.join(jobs.RUNS_DIR, rid))
+        except Exception as e:
+            logger.debug("transcript summary for %s failed: %s", rid, e)
+            detail = None
+        if detail is not None:
+            row["has_transcript"] = True
+            row["transcript"] = {
+                "counts": detail.get("counts") or {},
+                "preview": detail.get("preview") or "",
+                "resume_command": detail.get("resume_command") or "",
+                "truncated": bool(detail.get("truncated")),
+            }
+        else:
+            row["has_transcript"] = False
+        runs.append(row)
     runs.sort(key=lambda r: -r["started"])
     return runs
 
