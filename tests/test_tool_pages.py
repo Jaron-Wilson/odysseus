@@ -41,7 +41,7 @@ def test_the_agent_reads_the_same_list_as_the_page():
     block = re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-pages:end\s*\*/", _JS, re.S).group(1)
     assert json.loads(block)["pages"] == tool_pages.PAGES
     assert [g["id"] for g in tool_pages.GROUPS] == ["organize", "create", "build", "system"]
-    assert {"devices", "terminal", "browser", "code", "calendar", "tasks", "devops", "background",
+    assert {"devices", "terminal", "browser", "code", "calendar", "tasks", "devops", "background", "claude-sessions",
             "odysseus-dev", "research", "compare", "library", "notes", "brain", "gallery", "cookbook",
             "theme", "whats-new", "email", "chats", "skills", "settings"} == set(tool_pages.keys())
 
@@ -50,7 +50,7 @@ def test_the_agent_reads_the_same_list_as_the_page():
     ("devices", "devices"), ("the devices page", "devices"), ("computers", "devices"), ("phones", "devices"),
     ("machines", "devices"), ("command line", "terminal"), ("shell", "terminal"), ("console", "terminal"),
     ("vs code", "code"), ("editor", "code"), ("IDE", "code"), ("Deep Research", "research"),
-    ("odysseus dev", "odysseus-dev"), ("memories", "brain"), ("documents", "library"), ("sessions", "chats"),
+    ("odysseus dev", "odysseus-dev"), ("claude code sessions", "claude-sessions"), ("memories", "brain"), ("documents", "library"), ("sessions", "chats"),
     ("inbox", "email"), ("preferences", "settings"), ("calendars", "calendar"),
 ])
 def test_page_names_and_aliases(name, key):
@@ -65,7 +65,7 @@ def test_unknown_names_are_not_guessed():
 def test_the_prompt_lists_every_page_in_its_group():
     names = tool_pages.names_for_prompt()
     assert names.startswith("Organize: calendar, tasks, notes, brain;")
-    assert "Build: code, terminal, browser, background, devops, odysseus-dev" in names
+    assert "Build: code, terminal, browser, background, claude-sessions, devops, odysseus-dev" in names
     assert "command line/shell/console->terminal" in tool_pages.aliases_for_prompt()
 
 

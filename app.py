@@ -711,6 +711,9 @@ app.include_router(setup_ide_routes())
 # The Terminal: a live shell over a WebSocket, admin only (routes/terminal_routes.py).
 from routes.terminal_routes import setup_terminal_routes
 app.include_router(setup_terminal_routes())
+# Claude Code sessions on this host, read-only, admin only (routes/claude_sessions_routes.py).
+from routes.claude_sessions_routes import setup_claude_sessions_routes
+app.include_router(setup_claude_sessions_routes())
 
 
 @app.get("/api/version")
