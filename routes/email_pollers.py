@@ -158,6 +158,9 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                     .order_by(_EA.is_default.desc(), _EA.created_at.asc())
                     .all()
                 )
+                # Each inbox once, even when two rows log in to it.
+                from routes.email_helpers import _distinct_mailboxes
+                rows = _distinct_mailboxes(rows)
                 ids = [r.id for r in rows]
                 names = {r.id: r.name for r in rows}
             finally:
