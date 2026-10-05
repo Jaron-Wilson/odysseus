@@ -95,6 +95,209 @@ def save_settings(s: dict) -> None:
         pass
 
 
+# ── Topmost & Win32 window helpers ──────────────────────────────────────────
+HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+
+
+def parse_topmost(val) -> bool:
+    """Parse Tkinter's -topmost attribute value safely.
+
+    Tkinter on some platforms/versions returns '0' or '1' as strings.
+    In Python, bool('0') is True, which causes false-positives if not checked.
+    """
+    if isinstance(val, str):
+        val = val.strip().lower()
+        if val in ("0", "false", "no", "off", ""):
+            return False
+        if val in ("1", "true", "yes", "on"):
+            return True
+    return bool(val)
+
+
+def _get_user32():
+    if IS_WINDOWS and hasattr(ctypes, "windll"):
+        try:
+            return ctypes.windll.user32
+        except Exception:
+            return None
+    return None
+
+
+def _get_hwnd(win):
+    """Get the top-level Win32 HWND for a Tk window."""
+    user32 = _get_user32()
+    if user32 is None or win is None:
+        return None
+    try:
+        wid = win.winfo_id() if hasattr(win, "winfo_id") else getattr(win, "_hwnd", None)
+        if not wid:
+            return None
+        return user32.GetParent(wid) or wid
+    except Exception:
+        return None
+
+
+def set_window_topmost(win, on: bool = True) -> bool:
+    """Set or re-assert topmost for a Tk window using Win32 SetWindowPos on Windows,
+    and Tk's -topmost attribute on all platforms."""
+    if win is None:
+        return False
+    try:
+        if hasattr(win, "attributes"):
+            win.attributes("-topmost", bool(on))
+    except Exception:
+        pass
+    user32 = _get_user32()
+    if user32 is None:
+        return False
+    try:
+        hwnd = _get_hwnd(win)
+        if not hwnd:
+            return False
+        target = HWND_TOPMOST if on else HWND_NOTOPMOST
+        flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+        return bool(user32.SetWindowPos(hwnd, target, 0, 0, 0, 0, flags))
+    except Exception:
+        return False
+
+
+class OverlayMenu:
+    """A frameless, topmost Tk popup menu designed for borderless windows.
+
+    Native tk.Menu (Win32 TrackPopupMenu) drops command dispatch on Windows
+    when attached to borderless (overrideredirect) windows that lack standard
+    WS_CAPTION window activation. This Tk-native popup guarantees that every
+    click fires directly within Tk's event system, stays topmost, and matches
+    the overlay's dark palette.
+    """
+
+    MENU_BG = "#1f1f24"
+    MENU_BORDER = "#33333b"
+    ITEM_HOVER = "#2d2d36"
+    ITEM_FG = "#f2f2f2"
+    ITEM_DIM = "#9a9aa3"
+    ITEM_ACCENT = "#e0b341"
+
+    def __init__(self, parent, x: int, y: int, on_close=None):
+        self.parent = parent
+        self.on_close = on_close
+        self.top = tk.Toplevel(parent)
+        self.top.overrideredirect(True)
+        set_window_topmost(self.top, True)
+        self.top.configure(bg=self.MENU_BORDER)
+
+        self.inner = tk.Frame(self.top, bg=self.MENU_BG, padx=2, pady=4)
+        self.inner.pack(fill="both", expand=True, padx=1, pady=1)
+
+        self._x = x
+        self._y = y
+        self._closed = False
+
+        self.top.bind("<Escape>", lambda e: self.close())
+        self.top.bind("<FocusOut>", self._on_focus_out)
+
+    def _on_focus_out(self, event=None):
+        try:
+            self.top.after(150, self._check_focus_and_close)
+        except Exception:
+            pass
+
+    def _check_focus_and_close(self):
+        if self._closed:
+            return
+        try:
+            focus = self.top.focus_get()
+            if focus is None or focus.winfo_toplevel() != self.top:
+                self.close()
+        except Exception:
+            self.close()
+
+    def add_command(self, label: str, command):
+        self._add_row(label, command, prefix="   ")
+
+    def add_checkbutton(self, label: str, checked: bool, command):
+        check_symbol = "✓  " if checked else "   "
+        self._add_row(label, command, prefix=check_symbol, active_color=self.ITEM_ACCENT if checked else None)
+
+    def add_radiobutton(self, label: str, selected: bool, command):
+        radio_symbol = "●  " if selected else "○  "
+        self._add_row(label, command, prefix=radio_symbol, active_color=self.ITEM_ACCENT if selected else None)
+
+    def add_separator(self):
+        sep = tk.Frame(self.inner, bg=self.MENU_BORDER, height=1)
+        sep.pack(fill="x", padx=6, pady=4)
+
+    def _add_row(self, label: str, command, prefix: str = "", active_color=None):
+        row = tk.Frame(self.inner, bg=self.MENU_BG, cursor="hand2")
+        row.pack(fill="x", padx=2, pady=1)
+
+        fg = active_color or self.ITEM_FG
+        lbl = tk.Label(row, bg=self.MENU_BG, fg=fg, anchor="w",
+                       font=("Segoe UI", 9), text=f"{prefix}{label}")
+        lbl.pack(fill="x", padx=8, pady=3)
+
+        def on_enter(e):
+            row.configure(bg=self.ITEM_HOVER)
+            lbl.configure(bg=self.ITEM_HOVER)
+
+        def on_leave(e):
+            row.configure(bg=self.MENU_BG)
+            lbl.configure(bg=self.MENU_BG)
+
+        def on_click(e):
+            self.close()
+            if command:
+                try:
+                    command()
+                except Exception as ex:
+                    log(f"menu command '{label}' error: {ex}")
+
+        for w in (row, lbl):
+            w.bind("<Enter>", on_enter)
+            w.bind("<Leave>", on_leave)
+            w.bind("<Button-1>", on_click)
+
+    def show(self):
+        self.top.update_idletasks()
+        w = max(220, self.top.winfo_reqwidth())
+        h = self.top.winfo_reqheight()
+
+        try:
+            sw = self.top.winfo_screenwidth()
+            sh = self.top.winfo_screenheight()
+        except Exception:
+            sw, sh = 1920, 1080
+
+        x = max(8, min(self._x, sw - w - 8))
+        y = max(8, min(self._y, sh - h - 8))
+
+        self.top.geometry(f"{w}x{h}+{x}+{y}")
+        self.top.deiconify()
+        set_window_topmost(self.top, True)
+        try:
+            self.top.focus_force()
+        except Exception:
+            pass
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.top.destroy()
+        except Exception:
+            pass
+        if self.on_close:
+            try:
+                self.on_close()
+            except Exception:
+                pass
+
+
 # ── Windows media session (winsdk), on its own asyncio thread ─────────────
 class Media:
     def __init__(self):
@@ -367,7 +570,9 @@ class Overlay:
         root = self.root = tk.Tk()
         root.title("Odysseus music")
         root.overrideredirect(True)                    # no title bar, no X
-        root.attributes("-topmost", self.settings.get("topmost", True))
+        self.topmost_on = parse_topmost(self.settings.get("topmost", True))
+        root.attributes("-topmost", self.topmost_on)
+        set_window_topmost(root, self.topmost_on)
         root.attributes("-alpha", float(self.settings.get("alpha", 0.86)))
         root.configure(bg=BG)
         sw = root.winfo_screenwidth()
@@ -382,9 +587,11 @@ class Overlay:
         root.geometry(f"{W}x{H}+{self.ax}+{self.ay}")
         if not self._font_ok("Segoe Fluent Icons"):
             self.ICON_FONT = ("Segoe MDL2 Assets", 12)
+        self._active_menu = None
         self._build()
         self._build_messages()
         root.after(50, self._round_corners)
+        root.after(500, self._reassert_topmost)
         threading.Thread(target=self._poll, daemon=True).start()
         self.url = (self.settings.get("url") or ODYSSEUS_URL).rstrip("/") + "/"
         self.token = self.settings.get("token") or ""
@@ -411,11 +618,32 @@ class Overlay:
         # Windows 11: ask DWM for rounded corners (harmless elsewhere).
         try:
             w = win or self.root
-            hwnd = ctypes.windll.user32.GetParent(w.winfo_id()) or w.winfo_id()
-            pref = ctypes.c_int(2)                      # DWMWCP_ROUND
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
+            hwnd = _get_hwnd(w)
+            if hwnd:
+                pref = ctypes.c_int(2)                      # DWMWCP_ROUND
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
         except Exception:
             pass
+
+    def _reassert_topmost(self):
+        try:
+            if getattr(self, "topmost_on", True):
+                set_window_topmost(self.root, True)
+                if getattr(self, "msg_open", False) and getattr(self, "alert", None):
+                    set_window_topmost(self.alert, True)
+                if getattr(self, "reader", None) and getattr(self.reader, "top", None):
+                    set_window_topmost(self.reader.top, True)
+        except Exception:
+            pass
+        try:
+            self.root.after(500, self._reassert_topmost)
+        except Exception:
+            pass
+
+    def _close_menu_if_open(self):
+        if getattr(self, "_active_menu", None):
+            self._active_menu.close()
+            self._active_menu = None
 
     def _build(self):
         # The player row lives in its own frame, so a message can open above
@@ -452,6 +680,7 @@ class Overlay:
 
     # dragging
     def _drag_start(self, e):
+        self._close_menu_if_open()
         # Relative to the window's top-left, which is known from the anchor.
         self._dx, self._dy = e.x_root - self.ax, e.y_root - self.ay
 
@@ -465,28 +694,42 @@ class Overlay:
         # Saved as the player's own position, whether or not a message is open.
         self.settings.update(x=self.ax, y=self.ay)
         save_settings(self.settings)
+        if getattr(self, "topmost_on", True):
+            set_window_topmost(self.root, True)
 
     # right-click menu
     def _menu(self, e):
-        m = tk.Menu(self.root, tearoff=0)
+        self._close_menu_if_open()
+
+        m = OverlayMenu(self.root, e.x_root, e.y_root, on_close=lambda: setattr(self, "_active_menu", None))
+        self._active_menu = m
+
+        current_alpha = float(self.settings.get("alpha", 0.86))
         for pct in (100, 86, 70, 55):
-            m.add_command(label=f"Opacity {pct}%", command=lambda p=pct: self._alpha(p / 100))
-        top = tk.BooleanVar(value=bool(self.root.attributes("-topmost")))
-        m.add_checkbutton(label="Always on top", variable=top, command=lambda: self._topmost(top.get()))
-        label, _ = self._app()
-        target = tk.StringVar(value=self.settings.get("vol_target", "pc"))
-        m.add_radiobutton(label="Volume buttons: computer", value="pc", variable=target,
-                          command=lambda: self._set("vol_target", "pc"))
-        m.add_radiobutton(label=f"Volume buttons: {label or 'playing app'} only", value="app",
-                          variable=target, command=lambda: self._set("vol_target", "app"))
-        cwo = tk.BooleanVar(value=bool(self.settings.get("close_with_odysseus", True)))
-        m.add_checkbutton(label="Close with Odysseus", variable=cwo,
-                          command=lambda: self._set("close_with_odysseus", cwo.get()))
-        m.add_command(label="Put alerts back above the player", command=self._reset_alert)
+            val = pct / 100
+            is_cur = abs(current_alpha - val) < 0.03
+            m.add_radiobutton(f"Opacity {pct}%", is_cur, lambda p=pct: self._alpha(p / 100))
+
         m.add_separator()
-        m.add_command(label="Open Odysseus", command=lambda: webbrowser.open(ODYSSEUS_URL))
-        m.add_command(label="Close", command=self.root.destroy)
-        m.tk_popup(e.x_root, e.y_root)
+        top_on = parse_topmost(self.root.attributes("-topmost"))
+        m.add_checkbutton("Always on top", top_on, lambda: self._topmost(not top_on))
+
+        label, _ = self._app()
+        target = self.settings.get("vol_target", "pc")
+        m.add_radiobutton("Volume buttons: computer", target == "pc",
+                          lambda: self._set("vol_target", "pc"))
+        m.add_radiobutton(f"Volume buttons: {label or 'playing app'} only", target == "app",
+                          lambda: self._set("vol_target", "app"))
+
+        cwo = bool(self.settings.get("close_with_odysseus", True))
+        m.add_checkbutton("Close with Odysseus", cwo,
+                          lambda: self._set("close_with_odysseus", not cwo))
+
+        m.add_command("Put alerts back above the player", self._reset_alert)
+        m.add_separator()
+        m.add_command("Open Odysseus", lambda: webbrowser.open(ODYSSEUS_URL))
+        m.add_command("Close", self.root.destroy)
+        m.show()
 
     def _set(self, key, value):
         self.settings[key] = value
@@ -499,10 +742,15 @@ class Overlay:
         save_settings(self.settings)
 
     def _topmost(self, on):
-        self.root.attributes("-topmost", on)
-        self.alert.attributes("-topmost", on)
-        self.settings["topmost"] = on
+        self.topmost_on = bool(on)
+        self.settings["topmost"] = self.topmost_on
         save_settings(self.settings)
+        set_window_topmost(self.root, self.topmost_on)
+        if getattr(self, "alert", None):
+            set_window_topmost(self.alert, self.topmost_on)
+        if getattr(self, "reader", None) and getattr(self.reader, "top", None):
+            set_window_topmost(self.reader.top, self.topmost_on)
+        self._flash("Always on top: on" if self.topmost_on else "Always on top: off")
 
     # controls
     def _flash(self, text):
@@ -695,7 +943,8 @@ class Overlay:
         # player until dragged somewhere else, and keeps that spot.
         a = self.alert = tk.Toplevel(self.root)
         a.overrideredirect(True)
-        a.attributes("-topmost", self.settings.get("topmost", True))
+        a.attributes("-topmost", self.topmost_on)
+        set_window_topmost(a, self.topmost_on)
         a.attributes("-alpha", float(self.settings.get("alpha", 0.86)))
         a.configure(bg=BG)
         a.withdraw()
@@ -732,6 +981,7 @@ class Overlay:
             w.bind("<ButtonPress-1>", self._alert_drag_start)
             w.bind("<B1-Motion>", self._alert_drag)
             w.bind("<ButtonRelease-1>", self._alert_drag_end)
+            w.bind("<Button-3>", self._menu)
 
     # the alert window's own position
     def _alert_pos(self):
@@ -746,6 +996,7 @@ class Overlay:
         self.alert.geometry(f"{W}x{MSG_H}+{x}+{y}")
 
     def _alert_drag_start(self, e):
+        self._close_menu_if_open()
         x, y = self._alert_pos()
         self._adx, self._ady = e.x_root - x, e.y_root - y
 
@@ -758,13 +1009,23 @@ class Overlay:
             self.settings.update(alert_x=self._alert_xy[0], alert_y=self._alert_xy[1])
             save_settings(self.settings)
             self._alert_xy = None
+        if getattr(self, "topmost_on", True):
+            set_window_topmost(self.alert, True)
 
     def _reset_alert(self):
         self.settings.pop("alert_x", None)
         self.settings.pop("alert_y", None)
         save_settings(self.settings)
-        if self.current is not None:
-            self._place_alert()
+        self._place_alert()
+        if getattr(self, "alert", None):
+            self.alert.lift()
+            set_window_topmost(self.alert, True)
+            if self.current is not None or getattr(self, "msg_open", False):
+                if not self.msg_open:
+                    self.alert.deiconify()
+                    self.msg_open = True
+                self.root.after(50, lambda: self._round_corners(self.alert))
+        self._flash("Alerts reset")
 
     # ── the message queue ─────────────────────────────────────────────────
     # Everything waiting to be read, oldest first. Seen live: two replies
@@ -860,8 +1121,7 @@ class Overlay:
     def _attention(self):
         # Back on top, over a game that took focus, and a gentle chime.
         for w in (self.root, self.alert):
-            w.attributes("-topmost", False)
-            w.attributes("-topmost", True)
+            set_window_topmost(w, True)
             w.lift()
         try:
             if IS_WINDOWS:
@@ -1038,6 +1298,8 @@ class PlanReader:
         t = self.top = tk.Toplevel(ov.root)
         t.overrideredirect(True)
         t.attributes("-topmost", True)
+        set_window_topmost(t, True)
+        t.after(50, lambda: self.ov._round_corners(t))
         t.configure(bg=BG)
         w = n * self.COL_W + (n + 1) * self.PAD
         h = min(int(t.winfo_screenheight() * 0.78), 1100)
@@ -1069,6 +1331,7 @@ class PlanReader:
         for wd in (head, title):
             wd.bind("<ButtonPress-1>", self._drag_start)
             wd.bind("<B1-Motion>", self._drag)
+            wd.bind("<ButtonRelease-1>", self._drag_end)
         body_h = h - self.HEAD_H - self.PAD
         for i, pid in enumerate(self.ids):
             self._column(pid, self.PAD + i * (self.COL_W + self.PAD), self.HEAD_H, body_h)
@@ -1204,6 +1467,9 @@ class PlanReader:
     def _drag(self, e):
         self.rx, self.ry = e.x_root - self._dx, e.y_root - self._dy
         self.top.geometry(f"+{self.rx}+{self.ry}")
+
+    def _drag_end(self, e):
+        set_window_topmost(self.top, True)
 
 
 def main():
