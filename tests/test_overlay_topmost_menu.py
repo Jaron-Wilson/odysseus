@@ -267,3 +267,31 @@ def test_overlay_menu_dispatches_commands(monkeypatch):
     assert closed == [True]
     assert menu.top._destroyed is True
 
+
+
+def test_menu_grabs_topmost_only_after_realization():
+    # Regression: set_window_topmost on an unrealized Toplevel no-ops, so it
+    # used to be called in __init__ (before deiconify mapped the HWND) and the
+    # menu rendered behind the player.
+    assert "set_window_topmost(self.top, True)" not in SRC.split("def __init__", 1)[1].split("def _on_focus_out", 1)[0]
+    show_src = SRC.split("def show(self):", 1)[1].split("\n    def ", 1)[0]
+    deiconify_pos = show_src.index("deiconify()")
+    topmost_pos = show_src.index("set_window_topmost(self.top, True)")
+    assert topmost_pos > deiconify_pos
+
+
+def test_menu_keeps_topmost_for_its_lifetime():
+    src = SRC.split("class OverlayMenu:", 1)[1].split("\n# ", 1)[0]
+    assert "def _keep_topmost(self):" in src
+    assert "self.top.after(400, self._keep_topmost)" in src
+
+
+def test_player_reasserts_yield_while_menu_is_open():
+    # Regression: the player's 500 ms reassert loop popped the player back in
+    # front of the open menu. While a menu is open it must not reassert itself.
+    reassert_src = SRC.split("def _reassert_topmost(self):", 1)[1].split("\n    def ", 1)[0]
+    assert 'getattr(self, "_active_menu", None) is not None' in reassert_src
+    # The root reassert must be in the else-branch, not before the check:
+    if_pos = reassert_src.index('is not None')
+    root_pos = reassert_src.index("set_window_topmost(self.root, True)")
+    assert root_pos > if_pos
