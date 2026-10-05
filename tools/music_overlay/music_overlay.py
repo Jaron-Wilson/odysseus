@@ -187,7 +187,6 @@ class OverlayMenu:
         self.on_close = on_close
         self.top = tk.Toplevel(parent)
         self.top.overrideredirect(True)
-        set_window_topmost(self.top, True)
         self.top.configure(bg=self.MENU_BORDER)
 
         self.inner = tk.Frame(self.top, bg=self.MENU_BG, padx=2, pady=4)
@@ -277,9 +276,26 @@ class OverlayMenu:
 
         self.top.geometry(f"{w}x{h}+{x}+{y}")
         self.top.deiconify()
-        set_window_topmost(self.top, True)
         try:
             self.top.focus_force()
+        except Exception:
+            pass
+        # Only now does the HWND exist (deiconify maps it) — grabbing topmost
+        # before that silently no-oped. Do it after, so the menu opens above
+        # the player even while the player's reassert loop is running.
+        set_window_topmost(self.top, True)
+        # Keep it there for the menu's lifetime.
+        try:
+            self.top.after(400, self._keep_topmost)
+        except Exception:
+            pass
+
+    def _keep_topmost(self):
+        if self._closed:
+            return
+        try:
+            set_window_topmost(self.top, True)
+            self.top.after(400, self._keep_topmost)
         except Exception:
             pass
 
@@ -626,13 +642,19 @@ class Overlay:
             pass
 
     def _reassert_topmost(self):
+        # While a menu is open, it owns the top of the z-order: the menu keeps
+        # itself there, and if the player also reasserts it would pop back in
+        # front of the menu within its 500 ms tick.
         try:
             if getattr(self, "topmost_on", True):
-                set_window_topmost(self.root, True)
-                if getattr(self, "msg_open", False) and getattr(self, "alert", None):
-                    set_window_topmost(self.alert, True)
-                if getattr(self, "reader", None) and getattr(self.reader, "top", None):
-                    set_window_topmost(self.reader.top, True)
+                if getattr(self, "_active_menu", None) is not None:
+                    pass
+                else:
+                    set_window_topmost(self.root, True)
+                    if getattr(self, "msg_open", False) and getattr(self, "alert", None):
+                        set_window_topmost(self.alert, True)
+                    if getattr(self, "reader", None) and getattr(self.reader, "top", None):
+                        set_window_topmost(self.reader.top, True)
         except Exception:
             pass
         try:
