@@ -5990,6 +5990,23 @@ const COMMANDS = {
       'export':      { handler: _cmdSessionExport,      alias: ['cat'],            help: 'Download as markdown',        usage: '/chats export' }
     }
   },
+  // Threads of this chat (chatThreads.js, src/chat_subagents.py).
+  branch: {
+    alias: [],
+    category: 'Chats',
+    help: 'Branch this chat into a thread you carry on separately',
+    handler: (args) => (window.chatThreads ? window.chatThreads.slashBranch(args.join(' ')) : true),
+    noUserBubble: true,
+    usage: '/branch [title]',
+  },
+  subagent: {
+    alias: ['sub'],
+    category: 'Chats',
+    help: 'Hand a task to a subagent that works in the background and reports back',
+    handler: (args) => (window.chatThreads ? window.chatThreads.slashSubagent(args.join(' ')) : true),
+    noUserBubble: true,
+    usage: '/subagent <task>',
+  },
   toggle: {
     alias: ['t'],
     category: 'Quick toggles',

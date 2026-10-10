@@ -92,6 +92,9 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "edit_image", "trigger_research", "manage_research",
              "claude_code", "notify_device", "manage_devices", "call_me",
              "chat_memory",
+             # Threads of a chat: a branch, or a subagent run in the
+             # background (src/chat_subagents.py).
+             "branch_thread", "spawn_subagent",
              # The merged PRs (src/whats_new.py), read-only.
              "whats_new",
              # Make or join a Google Meet (src/meet/tool.py).

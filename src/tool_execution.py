@@ -783,6 +783,18 @@ async def execute_tool_block(
         desc = "chat_memory"
         from src import chat_memory
         result = chat_memory.run_tool(content, session_id=session_id, owner=owner)
+    elif tool in ("branch_thread", "spawn_subagent"):
+        # Threads of this chat (src/chat_subagents.py).
+        from src import chat_subagents
+        try:
+            if tool == "branch_thread":
+                result = chat_subagents.run_branch_tool(content, session_id=session_id, owner=owner)
+            else:
+                result = chat_subagents.run_subagent_tool(content, session_id=session_id, owner=owner)
+        except Exception as e:
+            logger.warning("%s failed: %s", tool, e, exc_info=True)
+            result = {"error": f"{tool}: {type(e).__name__}: {e}"[:400], "exit_code": 1}
+        desc = f"{tool}: {((result or {}).get('thread') or {}).get('name', '')}"[:100]
     elif tool == "call_me":
         desc = f"call_me: {content.split(chr(10))[0][:80]}"
         from src.agent_tools import TOOL_HANDLERS

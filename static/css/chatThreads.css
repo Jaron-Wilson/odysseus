@@ -1,0 +1,159 @@
+/* Threads of a chat: the header button, the Threads panel, thread cards and
+   the breadcrumb inside a thread (static/js/chatThreads.js). */
+
+:root {
+  --th-branch: #4f9fd9;
+  --th-agent: #3fae7a;
+  --th-side: #8f7ad6;
+}
+
+/* ── header button ───────────────────────────────────────────────────── */
+.threads-btn {
+  height: auto; display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 2px 8px 2px 6px;
+  font: inherit; font-size: 1em; line-height: 1.3; color: inherit; cursor: pointer; position: relative;
+  background: none; border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); border-radius: 999px;
+}
+.threads-btn[hidden] { display: none; }
+.threads-btn:hover, .threads-btn.active {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.threads-btn svg { flex-shrink: 0; }
+.threads-btn-count {
+  min-width: 15px; padding: 0 4px; border-radius: 8px; font-size: .9em; text-align: center; box-sizing: border-box;
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
+}
+.threads-btn-dot {
+  position: absolute; top: -2px; right: -2px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--th-agent); box-shadow: 0 0 0 2px var(--bg, #111);
+  animation: th-pulse 1.4s ease-in-out infinite;
+}
+@keyframes th-pulse { 50% { opacity: .35; } }
+@media (max-width: 768px) {
+  .threads-btn { margin-left: 6px; padding: 2px 6px; }
+  .threads-btn-label { display: none; }
+}
+
+/* ── panel ───────────────────────────────────────────────────────────── */
+.threads-panel {
+  position: fixed; z-index: 1200; top: 44px; right: 16px; width: min(400px, calc(100vw - 32px));
+  max-height: min(72vh, 640px); display: flex; flex-direction: column; box-sizing: border-box;
+  background: var(--panel, var(--bg, #1b1b1b)); color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent); border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .35); font-size: 13px;
+}
+.threads-panel[hidden] { display: none; }
+.tp-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; }
+.tp-title { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; font-weight: 600; font-size: 14px; }
+.tp-sub { font-weight: normal; opacity: .6; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-close {
+  padding: 0; border: 0; background: none; color: inherit; font-size: 20px; line-height: 1; cursor: pointer; opacity: .6;
+  width: 28px; height: 28px; border-radius: 8px;
+}
+.tp-close:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.tp-crumbs { padding: 0 14px 8px; }
+.tp-crumbs[hidden] { display: none; }
+.tp-actions { display: flex; gap: 8px; padding: 0 14px 10px; flex-wrap: wrap; }
+.tp-actions button, .tp-compose button, .tp-stop {
+  height: auto; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12.5px; padding: 5px 11px;
+  border-radius: 9px; cursor: pointer; color: inherit; background: none;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.tp-actions button:hover, .tp-compose button:hover, .tp-stop:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.tp-actions [data-threads-branch] svg { color: var(--th-branch); }
+.tp-actions [data-threads-compose] svg { color: var(--th-agent); }
+.tp-compose { display: flex; flex-direction: column; gap: 7px; margin: 0 14px 10px; padding: 10px;
+  border-radius: 10px; background: color-mix(in srgb, var(--th-agent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--th-agent) 30%, transparent); }
+.tp-compose[hidden] { display: none; }
+.tp-compose textarea, .tp-compose input {
+  font: inherit; font-size: 13px; color: inherit; width: 100%; box-sizing: border-box; padding: 7px 9px; resize: vertical;
+  background: color-mix(in srgb, var(--bg, #000) 60%, transparent); border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.tp-compose-row { display: flex; align-items: center; gap: 8px; }
+.tp-hint { flex: 1; font-size: 11.5px; opacity: .65; }
+.tp-compose .tp-primary { background: var(--th-agent); border-color: var(--th-agent); color: #fff; font-weight: 600; }
+.tp-compose .tp-primary:hover { background: color-mix(in srgb, var(--th-agent) 85%, #000); }
+.tp-compose .tp-primary:disabled { opacity: .5; cursor: default; }
+.tp-list { overflow-y: auto; padding: 2px 8px 10px; border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); }
+.tp-row { display: flex; align-items: flex-start; gap: 6px; padding: 2px 0; border-radius: 10px; }
+.tp-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.tp-open {
+  height: auto; flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 9px; padding: 8px 6px; text-align: left;
+  font: inherit; color: inherit; background: none; border: 0; cursor: pointer; border-radius: 10px;
+}
+.tp-kind { flex-shrink: 0; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; font-size: 13px;
+  background: color-mix(in srgb, var(--th-side) 16%, transparent); color: var(--th-side); }
+.th-kind-branch .tp-kind { background: color-mix(in srgb, var(--th-branch) 16%, transparent); color: var(--th-branch); }
+.th-kind-subagent .tp-kind { background: color-mix(in srgb, var(--th-agent) 16%, transparent); color: var(--th-agent); }
+.tp-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tp-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-meta { font-size: 11.5px; opacity: .6; }
+.tp-preview { font-size: 12px; opacity: .8; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tp-side { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; padding: 9px 6px 0 0; flex-shrink: 0; }
+.tp-stop { padding: 2px 9px; font-size: 11.5px; }
+.tp-empty { padding: 10px 8px 4px; font-size: 12.5px; line-height: 1.5; opacity: .8; }
+.tp-empty p { margin: 0 0 8px; }
+.tp-empty code { font-size: 12px; padding: 0 4px; border-radius: 4px; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+
+@media (max-width: 768px) {
+  .threads-panel {
+    top: auto; bottom: 0; left: 0; right: 0; width: 100%; max-height: 78vh;
+    border-radius: 16px 16px 0 0; border-bottom: 0; padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .tp-actions button { flex: 1; justify-content: center; padding: 8px 10px; }
+  .tp-open { padding: 10px 6px; }
+}
+
+/* ── status pills ────────────────────────────────────────────────────── */
+.th-status { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid currentColor; }
+.th-st-running { color: var(--th-agent); }
+.th-st-running::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%;
+  background: currentColor; vertical-align: 1px; animation: th-pulse 1.4s ease-in-out infinite; }
+.th-st-done { color: color-mix(in srgb, var(--fg) 60%, transparent); }
+.th-st-failed { color: #e0655b; }
+.th-st-stopped { color: #c9a13b; }
+
+/* ── cards under a message ───────────────────────────────────────────── */
+.thread-card.th-kind-branch { border-left-color: var(--th-branch); background: color-mix(in srgb, var(--th-branch) 8%, transparent); }
+.thread-card.th-kind-subagent { border-left-color: var(--th-agent); background: color-mix(in srgb, var(--th-agent) 8%, transparent); }
+.thread-card-kind { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; opacity: .75; }
+.thread-card.th-kind-branch .thread-card-kind svg { color: var(--th-branch); }
+.thread-card.th-kind-subagent .thread-card-kind svg { color: var(--th-agent); }
+.thread-card-result { flex-basis: 100%; font-size: 12px; opacity: .8; overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* ── breadcrumb inside a thread ──────────────────────────────────────── */
+.thread-banner.th-kind-branch { border-color: color-mix(in srgb, var(--th-branch) 45%, transparent); background: color-mix(in srgb, var(--th-branch) 10%, transparent); }
+.thread-banner.th-kind-subagent { border-color: color-mix(in srgb, var(--th-agent) 45%, transparent); background: color-mix(in srgb, var(--th-agent) 10%, transparent); }
+.thread-banner .th-crumbs { flex: 1 1 100%; }
+.thread-banner .thread-banner-title { opacity: .75; }
+.thread-banner-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.th-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; font-size: 12.5px; }
+.th-crumb { height: auto; display: inline-flex; align-items: center; gap: 4px; max-width: 100%; font: inherit; color: inherit;
+  background: none; border: 0; padding: 2px 6px; border-radius: 7px; cursor: pointer; }
+.th-crumbs button.th-crumb { text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--fg) 35%, transparent); }
+.th-crumbs button.th-crumb:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.th-crumb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th-crumb-here { font-weight: 600; cursor: default; }
+.th-crumb-sep, .th-crumb-gap { opacity: .5; }
+.thread-banner .th-crumbs button.th-crumb { border: 0; padding: 2px 6px; font-size: 12.5px; }
+
+/* ── a subagent's report in the chat ─────────────────────────────────── */
+#chat-history .msg.msg-user.msg-subagent-report {
+  align-self: stretch; align-items: stretch; width: auto; max-width: 100% !important; margin: 4px 0 12px;
+  border-radius: 12px; background: color-mix(in srgb, var(--th-agent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--th-agent) 25%, transparent);
+}
+.msg-subagent-report .body { font-size: inherit; border-left: 3px solid var(--th-agent); padding-left: 12px; }
+.msg-subagent-report.subagent-failed .body { border-left-color: #e0655b; }
+#chat-history .msg.msg-user.msg-subagent-report.subagent-failed { background: color-mix(in srgb, #e0655b 6%, transparent); border-color: color-mix(in srgb, #e0655b 25%, transparent); }
+#chat-history .msg.msg-user.msg-subagent-report.subagent-stopped { background: color-mix(in srgb, #c9a13b 6%, transparent); border-color: color-mix(in srgb, #c9a13b 25%, transparent); }
+.msg-subagent-report.subagent-stopped .body { border-left-color: #c9a13b; }
+.subagent-report-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; font-size: 12.5px; }
+.subagent-report-open { height: auto; font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 8px; cursor: pointer; color: inherit;
+  background: none; border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent); }
+.subagent-report-open:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
