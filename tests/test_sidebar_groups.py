@@ -39,7 +39,7 @@ _JS = (_STATIC / "js" / "toolPages.js").read_text()
 _TAXONOMY = json.loads(re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-pages:end\s*\*/", _JS, re.S).group(1))
 
 _TOOL_IDS = ["tool-memory-btn", "tool-calendar-btn", "tool-compare-btn", "tool-cookbook-btn", "tool-research-btn",
-             "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-tasks-btn", "tool-bg-btn",
+             "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-plans-btn", "tool-tasks-btn", "tool-bg-btn",
              "tool-devops-btn", "tool-code-btn", "tool-browser-btn", "tool-devices-btn", "tool-terminal-btn",
              "tool-claude-sessions-btn", "tool-adsb-btn",
              "tool-odysseus-dev-btn", "tool-theme-btn", "tool-whats-new-btn"]
@@ -221,7 +221,7 @@ def test_the_groups_render_in_every_design(make_page, design):
     gs = _groups(pg)
     assert [g["label"] for g in gs] == ["Organize", "Create & research", "Build", "System"]
     assert [g["items"] for g in gs] == [
-        ["tool-calendar-btn", "tool-tasks-btn", "tool-notes-btn", "tool-memory-btn"],
+        ["tool-calendar-btn", "tool-tasks-btn", "tool-notes-btn", "tool-plans-btn", "tool-memory-btn"],
         ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn"],
         ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-claude-sessions-btn", "tool-devops-btn",
          "tool-odysseus-dev-btn"],
@@ -314,7 +314,7 @@ def test_the_new_tab_menu_lists_the_tools_in_the_same_groups(make_page):
         [...g.querySelectorAll('button')].map(b => b.textContent.trim())]) })""")
     assert menu["top"] == ["New chat", "Inbox", "Settings"]
     assert menu["groups"] == [
-        ["Organize", ["Calendar", "Tasks", "Notes", "Brain"]],
+        ["Organize", ["Calendar", "Tasks", "Notes", "Plans", "Brain"]],
         ["Create & research", ["Library", "Gallery", "Deep Research", "Compare"]],
         ["Build", ["Code", "Terminal", "Browser", "Background", "Claude sessions", "DevOps", "Odysseus dev"]],
         ["System", ["Devices", "ADS-B receiver", "Cookbook", "Theme", "What's new"]]]

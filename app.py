@@ -887,6 +887,10 @@ logger.info("Webhook & API token routes initialized")
 from routes.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler))
 
+# Plans: the user's own Markdown plans as .md files, no model involved (routes/plans_routes.py)
+from routes.plans_routes import setup_plans_routes
+app.include_router(setup_plans_routes())
+
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()
