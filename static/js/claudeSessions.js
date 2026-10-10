@@ -11,7 +11,9 @@
 // each tool call folded to its name and a one-line summary, with its result
 // (cut short) inside. A live session is followed every few seconds; older
 // turns load on scroll up. On a phone the list and the transcript take
-// turns, with a Back button.
+// turns, with a Back button. #claude-sessions/<project>/<id> opens one
+// session, and "Attach to this chat" hands it to the open chat
+// (/claude attach, slashCommands.js).
 
 import { addFillChatAreaButton } from './fillChatArea.js';
 
@@ -76,7 +78,7 @@ function close() {
   if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; }
   if (_panel) { _panel.remove(); _panel = null; }
   _cur = null;
-  if (location.hash === '#claude-sessions') history.replaceState(null, '', location.pathname + location.search);
+  if (location.hash.startsWith('#claude-sessions')) history.replaceState(null, '', location.pathname + location.search);
 }
 
 // ── The list ─────────────────────────────────────────────────────────────
@@ -169,7 +171,10 @@ function paintHead(s) {
         ${s.job && s.job.name ? ` · job <b>${esc(s.job.name)}</b> (${esc(s.job.state)})` : ''}
       </div>
     </div>
-    <button type="button" class="cs-copy" data-copy="claude --resume ${esc(s.id)}" title="Copy the command that resumes this session in a terminal">Copy resume</button>`;
+    <div class="cs-head-actions">
+      <button type="button" class="cs-copy" data-copy="claude --resume ${esc(s.id)}" title="Copy the command that resumes this session in a terminal">Copy resume</button>
+      <button type="button" class="cs-copy cs-attach" data-attach="${esc(s.id)}" title="Let the open chat's coding agent carry this session on (/claude attach)">Attach to this chat</button>
+    </div>`;
   syncLiveTimer();
 }
 
@@ -328,7 +333,25 @@ function backToList() {
 }
 
 // ── The page ─────────────────────────────────────────────────────────────
-export function open() {
+// Runs `/claude attach <id>` in the open chat, so the card shows there.
+function attachToChat(id) {
+  const input = document.getElementById('message');
+  const form = document.getElementById('chat-form');
+  if (!input || !form) return;
+  close();
+  input.value = `/claude attach ${id}`;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  if (typeof form.requestSubmit === 'function') form.requestSubmit();
+  else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+}
+
+// The session a #claude-sessions/<project>/<id> hash names, or null.
+function fromHash() {
+  const m = location.hash.match(/^#claude-sessions\/([^/]+)\/([^/]+)$/);
+  return m ? [decodeURIComponent(m[1]), decodeURIComponent(m[2])] : null;
+}
+
+export function open(project, id) {
   if (!_panel) {
     _panel = document.createElement('div');
     _panel.className = 'bg-panel-backdrop';
@@ -354,6 +377,8 @@ export function open() {
       if (item) { openSession(item.dataset.project, item.dataset.id); return; }
       if (ev.target.closest('.cs-back')) { backToList(); return; }
       if (ev.target.closest('.cs-older')) { loadOlder(); return; }
+      const att = ev.target.closest('[data-attach]');
+      if (att) { attachToChat(att.dataset.attach); return; }
       const copy = ev.target.closest('[data-copy]');
       if (copy) {
         navigator.clipboard?.writeText(copy.dataset.copy).then(
@@ -378,12 +403,17 @@ export function open() {
   }
   refreshList();
   if (!_listTimer) _listTimer = setInterval(() => { if (document.visibilityState === 'visible') refreshList(); }, LIST_MS);
+  if (typeof project === 'string' && typeof id === 'string' && project && id) openSession(project, id);
 }
 
 function init() {
-  document.getElementById('tool-claude-sessions-btn')?.addEventListener('click', open);
-  if (location.hash === '#claude-sessions') open();
-  window.addEventListener('hashchange', () => { if (location.hash === '#claude-sessions') open(); });
+  document.getElementById('tool-claude-sessions-btn')?.addEventListener('click', () => open());
+  const byHash = () => {
+    if (location.hash === '#claude-sessions') open();
+    else if (fromHash()) open(...fromHash());
+  };
+  byHash();
+  window.addEventListener('hashchange', byHash);
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

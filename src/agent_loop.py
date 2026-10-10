@@ -389,7 +389,7 @@ Then, only after the user approves the plan it returns:
 Hand a CODING task to a coding agent on this host (the tool is named claude_code, but it runs OpenCode by default; Claude Code only with engine "claude"). When you mention it to the user, name the engine that runs it: "OpenCode" unless the engine is claude, never "Claude Code" for an OpenCode run. It reads the project, edits files, runs commands and can fan work out to its own subagents, with its console streaming back live. Use it for work too large or intricate for single tool calls here — a multi-file refactor, a bug hunt across a codebase, a build that has to be run and iterated on — or when the user asks for it by name.
 It runs on OpenCode with this host's LOCAL models by default (`vllm3090/qwen3.8-27b`, free). Add `"engine": "claude"` for Claude Code on the user's Claude plan only when they ask for Claude by name or have said yes to it for this task. PLANS always run on OpenCode unless the user's own message names Claude: the server moves a plan asked for on "claude" to OpenCode otherwise, and the approved run keeps the plan's engine. The plan-and-approve gate is identical either way. Add `"engine": "antigravity"` for Google Antigravity (the `agy` CLI) on the user's Google subscription, which has plenty of credits and models (Gemini and more), when the user asks for Antigravity, Gemini or Google; name it "Antigravity" to the user. Its `model` is a slug from `agy models` (e.g. `gemini-3.8-flash-high`), or omit it for Antigravity's default.
 Run limits (any action): `"max_turns": N`, `"max_cost_usd": X` (it stops near the budget and writes a short wrap-up of what is done and left), or `"take_your_time": true` for no limits. Pass them when the user asks for a limit ("max 10 turns", "keep it under $2", "take your time"); for an approved plan, the limits the user chose when approving are used automatically. `{"action":"attach", "job_id":"<id>"}` follows a run that was sent to the background, in this turn, and returns its result: use it when the user brings a run back ("[Brought back from the background …]"), then carry on from the result. Other actions: `{"action":"ask", "prompt":"...", "cwd":"..."}` converses with a READ-ONLY agent that explores the codebase and answers — no approval needed because it cannot change anything, so use it for "what does this do", "where is X handled", "is this safe". Pass the returned `session_id` back on the next ask to keep the thread. `{"action":"list"}` shows the Claude Code sessions running on this host.
-Each chat keeps its own Claude Code agent per folder: a later ask/plan in the same chat carries it on automatically (pass `"new_agent": true` for a fresh one). `{"action":"agents"}` lists every chat's agents; to carry on another chat's agent, add `"from_chat": "<chat id or name>"` to an ask/plan. Do that when the user names another chat or pastes its id, or when `agents` shows a chat already working in the same project.
+Each chat keeps its own Claude Code agent per folder: a later ask/plan in the same chat carries it on automatically (pass `"new_agent": true` for a fresh one). `{"action":"agents"}` lists every chat's agents; to carry on another chat's agent, add `"from_chat": "<chat id or name>"` to an ask/plan. Do that when the user names another chat or pastes its id, or when `agents` shows a chat already working in the same project. When the user has attached one of their own Claude Code sessions to the chat (/claude attach, said in the system prompt), an ask/plan without session_id, engine or from_chat carries that session on, in its own folder.
 ALWAYS plan first. The default `action` is `plan`: it reads with read-only tools and writes up what it intends to do, changing NOTHING. Show that plan to the user in full, then show the two links from the result's `approval` field on their own line so they can click one. Only call `action:"execute"` after they click Approve, passing the `session_id` from the plan so it keeps everything it already read. The server records the approval and refuses any execute it did not authorise, so executing early just fails — wait for them.
 `cwd` is REQUIRED and absolute: it is the only limit on what can be read or edited, so name the project directory and nothing broader. The coding agent runs on THIS server: never use the Odysseus install (/home/jaron/odysseus) as cwd. For a project on another machine (the laptop, the PC), use ~/odysseus-data/workspaces/<project name> (created for you) and have the agent reach the machine over ssh. To build a feature for Odysseus ITSELF: never touch /home/jaron/odysseus (it is the live, running install). Use its own copy, ~/odysseus-data/workspaces/odysseus: clone it there if it is missing (git clone the remote of /home/jaron/odysseus), then git fetch and branch from origin/dev, make the change there (plan, approval, execute as usual), run its tests, commit, push the branch, and open a PR against dev with gh pr create. Do not merge it and do not push to dev or main: the user merges, then it is deployed. Say this is how it works when asked. With engine "claude" or "antigravity" code goes to a cloud model, so keep anything the user has said must stay local on the default OpenCode engine.
 For a one-line edit you could make with edit_file, just do that instead — this spawns a whole second agent.
@@ -2197,6 +2197,16 @@ def _deliver_queued_messages(session_id: Optional[str], messages: List[Dict]) ->
     return items
 
 
+def _attached_claude_note(session_id: str) -> str:
+    """What the model is told about a Claude Code session attached to this
+    chat (/claude attach, src/claude_attach.py), or ""."""
+    try:
+        from src import claude_attach
+        return claude_attach.context_note(session_id)
+    except Exception:
+        return ""
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -2376,6 +2386,10 @@ async def stream_agent_loop(
         # and without it the model reached for the desktop tools instead.
         if session_id and _is_meet_chat(session_id, owner):
             _relevant_tools.add("google_meet")
+        # A chat with a Claude Code session attached (/claude attach) always
+        # has the coding tool: "carry on" names no tool at all.
+        if session_id and "claude_code" not in disabled_tools and _attached_claude_note(session_id):
+            _relevant_tools.add("claude_code")
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
@@ -2498,6 +2512,14 @@ async def stream_agent_loop(
             messages[0]["content"] = (messages[0].get("content") or "") + "\n\n" + client_device["note"]
         else:
             messages.insert(0, {"role": "system", "content": client_device["note"]})
+    # The Claude Code session attached to this chat (src/claude_attach.py).
+    if session_id and not guide_only and "claude_code" not in disabled_tools:
+        _attach_note = _attached_claude_note(session_id)
+        if _attach_note:
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = (messages[0].get("content") or "") + "\n\n" + _attach_note
+            else:
+                messages.insert(0, {"role": "system", "content": _attach_note})
     # "Needs to know" (src/chat_memory.py): this chat's running notes, and in
     # a brand-new chat the user's recent chats' notes. Kept out of the system
     # role, since the user and the model both write it.

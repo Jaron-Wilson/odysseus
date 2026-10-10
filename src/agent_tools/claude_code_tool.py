@@ -701,6 +701,36 @@ class ClaudeCodeTool:
                               "Run them yourself with bash (ssh to the machine if needed), one "
                               "command per step, and report what each did."),
                     "chore": True, "exit_code": 1}
+        # A session the user attached to this chat (/claude attach,
+        # src/claude_attach.py): an ask or plan carries THAT session on, in
+        # its own folder, on Claude Code, unless another session, chat,
+        # engine or a fresh agent was asked for.
+        attached = None
+        attached_note = ""
+        attached_extra = ""
+        if (action in ("plan", "ask") and not resume_id and not args.get("from_chat")
+                and not args.get("new_agent")
+                and str(args.get("engine") or "").strip().lower() in ("", "claude")):
+            try:
+                from src import claude_attach
+                attached = claude_attach.get((ctx or {}).get("session_id") or "")
+            except Exception:
+                attached = None
+            if attached and attached.get("cwd"):
+                resume_id = attached["session_id"]
+                args["engine"] = "claude"
+                asked = str(args.get("cwd") or "").strip()
+                if asked:
+                    asked_path = str(Path(asked).expanduser().resolve())
+                    if asked_path != os.path.realpath(attached["cwd"]) and Path(asked_path).is_dir():
+                        attached_extra = asked_path
+                args["cwd"] = attached["cwd"]
+                attached_note = (f"Carrying on the Claude Code session {resume_id[:8]} attached to this "
+                                 "chat (/claude attach), with everything it already knows."
+                                 + (f" It runs in {attached['cwd']} with {attached_extra} added."
+                                    if attached_extra else ""))
+            else:
+                attached = None
         if action == "execute" and not resume_id:
             return {
                 "error": (
@@ -738,7 +768,7 @@ class ClaudeCodeTool:
         # opus on its own for a plan, spending the user's Claude plan on
         # read-only recon. The approved run carries on with the plan's engine.
         engine_note = ""
-        if (action == "plan" and engine == "claude" and DEFAULT_ENGINE == "opencode"
+        if (action == "plan" and engine == "claude" and DEFAULT_ENGINE == "opencode" and not attached
                 and not _user_named_claude((ctx or {}).get("session_id") or "")):
             engine = "opencode"
             args.pop("model", None)                  # a Claude model name means nothing to OpenCode
@@ -780,9 +810,9 @@ class ClaudeCodeTool:
         # chat carries on that chat's agent for the folder, so it keeps what it
         # already read. `from_chat` carries on another chat's agent instead.
         chat_id = (ctx or {}).get("session_id") or ""
-        agent_note = ""
-        agent_from = ""
-        extra_dir = ""                               # a folder added to a carried-on Claude agent
+        agent_note = attached_note if (attached and resume_id) else ""
+        agent_from = chat_id if agent_note else ""
+        extra_dir = attached_extra if agent_note else ""   # a folder added to a carried-on Claude agent
         if action in ("ask", "plan") and not resume_id:
             from_chat = str(args.get("from_chat") or "").strip()
             if from_chat:
@@ -1116,6 +1146,7 @@ class ClaudeCodeTool:
             "chat_id": chat_id, "owner": (ctx or {}).get("owner") or "",
             "prompt": prompt, "agent_note": agent_note, "timeout": timeout, "limits": limits,
             "engine_note": engine_note,
+            "attached": resume_id if (attached and agent_note) else "",
         }
 
         # The CLI runs in its own session, writing to files rather than pipes
@@ -1811,6 +1842,12 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
     if spec.get("engine_note"):
         result["engine_note"] = spec["engine_note"]
     chat_id = spec.get("chat_id", "")
+    if chat_id and session_id and spec.get("attached") and session_id != spec["attached"]:
+        try:
+            from src import claude_attach
+            claude_attach.follow(chat_id, spec["attached"], session_id)
+        except Exception:
+            pass
     if chat_id and session_id and not stream.is_error:
         try:
             claude_code_agents.record(

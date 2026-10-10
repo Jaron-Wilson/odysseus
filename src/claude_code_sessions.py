@@ -565,3 +565,47 @@ def list_sessions(now: Optional[float] = None) -> List[Dict]:
             _CACHE.pop(p, None)
     out.sort(key=lambda s: (not s["live"], -s["last_activity"]))
     return out
+
+
+# ── Finding a session by the start of its id ───────────────────────────
+
+# "claude attach 7238cfa3": the start of a session id, as `claude agents`
+# and the Claude sessions page show it. At least this many hex digits, so a
+# couple of letters can't pick a session at random.
+MIN_PREFIX = 6
+_PREFIX_RE = re.compile(r"^[0-9a-f-]+$")
+
+
+def valid_prefix(prefix: str) -> bool:
+    if not isinstance(prefix, str) or len(prefix) < MIN_PREFIX or len(prefix) > 36:
+        return False
+    if not _PREFIX_RE.match(prefix):
+        return False
+    # Every character must sit where a UUID has that kind of character.
+    shape = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    return all((c == "-") == (shape[i] == "-") for i, c in enumerate(prefix))
+
+
+def resolve_prefix(prefix: str) -> List[Tuple[str, str]]:
+    """(project, transcript path) for every session whose id starts with
+    `prefix`, newest first. [] for an invalid prefix or no match. Only
+    regular files named <uuid>.jsonl inside a real project dir count."""
+    prefix = (prefix or "").strip().lower()
+    if not valid_prefix(prefix):
+        return []
+    root = projects_dir()
+    out = []
+    for project in project_names():
+        try:
+            names = os.listdir(os.path.join(root, project))
+        except OSError:
+            continue
+        for name in names:
+            sid = name[:-6] if name.endswith(".jsonl") else ""
+            if not sid.startswith(prefix) or not valid_session_id(sid):
+                continue
+            path = transcript_path(project, sid)
+            if path and not os.path.islink(os.path.join(root, project, name)):
+                out.append((project, path))
+    out.sort(key=lambda pp: -os.path.getmtime(pp[1]))
+    return out
