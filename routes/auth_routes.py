@@ -790,6 +790,9 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
         _INT_RANGES = {
             "agent_max_rounds": (1, 200),
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
+            "tts_elevenlabs_min_credits_pct": (0, 100),
+            "tts_elevenlabs_min_credits": (0, 10_000_000),
+            "tts_elevenlabs_max_reply_chars": (0, 5000),  # 0 = no cap
         }
         for key in DEFAULT_SETTINGS:
             if key not in body:

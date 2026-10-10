@@ -37,6 +37,8 @@ your phone ──call──> Twilio number ──webhook (signed)──> Odysseu
   browser's engines cannot hear or speak on a phone line. Telephone audio is
   8 kHz mu-law; Odysseus converts it to 16 kHz WAV for speech to text, and
   converts the engine's WAV (asked for as WAV, not MP3) down to 8 kHz mu-law.
+- **ElevenLabs as the voice.** "Speaks with: ElevenLabs (API)" works on calls
+  too. See [ElevenLabs text to speech](#elevenlabs-text-to-speech) below.
 - **Or let Twilio do the speech.** "Speech: Twilio hears and speaks" uses
   Twilio ConversationRelay: Twilio does speech recognition (Deepgram or Google)
   and text to speech (ElevenLabs, Google or Amazon), handles barge-in, and
@@ -195,6 +197,42 @@ Sources: twilio.com/en-us/voice/pricing/us, telnyx.com/pricing/numbers,
 telnyx.com/pricing/call-control/us, telnyx.com/pricing/conversational-ai,
 signalwire.com/pricing/voice, plivo.com/voice/pricing/us, flowroute.com/pricing.
 Speech to text and text to speech on your own hardware count as $0.
+
+## ElevenLabs text to speech
+
+Settings > AI Defaults > Voice call > Speaks with: **ElevenLabs (API)**. Paste
+the API key (elevenlabs.io > Developers > API keys) and press Save key: the
+server checks it with ElevenLabs, stores it encrypted in `data/api_keys.json`
+(the same Fernet key as the other provider keys) and only ever shows it back
+as `...abcd`. A key ElevenLabs rejects is not stored. Then pick a voice (the
+account's own clones are listed first), a model, and press Test.
+
+- **Models and cost.** The default is Flash v2.5 (`eleven_flash_v2_5`),
+  the fastest and cheapest: ElevenLabs bills it at half the credits per
+  character of Multilingual v2 / v3 (about 0.5 credit per character on a
+  subscription, against 1). v4 Turbo, Multilingual v2, v3 and v4 are in the
+  list too. v4 and v4 Turbo ignore the speed setting; the others take 0.7x
+  to 1.2x.
+- **Formats.** The app gets MP3 (`mp3_44100_128`). A call asks for WAV, so
+  ElevenLabs is asked for `pcm_16000` and Odysseus wraps it in a WAV header.
+- **Cache.** Audio is cached by provider, model, voice, speed, format and
+  text, so a repeated phrase (a greeting, "Okay, bye.") costs no credits.
+- **Credits.** The card shows credits left, the plan limit and the reset date
+  (from `GET /v1/user/subscription`, read at most once a minute), plus a
+  local count of the characters this server sent this month
+  (`data/elevenlabs_usage.json`). Between reads the shown numbers are moved on
+  by what was sent.
+- **Credit reserve.** Below "Keep in reserve" (default 5% of the plan, or a
+  fixed number of credits) ElevenLabs is paused: Kokoro speaks when it is
+  downloaded, else the browser voice (in the app) and a call cannot start.
+  When ElevenLabs answers that the quota is used up, it is paused for ten
+  minutes the same way. The app shows a short notice when this happens.
+- **Max per reply.** Auto-read stops after this many characters of one reply
+  (default 1500), and no single request sends more.
+- **Streaming.** Not used yet: each sentence is one request, which already
+  keeps the first words quick on Flash (about 75 ms model time). The
+  `/stream` endpoint could shave a little more off a call later.
+- **Tests.** `ODYSSEUS_ELEVENLABS_BASE_URL` points the client at a fake server.
 
 ## Why Twilio (the research)
 

@@ -1,6 +1,7 @@
 # services/tts/tts_service.py
 """Multi-provider TTS service: local Kokoro (kokoro-onnx), an
-OpenAI-compatible API (OpenAI, Kokoro-FastAPI, ...), or the browser."""
+OpenAI-compatible API (OpenAI, Kokoro-FastAPI, ...), ElevenLabs, or the
+browser."""
 
 import hashlib
 import logging
@@ -13,6 +14,7 @@ import httpx
 
 from src.constants import TTS_CACHE_DIR
 from src.upload_limits import read_byte_limit_env
+from services.tts import elevenlabs as el
 from services.tts.kokoro_local import (
     KOKORO_MODELS, PIP, VOICES, KokoroEngine, TTSError, cpu_has_vnni, cpu_threads,
     default_model, missing_packages, model_status, models_dir, resolve_model, resolve_voice,
@@ -30,6 +32,27 @@ TTS_CACHE_MAX_BYTES_ENV = "ODYSSEUS_TTS_CACHE_MAX_BYTES"
 
 def get_tts_cache_max_bytes() -> int:
     return read_byte_limit_env(TTS_CACHE_MAX_BYTES_ENV, DEFAULT_TTS_CACHE_MAX_BYTES)
+
+
+def _safe_num(value, default: float) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    return v if v >= 0 else default
+
+
+def _cap_text(text: str, limit: int) -> str:
+    """At most `limit` characters, cut at the last sentence (or word) end."""
+    if not limit or len(text) <= limit:
+        return text
+    cut = text[:limit]
+    for mark in (". ", "! ", "? ", "\n"):
+        i = cut.rfind(mark)
+        if i > limit * 0.5:
+            return cut[: i + 1].strip()
+    i = cut.rfind(" ")
+    return (cut[:i] if i > limit * 0.5 else cut).strip()
 
 
 def _safe_speed(value, default: float = 1.0) -> float:
@@ -54,6 +77,10 @@ class TTSService:
       "local"           - Kokoro-82M on this machine via kokoro-onnx (no torch)
       "endpoint:<id>"   - OpenAI-compatible /audio/speech via ModelEndpoint
                           (also Kokoro-FastAPI on a GPU box: voice "af_heart")
+      "elevenlabs"      - ElevenLabs (services/tts/elevenlabs.py). Paid per
+                          character, so it has a credit guard: below the
+                          set reserve it hands over to Kokoro when Kokoro
+                          is ready, else to the browser voice.
 
     Speed is applied here for every server provider (Kokoro natively, APIs
     through their `speed` field), so the browser plays the audio at 1x.
@@ -63,6 +90,10 @@ class TTSService:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._kokoro = None  # lazy-init
+        self._eleven = None  # lazy-init
+        self._fallback: Optional[Dict[str, Any]] = None  # last ElevenLabs hand-over
+        self._quota_hit: Optional[Dict[str, Any]] = None
+        self._last_fallback: Optional[Dict[str, Any]] = None
 
     # ── Settings ──
 
@@ -76,6 +107,10 @@ class TTSService:
             "tts_voice": saved.get("tts_voice", "alloy"),
             "tts_speed": saved.get("tts_speed", "1"),
             "tts_kokoro_model": saved.get("tts_kokoro_model", ""),
+            "tts_elevenlabs_model": saved.get("tts_elevenlabs_model", el.DEFAULT_MODEL),
+            "tts_elevenlabs_min_credits_pct": saved.get("tts_elevenlabs_min_credits_pct", 5),
+            "tts_elevenlabs_min_credits": saved.get("tts_elevenlabs_min_credits", 0),
+            "tts_elevenlabs_max_reply_chars": saved.get("tts_elevenlabs_max_reply_chars", 1500),
         }
 
     def _kokoro_model(self, settings: dict) -> str:
@@ -96,7 +131,91 @@ class TTSService:
             return self._get_kokoro().readiness(self._kokoro_model(settings)) is None
         if provider.startswith("endpoint:"):
             return True  # assume reachable; errors surface at synthesis time
+        if provider == "elevenlabs":
+            return bool(self.elevenlabs.key())
         return False
+
+    # ── ElevenLabs ──
+
+    @property
+    def elevenlabs(self) -> "el.ElevenLabsClient":
+        if self._eleven is None:
+            self._eleven = el.ElevenLabsClient()
+        return self._eleven
+
+    def elevenlabs_guard(self, settings: Optional[dict] = None) -> Dict[str, Any]:
+        """Whether ElevenLabs may be used right now. Trips when the remaining
+        credits are below the reserve (a percent of the plan and/or a fixed
+        number), or for ten minutes after ElevenLabs said the quota is used
+        up. `fallback` is what speaks instead: "local" when Kokoro is ready,
+        else "browser"."""
+        settings = settings or self._load_settings()
+        pct = _safe_num(settings.get("tts_elevenlabs_min_credits_pct"), 5.0)
+        floor = _safe_num(settings.get("tts_elevenlabs_min_credits"), 0.0)
+        credits = self.elevenlabs.credits() if self.elevenlabs.key() else {"known": False, "error": ""}
+        tripped, reason = False, ""
+        if credits.get("known"):
+            remaining, limit = credits["remaining"], credits["limit"]
+            if limit and remaining * 100.0 / limit < pct:
+                tripped, reason = True, f"ElevenLabs credits are below {pct:g}% ({remaining:,} of {limit:,} left)"
+            elif floor and remaining < floor:
+                tripped, reason = True, f"ElevenLabs credits are below {floor:,.0f} ({remaining:,} left)"
+        quota = self._quota_hit
+        if not tripped and quota and time.time() - quota["at"] < 600:
+            tripped, reason = True, quota["reason"]
+        out = {"tripped": tripped, "reason": reason, "min_credits_pct": pct, "min_credits": floor,
+               "max_reply_chars": int(_safe_num(settings.get("tts_elevenlabs_max_reply_chars"), 1500)),
+               "credits": credits}
+        if tripped:
+            ready = self._get_kokoro().readiness(self._kokoro_model(settings)) is None
+            out["fallback"] = "local" if ready else "browser"
+        return out
+
+    def elevenlabs_status(self, refresh: bool = False) -> Dict[str, Any]:
+        """Everything the Settings card shows; never the key itself."""
+        settings = self._load_settings()
+        key = self.elevenlabs.key()
+        if refresh and key:
+            self.elevenlabs.subscription(refresh=True)
+        guard = self.elevenlabs_guard(settings)
+        credits = guard.pop("credits")
+        return {
+            "key_set": bool(key),
+            "key_hint": el.mask_key(key),
+            "model": el.resolve_model(settings.get("tts_elevenlabs_model")),
+            "models": el.MODELS,
+            "default_model": el.DEFAULT_MODEL,
+            "default_voice": el.DEFAULT_VOICE,
+            "guard": guard,
+            "credits": credits,
+            "tally": self.elevenlabs.tally.snapshot(),
+            "last_fallback": self._last_fallback,
+        }
+
+    def set_elevenlabs_key(self, key: str) -> Dict[str, Any]:
+        """Check the key against the account, then store it encrypted. A key
+        ElevenLabs rejects is not stored; a key that works but cannot read
+        the account (a restricted key) is stored with a warning."""
+        key = (key or "").strip()
+        if not key:
+            raise TTSError("Paste an ElevenLabs API key first.", 400)
+        warning = ""
+        try:
+            self.elevenlabs.subscription(key=key)
+        except TTSError as e:
+            if isinstance(e, el.InvalidKey):
+                raise
+            warning = e.message + " The key was saved, but the credit numbers may not show."
+        el.save_api_key(key)
+        self.elevenlabs.forget()
+        self._quota_hit = None
+        logger.info("ElevenLabs API key saved (%s)", el.mask_key(key))
+        return {"saved": True, "warning": warning, "key_hint": el.mask_key(key)}
+
+    def delete_elevenlabs_key(self) -> None:
+        el.delete_api_key()
+        self.elevenlabs.forget()
+        logger.info("ElevenLabs API key removed")
 
     # ── Cache ──
 
@@ -285,15 +404,28 @@ class TTSService:
         if len(text) > 5000:
             text = text[:5000]
 
-        if provider == "local":
+        if provider == "elevenlabs":
+            self._fallback = None
+            if not self.elevenlabs.key():
+                raise TTSError("No ElevenLabs API key yet. Paste one in Settings > AI Defaults > Voice call.", 400)
+            model = el.resolve_model(settings.get("tts_elevenlabs_model"))
+            voice = el.resolve_voice(voice)
+            # Credits are per character: one request never sends more than
+            # the per-reply cap (0 means no cap).
+            text = _cap_text(text, int(_safe_num(settings.get("tts_elevenlabs_max_reply_chars"), 1500)))
+        elif provider == "local":
             model = self._kokoro_model(settings)
             voice = resolve_voice(voice)
         elif not provider.startswith("endpoint:"):
             raise TTSError(f"Unknown TTS provider: {provider}", 400)
 
         # The format is in the key only when it is not the default, so the
-        # cache the browser already filled stays valid.
-        cache_voice = voice if response_format == "mp3" or provider == "local" else f"{voice}|{response_format}"
+        # cache the browser already filled stays valid. ElevenLabs always
+        # has it, since its WAV and MP3 for one phrase differ.
+        if provider == "elevenlabs" or (response_format != "mp3" and provider != "local"):
+            cache_voice = f"{voice}|{response_format}"
+        else:
+            cache_voice = voice
         key = self._cache_key(text, provider, model, cache_voice, speed)
         if use_cache:
             cached = self._get_cached(key)
@@ -301,7 +433,22 @@ class TTSService:
                 logger.info(f"TTS cache hit ({len(text)} chars)")
                 return cached
 
-        if provider == "local":
+        if provider == "elevenlabs":
+            # Only a cache miss costs credits, so only then check the reserve.
+            guard = self.elevenlabs_guard(settings)
+            if guard["tripped"]:
+                return self._synthesize_fallback(guard, text, speed, use_cache)
+            t0 = time.monotonic()
+            try:
+                audio_data = self.elevenlabs.synthesize(text, voice, model, speed, wav=response_format == "wav")
+            except el.QuotaExceeded as e:
+                # Out of credits: stop asking for ten minutes and let this
+                # reply speak with the fallback.
+                self._quota_hit = {"reason": e.message.rstrip("."), "at": time.time()}
+                return self._synthesize_fallback(self.elevenlabs_guard(settings), text, speed, use_cache)
+            self._last_api = {"latency_ms": round((time.monotonic() - t0) * 1000), "chars": len(text),
+                              "at": time.time()}
+        elif provider == "local":
             k = self._get_kokoro()
             reason = k.readiness(model)
             if reason:
@@ -321,6 +468,37 @@ class TTSService:
         if audio_data and use_cache:
             self._put_cache(key, audio_data)
         return audio_data
+
+    def _synthesize_fallback(self, guard: Dict[str, Any], text: str, speed: float, use_cache: bool) -> bytes:
+        """ElevenLabs is paused (credit reserve or quota): speak with Kokoro
+        when it is ready, else raise so the browser voice takes over. The
+        hand-over is recorded for the notice in the app."""
+        to = guard.get("fallback") or "browser"
+        reason = guard.get("reason") or "ElevenLabs is paused"
+        if not self._last_fallback or self._last_fallback.get("reason") != reason:
+            logger.warning("ElevenLabs paused: %s; speaking with %s", reason, to)
+        self._fallback = {"reason": reason, "to": to, "at": time.time()}
+        self._last_fallback = self._fallback
+        if to != "local":
+            err = TTSError(reason + ". Kokoro is not ready, so the browser voice speaks instead.", 409)
+            err.fallback = "browser"
+            raise err
+        settings = self._load_settings()
+        model = self._kokoro_model(settings)
+        voice = resolve_voice("")
+        key = self._cache_key(text, "local", model, voice, speed)
+        if use_cache:
+            cached = self._get_cached(key)
+            if cached:
+                return cached
+        audio = self._get_kokoro().synthesize(text, model, voice, speed)
+        if audio and use_cache:
+            self._put_cache(key, audio)
+        return audio
+
+    def current_fallback(self) -> Optional[Dict[str, Any]]:
+        """The ElevenLabs hand-over that applied to the last synthesis, if any."""
+        return self._fallback
 
     def synthesize(self, text: str, use_cache: bool = True, response_format: str = "mp3") -> Optional[bytes]:
         try:
@@ -386,7 +564,7 @@ class TTSService:
             "voice": settings["tts_voice"],
             "speed": _safe_speed(settings.get("tts_speed", "1")),
             # Server providers apply the speed themselves; play at 1x.
-            "speed_applied": provider == "local" or provider.startswith("endpoint:"),
+            "speed_applied": provider in ("local", "elevenlabs") or provider.startswith("endpoint:"),
             "cache_entries": len(cache_files),
             "cache_size_mb": round(cache_size / (1024 * 1024), 2),
         }
@@ -412,6 +590,28 @@ class TTSService:
                 stats["last_latency_ms"] = k.last.get("latency_ms")
         elif provider == "browser":
             stats["model"] = "Browser (Web Speech API)"
+        elif provider == "elevenlabs":
+            key_set = bool(self.elevenlabs.key())
+            guard = self.elevenlabs_guard(settings)
+            credits = guard.pop("credits")
+            effective = guard.get("fallback", "elevenlabs") if guard["tripped"] else "elevenlabs"
+            stats.update({
+                "engine": "elevenlabs",
+                "model": el.resolve_model(settings.get("tts_elevenlabs_model")),
+                "voice": el.resolve_voice(settings["tts_voice"]),
+                "key_set": key_set,
+                "ready": is_available,
+                "reason": "" if key_set else "No ElevenLabs API key yet. Paste one in Settings > AI Defaults > Voice call.",
+                "credits": credits,
+                "guard": guard,
+                "max_reply_chars": guard["max_reply_chars"],
+                "effective_provider": effective,
+                "fallback_reason": guard["reason"],
+            })
+            last = getattr(self, "_last_api", None)
+            if last:
+                stats["last"] = dict(last)
+                stats["last_latency_ms"] = last["latency_ms"]
         elif provider.startswith("endpoint:"):
             stats["endpoint_id"] = provider.split(":", 1)[1]
             last = getattr(self, "_last_api", None)

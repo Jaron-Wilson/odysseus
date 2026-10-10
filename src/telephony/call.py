@@ -85,6 +85,10 @@ def engines_ready() -> List[str]:
         if p in ("disabled", "browser") or not stats.get("available"):
             problems.append("Text to speech: pick Kokoro or an API engine for \"Speaks with\" "
                             "(Settings > AI Defaults > Voice call). The browser voice cannot speak on a phone line or in a meeting.")
+        elif p == "elevenlabs" and stats.get("effective_provider") == "browser":
+            problems.append("Text to speech: " + (stats.get("fallback_reason") or "ElevenLabs is paused")
+                            + ", and Kokoro is not ready to take over. Download the Kokoro voice model or "
+                            "lower the credit reserve (Settings > AI Defaults > Voice call).")
     except Exception:
         problems.append("Text to speech is not available.")
     return problems

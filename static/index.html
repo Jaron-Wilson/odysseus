@@ -1875,7 +1875,48 @@
                 <select id="set-vcTts" class="settings-select" data-goto-keywords="tts text to speech read aloud engine kokoro voice output">
                   <option value="browser">Browser (built-in)</option>
                   <option value="local">Local: Kokoro</option>
+                  <option value="elevenlabs">ElevenLabs (API)</option>
                 </select>
+              </div>
+              <!-- ElevenLabs: key, model, credits and the credit guard (static/js/ttsElevenLabs.js). -->
+              <div id="set-elWrap" class="settings-col" hidden style="display:none">
+                <div class="settings-row">
+                  <label class="settings-label" for="set-elKey">API key</label>
+                  <input id="set-elKey" class="settings-select" type="password" placeholder="Paste your ElevenLabs API key" autocomplete="off" spellcheck="false" data-goto-keywords="elevenlabs api key eleven labs">
+                  <button type="button" id="set-elKeySave" class="admin-btn-sm" style="flex-shrink:0">Save key</button>
+                  <button type="button" id="set-elKeyRemove" class="admin-btn-sm" style="flex-shrink:0;display:none" hidden>Remove</button>
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label"></span>
+                  <span id="set-elKeyStatus" style="flex:1;font-size:12px;opacity:0.75;overflow-wrap:anywhere"></span>
+                  <button type="button" id="set-elTest" class="admin-btn-sm" style="flex-shrink:0" title="Speak a short sample with ElevenLabs (about 20 credits, then cached)">Test</button>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="set-elModel">Model</label>
+                  <select id="set-elModel" class="settings-select" data-goto-keywords="elevenlabs model flash multilingual v3 v4 turbo"></select>
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label">Credits</span>
+                  <span id="set-elCredits" style="flex:1;font-size:12px;opacity:0.85;overflow-wrap:anywhere">Not read yet</span>
+                  <button type="button" id="set-elCreditsRefresh" class="admin-btn-sm" style="flex-shrink:0" title="Read the credit numbers from ElevenLabs now">Refresh</button>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="set-elMinPct">Keep in reserve</label>
+                  <input id="set-elMinPct" class="settings-select" type="number" min="0" max="100" step="1" style="width:70px;flex:0 0 auto" data-goto-keywords="elevenlabs credits reserve guard fallback quota">
+                  <span style="font-size:12px;opacity:0.7">% or</span>
+                  <input id="set-elMinCredits" class="settings-select" type="number" min="0" step="500" style="width:100px;flex:0 0 auto" title="0 means only the percent counts">
+                  <span style="font-size:12px;opacity:0.7">credits</span>
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label"></span>
+                  <span style="flex:1;font-size:12px;opacity:0.65">Below this, Kokoro speaks instead (or the browser voice when Kokoro is not downloaded) until the credits reset.</span>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="set-elMaxChars">Max per reply</label>
+                  <input id="set-elMaxChars" class="settings-select" type="number" min="0" max="5000" step="100" style="width:100px;flex:0 0 auto" data-goto-keywords="elevenlabs characters per reply read aloud limit">
+                  <span style="font-size:12px;opacity:0.7">characters read aloud per reply (0 = no limit)</span>
+                </div>
+                <div id="set-elNotice" style="font-size:12px;display:none" hidden></div>
               </div>
               <!-- Local voice model + download (static/js/ttsEngines.js). -->
               <div class="settings-row" id="set-vcTtsModelRow" hidden style="display:none">
@@ -3407,6 +3448,7 @@
 <script type="module" src="/static/js/sttEngines.js"></script>
 <script type="module" src="/static/js/callHandoff.js"></script>
 <script type="module" src="/static/js/ttsEngines.js"></script>
+<script type="module" src="/static/js/ttsElevenLabs.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
