@@ -717,6 +717,9 @@ app.include_router(setup_terminal_routes())
 # Claude Code sessions on this host, read-only, admin only (routes/claude_sessions_routes.py).
 from routes.claude_sessions_routes import setup_claude_sessions_routes
 app.include_router(setup_claude_sessions_routes())
+# The ADS-B receiver (a Pi on the tailnet): status and its live map, admin only (routes/adsb_routes.py).
+from routes.adsb_routes import setup_adsb_routes
+app.include_router(setup_adsb_routes())
 
 
 @app.get("/api/version")

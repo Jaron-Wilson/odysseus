@@ -41,6 +41,7 @@ const ICONS = {
   theme: svg('<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>'),
   settings: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
   agents: svg('<rect x="4" y="7" width="16" height="12" rx="2"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/>'),
+  adsb: svg('<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>'),
   sessions: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 8l3 2-3 2M13 12h3"/>'),
   devops: svg('<path d="M3 12h4l3-8 4 16 3-8h4"/>'),
   news: svg('<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>'),
@@ -82,12 +83,13 @@ const TOOLS = [
   { key: 'terminal', label: 'Terminal', icon: 'terminal', sel: '.term-backdrop', win: '.bg-panel', open: '#tool-terminal-btn' },
   { key: 'devops', label: 'DevOps', icon: 'devops', sel: '.bg-panel-backdrop:has(> .dv-panel)', win: '.bg-panel', open: '#tool-devops-btn' },
   { key: 'claude-sessions', label: 'Claude sessions', icon: 'sessions', sel: '.bg-panel-backdrop:has(> .cs-panel)', win: '.bg-panel', open: '#tool-claude-sessions-btn' },
+  { key: 'adsb', label: 'ADS-B receiver', icon: 'adsb', sel: '.bg-panel-backdrop:has(> .adsb-panel)', win: '.bg-panel', open: '#tool-adsb-btn' },
   { key: 'whats-new', label: "What's new", icon: 'news', sel: '.wn-backdrop', win: '.bg-panel', open: '#tool-whats-new-btn' },
   // VS Code (codePanel.js). One tab; its project picker switches the folder.
   { key: 'code', label: 'Code', icon: 'code', sel: '.ide-backdrop', win: '.bg-panel', open: '#tool-code-btn',
     title: (el) => { const n = el.querySelector('.ide-project-name')?.textContent.trim();
       return n && n !== 'Pick a project' ? 'Code: ' + n : 'Code'; } },
-  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not(:has(> .dv-panel)):not(:has(> .cs-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
+  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
 ];
 const TOOL_BY_KEY = Object.fromEntries(TOOLS.map(t => [t.key, t]));
 // An opened email is its own window (#email-reader-<n>) and its own tab.
