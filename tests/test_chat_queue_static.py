@@ -38,7 +38,7 @@ def test_clicking_the_stop_button_always_stops_even_with_text_in_the_box():
     submit = js[js.index("export async function handleChatSubmit"):]
     guard_at = submit.index("const _clickedTheButton = e.submitter === submitBtn;")
     queue_if_at = submit.index("if (isStreaming && !_clickedTheButton) {")
-    queue_at = submit.index("queueMessage(_typed)")
+    queue_at = submit.index("queueMessage(_typed)", queue_if_at)
     assert guard_at < queue_if_at < queue_at, \
         "an explicit button click must bypass the queue-and-return path"
 
@@ -53,7 +53,7 @@ def test_a_finished_reply_sends_the_next_queued_message():
 def test_queue_panel_and_button_are_wired():
     assert '<div id="chat-queue" class="chat-queue" hidden></div>' in _read("static", "index.html")
     app = _read("static", "app.js")
-    assert "Queue: sends when this reply finishes" in app
+    assert "Enter in the box queues your message instead" in app
     assert ".chat-queue {" in _read("static", "style.css")
 
 
