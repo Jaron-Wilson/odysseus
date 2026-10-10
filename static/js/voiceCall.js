@@ -402,6 +402,16 @@ export async function resolveTts() {
   if (s.available && (p === 'local' || p.startsWith('endpoint:'))) {
     return { kind: 'server', provider: p, speed, synthesize: _synthServer };
   }
+  // ElevenLabs speaks from the server; when its credit guard has paused it,
+  // Kokoro does (still the server), or else this browser's voice.
+  if (s.available && p === 'elevenlabs') {
+    const why = s.fallback_reason ? s.fallback_reason.replace(/\.?$/, '.') : '';
+    if (s.effective_provider !== 'browser') {
+      return { kind: 'server', provider: p, speed, synthesize: _synthServer,
+        notice: why ? why + ' Kokoro is speaking instead of ElevenLabs.' : '' };
+    }
+    if (hasBrowser) return { kind: 'browser', provider: p, voice: '', speed, notice: why + " This browser's voice is speaking instead of ElevenLabs." };
+  }
   // No server voice: the browser's. The stored voice counts unless it is
   // the API or Kokoro default, which means nothing to the browser.
   const v = String(s.voice || '');
@@ -684,6 +694,7 @@ export class VoiceCall {
     }
     if (this.tts.kind === 'none') this._hint('No voice is available here, so replies show as text.');
     if (this.stt.notice) this._hint(this.stt.notice);
+    if (this.tts.notice) this._hint(this.tts.notice);
 
     this._wireAudio();
     this._wireApp();
@@ -1885,10 +1896,36 @@ async function _loadEngines(card) {
   const pickSel = card.querySelector('#set-vcVoiceSelect');
   const OTHER = '__other';
   const showTyped = (on) => { voice.hidden = !on; voice.style.display = on ? '' : 'none'; };
+  // ElevenLabs voices come from the account (premade plus the user's own
+  // clones), fetched once and again after the key changes.
+  let elVoices = null, elLoading = false;
+  const loadElVoices = async () => {
+    if (elLoading) return;
+    elLoading = true;
+    try {
+      const r = await fetch('/api/tts/elevenlabs/voices', { credentials: 'same-origin' });
+      const d = await r.json().catch(() => ({}));
+      elVoices = r.ok ? (d.voices || []) : [];
+      if (!r.ok && r.status !== 400 && msg) { msg.textContent = (d.detail && d.detail.message) || 'Could not list the ElevenLabs voices.'; msg.style.color = 'var(--red)'; }
+    } catch (_) { elVoices = []; }
+    elLoading = false;
+    if (tts.value === 'elevenlabs') fillVoices();
+  };
+  document.addEventListener('elevenlabs-key-changed', () => { elVoices = null; if (tts.value === 'elevenlabs') loadElVoices(); });
+  const EL_CATEGORY = { cloned: 'Your cloned voices', professional: 'Your professional voices', generated: 'Your designed voices', premade: 'ElevenLabs voices' };
   const fillVoices = () => {
     const p = tts.value;
     const groups = [];
-    if (p === 'browser' && typeof window.speechSynthesis !== 'undefined') {
+    if (p === 'elevenlabs') {
+      if (elVoices === null) loadElVoices();
+      const by = {};
+      for (const v of elVoices || []) {
+        const g = EL_CATEGORY[v.category] || 'Other voices';
+        const tags = [v.labels && v.labels.gender, v.labels && v.labels.accent].filter(Boolean).join(', ');
+        (by[g] = by[g] || []).push([v.voice_id, v.name + (tags ? ' (' + tags + ')' : '') + (v.category && !EL_CATEGORY[v.category] ? ' [' + v.category + ']' : '')]);
+      }
+      for (const g of [...Object.values(EL_CATEGORY), 'Other voices']) if (by[g]) groups.push([g, by[g]]);
+    } else if (p === 'browser' && typeof window.speechSynthesis !== 'undefined') {
       groups.push(['', window.speechSynthesis.getVoices().map(v => [v.name, v.name])]);
     } else if (p === 'local') {
       const by = {};
@@ -1901,7 +1938,8 @@ async function _loadEngines(card) {
     } else {
       groups.push(['', ['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'].map(n => [n, n])]);
     }
-    const dflt = p === 'browser' ? 'System default' : (p === 'local' ? 'Default (af_heart)' : 'Default (alloy)');
+    const dflt = p === 'browser' ? 'System default' : (p === 'local' ? 'Default (af_heart)'
+      : (p === 'elevenlabs' ? (elVoices === null ? 'Default (George), loading voices...' : 'Default (George)') : 'Default (alloy)'));
     let html = `<option value="">${_esc(dflt)}</option>`;
     for (const [g, items] of groups) {
       const opts = items.map(([v, l]) => `<option value="${_esc(v)}">${_esc(l)}</option>`).join('');
@@ -1944,10 +1982,10 @@ async function _loadEngines(card) {
     // The browser voice needs no server engine. It is saved as no server
     // TTS at all, so picking it does not switch on Read aloud in the chat.
     save({ tts_enabled: true, tts_provider: tts.value === 'browser' ? 'disabled' : tts.value,
-      tts_voice: tts.value === 'local' ? 'af_heart' : (tts.value === 'browser' ? '' : 'alloy') });
+      tts_voice: tts.value === 'local' ? 'af_heart' : (tts.value === 'browser' || tts.value === 'elevenlabs' ? '' : 'alloy') });
   });
   voice.addEventListener('change', () => {
-    save({ tts_voice: voice.value.trim() || (tts.value === 'local' ? 'af_heart' : (tts.value === 'browser' ? '' : 'alloy')) });
+    save({ tts_voice: voice.value.trim() || (tts.value === 'local' ? 'af_heart' : (tts.value === 'browser' || tts.value === 'elevenlabs' ? '' : 'alloy')) });
     fetch('/api/tts/clear-cache', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
   });
 }

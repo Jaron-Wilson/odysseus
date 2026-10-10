@@ -53,6 +53,18 @@ DEFAULT_SETTINGS = {
     # Kokoro model for the "local" TTS provider (services/tts/kokoro_local.py);
     # empty picks the one that is faster on this CPU.
     "tts_kokoro_model": "",
+    # ElevenLabs ("elevenlabs" provider, services/tts/elevenlabs.py). The API
+    # key is not a setting: it is stored encrypted in data/api_keys.json.
+    # Flash v2.5 is the default because it costs half the credits per
+    # character of the other models.
+    "tts_elevenlabs_model": "eleven_flash_v2_5",
+    # Credit guard: below this share of the plan (percent) or this many
+    # credits, ElevenLabs pauses and Kokoro (or the browser voice) speaks.
+    "tts_elevenlabs_min_credits_pct": 5,
+    "tts_elevenlabs_min_credits": 0,
+    # Most characters one reply may send to ElevenLabs (0 = no cap), so a
+    # long answer read aloud does not burn the month's credits.
+    "tts_elevenlabs_max_reply_chars": 1500,
     "stt_enabled": False,
     "stt_provider": "disabled",
     # Whisper model for the "local" STT provider (see services/stt/local_models.py).

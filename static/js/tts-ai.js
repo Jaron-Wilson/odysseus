@@ -20,6 +20,9 @@ class AITTSManager {
         // Streaming sentence-by-sentence TTS state
         this._streamSentencesSent = 0;  // chars of plain text already queued
         this._streamActive = false;
+        this._streamCharsQueued = 0;
+        this._streamCapped = false;
+        this.maxReplyChars = 0;
         this._streamButton = null;
         this._streamResetFn = null;
         this._streamDebounceTimer = null;
@@ -46,6 +49,14 @@ class AITTSManager {
             this.available = stats.available && stats.ready;
             this.playbackSpeed = stats.speed || 1;
             this._provider = stats.provider || 'disabled';
+            // ElevenLabs bills per character: auto-read stops after this many
+            // characters of one reply (0 = no limit).
+            this.maxReplyChars = stats.provider === 'elevenlabs' ? (Number(stats.max_reply_chars) || 0) : 0;
+            if (stats.provider === 'elevenlabs' && stats.available && stats.effective_provider === 'browser') {
+                // The credit guard paused ElevenLabs and Kokoro is not ready.
+                this._fallbackToBrowser(stats.fallback_reason);
+                return;
+            }
 
             if (stats.provider === 'browser') {
                 this.useBrowserTTS = true;
@@ -63,6 +74,20 @@ class AITTSManager {
             console.error('Failed to check TTS availability:', error);
             this.available = false;
         }
+    }
+
+    _notice(text) {
+        if (!text || this._lastNotice === text) return;
+        this._lastNotice = text;
+        if (typeof window.showToast === 'function') window.showToast(text);
+        else console.info('TTS:', text);
+    }
+
+    _fallbackToBrowser(reason) {
+        this.useBrowserTTS = true;
+        this.browserVoice = '';
+        this.available = 'speechSynthesis' in window;
+        this._notice((reason ? reason.replace(/\.?$/, '. ') : '') + "Reading aloud with this browser's voice instead of ElevenLabs.");
     }
 
     extractPlainText(content) {
@@ -141,8 +166,16 @@ class AITTSManager {
             });
 
             if (!response.ok) {
-                const error = await response.json();
+                const error = await response.json().catch(() => ({}));
+                if (response.status === 409 && error.detail?.fallback === 'browser') {
+                    this._fallbackToBrowser(error.detail.message);
+                    return '__browser_tts__';
+                }
                 throw new Error(error.detail?.message || 'Synthesis failed');
+            }
+            const fellBack = response.headers.get('X-TTS-Fallback');
+            if (fellBack) {
+                this._notice((response.headers.get('X-TTS-Fallback-Reason') || 'ElevenLabs is paused') + '. Kokoro is reading aloud instead.');
             }
 
             const audioBlob = await response.blob();
@@ -184,6 +217,7 @@ class AITTSManager {
 
         try {
             const audioUrl = await this.synthesize(text);
+            if (audioUrl === '__browser_tts__') return this._playBrowser(plainText);
 
             this.currentAudio = new Audio(audioUrl);
             await this.currentAudio.play();
@@ -339,7 +373,24 @@ class AITTSManager {
 
     // ── Streaming TTS (sentence-by-sentence) ──
 
+    // True when this sentence still fits the per-reply character budget
+    // (ElevenLabs only). Past it, auto-read stops for the rest of the reply.
+    _fitsBudget(sentence) {
+        if (!this.maxReplyChars || this.useBrowserTTS) return true;
+        if (this._streamCapped) return false;
+        if (this._streamCharsQueued + sentence.length > this.maxReplyChars) {
+            this._streamCapped = true;
+            this._notice('Stopped reading this reply aloud after ' + this._streamCharsQueued.toLocaleString('en-US')
+                + ' characters to save ElevenLabs credits (Max per reply in Settings > AI Defaults > Voice call).');
+            return false;
+        }
+        this._streamCharsQueued += sentence.length;
+        return true;
+    }
+
     streamingStart() {
+        this._streamCharsQueued = 0;
+        this._streamCapped = false;
         this._streamSentencesSent = 0;
         this._streamActive = true;
         this._streamButton = null;
@@ -391,6 +442,10 @@ class AITTSManager {
                 advancedChars += sentence.length + 1;
                 continue;
             }
+            if (!this._fitsBudget(sentence)) {
+                advancedChars += sentence.length + 1;
+                continue;
+            }
             var btn = this._streamButton || this._createPlaceholderButton();
             var resetFn = this._streamResetFn || function() {};
             this.enqueue(sentence, btn, resetFn);
@@ -434,7 +489,7 @@ class AITTSManager {
         if (!plainText) return;
 
         var remaining = plainText.substring(this._streamSentencesSent).trim();
-        if (remaining.length >= 15) {
+        if (remaining.length >= 15 && this._fitsBudget(remaining)) {
             var btn = this._streamButton || this._createPlaceholderButton();
             var resetFn = this._streamResetFn || function() {};
             this.enqueue(remaining, btn, resetFn);
