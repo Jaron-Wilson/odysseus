@@ -2516,6 +2516,10 @@ export function addMessage(role, content, modelName, metadata) {
     } else {
       b.innerHTML = sourcesPrefix + markdownModule.processWithThinking(text) + findingsSuffix;
     }
+    // A /claude attach card (slashCommands.js), rebuilt from its metadata.
+    if (isSlash && metadata?.claude_attach && window.claudeAttachCard) {
+      try { window.claudeAttachCard(b, metadata.claude_attach); } catch (_) { /* keep the text */ }
+    }
 
     // The vision/OCR caption is stripped from the displayed text above (so the
     // bubble doesn't show the raw model output) but no longer rendered as an

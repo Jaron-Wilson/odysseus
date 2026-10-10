@@ -75,6 +75,23 @@ def record(chat_id: str, *, session_id: str, cwd: str, engine: str, model: str,
         _save({k: v for k, v in data.items() if v})
 
 
+def forget(chat_id: str, session_id: str) -> None:
+    """Drop one session from this chat's agents (a detached session)."""
+    if not chat_id or not session_id:
+        return
+    with _lock:
+        data = _load()
+        agents = data.get(chat_id) or []
+        kept = [a for a in agents if a.get("session_id") != session_id]
+        if len(kept) == len(agents):
+            return
+        if kept:
+            data[chat_id] = kept
+        else:
+            data.pop(chat_id, None)
+        _save(data)
+
+
 def for_chat(chat_id: str, *, cwd: str = "", engine: str = "claude") -> Optional[Dict]:
     """This chat's agent for the folder (or its latest one, with no folder)."""
     agents = _load().get(chat_id or "", [])

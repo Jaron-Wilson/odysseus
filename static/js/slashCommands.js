@@ -286,7 +286,7 @@ function _persistMsg(role, content, metadata) {
   }).catch(() => {});
 }
 
-function slashReply(text) {
+function slashReply(text, persistText, persistMeta) {
   const chatBox = document.getElementById('chat-history');
   const div = document.createElement('div');
   div.className = 'msg msg-ai';
@@ -313,7 +313,7 @@ function slashReply(text) {
   div.appendChild(_slashFooter(div));
   chatBox.appendChild(div);
   uiModule.scrollHistory();
-  _persistMsg('assistant', body.textContent, { source: 'slash' });
+  _persistMsg('assistant', persistText || body.textContent, { ...(persistMeta || {}), source: 'slash' });
   return { el: div, body };
 }
 
@@ -1765,6 +1765,196 @@ async function _cmdCall() {
 
 // /meet LINK [talk]: the agent joins a Google Meet (routes/meet_routes.py).
 // /meet leave: it leaves. /meet alone opens its Settings card.
+// ── /claude: a Claude Code session attached to this chat ─────────
+// "claude attach 7238cfa3": the chat's coding agent carries that session on
+// (routes/claude_sessions_routes.py, src/claude_attach.py).
+
+const _CC_BARE_RE = /^claude\s+(?:attach\s+[0-9a-f][0-9a-f-]{5,35}|detach|status)\s*$/i;
+
+function _ccAgo(t) {
+  const s = Math.max(0, Date.now() / 1000 - (t || 0));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+const _ccShortCwd = (cwd) => String(cwd || '').replace(/^\/home\/[^/]+/, '~');
+
+function _ccSessionsHref(a) {
+  return `#claude-sessions/${encodeURIComponent(a.project || '')}/${encodeURIComponent(a.id || a.session_id || '')}`;
+}
+
+async function _ccApi(method, url, body) {
+  const res = await fetch(`${API_BASE}${url}`, {
+    method, credentials: 'same-origin',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+function _ccErrorText(r) {
+  if (r.status === 401 || r.status === 403) return 'Only an admin can attach Claude Code sessions.';
+  const d = r.data && r.data.detail;
+  if (d && typeof d === 'object') return d.error || `HTTP ${r.status}`;
+  return d || `HTTP ${r.status}`;
+}
+
+async function _ccChatId(ctx) {
+  if (!ctx.sid && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
+    await sessionModule.materializePendingSession();
+    ctx.sid = sessionModule.getCurrentSessionId();
+  }
+  return ctx.sid;
+}
+
+function _ccCardHtml(a, { heading, warning } = {}) {
+  const esc = uiModule.esc;
+  const id = a.id || a.session_id || '';
+  const branch = a.git_branch && a.git_branch !== 'HEAD' ? a.git_branch : '';
+  return `<div class="cc-attach-card" data-chat-attach="${esc(id)}">
+    <div class="cc-attach-head">${esc(heading || 'Claude Code session attached')}</div>
+    <div class="cc-attach-title">${a.live ? '<span class="bg-dot running" title="Live: written to in the last 2 minutes"></span>' : ''}${esc(a.title || 'Untitled session')}</div>
+    <div class="cc-attach-meta">
+      <code title="${esc(a.cwd || '')}">${esc(_ccShortCwd(a.cwd))}</code>
+      ${branch ? `<span class="cs-chip" title="Git branch">${esc(branch)}</span>` : ''}
+      <span>${a.live ? 'live' : esc(_ccAgo(a.last_activity))}</span>
+      <code class="cc-attach-id" title="${esc(id)}">${esc(id.slice(0, 8))}</code>
+    </div>
+    ${a.live ? '<div class="cc-attach-note">It is live, so it may be open in a terminal. Finish there before this chat uses it, or both will write to it.</div>' : ''}
+    ${warning ? `<div class="cc-attach-note cc-attach-warn">${esc(warning)}</div>` : ''}
+    <div class="cc-attach-sub">This chat's coding agent now carries this session on, with all of its context.</div>
+    <div class="cc-attach-actions">
+      <button type="button" class="cc-attach-detach">Detach</button>
+      <a href="${esc(_ccSessionsHref(a))}" class="cc-attach-open">Open in Claude sessions</a>
+    </div>
+  </div>`;
+}
+
+function _ccPersistText(a, { heading, warning } = {}) {
+  const id = a.id || a.session_id || '';
+  const branch = a.git_branch && a.git_branch !== 'HEAD' ? ` on ${a.git_branch}` : '';
+  return [
+    `**${heading || 'Claude Code session attached'}:** ${a.title || 'Untitled session'}`,
+    `\`${id.slice(0, 8)}\` in \`${_ccShortCwd(a.cwd)}\`${branch}`,
+    warning || '',
+    `[Open in Claude sessions](${_ccSessionsHref(a)}) · /claude detach to let it go`,
+  ].filter(Boolean).join('\n\n');
+}
+
+function _ccWireCard(el, ctx, cardId) {
+  el.querySelector('.cc-attach-open')?.addEventListener('click', (ev) => {
+    const card = ev.currentTarget.closest('.cc-attach-card');
+    const m = (ev.currentTarget.getAttribute('href') || '').match(/^#claude-sessions\/([^/]+)\/([^/]+)$/);
+    if (m && window.claudeSessions && card) {
+      ev.preventDefault();
+      window.claudeSessions.open(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+    }
+  });
+  el.querySelector('.cc-attach-detach')?.addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    const sid = ctx.sid || sessionModule.getCurrentSessionId();
+    // An older card: only the session it shows is detached.
+    const now = await _ccApi('GET', `/api/claude_attach/${encodeURIComponent(sid)}`);
+    if (now.ok && (!now.data.attached || now.data.attached.id !== cardId)) {
+      _ccMarkOff(btn.closest('.cc-attach-card'), 'No longer attached');
+      return;
+    }
+    const r = await _ccApi('DELETE', `/api/claude_attach/${encodeURIComponent(sid)}`);
+    if (!r.ok) { btn.disabled = false; window.showToast?.(_ccErrorText(r)); return; }
+    _ccMarkOff(btn.closest('.cc-attach-card'), 'Detached');
+    _persistMsg('assistant', 'Claude Code session detached from this chat.', { source: 'slash' });
+  });
+}
+
+function _ccMarkOff(card, heading) {
+  if (!card) return;
+  card.classList.add('cc-attach-off');
+  card.querySelector('.cc-attach-head').textContent = heading;
+  card.querySelector('.cc-attach-sub').textContent = 'This chat no longer carries this session on.';
+  card.querySelector('.cc-attach-detach')?.remove();
+}
+
+// Rebuilds a persisted card when the chat is opened again (chatRenderer.js),
+// marked off if that session is no longer the attached one.
+window.claudeAttachCard = (body, a) => {
+  const id = a.id || a.session_id || '';
+  body.innerHTML = _ccCardHtml(a, { heading: a.heading, warning: a.warning });
+  _ccWireCard(body, {}, id);
+  const sid = sessionModule.getCurrentSessionId();
+  if (!sid) return;
+  _ccApi('GET', `/api/claude_attach/${encodeURIComponent(sid)}`).then((r) => {
+    if (r.ok && (!r.data.attached || r.data.attached.id !== id)) {
+      _ccMarkOff(body.querySelector('.cc-attach-card'), 'No longer attached');
+    }
+  }).catch(() => {});
+};
+
+function _ccShowCard(a, ctx, opts) {
+  const keep = { ...a, heading: (opts && opts.heading) || '', warning: (opts && opts.warning) || '' };
+  const { el } = slashReply(_ccCardHtml(a, opts), _ccPersistText(a, opts), { claude_attach: keep });
+  _ccWireCard(el, ctx, a.id || a.session_id || '');
+}
+
+async function _cmdClaudeAttach(args, ctx) {
+  const prefix = (args[0] || '').trim().toLowerCase();
+  if (!prefix) {
+    slashReply('Usage: <code>/claude attach &lt;session id&gt;</code>, at least 6 characters of it, as <code>claude agents</code> or the Claude sessions page shows it.');
+    return true;
+  }
+  const sid = await _ccChatId(ctx);
+  if (!sid) { slashReply('Open a chat first, then attach a Claude Code session to it.'); return true; }
+  const r = await _ccApi('POST', `/api/claude_attach/${encodeURIComponent(sid)}`, { id: prefix });
+  if (!r.ok) {
+    const cands = (r.data && r.data.detail && r.data.detail.candidates) || [];
+    if (r.status === 409 && cands.length) {
+      const esc = uiModule.esc;
+      const rows = cands.map((c) => `<li><button type="button" class="cc-attach-pick" data-id="${esc(c.id)}">${esc(c.id.slice(0, 13))}</button> ${esc(c.title || 'Untitled session')} <span class="cc-attach-dim">${esc(_ccShortCwd(c.cwd))} · ${c.live ? 'live' : esc(_ccAgo(c.last_activity))}</span></li>`).join('');
+      const { el } = slashReply(`${esc(_ccErrorText(r))}<ul class="cc-attach-cands">${rows}</ul>`,
+        `${_ccErrorText(r)}\n\n` + cands.map((c) => `- \`${c.id}\` ${c.title || 'Untitled session'} (${_ccShortCwd(c.cwd)})`).join('\n'));
+      el.querySelectorAll('.cc-attach-pick').forEach((b) => b.addEventListener('click', () => {
+        _cmdClaudeAttach([b.dataset.id], ctx);
+      }));
+      return true;
+    }
+    slashReply(uiModule.esc(_ccErrorText(r)));
+    return true;
+  }
+  _ccShowCard(r.data.attached, ctx, { warning: r.data.warning });
+  return true;
+}
+
+async function _cmdClaudeDetach(args, ctx) {
+  if (!ctx.sid) { slashReply('No chat is open.'); return true; }
+  const r = await _ccApi('DELETE', `/api/claude_attach/${encodeURIComponent(ctx.sid)}`);
+  if (!r.ok) { slashReply(uiModule.esc(_ccErrorText(r))); return true; }
+  const was = r.data.detached;
+  slashReply(was ? `Detached Claude Code session <code>${uiModule.esc(String(was.session_id || '').slice(0, 8))}</code>. This chat's coding agent starts its own again.`
+    : 'No Claude Code session is attached to this chat.');
+  return true;
+}
+
+// `/claude 7238cfa3` attaches; a bare `/claude` shows what is attached.
+async function _cmdClaudeDefault(args, ctx) {
+  if (args[0] && /^[0-9a-f][0-9a-f-]{5,35}$/i.test(args[0])) return _cmdClaudeAttach(args, ctx);
+  return _cmdClaudeStatus(args, ctx);
+}
+
+async function _cmdClaudeStatus(args, ctx) {
+  if (!ctx.sid) { slashReply('No chat is open.'); return true; }
+  const r = await _ccApi('GET', `/api/claude_attach/${encodeURIComponent(ctx.sid)}`);
+  if (!r.ok) { slashReply(uiModule.esc(_ccErrorText(r))); return true; }
+  if (!r.data.attached) {
+    slashReply('No Claude Code session is attached to this chat. Attach one with <code>/claude attach &lt;session id&gt;</code>.');
+    return true;
+  }
+  _ccShowCard(r.data.attached, ctx, { heading: 'Attached to this chat' });
+  return true;
+}
+
 async function _cmdMeet(args, ctx) {
   const first = (args[0] || '').toLowerCase();
   const api = async (method, path, body) => {
@@ -5845,6 +6035,18 @@ const COMMANDS = {
     noUserBubble: true,
     usage: '/meet https://meet.google.com/abc-defg-hij [talk]  ·  /meet leave',
   },
+  claude: {
+    alias: ['cc'],
+    category: 'Chats',
+    help: 'Attach one of your Claude Code sessions to this chat',
+    default: '_default',
+    subs: {
+      '_default': { handler: _cmdClaudeDefault, alias: [], help: 'Attach an id, or show the attached session', usage: '/claude [session id]' },
+      'attach': { handler: _cmdClaudeAttach, alias: ['use'],   help: 'Carry a Claude Code session on in this chat', usage: '/claude attach <session id>' },
+      'detach': { handler: _cmdClaudeDetach, alias: ['drop'],  help: 'Let the attached session go',                usage: '/claude detach' },
+      'status': { handler: _cmdClaudeStatus, alias: ['info'],  help: 'Show the attached session',                  usage: '/claude status' }
+    }
+  },
   todo: {
     alias: ['td'],
     category: 'Productivity',
@@ -6282,10 +6484,13 @@ function _fuzzyMatch(typed, maxDist) {
 // ── Command prefix ──────────────────────────────────────────────
 
 function _isCmd(str) { return str.startsWith('/') || str.startsWith('!'); }
+// "claude attach 7238cfa3" works without the slash too (_CC_BARE_RE).
+function _isBareClaude(str) { return _CC_BARE_RE.test(str || ''); }
 
 // ── Main dispatcher ───────────────────────────────────────────────
 
 async function handleSlashCommand(input) {
+  if (!_isCmd(input) && _isBareClaude(input)) input = '/' + input.trim();
   const parts = input.slice(1).split(/\s+/);
   const rawCmd = parts[0].toLowerCase();
   let args = parts.slice(1);
@@ -6492,7 +6697,7 @@ export function initSlashCommands(deps) {
  * Check if input looks like a slash command.
  */
 export function isCommand(str) {
-  return _isCmd(str);
+  return _isCmd(str) || _isBareClaude(str);
 }
 
 /**
