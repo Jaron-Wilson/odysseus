@@ -3596,22 +3596,16 @@ function startOdysseusApp() {
     return fileHandlerModule.getPendingCount && fileHandlerModule.getPendingCount() > 0;
   }
 
-  const _queueIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="14" y2="7"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="17" x2="10" y2="17"/><path d="M18 14v6M15 17h6"/></svg>';
   function _updateSendBtnIcon() {
     if (!sendBtn) return;
-    // Mid-reply the button is Stop -- unless there is text in the box, in
-    // which case Enter/click queues it to send after this reply.
+    // Mid-reply the button is Stop, and stays Stop: a click on it always
+    // stops, even with text in the box (Enter in the box is what queues the
+    // text to send after this reply). It used to turn into a queue icon
+    // while typing, which hid Stop for as long as anything was in the box.
     if (sendBtn.dataset.mode === 'streaming') {
       const typing = messageInput && messageInput.value.trim().length > 0;
-      if (typing && sendBtn.dataset.queue !== '1') {
-        sendBtn.dataset.queue = '1';
-        sendBtn.innerHTML = _queueIcon;
-        sendBtn.title = 'Queue: sends when this reply finishes';
-      } else if (!typing && sendBtn.dataset.queue === '1') {
-        delete sendBtn.dataset.queue;
-        sendBtn.innerHTML = _stopIcon;
-        sendBtn.title = 'Stop generation';
-      }
+      sendBtn.title = typing ? 'Stop generation (Enter in the box queues your message instead)'
+                             : 'Stop generation';
       return;
     }
     // Don't override while recording
@@ -3708,8 +3702,29 @@ function startOdysseusApp() {
         return;
       }
 
+      // Mid-reply this button is Stop (a reply of ours, a compare run, or a
+      // run this page re-attached to). Handle it before anything below: with
+      // an empty box the mic branch used to run first, so pressing Stop
+      // started a voice recording and the reply kept going. The submitter is
+      // passed so handleChatSubmit knows this was the button, not Enter, and
+      // stops even with text in the box.
+      if (sendBtn.dataset.mode === 'streaming') {
+        _submitting = false;   // the send debounce must never swallow a Stop
+        handleSubmit({ preventDefault() {}, submitter: sendBtn, type: 'click' });
+        return;
+      }
+
+      // A send is starting (the stream has not taken the button yet): the
+      // box is already empty, so a second tap would otherwise record.
+      if (sendBtn.classList.contains('send-pending')) return;
+
       const hasText = messageInput && messageInput.value.trim().length > 0;
       const hasFiles = _hasAttachments();
+
+      // Stop went away a moment ago (the reply ended or was stopped): an
+      // empty-box tap now was aimed at Stop, or is the second tap of a
+      // double-tap on it. Don't let it start a recording or open a new chat.
+      if (!hasText && !hasFiles && Date.now() - (sendBtn._stopEndedAt || 0) < 800) return;
 
       // New chat mode — empty input, no attachments, no STT
       if (!hasText && !hasFiles && sendBtn.dataset.mode === 'newchat') {

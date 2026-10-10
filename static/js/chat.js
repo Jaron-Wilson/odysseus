@@ -743,6 +743,10 @@ import './chatThreads.js';
       // arrow out for the stop icon — otherwise the swap happens mid-flight
       // and the user sees nothing fly out.
       setTimeout(() => {
+        // A reply that ended (or failed) inside the launch animation has
+        // already put the button back to mic/send. Swapping the Stop square
+        // in now would leave a Stop icon on a button whose click records.
+        if (submitBtn.dataset.mode !== 'streaming') { submitBtn.classList.remove('anim-launch'); return; }
         submitBtn.innerHTML = _stopSvg;
         submitBtn.classList.remove('anim-launch');
         void submitBtn.offsetWidth;
@@ -761,7 +765,25 @@ import './chatThreads.js';
         _restoreDraft = null;
       }
       renderQueue();
+    } else if (state === 'watching') {
+      // A run this page did not start but is showing live (re-attached after
+      // a reload or chat switch, a queued message the server sent, a
+      // brought-back or approved run). The button is Stop for it, without the
+      // send animation and without isStreaming: there is no fetch of ours to
+      // abort, and Stop posts /api/chat/stop instead (see _stopWatchedRun).
+      submitBtn.classList.remove('anim-spin', 'anim-spin-swap', 'anim-launch', 'anim-land', 'mic-mode', 'newchat-mode', 'newchat-expanded', 'recording', 'send-pending');
+      clearTimeout(submitBtn._collapseTimer);
+      clearTimeout(submitBtn._expandTimer);
+      submitBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+      submitBtn.title = 'Stop generation';
+      submitBtn.dataset.mode = 'streaming';
+      submitBtn.dataset.phase = 'processing';
+      renderQueue();
     } else if (state === 'idle') {
+      // Remember when Stop went away: app.js ignores a mic/new-chat press for
+      // a moment after, so a tap aimed at Stop that lands just after the reply
+      // ended (or a second tap of a double-tap) never starts a recording.
+      if (submitBtn.dataset.mode === 'streaming') submitBtn._stopEndedAt = Date.now();
       submitBtn.dataset.mode = '';
       delete submitBtn.dataset.phase;
       delete submitBtn.dataset.queue;
@@ -828,6 +850,20 @@ import './chatThreads.js';
     // button only queued the word "stop" as the next message and let the
     // reply keep going, which is exactly backwards.
     const _clickedTheButton = e.submitter === submitBtn;
+    // A run shown live but not started by this page (see watchRun): Enter
+    // with text queues behind it, anything else stops it on the server.
+    if (!isStreaming && _isWatchingCurrent()) {
+      const _ta = document.getElementById('message');
+      const _typed = _ta ? (_ta.value || '').trim() : '';
+      if (!_clickedTheButton && _typed && queueMessage(_typed)) {
+        _ta.value = '';
+        if (uiModule.autoResize) uiModule.autoResize(_ta);
+        if (window._updateSendBtnIcon) window._updateSendBtnIcon();
+        return;
+      }
+      _stopWatchedRun(sessionId);
+      return;
+    }
     if (isStreaming && !_clickedTheButton) {
       const _ta = document.getElementById('message');
       const _typed = _ta ? (_ta.value || '').trim() : '';
@@ -3699,29 +3735,75 @@ import './chatThreads.js';
       try {
         const _sid = _streamSessionId
           || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
-        if (_sid) {
-          fetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST', credentials: 'same-origin' })
-            .then(r => r.ok ? r.json() : null)
-            .then(info => {
-              // Say it out loud when Stop also took back control of a
-              // machine. Releasing it silently is indistinguishable from
-              // not releasing it, which is what "there was no stop on the
-              // mcp side" meant -- the run halted, and nothing said the
-              // computer was no longer reachable.
-              const n = info && info.screen_control_revoked;
-              // uiModule is the imported module, not window.uiModule -
-              // nothing ever assigns that, so going through it would make
-              // this a no-op that looks like working code.
-              if (n && uiModule && uiModule.showToast) {
-                uiModule.showToast(
-                  n === 1 ? 'Stopped \u2014 screen control released'
-                          : `Stopped \u2014 released screen control on ${n} machines`);
-              }
-            })
-            .catch(() => {});
-        }
+        if (_sid) _postStop(_sid);
       } catch (_) {}
     }
+  }
+
+  // Cancel the server-side run for a chat (the run is detached, so closing
+  // our reader never stops it; only this does).
+  function _postStop(sid) {
+    return fetch(`/api/chat/stop/${encodeURIComponent(sid)}`, { method: 'POST', credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(info => {
+        // Say it out loud when Stop also took back control of a
+        // machine. Releasing it silently is indistinguishable from
+        // not releasing it, which is what "there was no stop on the
+        // mcp side" meant -- the run halted, and nothing said the
+        // computer was no longer reachable.
+        const n = info && info.screen_control_revoked;
+        // uiModule is the imported module, not window.uiModule -
+        // nothing ever assigns that, so going through it would make
+        // this a no-op that looks like working code.
+        if (n && uiModule && uiModule.showToast) {
+          uiModule.showToast(
+            n === 1 ? 'Stopped: screen control released'
+                    : `Stopped: released screen control on ${n} machines`);
+        }
+        return info;
+      })
+      .catch(() => null);
+  }
+
+  // ── Runs this page shows but did not start ─────────────────────
+  // resumeStream (reload, chat switch, a queued message the server sent,
+  // bring-back, plan/screen approvals), a same-tab stream that went to the
+  // background and is now on screen again, and the spinner+poll fallback in
+  // sessions.js all show a reply in progress without a fetch of ours behind
+  // it. The button used to stay mic/send for those, so there was no Stop at
+  // all, and an empty-box tap started a voice recording. While one is on
+  // screen the button is Stop, and Stop cancels it on the server.
+  let _watchedRun = null;               // sessionId of the run the button stops
+
+  export function watchRun(sessionId) {
+    if (!sessionId || isStreaming) return;
+    if (sessionModule.getCurrentSessionId() !== sessionId) return;
+    _watchedRun = sessionId;
+    updateSubmitButton('watching', document.querySelector('.send-btn'));
+  }
+
+  export function unwatchRun(sessionId) {
+    if (!_watchedRun || (sessionId && _watchedRun !== sessionId)) return;
+    _watchedRun = null;
+    if (isStreaming) return;           // a new send of ours owns the button now
+    const btn = document.querySelector('.send-btn');
+    if (btn && btn.dataset.mode === 'streaming') updateSubmitButton('idle', btn);
+  }
+
+  function _isWatchingCurrent() {
+    return !!_watchedRun && _watchedRun === sessionModule.getCurrentSessionId();
+  }
+
+  function _stopWatchedRun(sid) {
+    if (_researchingStreamIds.has(sid)) {
+      fetch(`${API_BASE}/api/research/cancel/${encodeURIComponent(sid)}`, { method: 'POST' }).catch(() => {});
+      _researchingStreamIds.delete(sid);
+      _clearResearchTimer();
+    }
+    _postStop(sid);
+    // The reader showing it gets the end of the run and reloads the chat,
+    // which shows the stopped turn as saved; the button settles right away.
+    unwatchRun(sid);
   }
 
   // ── Stall watchdog ──────────────────────────────────────────────
@@ -3971,6 +4053,8 @@ import './chatThreads.js';
     _applyModelColor(holder.querySelector('.role'), meta && meta.model);
     const contentDiv = holder.querySelector('.stream-content');
     box.appendChild(holder);
+    // A reply is running here: the button is Stop for it until it ends.
+    watchRun(sessionId);
 
     // Nothing has arrived yet: say so, as the live send does ("waiting for
     // first token"), and switch once the replay or the model produces output.
@@ -4001,6 +4085,7 @@ import './chatThreads.js';
     const cleanup = () => {
       try { spinner.destroy(); } catch (_) {}
       _resumingStreams.delete(sessionId);
+      unwatchRun(sessionId);
     };
 
     // Tool calls, drawn live. This view used to show only the text until the
@@ -4277,11 +4362,15 @@ import './chatThreads.js';
 
       box.appendChild(holder);
       uiModule.scrollHistory();
+      // Still running: Stop must be there for it (it posts /api/chat/stop;
+      // our detached reader then sees the end and this poll reloads).
+      watchRun(sessionId);
 
       // Poll map until stream finishes, then reload history
       var pollId = setInterval(function() {
         if (sessionModule.getCurrentSessionId() !== sessionId) {
           clearInterval(pollId);
+          unwatchRun(sessionId);
           spinner.destroy();
           if (holder.parentNode) holder.remove();
           return;
@@ -4293,6 +4382,7 @@ import './chatThreads.js';
         }
         if (!curPoll || curPoll.status !== 'running') {
           clearInterval(pollId);
+          unwatchRun(sessionId);
           spinner.destroy();
           if (holder.parentNode) holder.remove(); // Remove entire holder, not just spinner
           _backgroundStreams.delete(sessionId);
@@ -4506,7 +4596,7 @@ import './chatThreads.js';
         }
 
         // Reset UI state
-        var _submitBtn = document.getElementById('submit');
+        var _submitBtn = document.querySelector('.send-btn');
         updateSubmitButton('idle', _submitBtn);
         var _msgInput = document.getElementById('message');
         if (_msgInput) _msgInput.disabled = false;
@@ -5794,6 +5884,8 @@ import './chatThreads.js';
     detachCurrentStream,
     checkBackgroundStream,
     resumeStream,
+    watchRun,
+    unwatchRun,
     watchQueue,
     // For modules that cannot import sessions.js (chatRenderer's approval
     // modal): which chat is on screen, so a resumed run is only attached to

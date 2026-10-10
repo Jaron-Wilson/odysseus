@@ -2268,9 +2268,17 @@ async function _checkServerStreamOnce(sessionId) {
     // on the first poll tick where it becomes available.
     let _resumeRetried = false;
     _pollingStream.add(sessionId);
+    // A reply is running: show Stop for it (chat.js watchRun), and give the
+    // button back when this poll ends, however it ends.
+    const _cm = () => window.chatModule || {};
+    if (_cm().watchRun) _cm().watchRun(sessionId);
+    const _endPoll = () => {
+      clearInterval(pollId); _pollingStream.delete(sessionId);
+      if (_cm().unwatchRun) _cm().unwatchRun(sessionId);
+    };
     const pollId = setInterval(async () => {
       if (getCurrentSessionId() !== sessionId) {
-        clearInterval(pollId); _pollingStream.delete(sessionId);
+        _endPoll();
         spinner.destroy();
         if (holder.parentNode) holder.remove();
         return;
@@ -2279,7 +2287,7 @@ async function _checkServerStreamOnce(sessionId) {
         _resumeRetried = true;
         const attached = await window.chatModule.resumeStream(sessionId);
         if (attached) {
-          clearInterval(pollId); _pollingStream.delete(sessionId);
+          _endPoll();
           spinner.destroy();
           if (holder.parentNode) holder.remove();
           return;
@@ -2288,14 +2296,14 @@ async function _checkServerStreamOnce(sessionId) {
       try {
         const r = await fetch(`${API_BASE}/api/chat/stream_status/${sessionId}`);
         if (!r.ok || (await r.json()).status !== 'streaming') {
-          clearInterval(pollId); _pollingStream.delete(sessionId);
+          _endPoll();
           spinner.destroy();
           if (holder.parentNode) holder.remove();
           // Reload session to show the completed response + docs
           selectSession(sessionId);
         }
       } catch (_) {
-        clearInterval(pollId); _pollingStream.delete(sessionId);
+        _endPoll();
         spinner.destroy();
         if (holder.parentNode) holder.remove();
         selectSession(sessionId);

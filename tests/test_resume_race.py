@@ -34,5 +34,8 @@ def test_one_stream_check_and_one_placeholder_per_chat():
     src = open(os.path.join(HERE, "static", "js", "sessions.js"), encoding="utf-8").read()
     assert "if (_checkingStream.has(sessionId) || _pollingStream.has(sessionId)) return;" in src
     body = src[src.index("async function _checkServerStreamOnce(sessionId) {"):src.index("export function clearStreamComplete")]
-    assert body.count("clearInterval(pollId); _pollingStream.delete(sessionId);") == 4
+    # Every way the poll ends goes through _endPoll, which clears the flag.
+    end_poll = body[body.index("const _endPoll = () => {"):]
+    assert "clearInterval(pollId); _pollingStream.delete(sessionId);" in end_poll[:200]
+    assert body.count("_endPoll();") == 4
     assert "_pollingStream.add(sessionId);" in body
