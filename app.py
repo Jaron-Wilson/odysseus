@@ -720,6 +720,9 @@ app.include_router(setup_claude_sessions_routes())
 # The ADS-B receiver (a Pi on the tailnet): status and its live map, admin only (routes/adsb_routes.py).
 from routes.adsb_routes import setup_adsb_routes
 app.include_router(setup_adsb_routes())
+# Paperclip (agent-company control plane), read-only, admin only (routes/paperclip_routes.py).
+from routes.paperclip_routes import setup_paperclip_routes
+app.include_router(setup_paperclip_routes())
 
 
 @app.get("/api/version")

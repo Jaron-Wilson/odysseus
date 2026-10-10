@@ -41,7 +41,7 @@ _TAXONOMY = json.loads(re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-p
 _TOOL_IDS = ["tool-memory-btn", "tool-calendar-btn", "tool-compare-btn", "tool-cookbook-btn", "tool-research-btn",
              "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-tasks-btn", "tool-bg-btn",
              "tool-devops-btn", "tool-code-btn", "tool-browser-btn", "tool-devices-btn", "tool-terminal-btn",
-             "tool-claude-sessions-btn", "tool-adsb-btn",
+             "tool-claude-sessions-btn", "tool-adsb-btn", "tool-paperclip-btn",
              "tool-odysseus-dev-btn", "tool-theme-btn", "tool-whats-new-btn"]
 
 
@@ -225,7 +225,7 @@ def test_the_groups_render_in_every_design(make_page, design):
         ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn"],
         ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-claude-sessions-btn", "tool-devops-btn",
          "tool-odysseus-dev-btn"],
-        ["tool-devices-btn", "tool-adsb-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-whats-new-btn"]]
+        ["tool-devices-btn", "tool-adsb-btn", "tool-paperclip-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-whats-new-btn"]]
     assert all(not g["folded"] and g["expanded"] == "true" and g["shown"] == g["items"] for g in gs)
     # Headers are on screen, in order, each above its own rows.
     tops = pg.evaluate("""() => [...document.querySelectorAll('.tool-group')].map(g => {
@@ -244,7 +244,7 @@ def test_a_group_folds_says_whats_inside_and_stays_folded(make_page, browser):
     pg.click('.tool-group[data-tool-group="system"] .tool-group-head')
     g = {x["id"]: x for x in _groups(pg)}["system"]
     assert g["folded"] and g["expanded"] == "false" and g["shown"] == []
-    assert g["summary"] == "Devices, ADS-B receiver, Cookbook, Theme, What's new"
+    assert g["summary"] == "Devices, ADS-B receiver, Paperclip, Cookbook, Theme, What's new"
     assert pg.is_visible('.tool-group[data-tool-group="system"] .tool-group-summary')
     assert json.loads(pg.evaluate("localStorage.getItem('odysseus-tool-groups')")) == {"system": "closed"}
     pg.reload()
@@ -317,7 +317,7 @@ def test_the_new_tab_menu_lists_the_tools_in_the_same_groups(make_page):
         ["Organize", ["Calendar", "Tasks", "Notes", "Brain"]],
         ["Create & research", ["Library", "Gallery", "Deep Research", "Compare"]],
         ["Build", ["Code", "Terminal", "Browser", "Background", "Claude sessions", "DevOps", "Odysseus dev"]],
-        ["System", ["Devices", "ADS-B receiver", "Cookbook", "Theme", "What's new"]]]
+        ["System", ["Devices", "ADS-B receiver", "Paperclip", "Cookbook", "Theme", "What's new"]]]
     pg.click(".ws-menu-group button:has-text('Devices')")
     pg.wait_for_function("() => [...document.querySelectorAll('.ws-tab')].some(t => t.dataset.tab === 'tool:devices')")
     assert "tool-devices-btn" in pg.evaluate("calls")
@@ -327,7 +327,7 @@ def test_the_new_tab_menu_leaves_out_what_a_non_admin_cant_open(make_page):
     pg = make_page("workspace", admin=False)
     pg.click(".ws-new-btn")
     names = pg.evaluate("[...document.querySelectorAll('.ws-menu button')].map(b => b.textContent.trim())")
-    for gone in ("Code", "Terminal", "DevOps", "Odysseus dev", "Devices", "ADS-B receiver"):
+    for gone in ("Code", "Terminal", "DevOps", "Odysseus dev", "Devices", "ADS-B receiver", "Paperclip"):
         assert gone not in names
     assert "Browser" in names and "Calendar" in names
 
