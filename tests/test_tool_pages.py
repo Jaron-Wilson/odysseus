@@ -42,7 +42,7 @@ def test_the_agent_reads_the_same_list_as_the_page():
     assert json.loads(block)["pages"] == tool_pages.PAGES
     assert [g["id"] for g in tool_pages.GROUPS] == ["organize", "create", "build", "system"]
     assert {"devices", "terminal", "browser", "code", "calendar", "tasks", "devops", "background", "claude-sessions", "adsb",
-            "odysseus-dev", "research", "compare", "library", "notes", "brain", "gallery", "cookbook",
+            "odysseus-dev", "research", "compare", "library", "notes", "plans", "brain", "gallery", "cookbook",
             "theme", "whats-new", "email", "chats", "skills", "settings"} == set(tool_pages.keys())
 
 
@@ -64,7 +64,7 @@ def test_unknown_names_are_not_guessed():
 
 def test_the_prompt_lists_every_page_in_its_group():
     names = tool_pages.names_for_prompt()
-    assert names.startswith("Organize: calendar, tasks, notes, brain;")
+    assert names.startswith("Organize: calendar, tasks, notes, plans, brain;")
     assert "Build: code, terminal, browser, background, claude-sessions, devops, odysseus-dev" in names
     assert "command line/shell/console->terminal" in tool_pages.aliases_for_prompt()
 

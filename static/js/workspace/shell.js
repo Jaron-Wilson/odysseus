@@ -32,6 +32,7 @@ const ICONS = {
   mail: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>'),
   calendar: svg('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>'),
   notes: svg('<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/>'),
+  plans: svg('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8l1.5 1.5L13 7"/><path d="M9 13l1.5 1.5L13 12"/><path d="M9 17.5h7"/>'),
   tasks: svg('<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>'),
   library: svg('<path d="M4 19V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M8 7h7"/>'),
   gallery: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>'),
@@ -68,6 +69,9 @@ const TOOLS = [
   { key: 'calendar', label: 'Calendar', icon: 'calendar', id: 'calendar-modal', open: '#tool-calendar-btn' },
   { key: 'notes', label: 'Notes', icon: 'notes', id: 'notes-pane', win: null, open: '#tool-notes-btn',
     close: () => import('../notes.js').then(m => m.closePanel()) },   // (no close button, only minimize)
+  { key: 'plans', label: 'Plans', icon: 'plans', sel: '.bg-panel-backdrop:has(> .plans-panel)', win: '.bg-panel', open: '#tool-plans-btn',
+    title: (el) => { const n = el.querySelector('.pln-editor:not([hidden]) .pln-title')?.value.trim();
+      return n ? 'Plans: ' + n : 'Plans'; } },
   { key: 'tasks', label: 'Tasks', icon: 'tasks', id: 'tasks-modal', open: '#tool-tasks-btn' },
   { key: 'library', label: 'Library', icon: 'library', id: 'library-modal', open: '#tool-library-btn' },
   { key: 'archive', label: 'Archive', icon: 'library', id: 'archive-modal' },
@@ -89,7 +93,7 @@ const TOOLS = [
   { key: 'code', label: 'Code', icon: 'code', sel: '.ide-backdrop', win: '.bg-panel', open: '#tool-code-btn',
     title: (el) => { const n = el.querySelector('.ide-project-name')?.textContent.trim();
       return n && n !== 'Pick a project' ? 'Code: ' + n : 'Code'; } },
-  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
+  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel)):not(:has(> .plans-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
 ];
 const TOOL_BY_KEY = Object.fromEntries(TOOLS.map(t => [t.key, t]));
 // An opened email is its own window (#email-reader-<n>) and its own tab.

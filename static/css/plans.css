@@ -1,0 +1,166 @@
+/* Plans (static/js/plans.js): the list of plans beside a Markdown editor
+   with a live preview. On a phone the list and the editor are separate
+   screens and the preview is a toggle. */
+.plans-panel { width: min(1300px, 100%); height: 88vh; overflow: hidden; }
+.plans-panel.fill-chat-area { height: auto; }
+.plans-panel .bg-panel-head > span:first-child { flex: 1; }
+.pln-body { flex: 1; min-height: 0; display: flex; }
+
+.plans-panel button { font-family: inherit; color: inherit; line-height: 1.3; }
+.plans-panel :focus-visible:not(.pln-text) { outline: 2px solid var(--accent, #d97a4a); outline-offset: 1px; }
+
+/* ── The list ─────────────────────────────────────────────────────────── */
+.pln-side { width: 280px; flex: 0 0 280px; display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); }
+.pln-side-top { display: flex; gap: 6px; padding: 10px 10px 8px; }
+.pln-search { flex: 1; min-width: 0; font: inherit; font-size: 13px; color: inherit; box-sizing: border-box;
+  padding: 6px 9px; border-radius: 8px; background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent); }
+.pln-new { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+  padding: 5px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--accent, #d97a4a) 55%, transparent);
+  background: color-mix(in srgb, var(--accent, #d97a4a) 14%, transparent); }
+.pln-new:hover { background: color-mix(in srgb, var(--accent, #d97a4a) 24%, transparent); }
+.pln-list { list-style: none; margin: 0; padding: 0 6px 8px; flex: 1; min-height: 0; overflow: auto; }
+.pln-list-empty { font-size: 13px; opacity: .6; padding: 12px 8px; }
+.pln-item { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; cursor: pointer;
+  background: none; border: 0; border-radius: 8px; padding: 7px 9px; margin: 1px 0; }
+/* Buttons get a fixed height from the app's button styles; a row needs its own. */
+.bg-panel.plans-panel .pln-list .pln-item { height: auto; min-height: 0; flex: none; }
+.pln-item:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.pln-item.active { background: color-mix(in srgb, var(--accent, #d97a4a) 14%, transparent); }
+.pln-item-title { font-size: 13.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pln-item-sub { font-size: 12px; opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pln-item-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; opacity: .55;
+  font-variant-numeric: tabular-nums; }
+.pln-item-tasks { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.pln-mini-bar { display: inline-block; width: 34px; height: 4px; border-radius: 2px; overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 14%, transparent); }
+.pln-mini-bar > span { display: block; height: 100%; background: var(--accent, #d97a4a); }
+.pln-side-foot { font-size: 11px; opacity: .45; padding: 8px 12px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 8%, transparent); }
+
+/* ── The editor ───────────────────────────────────────────────────────── */
+.pln-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pln-empty { margin: auto; text-align: center; font-size: 14px; opacity: .7; padding: 20px; }
+.pln-empty .pln-hint { font-size: 12.5px; opacity: .75; }
+.pln-empty[hidden], .pln-editor[hidden] { display: none; }
+.pln-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.pln-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent); }
+.pln-title { flex: 1 1 180px; min-width: 120px; font: inherit; font-size: 15px; font-weight: 600; color: inherit;
+  background: none; border: 1px solid transparent; border-radius: 7px; padding: 4px 7px; margin-left: -7px; }
+.pln-title:hover { border-color: color-mix(in srgb, var(--fg) 12%, transparent); }
+.pln-title:focus { border-color: color-mix(in srgb, var(--fg) 22%, transparent);
+  background: color-mix(in srgb, var(--fg) 4%, transparent); outline: none; }
+.pln-status { font-size: 11.5px; opacity: .6; white-space: nowrap; }
+.pln-status[data-kind="ok"]::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: #3fb950; margin-right: 5px; vertical-align: 1px; }
+.pln-status[data-kind="bad"] { color: #e5534b; opacity: 1; }
+.pln-progress { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; white-space: nowrap;
+  font-variant-numeric: tabular-nums; opacity: .85; }
+.pln-progress[hidden] { display: none; }
+.pln-meter { display: inline-block; width: 64px; height: 6px; border-radius: 3px; overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 14%, transparent); }
+.pln-meter > span { display: block; height: 100%; background: var(--accent, #d97a4a); }
+.pln-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.pln-icon { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px;
+  background: none; border: 1px solid transparent; border-radius: 7px; padding: 5px 7px; opacity: .8; }
+.pln-icon:hover:not(:disabled) { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.pln-icon:disabled { opacity: .35; cursor: default; }
+.pln-delete:hover:not(:disabled) { color: #e5534b; }
+.pln-back { display: none; }
+
+.pln-view { display: inline-flex; border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  border-radius: 8px; overflow: hidden; margin: 0 4px; }
+.pln-view button { background: none; border: 0; padding: 4px 10px; font-size: 12px; cursor: pointer; opacity: .75; }
+.pln-view button + button { border-left: 1px solid color-mix(in srgb, var(--fg) 14%, transparent); }
+.pln-view button[aria-pressed="true"] { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); font-weight: 600; }
+
+.pln-outline-wrap { position: relative; }
+.pln-outline { position: absolute; top: calc(100% + 4px); right: 0; z-index: 5; min-width: 220px; max-width: 340px;
+  max-height: 50vh; overflow: auto; padding: 4px; border-radius: 10px; background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); }
+.pln-outline[hidden] { display: none; }
+.pln-outline-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px;
+  padding: 5px 8px; font-size: 12.5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pln-outline-item:hover, .pln-outline-item:focus { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+
+.pln-conflict { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; padding: 7px 12px;
+  background: color-mix(in srgb, #e5534b 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #e5534b 30%, transparent); }
+.pln-conflict[hidden] { display: none; }
+.pln-conflict span { flex: 1; min-width: 180px; }
+.pln-conflict button { cursor: pointer; font-size: 12px; background: none; border-radius: 7px; padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent); }
+
+.pln-panes { flex: 1; min-height: 0; display: flex; }
+.pln-source { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pln-panes[data-view="split"] .pln-source { border-right: 1px solid color-mix(in srgb, var(--fg) 8%, transparent); }
+.pln-panes[data-view="edit"] .pln-preview, .pln-panes[data-view="preview"] .pln-source { display: none; }
+.pln-format { display: flex; align-items: center; gap: 2px; padding: 4px 8px; flex-wrap: wrap;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 6%, transparent); }
+.pln-format button { background: none; border: 0; border-radius: 6px; padding: 3px 8px; font-size: 12.5px; cursor: pointer; opacity: .7; }
+.pln-format button:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.pln-keys { margin-left: auto; font-size: 11px; opacity: .4; white-space: nowrap; }
+.pln-text { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; resize: none; border: 0; outline: none;
+  padding: 14px 18px 40vh; background: transparent; color: inherit; tab-size: 2;
+  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 13.5px; line-height: 1.6; }
+.pln-text::placeholder { opacity: .4; }
+/* The editor is the page: no focus frame around it (the caret shows where you are). */
+.plans-panel .pln-text:is(:focus, :focus-visible) { outline: none; box-shadow: none; }
+
+/* ── The preview ──────────────────────────────────────────────────────── */
+.pln-preview { flex: 1; min-width: 0; overflow: auto; padding: 14px 22px 40vh; font-size: 14px; line-height: 1.6;
+  overflow-wrap: anywhere; }
+.pln-preview:focus { outline: none; }
+.pln-preview > :first-child { margin-top: 0; }
+.pln-preview h1, .pln-preview h2, .pln-preview h3, .pln-preview h4, .pln-preview h5, .pln-preview h6 {
+  margin: 1.1em 0 .4em; line-height: 1.3; scroll-margin-top: 8px; }
+.pln-preview h1 { font-size: 1.55em; }
+.pln-preview h2 { font-size: 1.25em; padding-bottom: .2em; border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); }
+.pln-preview h3 { font-size: 1.08em; }
+.pln-preview p { margin: .55em 0; }
+.pln-preview ul, .pln-preview ol { margin: .4em 0; padding-left: 1.5em; }
+.pln-preview li { margin: .15em 0; }
+.pln-preview li.task-item { align-items: baseline; margin-left: -1.3em; flex-wrap: wrap; column-gap: 8px; }
+/* A sub-list under a task goes on its own lines, and only the ticked item is struck through. */
+.pln-preview li.task-item > :is(ul, ol) { flex-basis: 100%; padding-left: 2.6em; }
+.pln-preview li > :is(ul, ol) { margin: .1em 0; }
+.pln-preview li.task-item .task-text { opacity: 1; text-decoration: none; }
+.pln-preview li.task-item.task-done > .task-text { opacity: .6; text-decoration: line-through; }
+.pln-check { flex: 0 0 auto; width: 15px; height: 15px; margin: 0; cursor: pointer; accent-color: var(--accent, #d97a4a);
+  position: relative; top: 2px; }
+.pln-check:disabled { cursor: default; }
+.pln-preview code { font-size: .9em; padding: .1em .35em; border-radius: 4px; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.pln-preview pre { position: relative; padding: 10px 12px; border-radius: 8px; overflow: auto;
+  background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.pln-preview pre code { padding: 0; background: none; }
+.pln-preview pre .copy-code { position: absolute; top: 6px; right: 6px; background: none; border: 0; opacity: .5; cursor: pointer; }
+.pln-preview blockquote { margin: .6em 0; padding: 0 0 0 12px; opacity: .8;
+  border-left: 3px solid color-mix(in srgb, var(--fg) 20%, transparent); }
+.pln-preview a { color: var(--accent, #d97a4a); }
+.pln-preview hr { border: 0; border-top: 1px solid color-mix(in srgb, var(--fg) 14%, transparent); margin: 1em 0; }
+.pln-preview table { font-size: .95em; }
+.pln-preview-empty { opacity: .45; }
+
+/* ── Phone: one screen at a time ──────────────────────────────────────── */
+@media (max-width: 768px) {
+  .bg-panel-backdrop:has(> .plans-panel) { padding: 0; }
+  .plans-panel { height: 100%; max-height: none; border-radius: 0; border: 0; }
+  .pln-side { width: 100%; flex: 1 1 auto; border-right: 0; }
+  .pln-body[data-screen="list"] .pln-main { display: none; }
+  .pln-body[data-screen="editor"] .pln-side { display: none; }
+  .pln-back { display: inline-flex; margin-left: -4px; }
+  .pln-split-btn, .pln-keys, .pln-outline-btn span { display: none; }
+  .pln-bar { gap: 6px; padding: 6px 8px; }
+  .pln-title { flex-basis: 0; font-size: 15px; }
+  .pln-actions { width: 100%; justify-content: flex-start; margin-left: 0; }
+  .pln-view { margin-left: 0; }
+  .pln-progress { order: 3; }
+  .pln-text { font-size: 15px; padding: 12px 14px 40vh; }
+  .pln-preview { padding: 12px 16px 40vh; font-size: 15px; }
+  .pln-item { padding: 10px 10px; }
+  .pln-search { font-size: 16px; }   /* no zoom-in on focus in iOS Safari */
+  .pln-outline { right: auto; left: 0; }
+}

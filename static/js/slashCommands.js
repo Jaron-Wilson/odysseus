@@ -1806,6 +1806,30 @@ async function _cmdMeet(args, ctx) {
   return true;
 }
 
+// /plan opens Plans (plans.js); /plan <name> puts that plan's Markdown in the
+// message box for you to edit and send yourself. No model is involved and
+// nothing is sent automatically.
+async function _cmdPlan(args, ctx) {
+  const query = (args || []).join(' ').trim();
+  const plans = await import('./plans.js');
+  if (!query) { plans.open(); return true; }
+  let hit = null;
+  let text = '';
+  try {
+    hit = await plans.findPlan(query);
+    if (hit) text = await plans.readPlan(hit.name);
+  } catch (e) {
+    slashReply(`Could not read your plans: ${ctx.esc(e.message)}`);
+    return true;
+  }
+  if (!hit) { plans.open({ q: query }); return true; }
+  // The composer is cleared once this command returns; fill it after that.
+  setTimeout(() => {
+    plans.insertIntoComposer(text).then((ok) => { if (ok) uiModule.showToast?.(`"${hit.name}" is in the message box. Nothing is sent until you send it.`); });
+  }, 0);
+  return true;
+}
+
 async function _cmdTodo(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
   if (sub === 'list' || sub === 'ls') {
@@ -6019,6 +6043,14 @@ const COMMANDS = {
     help: 'Open Notes',
     handler: (args, ctx) => _cmdToolPanel('notes', args, ctx),
     usage: '/notes'
+  },
+  plan: {
+    alias: ['plans'],
+    category: 'Tools',
+    help: 'Open Plans, or put a plan in the message box (nothing is sent)',
+    handler: _cmdPlan,
+    noUserBubble: true,
+    usage: '/plan  ·  /plan Kitchen remodel'
   },
   tasks: {
     alias: [],
