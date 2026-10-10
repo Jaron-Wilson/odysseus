@@ -149,6 +149,13 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             chat_queue.on_run_finished(session_id, run.status)
         except Exception:
             logger.exception("[agent-run] after-run hook failed for %s", session_id)
+        # A subagent's run: record how it went and post its report back to
+        # the chat it was started from (src/chat_subagents.py).
+        try:
+            from src import chat_subagents
+            chat_subagents.on_run_finished(session_id, run.status)
+        except Exception:
+            logger.exception("[agent-run] subagent hook failed for %s", session_id)
         # Run is terminal — arm the grace timer so it (and its buffer) is
         # eventually freed even if nobody ever reconnects. subscribe() cancels
         # this on connect and re-arms on disconnect.

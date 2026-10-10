@@ -14,7 +14,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from core.models import ChatMessage
 from routes.session_routes import _verify_session_owner
-from src import chat_threads
+from src import chat_threads, chat_subagents
+from src.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,8 @@ def setup_thread_routes(session_manager) -> APIRouter:
         body = await request.json()
         anchor = str(body.get("anchor_msg_id") or "")
         parent = _get(session_id)
-        if getattr(parent, "parent_session_id", None):
-            raise HTTPException(400, "A side thread cannot have side threads of its own")
+        if chat_subagents.depth(session_manager, session_id) + 1 > chat_subagents.MAX_THREAD_DEPTH:
+            raise HTTPException(400, f"Threads nest at most {chat_subagents.MAX_THREAD_DEPTH} deep")
         hist = parent.history
         idx = next((i for i, m in enumerate(hist) if _meta(m).get("_db_id") == anchor), None)
         if idx is None:
@@ -66,6 +67,7 @@ def setup_thread_routes(session_manager) -> APIRouter:
                     if k not in ("_db_id", "timestamp", "excluded", "references")}
             meta["thread_seed"] = True
             thread.add_message(ChatMessage(m.role, m.content, metadata=meta))
+        chat_subagents.save_info(thread_id, parent_id=parent.id, kind="side")
         logger.info("[threads] %s started in %s at %s", thread_id[:8], session_id[:8], anchor[:8])
         return {"id": thread_id, "name": name, "parent_session_id": parent.id,
                 "anchor_msg_id": anchor}
@@ -82,26 +84,103 @@ def setup_thread_routes(session_manager) -> APIRouter:
     def _own_count(thread) -> int:
         return sum(1 for m in thread.history if not _meta(m).get("thread_seed") and m.role != "system")
 
+    def _last_activity(s):
+        for m in reversed(s.history):
+            ts = _meta(m).get("timestamp")
+            if ts:
+                return ts
+        return None
+
+    def _child_ids(parent_id: str):
+        return [sid for sid, s in list(session_manager.sessions.items())
+                if getattr(s, "parent_session_id", None) == parent_id and not getattr(s, "archived", False)]
+
     @router.get("/api/session/{session_id}/threads")
     async def list_threads(request: Request, session_id: str):
-        """The side threads of a chat, for the cards under their messages."""
+        """The threads of a chat: side threads, branches and subagents, for
+        the Threads panel and the cards under their messages."""
         _verify_session_owner(request, session_id)
         parent = _get(session_id)
         merged = _merged_counts(parent)
+        infos = chat_subagents.infos_for_parent(session_id)
         out = []
-        for sid, s in list(session_manager.sessions.items()):
-            if getattr(s, "parent_session_id", None) != session_id or getattr(s, "archived", False):
-                continue
+        for sid in _child_ids(session_id):
             try:
                 s = session_manager.get_session(sid)       # hydrate its messages
             except KeyError:
                 continue
+            row = infos.get(sid)
+            kind = row["kind"] if row else "side"
             count = _own_count(s)
+            if kind == "subagent":
+                count = max(0, count - 1)                  # its task message
             out.append({"id": sid, "name": s.name, "anchor_msg_id": s.thread_anchor_id,
+                        "kind": kind, "status": chat_subagents.status_of(sid, row),
                         "message_count": count,
                         "merged": sid in merged and merged[sid] >= count and count > 0,
-                        "merged_count": merged.get(sid, 0)})
-        return {"threads": out}
+                        "merged_count": merged.get(sid, 0),
+                        "last_activity": _last_activity(s) or (row or {}).get("created_at"),
+                        "created_at": (row or {}).get("created_at"),
+                        "task": (row or {}).get("task"),
+                        "result": ((row or {}).get("result") or "")[:600] or None,
+                        "posted_back": bool((row or {}).get("posted_back")),
+                        "model": s.model,
+                        "thread_count": len(_child_ids(sid))})
+        out.sort(key=lambda t: t["created_at"] or t["last_activity"] or "")
+        return {"threads": out, "limits": {
+            "max_concurrent": chat_subagents.MAX_CONCURRENT,
+            "max_subagent_depth": chat_subagents.MAX_SUBAGENT_DEPTH,
+            "max_thread_depth": chat_subagents.MAX_THREAD_DEPTH}}
+
+    @router.get("/api/session/{session_id}/thread-info")
+    async def thread_info(request: Request, session_id: str):
+        """Where a chat sits: its kind and status, and the trail of chats
+        from the top-level one down to it, for the breadcrumb."""
+        _verify_session_owner(request, session_id)
+        _get(session_id)
+        path = []
+        for sid in reversed(chat_subagents.ancestry(session_manager, session_id)):
+            s = session_manager.sessions.get(sid)
+            row = chat_subagents.info(sid) if s and getattr(s, "parent_session_id", None) else None
+            path.append({"id": sid, "name": getattr(s, "name", "") if s else "",
+                         "kind": (row["kind"] if row else ("side" if s and s.parent_session_id else "chat"))})
+        me = chat_subagents.info(session_id)
+        return {"id": session_id, "path": path, "kind": path[-1]["kind"] if path else "chat",
+                "status": chat_subagents.status_of(session_id, me) if len(path) > 1 else None,
+                "task": (me or {}).get("task"), "thread_count": len(_child_ids(session_id))}
+
+    def _thread_error(e: "chat_subagents.ThreadError"):
+        raise HTTPException(e.status, str(e))
+
+    @router.post("/api/session/{session_id}/branch")
+    async def branch_thread(request: Request, session_id: str):
+        """Branch the chat: {"anchor_msg_id"?: ..., "title"?: ...}. The new
+        thread holds the conversation up to that message (all of it when
+        omitted) and is then carried on by itself."""
+        _verify_session_owner(request, session_id)
+        body = await request.json()
+        _get(session_id)
+        try:
+            return chat_subagents.branch(session_manager, session_id,
+                                         anchor_msg_id=(str(body.get("anchor_msg_id") or "") or None),
+                                         title=body.get("title"))
+        except chat_subagents.ThreadError as e:
+            _thread_error(e)
+
+    @router.post("/api/session/{session_id}/subagents")
+    async def start_subagent(request: Request, session_id: str):
+        """Start a subagent: {"task": ..., "title"?: ..., "model"?: ...}. It
+        runs in the background in a new thread; its report is posted back
+        here when it finishes. Stop it with POST /api/chat/stop/{thread id}."""
+        _verify_session_owner(request, session_id)
+        body = await request.json()
+        _get(session_id)
+        try:
+            return chat_subagents.spawn(session_manager, session_id, str(body.get("task") or ""),
+                                        title=body.get("title"), model=body.get("model"),
+                                        owner=get_current_user(request))
+        except chat_subagents.ThreadError as e:
+            _thread_error(e)
 
     @router.post("/api/session/{thread_id}/merge")
     async def merge_thread(request: Request, thread_id: str):

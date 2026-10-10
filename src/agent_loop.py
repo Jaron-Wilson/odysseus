@@ -545,6 +545,8 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "google_meet": "- ```google_meet```: The way to join or make a Google Meet. The preferred join method is by phone (dial-in number + PIN from the invite); if the meeting has a dial-in, pass dial_in and pin. Calling join initiates the connection; it has NOT joined yet — never claim it has joined. {\"action\": \"start\", \"attendees\": [\"bob@x.com\"], \"title\": \"Quick sync\"} makes a meeting now, invites people, and the agent joins it; {\"action\": \"schedule\", \"title\": \"Planning\", \"start\": \"tomorrow at 3pm\", \"minutes\": 30, \"attendees\": [\"amy@y.com\"]} puts one in their Google Calendar and Google emails the invites; {\"action\": \"join\", \"url\": \"https://meet.google.com/abc-defg-hij\", \"dial_in\": \"+16505550123\", \"pin\": \"123456789\"} joins by phone; {\"action\": \"join\", \"url\": \"https://meet.google.com/abc-defg-hij\"} joins through the browser if no dial-in is given; {\"action\": \"status\"}. Give the user the link from the result. If joining a bare link with no dial-in, tell the user their options.",
     "whats_new": "- ```whats_new```: The pull requests merged into Odysseus (this app), newest first, read-only. {\"action\": \"list\", \"query\": \"voice call\"} finds the PRs about something (omit query for the latest); {\"action\": \"get\", \"pr\": 127} gives one PR's description, files and whether the running server has it. Use for 'what changed with X', 'what's new', 'what was in PR #N', 'is that fix live yet'.",
     "chat_memory": "- ```chat_memory``` — This chat's \"Needs to know\": a short list of facts kept for this chat, which you see on every turn (like memory, but per chat). {\"action\": \"suggest\", \"text\": \"Waiting on Will to merge PR #3\"} proposes an item: the user is asked to add it or not, and it is kept only if they accept, so do not ask again in your reply. Suggest when something worth keeping comes up (the task, a decision, who or what you are waiting on, a branch or folder that matters), one fact per item. {\"action\": \"add\", \"text\": \"...\"} only when the user asked you to put something in Needs to know. {\"action\": \"remove\", \"id\": \"...\"} when an item is done or wrong. {\"action\": \"list\"}.",
+    "branch_thread": "- ```branch_thread```: Branch this chat: the conversation so far is copied into a new thread of this chat that the user carries on separately; this chat stays as it is. Args (JSON): {\"title\": \"Try Postgres instead\"}. Use when the user says \"branch this out\", \"branch off\" or wants to try another direction without losing this one. Give the user the returned link and do not carry on the branched work here.",
+    "spawn_subagent": "- ```spawn_subagent```: Hand a task to a subagent: a new thread of this chat where the agent, with the same tools, works on it in the background while the user keeps talking here; its final report is posted back to this chat when it finishes. Args (JSON): {\"task\": \"Find the three cheapest flights from DEN to SJO in March and report prices and times\", \"title\"?: \"Flights\", \"model\"?: \"model name\"}. Use when the user says \"subagent this out\", \"subagent out\", \"have a subagent do it\" or \"in parallel\". State the task in full (the subagent sees only the last few messages), tell the user it is running, and end your turn: do not wait for it or do the work yourself.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
@@ -1039,6 +1041,12 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
            r"pull requests?|prs?|pr\s*#?\d+|deployed|is (?:it|that|this) live|new features?|"
            r"(?:latest|recent) changes)\b"):
         domains.add("changes")
+    # Threads of this chat (src/chat_subagents.py): "subagent this out",
+    # "branch this out". Otherwise read as a plain chat message, so the
+    # branch/subagent tools were never offered.
+    if has(r"\b(sub-?agents?|sub agents?|branch (?:this|it|that|the chat|this chat|off|out)|"
+           r"make a branch|spin (?:it |this |that )?off|in parallel)\b"):
+        domains.add("threads")
 
     low_signal = not continuation and not domains
     if low_signal:
@@ -1584,6 +1592,7 @@ def _build_base_prompt(
             mgmt_tools = set(TOOL_SECTIONS.keys()) - set(ALWAYS_AVAILABLE) - {
                 "generate_image", "suggest_document",
                 "chat_with_model", "ask_teacher", "list_models",
+                "branch_thread", "spawn_subagent",
             }
             agent_prompt = _assemble_prompt(
                 set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact
@@ -2381,6 +2390,8 @@ async def stream_agent_loop(
             _relevant_tools.add("ui_control")
         if "changes" in (_intent.get("domains") or set()):
             _relevant_tools.add("whats_new")
+        if "threads" in (_intent.get("domains") or set()):
+            _relevant_tools.update({"branch_thread", "spawn_subagent"})
         # A chat made for a meeting always has the Meet tool: its follow-ups
         # ("join again", "try through my browser") name no meeting at all,
         # and without it the model reached for the desktop tools instead.

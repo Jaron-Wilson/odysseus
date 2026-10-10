@@ -178,9 +178,9 @@ def test_side_thread_start_list_merge(env):
 
     text, labels = chat_threads.resolve_references(s, [{"kind": "thread", "id": t["id"]}], sm)
     assert "It is keyless." in text and labels[0]["kind"] == "thread"
-    # No threads inside threads.
+    # Threads inside threads are fine now (src/chat_subagents.py limits how deep).
     tid = thread.history[-1].metadata["_db_id"]
-    assert c.post(f"/api/session/{t['id']}/threads", json={"anchor_msg_id": tid}).status_code == 400
+    assert c.post(f"/api/session/{t['id']}/threads", json={"anchor_msg_id": tid}).status_code == 200
 
 
 def test_the_page_wires_it_in():

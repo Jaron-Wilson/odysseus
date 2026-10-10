@@ -2585,6 +2585,17 @@ export function addMessage(role, content, modelName, metadata) {
           + `<details class="auto-prompt-details"><summary>The thread</summary>${_full}</details>`;
         wrap.classList.add('msg-auto-prompt');
       }
+      // A subagent's report, posted back when it finished (src/chat_subagents.py).
+      const _sub = metadata?.source === 'subagent_result'
+        && String(textRaw || '').match(/^\[Subagent (finished|failed|stopped) · ([^\]\n]+)\]\s*/);
+      if (_sub) {
+        const _tid = String(metadata.thread_id || '');
+        const _body = String(textRaw || '').slice(_sub[0].length);
+        b.innerHTML = `<div class="subagent-report-head"><span class="auto-prompt-tag">Subagent ${_sub[1]} · ${uiModule.esc(_sub[2])}</span>`
+          + (_tid ? `<button type="button" class="subagent-report-open" data-thread-open="${uiModule.esc(_tid)}">Open thread</button>` : '')
+          + `</div><div class="subagent-report-body">${markdownModule.processWithThinking(_body)}</div>`;
+        wrap.classList.add('msg-auto-prompt', 'msg-subagent-report', `subagent-${_sub[1]}`);
+      }
       // What this message sent along with it (Use as reference).
       if (Array.isArray(metadata?.references) && metadata.references.length) {
         const refs = document.createElement('div');

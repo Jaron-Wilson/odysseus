@@ -1140,6 +1140,50 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "branch_thread",
+            "description": (
+                "Branch this chat: copy the conversation so far into a new thread of this chat, "
+                "which the user then carries on separately (the main chat stays as it is). Use "
+                "when the user says 'branch this out', 'branch off', 'make a branch' or wants to "
+                "try another direction without losing this one. Give the user the returned link."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "A short name for the branch, e.g. 'Try Postgres instead'."},
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "spawn_subagent",
+            "description": (
+                "Hand a self-contained task to a subagent: a new thread of this chat where the "
+                "same agent, with the same tools, works on it in the background while the user "
+                "keeps talking here. Its final report is posted back to this chat when it "
+                "finishes. Use when the user says 'subagent this out', 'subagent out', 'have a "
+                "subagent do it', 'do it in the background' or 'in parallel'. State the task in "
+                "full: the subagent only sees the last few messages. Then end your turn; do not "
+                "wait for it or do the same work yourself. Not for coding work in a repository "
+                "the user wants Claude Code for (that is claude_code)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "What the subagent should do and what to report back, stated in full."},
+                    "title": {"type": "string", "description": "A short name for its thread."},
+                    "model": {"type": "string", "description": "Optional model (name or model@endpoint) to run it on. Omit to use this chat's model."},
+                },
+                "required": ["task"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "claude_code",
             "description": (
                 "THE tool for coding work: writing, editing or adding code, fixing bugs, "

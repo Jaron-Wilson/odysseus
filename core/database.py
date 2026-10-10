@@ -194,6 +194,23 @@ class ChatMessage(Base):
         Index('ix_messages_session_time', 'session_id', 'timestamp'),  # Composite for efficient message retrieval
     )
 
+
+class ChatThreadInfo(Base):
+    """What kind of thread a child chat is, and how its run went
+    (src/chat_threads.py, src/chat_subagents.py). Side threads made before
+    this table existed have no row and read as kind "side"."""
+    __tablename__ = "chat_thread_info"
+
+    thread_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True)
+    parent_id = Column(String, nullable=False, index=True)
+    kind = Column(String, nullable=False, default="side")      # side | branch | subagent
+    status = Column(String, nullable=True)                     # subagents: running | done | failed | stopped
+    task = Column(Text, nullable=True)
+    result = Column(Text, nullable=True)
+    posted_back = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=utcnow_naive)
+    finished_at = Column(DateTime, nullable=True)
+
 class Document(TimestampMixin, Base):
     """Living document that the AI can create and edit in-place."""
     __tablename__ = "documents"
