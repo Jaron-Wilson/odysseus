@@ -110,6 +110,23 @@ def should_gate(url: Optional[str]) -> bool:
     return is_local_endpoint(url)
 
 
+def gate_max_wait() -> float:
+    """The longest a run waits for Odysseus to be quiet (seconds), so an open,
+    busy page can't hold an agent back forever."""
+    try:
+        return max(0.0, float(os.getenv("COMPANY_GATE_MAX_WAIT_S", "60")))
+    except ValueError:
+        return 60.0
+
+
+async def wait_quiet(label: str) -> None:
+    from src.interactive_gate import wait_for_interactive_quiet
+    try:
+        await asyncio.wait_for(wait_for_interactive_quiet(label), timeout=gate_max_wait() or None)
+    except asyncio.TimeoutError:
+        logger.info("[company] %s: Odysseus stayed busy; going ahead", label)
+
+
 def _money(cents: float) -> str:
     return f"${float(cents or 0) / 100:.2f}"
 
@@ -662,9 +679,9 @@ class CompanyExecutor:
             if prep is None:
                 final = {"status": "cancelled", "error": info.get("skip") or "Nothing to run"}
                 return
-            if prep.get("gate"):
-                from src.interactive_gate import wait_for_interactive_quiet
-                await wait_for_interactive_quiet(f"company run {run_id[:8]}")
+            # The person asking (Wake now, an approval) is not kept waiting.
+            if prep.get("gate") and prep["source"] not in ("on_demand", "approval"):
+                await wait_quiet(f"company run {run_id[:8]}")
             if info.get("stop"):
                 raise asyncio.CancelledError()
             thread_id = self._begin(run_id, info, prep)
@@ -901,9 +918,9 @@ class CompanyExecutor:
         finally:
             db.close()
         if prep.get("gate"):
-            from src.interactive_gate import has_foreground_activity, wait_for_interactive_quiet
+            from src.interactive_gate import has_foreground_activity
             if has_foreground_activity():
-                await wait_for_interactive_quiet(f"company run {run_id[:8]}")
+                await wait_quiet(f"company run {run_id[:8]}")
         return None
 
     async def _finish(self, run_id: str, info: Dict[str, Any], st: Dict[str, Any], final: Dict[str, Any]) -> None:

@@ -251,8 +251,10 @@ shutdown. Every 3 seconds, or at once when a route queues a wake-up:
 4. **Foreground gate.** A run on a LOCAL model (loopback, private, tailnet
    CGNAT, a bare LAN host name) waits for Odysseus to be quiet before it
    starts (`src/interactive_gate.py`, as scheduled tasks do), and between
-   agent rounds waits again if the user came back. Cloud models are not
-   gated. `COMPANY_FOREGROUND_GATE=always|never` overrides. Company runs are
+   agent rounds waits again if the user came back, each wait capped at
+   `COMPANY_GATE_MAX_WAIT_S` (60 s) so a busy open page can't hold an agent
+   forever. A run the person asked for (Wake now, an approval decision)
+   starts at once. Cloud models are not gated. `COMPANY_FOREGROUND_GATE=always|never` overrides. Company runs are
    flagged `background` in `src/agent_runs.py`, so they don't count as the
    user's activity (one agent doesn't block the next) and a restart doesn't
    carry them on as chats.

@@ -302,3 +302,4 @@
 .co-budget.warn > span { background: #e0b341; }
 .co-budget.stop > span { background: #e5534b; }
 .co-warn { color: #e0b341; opacity: 1; }
+a.co-btn { color: inherit; text-decoration: none; display: inline-flex; align-items: center; }

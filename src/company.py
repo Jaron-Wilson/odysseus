@@ -1606,6 +1606,9 @@ def decide_approval(db, owner: str, actor: Actor, approval_id: str, decision: st
         requester = _scoped(db, CompanyAgent, owner).filter(CompanyAgent.id == ap.requested_by_id).first()
     if requester is None and resumed is not None:
         requester = resumed
+    if requester is None and ap.type in ("plan", "strategy") and agent_id:
+        # A plan the person wrote for an agent: that agent carries it out.
+        requester = _scoped(db, CompanyAgent, owner).filter(CompanyAgent.id == agent_id).first()
     if requester is not None:
         request_wakeup(db, owner, requester, "approval", approval_id=ap.id, issue_id=payload.get("issue_id"))
     log_activity(db, owner, ap.company_id, actor, f"approval.{decision}", "approval", ap.id,
