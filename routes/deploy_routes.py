@@ -10,15 +10,19 @@ Safe by construction:
   the checkout has no local changes;
 - every changed Python file of the new revision is compiled first, so a
   syntax error never takes the server down;
-- the restart runs in a detached helper (its own session), which stops this
-  process and starts the same command again with the same log. Claude Code
+- the restart runs in a detached helper (its own session), which checks the
+  new command can start, stops this process, starts the same command again
+  with the same log, waits for the port to answer and falls back to
+  `python -m uvicorn` if it does not. Claude Code
   runs survive it (they are reattached); a reply being written is cut off,
   and the page warns about that first.
 """
 
+import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -109,25 +113,201 @@ def _syntax_errors(rev: str, files: List[str]) -> List[str]:
     return errors
 
 
-def _restart() -> None:
+def _proc_cmdline() -> List[str]:
+    """The exact argv this process was started with (the kernel's copy, so
+    `python -m uvicorn` stays `-m uvicorn` and a console script keeps its
+    launcher path), or [] where /proc is not available."""
+    try:
+        with open("/proc/self/cmdline", "rb") as f:
+            raw = f.read()
+    except OSError:
+        return []
+    return [a.decode("utf-8", "surrogateescape") for a in raw.split(b"\0") if a]
+
+
+def _module_of(path: str) -> str:
+    """'uvicorn' for .../site-packages/uvicorn/__main__.py (or any file in
+    site-packages/<pkg>/), '' when the path is not inside an installed package."""
+    parts = os.path.normpath(os.path.abspath(path)).split(os.sep)
+    for marker in ("site-packages", "dist-packages"):
+        if marker in parts:
+            i = len(parts) - 1 - parts[::-1].index(marker)
+            if i + 2 < len(parts):                             # inside a package dir
+                if parts[-1] == "__main__.py":
+                    return ".".join(parts[i + 1:-1])           # site-packages/a/b/__main__.py -> a.b
+                return parts[i + 1]
+    if os.path.basename(path) == "__main__.py":
+        return os.path.basename(os.path.dirname(os.path.abspath(path)))
+    return ""
+
+
+def _relaunch_cmd(argv: List[str] = None, cmdline: List[str] = None, executable: str = None) -> List[str]:
+    """The command that starts this server again.
+
+    Seen live on 2026-10-11: the server ran as `python -m uvicorn app:app ...`,
+    so sys.argv[0] was .../site-packages/uvicorn/__main__.py, and the old
+    `[sys.executable, *sys.argv]` ran that file as a script. That puts the
+    uvicorn package dir first on sys.path, `import logging` found
+    uvicorn/logging.py, and the new server crashed at startup.
+    """
+    argv = list(sys.argv if argv is None else argv)
+    cmdline = list(_proc_cmdline() if cmdline is None else cmdline)
+    executable = executable or sys.executable
+    # Best: exactly what was run, unless it was `python -c ...` (not repeatable).
+    if cmdline and "-c" not in cmdline[1:3]:
+        if not os.path.isabs(cmdline[0]) and not shutil.which(cmdline[0]) and not os.path.exists(cmdline[0]):
+            cmdline[0] = executable
+        return cmdline
+    prog, rest = (argv[0] if argv else ""), argv[1:]
+    pkg = _module_of(prog) if prog.endswith(".py") else ""
+    if pkg:
+        return [executable, "-m", pkg, *rest]
+    if prog and not prog.endswith(".py"):
+        # A console script (.venv/bin/uvicorn): run the launcher itself.
+        launcher = (prog if os.path.exists(prog) else
+                    os.path.join(os.path.dirname(executable), os.path.basename(prog)))
+        if not os.path.exists(launcher):
+            launcher = shutil.which(os.path.basename(prog)) or ""
+        if launcher:
+            return [launcher, *rest]
+    return [executable, *argv]
+
+
+def _uvicorn_args(cmd: List[str]) -> List[str]:
+    """The arguments given to uvicorn in `cmd`, or [] if it is not a uvicorn command."""
+    for i, a in enumerate(cmd):
+        if a == "-m" and i + 1 < len(cmd) and cmd[i + 1] == "uvicorn":
+            return cmd[i + 2:]
+        if os.path.basename(a) == "uvicorn" or a.endswith(os.sep + os.path.join("uvicorn", "__main__.py")):
+            return cmd[i + 1:]
+    return []
+
+
+def _port_of(cmd: List[str], default: int) -> int:
+    for i, a in enumerate(cmd):
+        if a == "--port" and i + 1 < len(cmd) and cmd[i + 1].isdigit():
+            return int(cmd[i + 1])
+        if a.startswith("--port=") and a[7:].isdigit():
+            return int(a[7:])
+    return default
+
+
+def _import_check(cmd: List[str], cwd: str, executable: str) -> List[str]:
+    """A quick `python -c` that imports what `cmd` imports first, with the
+    same sys.path[0] it would get, so a command that cannot even start is
+    caught before the running server is stopped."""
+    py, path0, mod = executable, cwd, "uvicorn"
+    if len(cmd) > 2 and cmd[1] == "-m":
+        py, mod = cmd[0], cmd[2]
+    elif len(cmd) > 1 and cmd[1].endswith(".py"):
+        py, path0, mod = cmd[0], os.path.dirname(os.path.abspath(os.path.join(cwd, cmd[1]))), ""
+    elif len(cmd) > 1 and os.path.basename(cmd[0]).startswith("python"):
+        py, path0 = cmd[0], os.path.dirname(os.path.abspath(os.path.join(cwd, cmd[1])))   # python <launcher>
+    else:
+        path0 = os.path.dirname(os.path.abspath(cmd[0]))                                      # <launcher>
+    code = f"import sys; sys.path[0] = {path0!r}; import asyncio, logging; logging.Formatter"
+    return [py, "-c", code + (f"; import {mod}" if mod else "")]
+
+
+def _restart_plan(port: int, log: str, cwd: str = None, cmd: List[str] = None, wait_s: int = 90) -> dict:
+    """Everything the detached restart helper needs, worked out here so it can
+    be tested without restarting anything."""
+    cwd = cwd or os.getcwd()
+    cmd = cmd or _relaunch_cmd()
+    port = _port_of(cmd, port)
+    args = _uvicorn_args(cmd) or ["app:app", "--host", "127.0.0.1", "--port", str(port)]
+    fallback = [sys.executable, "-m", "uvicorn", *args]
+    return {"pid": os.getpid(), "cwd": cwd, "log": log, "port": port, "wait_s": wait_s,
+            "cmd": cmd, "check": _import_check(cmd, cwd, sys.executable),
+            "fallback": fallback, "fallback_check": _import_check(fallback, cwd, sys.executable)}
+
+
+# The detached helper. Runs with `python -I` (stdlib only, nothing from the
+# cwd can shadow it) in its own session, so it outlives the server it stops.
+RESTART_HELPER = r"""
+import json, os, signal, subprocess, sys, time, urllib.error, urllib.request
+plan = json.loads(sys.argv[1])
+def log(msg):
+    with open(plan["log"], "a") as f:
+        f.write(time.strftime("%Y-%m-%d %H:%M:%S") + " - deploy-restart - " + msg + "\n")
+def ok(check):
+    r = subprocess.run(check, cwd=plan["cwd"], capture_output=True, text=True, timeout=120)
+    if r.returncode:
+        log("ERROR: import check failed for this command: " + (r.stderr.strip().splitlines() or ["?"])[-1])
+    return r.returncode == 0
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+def up(proc):
+    end = time.time() + plan["wait_s"]
+    while time.time() < end:
+        if proc.poll() is not None:
+            return False
+        try:
+            urllib.request.urlopen("http://127.0.0.1:%d/" % plan["port"], timeout=3)
+            return True
+        except urllib.error.HTTPError:
+            return True
+        except Exception:
+            time.sleep(1)
+    return False
+def start(cmd):
+    log("starting: " + " ".join(cmd))
+    with open(plan["log"], "ab") as out:
+        return subprocess.Popen(cmd, cwd=plan["cwd"], stdin=subprocess.DEVNULL, stdout=out,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+runs = [(plan["cmd"], plan["check"]), (plan["fallback"], plan["fallback_check"])]
+runs = [r for r in runs if ok(r[1])]
+if not runs:
+    log("ERROR: NOT RESTARTING: neither the server's command nor python -m uvicorn would start. "
+        "The old server keeps running the old code.")
+    sys.exit(1)
+time.sleep(1)
+pid = plan["pid"]
+if alive(pid):
+    os.kill(pid, signal.SIGTERM)
+for _ in range(60):
+    if not alive(pid):
+        break
+    time.sleep(0.5)
+if alive(pid):
+    os.kill(pid, signal.SIGKILL)
+time.sleep(1)
+for i, (cmd, _) in enumerate(runs):
+    proc = start(cmd)
+    if up(proc):
+        log("server is back up on port %d (pid %d)" % (plan["port"], proc.pid))
+        sys.exit(0)
+    log("ERROR: SERVER DID NOT COME BACK within %ds (exit code %s) after: %s"
+        % (plan["wait_s"], proc.poll(), " ".join(cmd)))
+    if proc.poll() is None:
+        proc.kill()
+    if i + 1 < len(runs):
+        log("trying the fallback launch")
+log("ERROR: THE SERVER IS DOWN: start it by hand.")
+sys.exit(1)
+"""
+
+
+def _restart(port: int = 7000) -> None:
     """Stop this server and start the same command again, from a helper in
-    its own session so it outlives this process."""
-    pid = os.getpid()
+    its own session so it outlives this process. The helper checks the new
+    command can start before stopping anything, waits for the port to answer,
+    and falls back to `python -m uvicorn` if it does not."""
     try:
         log = os.readlink("/proc/self/fd/1")
-        if not log.startswith("/"):
+        if not log.startswith("/") or log.startswith("/dev/"):
             raise OSError
     except OSError:
         from src.constants import DATA_DIR
         log = os.path.join(DATA_DIR, "logs", "odysseus.log")
-    cmd = [sys.executable, *sys.argv]
-    script = (
-        'sleep 1; kill "$1"; i=0; while kill -0 "$1" 2>/dev/null && [ $i -lt 60 ]; do sleep 0.5; i=$((i+1)); done; '
-        'kill -9 "$1" 2>/dev/null; sleep 1; cd "$2" || exit 1; shift 3; exec "$@" >> "$LOG" 2>&1 < /dev/null'
-    )
-    env = dict(os.environ, LOG=log)
-    subprocess.Popen(["/bin/sh", "-c", script, "deploy-restart", str(pid), os.getcwd(), "--", *cmd],
-                     env=env, start_new_session=True, stdin=subprocess.DEVNULL,
+    plan = _restart_plan(port, log)
+    logger.info("Deploy restart: %s", " ".join(plan["cmd"]))
+    subprocess.Popen([sys.executable, "-I", "-c", RESTART_HELPER, json.dumps(plan)],
+                     cwd=plan["cwd"], start_new_session=True, stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
 
 
@@ -169,10 +349,12 @@ def setup_deploy_routes() -> APIRouter:
         except Exception as e:
             logger.warning("Could not note the replies to carry on: %s", e)
         stopped = await agent_runs.stop_all(timeout=10)
-        _restart()
+        server = request.scope.get("server") or ("127.0.0.1", 7000)
+        _restart(int(server[1] or 7000))
         new_prs = [p["pr"] for p in st["new_prs"] if p["pr"]]
         return {"ok": True, "restarting": True, "replies_stopped": stopped,
                 "to_pr": max(new_prs) if new_prs else st["running_pr"],
+                "to_commit": _git("rev-parse", "--short=8", "HEAD").stdout.strip(),
                 "pc_files_changed": st["pc_files_changed"]}
 
     return router
