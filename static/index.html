@@ -21,6 +21,12 @@
       // Classic was chosen. Workspace also carries ui-studio (same look).
       var ui = localStorage.getItem('odysseus-ui-design');
       if (ui !== 'classic' && ui !== 'studio') ui = 'workspace';
+      // A thread side by side with its chat (static/js/chatThreadTabs.js):
+      // this page in an iframe, the chat only. No Workspace tabs inside it.
+      if (location.pathname === '/thread-pane' && window.parent !== window) {
+        document.documentElement.classList.add('ody-pane');
+        if (ui === 'workspace') ui = 'studio';
+      }
       document.documentElement.classList.add('ui-' + ui);
       if (ui === 'workspace') document.documentElement.classList.add('ui-studio');
       document.documentElement.dataset.ui = ui;
@@ -255,6 +261,7 @@
   <link rel="stylesheet" href="/static/css/settingsNav.css">
   <link rel="stylesheet" href="/static/css/whatsNew.css">
   <link rel="stylesheet" href="/static/css/chatThreads.css">
+  <link rel="stylesheet" href="/static/css/chatThreadTabs.css">
   <link rel="stylesheet" href="/static/css/voiceCall.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">

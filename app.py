@@ -940,6 +940,12 @@ async def serve_index(request: Request):
         return _serve_html_with_nonce(request, root_path)
     raise HTTPException(404, "index.html not found")
 
+# A chat's thread beside it in the split view (static/js/chatThreadTabs.js):
+# the app in an iframe, framed by this origin only (core/middleware.py).
+@app.get("/thread-pane")
+async def serve_thread_pane(request: Request):
+    return await serve_index(request)
+
 @app.get("/notes")
 async def serve_notes(request: Request):
     return await serve_index(request)

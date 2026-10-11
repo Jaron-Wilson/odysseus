@@ -100,6 +100,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # proxied: it brings its own CSP (a meta tag in its workbench), and the
         # Code panel frames it, so it can't get the app's strict one.
         is_ide = path == "/ide" or path.startswith("/ide/")
+        # A chat's thread side by side with it (static/js/chatThreadTabs.js)
+        # is the app page in an iframe of the app page: framed by this origin
+        # only, and only at the path that serves it.
+        is_thread_pane = path == "/thread-pane"
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -138,7 +142,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'self'"
             )
         else:
-            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["X-Frame-Options"] = "SAMEORIGIN" if is_thread_pane else "DENY"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.
             # `static/index.html` and `static/login.html` ship inline <style>
             # blocks, and several JS modules build runtime `style=""` attrs.
@@ -159,7 +163,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 # ADS-B receiver's own map (src/adsb.py): only the origin set
                 # on that page, never a wildcard.
                 f"frame-src 'self' https://www.youtube-nocookie.com{_adsb_frame_src()}; "
-                "frame-ancestors 'none'"
+                + ("frame-ancestors 'self'" if is_thread_pane else "frame-ancestors 'none'")
             )
         return response
 

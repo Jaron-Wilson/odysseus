@@ -256,6 +256,35 @@ def test_each_chat_is_a_tab_and_switching_tabs_switches_the_chat(page):
     assert _tabs(page)[1] == "*chat:s1"
 
 
+def test_a_thread_opens_under_its_chats_tab_not_as_a_tab_of_its_own(page):
+    # Asked for 2026-10-10: "I want threads on the website instead of a new
+    # tab, show it like under the tab, so that I don't switch between the 2".
+    page.boot()
+    page.evaluate("""() => sessionModule.list.push(
+      {id: 't1', name: 'Branch of one', parent_session_id: 's1'},
+      {id: 't2', name: 'Thread of the branch', parent_session_id: 't1'})""")
+    _click(page, "#session-list [data-session-id=s1]")
+    page.evaluate("sessionModule.selectSession('t1')")       # chatThreads.js opening a thread
+    _settle(page)
+    assert _tabs(page) == ["home", "*chat:s1"]
+    assert page.inner_text(".ws-tab[data-tab='chat:s1'] .ws-tab-label") == "Chat one"
+    page.evaluate("sessionModule.selectSession('t2')")       # a thread of a thread too
+    _settle(page)
+    assert _tabs(page) == ["home", "*chat:s1"]
+
+    # The tab remembers the thread on screen: away and back, and over a reload.
+    _click(page, "#session-list [data-session-id=s2]")
+    _click(page, ".ws-tab[data-tab='chat:s1']")
+    assert page.evaluate("sessionModule.cur") == "t2"
+    page.boot()
+    assert page.evaluate("sessionModule.cur") == "t2"
+    assert _tabs(page) == ["home", "*chat:s1", "chat:s2"]
+    # Back to the main chat stays in the same tab.
+    page.evaluate("sessionModule.selectSession('s1')")
+    _settle(page)
+    assert _tabs(page) == ["home", "*chat:s1", "chat:s2"]
+
+
 def test_split_view_puts_two_tabs_side_by_side_with_the_chat_narrowed(page):
     page.boot()
     _click(page, "#session-list [data-session-id=s1]")
