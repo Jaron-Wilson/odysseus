@@ -37488,7 +37488,36 @@ body.music-pip-body { margin: 0; background: var(--bg, #17150f); color: var(--fg
 @media (max-width: 700px) {
   .us-panel .dv-table th:nth-child(n+5), .us-panel .dv-table td:nth-child(n+5) { display: table-cell; }
   .us-panel .dv-table th:nth-child(n+3):nth-child(-n+6), .us-panel .dv-table td:nth-child(n+3):nth-child(-n+6) { display: none; }
+  .us-panel .dv-table.us-sub-table th:nth-child(n+1), .us-panel .dv-table.us-sub-table td:nth-child(n+1) { display: table-cell; }
+  .us-panel .dv-table.us-sub-table th:nth-child(3):nth-child(n+1), .us-panel .dv-table.us-sub-table td:nth-child(3):nth-child(n+1) { display: none; }
 }
+/* Subscription plans on the Usage page. */
+.us-plan { margin: 4px 0 14px; }
+.us-plan-head { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 4px; }
+.us-plan-tiles { margin: 4px 0 6px; }
+.us-limits { font-size: 12px; margin: 0 0 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; opacity: .85; }
+.us-limit { padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.us-limit.us-near { background: color-mix(in srgb, #f59e0b 22%, transparent); }
+.us-limit.us-over { background: color-mix(in srgb, #ef4444 25%, transparent); }
+.us-warn { margin: 2px 0; }
+.us-settings { margin: 14px 0 4px; padding: 8px 10px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); }
+.us-settings summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.us-settings p { margin: 6px 0; }
+.us-set-grid { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.us-set-row { display: grid; grid-template-columns: minmax(130px, 1.6fr) repeat(4, minmax(60px, 1fr)) 24px; gap: 6px; align-items: center; }
+.us-set-hd { font-size: 11px; opacity: .6; }
+.us-set-key { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.us-set-key small { display: block; font-size: 11px; opacity: .55; overflow: hidden; text-overflow: ellipsis; }
+.us-settings input[type="number"], .us-settings input[type="text"] { font: inherit; font-size: 12.5px; padding: 3px 6px; min-width: 0;
+  border-radius: 6px; border: 1px solid color-mix(in srgb, var(--fg) 15%, transparent); background: transparent; color: inherit; }
+.us-settings button { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 6px; cursor: pointer; color: inherit;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.us-settings button.us-set-del { padding: 0; width: 24px; height: 24px; border: 0; background: transparent; opacity: .6; }
+.us-settings button.us-save { background: var(--accent, #60a5fa); color: #fff; border-color: transparent; }
+.us-set-add, .us-set-foot { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.us-set-add .us-new-plan { flex: 1; max-width: 360px; }
+.us-set-check { display: flex; gap: 6px; align-items: center; font-size: 12.5px; margin: 8px 0; }
+@media (max-width: 700px) { .us-set-row { grid-template-columns: 1fr 1fr 1fr; } .us-set-hd { display: none; } }
 
 /* The transcript viewer (inside DevOps — a read-only look at a run's out.jsonl).
    Collapsed by default (the thinking section is the same .thinking-section the

@@ -1,6 +1,7 @@
 // The Usage page: this month's tokens and spend, split into metered (billed
-// per token) and free (local models and subscription plans), by model,
-// provider, source and chat, with a daily chart. Server side: src/usage.py
+// per token), subscription plans (fixed monthly price, allocated by token
+// share) and free local models, by model, provider, source and chat, with a
+// daily chart. Server side: src/usage.py
 // via GET /api/usage/summary. Prices come from src/pricing.py.
 //
 // Opens from the sidebar (Usage) or #usage. Uses the DevOps page's panel and
@@ -98,6 +99,208 @@ function table(title, rows, nameFn, { limit = 12 } = {}) {
     <tbody>${body}</tbody></table>${more}`;
 }
 
+// ── subscription plans ──────────────────────────────────────────────────
+// Flat-rate endpoints (ChatGPT plan, Copilot, OpenCode Go) have no per-token
+// bill, so their monthly price is shown separately and split across users,
+// sources and company agents by token share (an allocation, not a bill).
+// Server side: src/subscriptions.py.
+
+const LIMIT_NAMES = { requests_per_day: 'requests per day', requests_per_5h: 'requests per 5 h', tokens_per_month: 'tokens per month' };
+const CAP_FIELDS = [['requests_per_day', 'Req/day'], ['requests_per_month', 'Req/month'], ['tokens_per_day', 'Tokens/day'], ['tokens_per_month', 'Tokens/month']];
+const PLAN_FIELDS = [['monthly_usd', '$/month', '0.01'], ['requests_per_day', 'Req/day', '1'], ['requests_per_5h', 'Req/5 h', '1'], ['tokens_per_month', 'Tokens/month', '1']];
+const pct = (v) => `${Math.round((Number(v) || 0) * 100)}%`;
+const fmtUsdExact = (v) => {
+  v = Number(v) || 0;
+  if (v === 0) return '$0';
+  if (v < 0.01) return '<$0.01';
+  return `$${v.toFixed(2)}`;
+};
+
+let _subCfg = null;          // GET /api/usage/subscriptions
+let _settingsEl = null;      // persistent editor node, survives repaints
+
+function shareTable(title, rows, nameFn) {
+  if (!rows || !rows.length) return '';
+  const body = rows.map((r) => `<tr><td>${nameFn(r)}</td><td>${r.requests}</td><td>${fmtN(r.tokens)}</td>
+    <td>${pct(r.share)}</td><td><b>${fmtUsdExact(r.allocated_usd)}</b></td></tr>`).join('');
+  return `<table class="dv-table us-sub-table"><thead><tr><th>${esc(title)}</th><th>Requests</th><th>Tokens</th>
+    <th>Share</th><th title="The plan price split by token share">Effective cost (allocated)</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function planBlock(p, sub) {
+  const methodNote = p.method === 'capacity'
+    ? 'allocated per token at the plan rate (price / tokens per month)'
+    : `allocated by token share of the price accrued so far (${pct(sub.elapsed_fraction)} of the month)`;
+  const head = `<div class="us-plan-head"><b>${esc(p.name)}</b>
+    <span class="dv-meta">${esc(p.provider || '')}${p.configured ? ` · ${fmtUsdExact(p.monthly_usd)} per month` : ''}</span></div>`;
+  if (!p.configured) {
+    return `<div class="us-plan">${head}
+      <div class="dv-meta us-warn">No price set: ${p.requests} requests, ${fmtN(p.tokens)} tokens this month counted at $0.
+        Set the plan's monthly price under Subscription plans below.</div></div>`;
+  }
+  const limits = Object.entries(p.limit_usage || {}).map(([k, u]) => {
+    const over = u.pct >= 100 ? ' us-over' : u.pct >= 80 ? ' us-near' : '';
+    return `<span class="us-limit${over}">${fmtN(u.used)} of ${fmtN(u.limit)} ${esc(LIMIT_NAMES[k] || k)}${u.pct != null ? ` (${Math.round(u.pct)}%)` : ''}</span>`;
+  }).join('');
+  return `<div class="us-plan">${head}
+    <div class="dv-tiles us-plan-tiles">
+      ${tile('Requests', fmtN(p.requests), p.plan_requests !== p.requests ? `of ${fmtN(p.plan_requests)} on the plan` : 'this month')}
+      ${tile('Tokens', fmtN(p.tokens), p.plan_tokens !== p.tokens ? `of ${fmtN(p.plan_tokens)} on the plan` : 'this month')}
+      ${tile('Share of plan', pct(p.share), 'by tokens')}
+      ${tile('Effective cost', fmtUsdExact(p.allocated_usd), 'allocation, not a bill')}
+    </div>
+    ${limits ? `<div class="us-limits">Plan limits (everyone): ${limits}</div>` : ''}
+    ${shareTable('By source', p.by_source, (r) => esc(SOURCE_NAMES[r.key] || r.key || 'Other'))}
+    ${shareTable('By company agent', p.by_company_agent, (r) => esc(r.name || r.key))}
+    ${shareTable('By user', p.by_owner, (r) => esc(r.key || 'shared'))}
+    <div class="dv-meta">Effective cost is ${esc(methodNote)}.</div></div>`;
+}
+
+function subscriptionSection(d) {
+  const sub = d.subscription;
+  if (!sub || !sub.plans || !sub.plans.length) return '';
+  const used = sub.plans.filter((p) => p.configured || p.requests);
+  if (!used.length) return '';
+  return `<div class="bg-section">Subscriptions</div>${used.map((p) => planBlock(p, sub)).join('')}`;
+}
+
+function planRow(key, label, plan, hint) {
+  const inputs = PLAN_FIELDS.map(([f, ph, step]) => `<input type="number" min="0" step="${step}" data-f="${f}"
+    placeholder="${esc(ph)}" aria-label="${esc(ph)}" value="${plan && plan[f] != null ? esc(plan[f]) : ''}">`).join('');
+  return `<div class="us-set-row" data-kind="plan" data-key="${esc(key)}">
+    <span class="us-set-key" title="${esc(key)}">${esc(label)}${hint ? `<small>${esc(hint)}</small>` : ''}</span>${inputs}
+    <button type="button" class="us-set-del" title="Remove" aria-label="Remove">×</button></div>`;
+}
+
+function capRow(key, cap) {
+  const inputs = CAP_FIELDS.map(([f, ph]) => `<input type="number" min="0" step="1" data-f="${f}"
+    placeholder="${esc(ph)}" aria-label="${esc(ph)}" value="${cap && cap[f] != null ? esc(cap[f]) : ''}">`).join('');
+  return `<div class="us-set-row" data-kind="cap">
+    <input type="text" class="us-set-scope" placeholder="company_agent:&lt;id&gt;" aria-label="Scope" value="${esc(key || '')}">${inputs}
+    <button type="button" class="us-set-del" title="Remove" aria-label="Remove">×</button></div>`;
+}
+
+function renderSettings() {
+  if (!_settingsEl || !_subCfg) return;
+  const cfg = _subCfg;
+  const plans = cfg.plans || {};
+  const rows = new Map();
+  Object.entries(plans).forEach(([k, p]) => rows.set(k, { label: p.name || k, plan: p }));
+  (cfg.endpoints || []).forEach((ep) => {
+    if (ep.plan_key) {
+      const r = rows.get(ep.plan_key);
+      if (r && !r.hint) r.hint = ep.plan_key === ep.provider ? `provider, used by ${ep.name}` : ep.name;
+    } else if (!rows.has(ep.provider)) {
+      rows.set(ep.provider, { label: ep.provider, plan: null, hint: `provider, used by ${ep.name}` });
+    }
+  });
+  ((_data && _data.subscription && _data.subscription.unconfigured) || []).forEach((k) => {
+    if (!rows.has(k)) rows.set(k, { label: k, plan: null, hint: 'seen in usage' });
+  });
+  const agents = (_data && _data.by_company_agent) || [];
+  const caps = Object.entries(cfg.caps || {});
+  const ro = cfg.can_edit ? '' : ' disabled';
+  _settingsEl.innerHTML = `<summary>Subscription plans and budget caps</summary>
+    <p class="dv-meta">What each plan costs per month and what it allows. A plan is keyed by a model endpoint id, its base URL or the
+      provider (chatgpt-plan, chatgpt-subscription, copilot, opencode-go). Setting tokens per month switches the allocation to a per-token rate.</p>
+    <div class="us-set-grid us-set-plans">
+      <div class="us-set-row us-set-hd"><span>Plan</span>${PLAN_FIELDS.map(([, ph]) => `<span>${esc(ph)}</span>`).join('')}<span></span></div>
+      ${[...rows.entries()].map(([k, r]) => planRow(k, r.label, r.plan, r.hint !== r.label ? r.hint : '')).join('')}
+    </div>
+    <div class="us-set-add"><input type="text" class="us-new-plan" placeholder="Add a plan: endpoint id, base URL or provider"${ro}>
+      <button type="button" class="us-add-plan"${ro}>Add</button></div>
+    <label class="us-set-check"><input type="checkbox" class="us-count-alloc"${cfg.count_subscription_allocation ? ' checked' : ''}${ro}>
+      Budgets count each scope's allocated subscription cost toward its money limit</label>
+    <p class="dv-meta">Budget caps limit subscription requests or tokens for a scope (company_agent:&lt;id&gt;, company:&lt;id&gt;, owner, ...).
+      A scope type alone (company_agent) is the default for every scope of that type. Warn at 80%, stop at 100%.</p>
+    <div class="us-set-grid us-set-caps">
+      <div class="us-set-row us-set-hd"><span>Scope</span>${CAP_FIELDS.map(([, ph]) => `<span>${esc(ph)}</span>`).join('')}<span></span></div>
+      ${caps.map(([k, c]) => capRow(k, c)).join('')}
+    </div>
+    <div class="us-set-add"><button type="button" class="us-add-cap"${ro}>Add cap</button>
+      ${agents.length ? `<span class="dv-meta">Agents: ${agents.slice(0, 6).map((a) => `<a href="#" data-cap-agent="${esc(a.key)}">${esc(a.name || a.key)}</a>`).join(', ')}</span>` : ''}</div>
+    <div class="us-set-foot">${cfg.can_edit ? '<button type="button" class="us-save">Save</button>' : '<span class="dv-meta">Only an admin can change these.</span>'}
+      <span class="us-save-msg dv-meta"></span></div>`;
+  if (!cfg.can_edit) _settingsEl.querySelectorAll('input, button.us-set-del').forEach((el) => { el.disabled = true; });
+}
+
+async function loadSubCfg() {
+  try {
+    const res = await fetch('/api/usage/subscriptions', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    _subCfg = await res.json();
+    renderSettings();
+  } catch (_) { /* the editor just stays empty */ }
+}
+
+function collectSettings() {
+  const plans = {};
+  const caps = {};
+  _settingsEl.querySelectorAll('.us-set-row[data-kind="plan"]').forEach((row) => {
+    const entry = {};
+    row.querySelectorAll('input[data-f]').forEach((i) => { if (i.value !== '') entry[i.dataset.f] = Number(i.value); });
+    const prev = (_subCfg.plans || {})[row.dataset.key];
+    if (prev && prev.name) entry.name = prev.name;
+    if (entry.monthly_usd != null || Object.keys(entry).some((k) => k !== 'name')) plans[row.dataset.key] = entry;
+  });
+  _settingsEl.querySelectorAll('.us-set-row[data-kind="cap"]').forEach((row) => {
+    const k = row.querySelector('.us-set-scope').value.trim();
+    if (!k) return;
+    const entry = {};
+    row.querySelectorAll('input[data-f]').forEach((i) => { if (i.value !== '') entry[i.dataset.f] = Number(i.value); });
+    if (Object.keys(entry).length) caps[k] = entry;
+  });
+  return { plans, caps, count_subscription_allocation: _settingsEl.querySelector('.us-count-alloc').checked };
+}
+
+async function saveSettings() {
+  const msg = _settingsEl.querySelector('.us-save-msg');
+  msg.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/usage/subscriptions', {
+      method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(collectSettings()),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+    msg.textContent = 'Saved';
+    await loadSubCfg();
+    refresh();
+  } catch (e) {
+    msg.textContent = `Could not save: ${e.message}`;
+  }
+}
+
+function settingsNode() {
+  if (_settingsEl) return _settingsEl;
+  _settingsEl = document.createElement('details');
+  _settingsEl.className = 'us-settings';
+  _settingsEl.innerHTML = '<summary>Subscription plans and budget caps</summary><div class="dv-meta">Loading…</div>';
+  _settingsEl.addEventListener('click', (ev) => {
+    if (ev.target.closest('.us-set-del')) { ev.target.closest('.us-set-row').remove(); return; }
+    if (ev.target.closest('.us-save')) { saveSettings(); return; }
+    if (ev.target.closest('.us-add-cap')) {
+      _settingsEl.querySelector('.us-set-caps').insertAdjacentHTML('beforeend', capRow('', null));
+      return;
+    }
+    const agent = ev.target.closest('[data-cap-agent]');
+    if (agent) {
+      ev.preventDefault();
+      _settingsEl.querySelector('.us-set-caps').insertAdjacentHTML('beforeend', capRow(`company_agent:${agent.dataset.capAgent}`, null));
+      return;
+    }
+    if (ev.target.closest('.us-add-plan')) {
+      const inp = _settingsEl.querySelector('.us-new-plan');
+      const k = inp.value.trim();
+      if (!k || _settingsEl.querySelector(`.us-set-row[data-key="${CSS.escape(k)}"]`)) return;
+      _settingsEl.querySelector('.us-set-plans').insertAdjacentHTML('beforeend', planRow(k, k, null, ''));
+      inp.value = '';
+    }
+  });
+  loadSubCfg();
+  return _settingsEl;
+}
+
 function paint() {
   if (!_panel || !_data) return;
   const d = _data;
@@ -108,14 +311,27 @@ function paint() {
     ? `<label class="us-all"><input type="checkbox" class="us-all-cb"${_all ? ' checked' : ''}> Everyone</label>` : '';
   _panel.querySelector('.us-all-slot').innerHTML = allToggle;
   if (!t.calls) {
-    body.innerHTML = `<div class="bg-empty">No model calls recorded in this month yet. Usage is recorded from now on, for every chat, task and subagent.</div>`;
+    body.innerHTML = `<div class="bg-empty">No model calls recorded in this month yet. Usage is recorded from now on, for every chat, task and subagent.</div>
+      <div class="us-settings-slot"></div>`;
+    body.querySelector('.us-settings-slot').replaceWith(settingsNode());
     return;
   }
+  const cost = d.cost || { metered_usd: t.metered_cost_usd, subscription_usd: 0, total_usd: t.metered_cost_usd };
+  const sub = d.subscription || {};
+  const priced = (sub.plans || []).filter((p) => p.configured).length;
+  const unpricedPlans = (sub.unconfigured || []).length;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const subNote = [
+    cost.subscription_basis === 'allocated' ? 'your allocated share' : `${plural(priced, 'plan')} at monthly price`,
+    unpricedPlans ? `${unpricedPlans} without a price` : '',
+  ].filter(Boolean).join(' · ');
   body.innerHTML = `
     <div class="dv-tiles">
+      ${tile('Total this month', fmtUsdExact(cost.total_usd), `${fmtUsdExact(cost.metered_usd)} metered + ${fmtUsdExact(cost.subscription_usd)} subscriptions`)}
+      ${tile('Subscriptions', fmtUsdExact(cost.subscription_usd), subNote)}
       ${tile('Metered spend', fmtUsd(t.metered_cost_usd), t.unpriced_calls ? `${t.unpriced_calls} calls had no known price` : 'billed per token')}
       ${tile('Tokens', fmtN(t.total_tokens), `${fmtN(t.input_tokens)} in · ${fmtN(t.cached_input_tokens)} cached · ${fmtN(t.output_tokens)} out`)}
-      ${tile('Free tokens', fmtN(t.free_tokens), `${freePct}% local or subscription`)}
+      ${tile('Unmetered tokens', fmtN(t.free_tokens), `${freePct}% local or subscription`)}
       ${tile('Metered tokens', fmtN(t.metered_tokens), 'API keys billed per token')}
       ${tile('Calls', fmtN(t.calls), 'finished model calls')}
     </div>
@@ -125,6 +341,7 @@ function paint() {
         <button type="button" data-mode="tokens" class="${_mode === 'tokens' ? 'on' : ''}">Tokens</button>
       </span></div>
     ${chart(d.daily)}
+    ${subscriptionSection(d)}
     ${table('By billing', d.by_billing_type, (r) => esc(BILLING_NAMES[r.key] || r.key || 'Unknown'))}
     ${table('By model', d.by_model, (r) => esc(r.key || 'unknown'))}
     ${table('By provider', d.by_provider, (r) => esc(r.key || 'unknown'))}
@@ -132,9 +349,12 @@ function paint() {
     ${table('By chat', d.by_session, (r) => `<a href="#" data-chat="${esc(r.key)}">${esc(r.name || r.key.slice(0, 8))}</a>`, { limit: 10 })}
     ${d.by_owner && d.by_owner.length ? table('By user', d.by_owner, (r) => esc(r.key || 'shared')) : ''}
     ${d.by_company && d.by_company.length ? table('By company', d.by_company, (r) => esc(r.key)) : ''}
-    ${d.by_company_agent && d.by_company_agent.length ? table('By company agent', d.by_company_agent, (r) => esc(r.key)) : ''}
-    <div class="dv-foot">Local models and subscription plans (ChatGPT, Copilot) cost $0 here; their tokens still count.
+    ${d.by_company_agent && d.by_company_agent.length ? table('By company agent', d.by_company_agent, (r) => esc(r.name || r.key)) : ''}
+    <div class="us-settings-slot"></div>
+    <div class="dv-foot">Local models cost $0. Subscription plans (ChatGPT, Copilot, OpenCode Go) have no per-token bill, so the
+      tables above show them as $0 metered; their monthly price is listed under Subscriptions and split by token share as an allocation.
       Prices are per model from the server's price table and can be overridden per endpoint.</div>`;
+  body.querySelector('.us-settings-slot').replaceWith(settingsNode());
 }
 
 async function refresh() {
@@ -147,6 +367,7 @@ async function refresh() {
     const d = await res.json();
     if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
     _data = d;
+    renderSettings();
   } catch (e) {
     if (_panel) _panel.querySelector('.dv-body').innerHTML = `<div class="bg-empty">Could not load usage: ${esc(e.message)}</div>`;
     return;

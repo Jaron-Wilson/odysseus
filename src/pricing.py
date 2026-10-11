@@ -9,7 +9,9 @@ Billing rules, in order (see :func:`price_usage`):
 1. A per-endpoint override in settings (``endpoint_pricing``, keyed by
    endpoint id or base URL) wins: its ``billing_type`` and/or prices.
 2. Subscription providers (ChatGPT subscription / plan, Copilot, OpenCode Go)
-   are ``subscription``: $0 metered, tokens still counted.
+   are ``subscription``: $0 metered, tokens still counted. Their monthly
+   plan price is added back as an allocation by src/subscriptions.py (Usage
+   page and budgets), never stored on the row.
 3. Ollama and local endpoints (loopback, LAN, Tailscale, single-label hosts,
    or an endpoint marked "local") are ``local_free``: $0.
 4. Everything else is ``metered``: priced from the table (most specific key
@@ -327,4 +329,13 @@ def pricing_table() -> Dict[str, Any]:
         "models": {k: dict(v) for k, v in MODEL_PRICES.items()},
         "subscription_providers": sorted(SUBSCRIPTION_PROVIDERS),
         "endpoint_overrides": _settings_overrides(),
+        "subscription_plans": _subscription_plans(),
     }
+
+
+def _subscription_plans() -> Dict[str, Any]:
+    try:
+        from src.subscriptions import get_plans
+        return get_plans()
+    except Exception:
+        return {}
