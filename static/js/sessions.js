@@ -35,7 +35,12 @@ function _markIncognito(sid) {
   if (!ids.includes(sid)) { ids.push(sid); sessionStorage.setItem(_INCOGNITO_SESSIONS_KEY, JSON.stringify(ids)); }
 }
 function _isIncognitoSession(sid) { return _getIncognitoIds().includes(sid); }
+// A thread's pane in the split view (chatThreadTabs.js): the page around it
+// owns the last-opened chat and the incognito cleanup.
+const _IN_PANE = document.documentElement.classList.contains('ody-pane');
+
 async function _cleanupIncognitoSessions() {
+  if (_IN_PANE) return;
   const ids = _getIncognitoIds();
   if (ids.length === 0) return;
   // Keep the current active incognito session alive, delete the rest
@@ -1543,7 +1548,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     const _meta = sessions.find(s => s.id === id);
     const _isTransientChat = !!_meta && (_meta.folder === 'Assistant' || _meta.folder === 'Tasks');
     if (!_isTransientChat) {
-      Storage.set('lastSessionId', id);
+      if (!_IN_PANE) Storage.set('lastSessionId', id);
       // Update URL hash without triggering hashchange handler
       if (window.location.hash !== '#' + id) {
         history.replaceState(null, '', '#' + id);

@@ -37,6 +37,9 @@ export function getDesign() {
 
 function _applyClass(design) {
   const root = document.documentElement;
+  // A thread's pane in the split view (chatThreadTabs.js) is a plain chat:
+  // Studio's look without Workspace's tabs.
+  if (design === 'workspace' && root.classList.contains('ody-pane')) design = 'studio';
   root.classList.toggle('ui-studio', _studioLike(design));
   root.classList.toggle('ui-workspace', design === 'workspace');
   root.classList.toggle('ui-classic', design === 'classic');

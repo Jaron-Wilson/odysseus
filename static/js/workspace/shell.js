@@ -104,7 +104,9 @@ const ROOT_SEL = [...TOOLS.map(t => t.id ? '#' + t.id : t.sel.split(':')[0]),
   '#notes-pane-backdrop', `[id^="${READER_PREFIX}"]`].join(', ');
 
 // ── State ────────────────────────────────────────────────────────────────
-// tabs: [{ id, kind: 'home'|'chat'|'tool', sid?, key?, title? }]
+// tabs: [{ id, kind: 'home'|'chat'|'tool', sid?, view?, key?, title? }]
+// A chat tab's `view` is the thread of it on screen, when not the chat itself
+// (threads live under their chat's tab, chatThreadTabs.js).
 // left/right: the tab shown in each pane (right is null unless split).
 let S = { tabs: [{ id: 'home', kind: 'home' }], left: 'home', right: null, focus: 'left', ratio: 0.5 };
 let _mru = ['home'];
@@ -119,7 +121,7 @@ const _els = new Map();     // tool tab id -> its element while open
 function _save() {
   try {
     const tabs = S.tabs.filter(t => t.kind !== 'tool' || !t.id.startsWith('tool:' + READER_PREFIX))
-      .map(({ id, kind, sid, key, title }) => ({ id, kind, sid, key, title }));
+      .map(({ id, kind, sid, view, key, title }) => ({ id, kind, sid, view, key, title }));
     const ok = (id) => tabs.some(t => t.id === id);
     localStorage.setItem(LS_KEY, JSON.stringify({
       tabs, left: ok(S.left) ? S.left : 'home', right: ok(S.right) ? S.right : null,
@@ -341,9 +343,34 @@ const _sessionName = (sid) => {
   return s ? (s.name || 'Untitled chat') : null;
 };
 
+// A thread's top-level chat (sessions carry parent_session_id).
+function _rootSid(sid) {
+  const list = SM()?.getSessions?.() || [];
+  let cur = sid;
+  for (let i = 0; i < 12 && cur; i++) {
+    const s = list.find(x => x.id === cur);
+    if (!s || !s.parent_session_id) break;
+    cur = s.parent_session_id;
+  }
+  return cur;
+}
+
 function _openChatTab(sid) {
-  const existing = S.tabs.find(t => t.kind === 'chat' && t.sid === sid);
-  if (existing) { show(existing.id, paneOf(shownChat()?.id) || undefined); return; }
+  // A thread opens in its chat's tab, never a tab of its own.
+  const root = sid ? _rootSid(sid) : sid;
+  const existing = S.tabs.find(t => t.kind === 'chat' && t.sid === root);
+  if (existing) {
+    existing.view = root !== sid ? sid : undefined;
+    show(existing.id, paneOf(shownChat()?.id) || undefined);
+    return;
+  }
+  if (root !== sid) {
+    const pane = paneOf(shownChat()?.id) || undefined;
+    const i = S.tabs.findIndex(x => x.id === activeId());
+    S.tabs.splice(i < 0 ? S.tabs.length : i + 1, 0, { id: 'chat:' + root, kind: 'chat', sid: root, view: sid });
+    show('chat:' + root, pane);
+    return;
+  }
   const cur = shownChat();
   if (cur && !cur.sid && sid) {                 // the pending new chat got its id
     cur.sid = sid; cur.id = 'chat:' + sid;
@@ -372,9 +399,13 @@ function _pollSession() {
   if (first) {
     // Page load: keep the restored layout; the open chat just gets a tab.
     const want = shownChat();
-    if (want && want.sid && want.sid !== cur) { SM().selectSession(want.sid); _seenSid = want.sid; }
-    else if (cur && !S.tabs.some(t => t.sid === cur)) {
-      addTab({ id: 'chat:' + cur, kind: 'chat', sid: cur }, { front: false });
+    const wantSid = want && (want.view || want.sid);
+    if (wantSid && wantSid !== cur) { SM().selectSession(wantSid); _seenSid = wantSid; }
+    else if (cur && !S.tabs.some(t => t.sid === cur || t.view === cur)) {
+      const root = _rootSid(cur);
+      const t = S.tabs.find(x => x.kind === 'chat' && x.sid === root);
+      if (t) t.view = cur;
+      else addTab({ id: 'chat:' + root, kind: 'chat', sid: root, view: root !== cur ? cur : undefined }, { front: false });
     }
     _refreshTitles();
     apply();
@@ -398,7 +429,8 @@ function _syncChatView() {
   const c = shownChat();
   if (!c || !SM()) return;
   const cur = SM().getCurrentSessionId?.() || null;
-  if (c.sid && c.sid !== cur) { _seenSid = c.sid; SM().selectSession(c.sid); }
+  const want = c.view || c.sid;
+  if (want && want !== cur) { _seenSid = want; SM().selectSession(want); }
   else if (!c.sid && cur) { _seenSid = null; document.getElementById('rail-new-session')?.click(); }
 }
 
