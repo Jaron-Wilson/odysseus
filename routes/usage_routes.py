@@ -92,9 +92,75 @@ def setup_usage_routes() -> APIRouter:
         user, all_users = _scope(request, all)
         s, e = _window(month, start, end)
         from src import usage
-        out = await asyncio.to_thread(usage.summary, user, all_users=all_users, start=s, end=e)
-        out["can_view_all"] = _is_admin(request, user)
+        admin = _is_admin(request, user)
+        out = await asyncio.to_thread(usage.summary, user, all_users=all_users, start=s, end=e,
+                                      include_fixed=admin)
+        out["can_view_all"] = admin
         return out
+
+    @router.get("/api/usage/subscriptions")
+    async def get_subscriptions(request: Request):
+        """Subscription plan prices and limits, budget caps, and the
+        subscription endpoints they can apply to (src/subscriptions.py)."""
+        user = require_user(request)
+        from src import subscriptions, usage
+
+        def load():
+            db = usage._session_factory()
+            try:
+                return subscriptions.subscription_endpoints(db)
+            finally:
+                db.close()
+        return {
+            "plans": subscriptions.get_plans(),
+            "caps": subscriptions.get_caps(),
+            "count_subscription_allocation": subscriptions.count_allocation_default(),
+            "endpoints": await asyncio.to_thread(load),
+            "can_edit": _is_admin(request, user),
+        }
+
+    @router.put("/api/usage/subscriptions")
+    async def set_subscriptions(request: Request):
+        """Save subscription settings (admin). Body, every key optional:
+        ``{"plans": {"<endpoint id | base url | provider>": {"name"?, "monthly_usd",
+        "requests_per_day"?, "requests_per_5h"?, "tokens_per_month"?}},
+        "caps": {"<scope_type>[:<scope_id>]": {"requests_per_day"?, "requests_per_month"?,
+        "tokens_per_day"?, "tokens_per_month"?}}, "count_subscription_allocation": bool}``.
+        ``plans`` and ``caps`` replace the stored maps."""
+        require_admin(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected an object")
+        from src import budgets, subscriptions
+        from src.settings import load_settings, save_settings
+        settings = dict(load_settings())
+        try:
+            if "plans" in body:
+                if not isinstance(body["plans"], dict):
+                    raise ValueError("plans: expected an object")
+                settings["subscription_plans"] = {
+                    str(k).strip(): subscriptions.clean_plan(str(k), v)
+                    for k, v in body["plans"].items() if str(k).strip()}
+            if "caps" in body:
+                if not isinstance(body["caps"], dict):
+                    raise ValueError("caps: expected an object")
+                caps = {}
+                for k, v in body["caps"].items():
+                    k = str(k).strip()
+                    if k.split(":", 1)[0] not in budgets.SCOPE_COLUMNS:
+                        raise ValueError(f"{k}: unknown scope_type")
+                    c = subscriptions.clean_caps(k, v)
+                    if c:
+                        caps[k] = c
+                settings["budget_caps"] = caps
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        if "count_subscription_allocation" in body:
+            settings["budget_count_subscription_allocation"] = bool(body["count_subscription_allocation"])
+        save_settings(settings)
+        return {"ok": True, "plans": settings.get("subscription_plans", {}),
+                "caps": settings.get("budget_caps", {}),
+                "count_subscription_allocation": settings.get("budget_count_subscription_allocation", True)}
 
     @router.get("/api/usage/events")
     async def usage_events(request: Request, month: Optional[str] = None,

@@ -306,9 +306,15 @@ def _group(q, col, limit: Optional[int] = None) -> List[Dict[str, Any]]:
 
 
 def summary(owner: Optional[str], *, all_users: bool = False, start: Optional[datetime] = None,
-            end: Optional[datetime] = None, session_limit: int = 25) -> Dict[str, Any]:
+            end: Optional[datetime] = None, session_limit: int = 25,
+            include_fixed: Optional[bool] = None) -> Dict[str, Any]:
     """Totals plus breakdowns for ``[start, end)`` (this UTC month by default).
-    ``owner`` scopes to one user unless ``all_users`` (admins)."""
+    ``owner`` scopes to one user unless ``all_users`` (admins).
+
+    ``subscription`` is src/subscriptions.py's plan block and ``cost`` the
+    monthly total: metered + subscription, where subscription is the full
+    plan prices when ``include_fixed`` (default: all users or no owner) and
+    the scope's allocated share otherwise."""
     from sqlalchemy import func
     from core.database import UsageEvent
     if start is None or end is None:
@@ -332,17 +338,38 @@ def summary(owner: Optional[str], *, all_users: bool = False, start: Optional[da
             k = d.strftime("%Y-%m-%d")
             daily.append(dict(daily_map.get(k) or _agg_dict(_Zero()), date=k))
             d += timedelta(days=1)
+        totals = _agg_dict(total)
+        if include_fixed is None:
+            include_fixed = bool(all_users or not owner)
+        try:
+            from src import subscriptions
+            sub = subscriptions.summarize(db, owner=owner, all_users=all_users, start=start, end=end,
+                                          include_fixed=include_fixed)
+        except Exception:
+            logger.warning("[usage] subscription summary failed", exc_info=True)
+            sub = {"plans": [], "fixed_usd": 0.0, "accrued_usd": 0.0, "allocated_usd": 0.0,
+                   "elapsed_fraction": 0.0, "include_fixed": include_fixed, "unconfigured": []}
+        sub_usd = sub["fixed_usd"] if include_fixed else sub["allocated_usd"]
+        by_agent = _group(q.filter(UsageEvent.company_agent_id != None), UsageEvent.company_agent_id)  # noqa: E711
+        _name_agents(db, by_agent)
         return {
             "start": start.isoformat() + "Z", "end": end.isoformat() + "Z",
             "scope": "all" if all_users else (owner or "single-user"),
-            "totals": _agg_dict(total),
+            "totals": totals,
+            "cost": {
+                "metered_usd": totals["metered_cost_usd"],
+                "subscription_usd": round(sub_usd, 6),
+                "subscription_basis": "plan_price" if include_fixed else "allocated",
+                "total_usd": round(totals["metered_cost_usd"] + sub_usd, 6),
+            },
+            "subscription": sub,
             "by_billing_type": by_billing,
             "by_model": _group(q, UsageEvent.model),
             "by_provider": _group(q, UsageEvent.provider),
             "by_source": _group(q, UsageEvent.source),
             "by_session": by_session,
             "by_company": _group(q.filter(UsageEvent.company_id != None), UsageEvent.company_id),  # noqa: E711
-            "by_company_agent": _group(q.filter(UsageEvent.company_agent_id != None), UsageEvent.company_agent_id),  # noqa: E711
+            "by_company_agent": by_agent,
             "by_owner": _group(q, UsageEvent.owner) if all_users else [],
             "daily": daily,
         }
@@ -364,6 +391,13 @@ def _name_sessions(db, rows: List[Dict[str, Any]]) -> None:
         names = dict(db.query(DBSession.id, DBSession.name).filter(DBSession.id.in_(ids)).all())
     except Exception:
         names = {}
+    for r in rows:
+        r["name"] = names.get(r["key"])
+
+
+def _name_agents(db, rows: List[Dict[str, Any]]) -> None:
+    from src.subscriptions import _agent_names
+    names = _agent_names(db, [r["key"] for r in rows if r.get("key")])
     for r in rows:
         r["name"] = names.get(r["key"])
 
