@@ -1956,7 +1956,7 @@ class CompanyRun(Base):
     agent_id          = Column(String, ForeignKey("company_agents.id", ondelete="CASCADE"), nullable=False, index=True)
     issue_id          = Column(String, ForeignKey("company_issues.id", ondelete="SET NULL"), nullable=True, index=True)
     invocation_source = Column(String, nullable=False, default="on_demand")  # timer | assignment | mention | on_demand | approval
-    status            = Column(String, nullable=False, default="queued")     # queued | running | succeeded | failed | cancelled | timed_out | interrupted
+    status            = Column(String, nullable=False, default="queued")     # queued | running | succeeded | no_progress | failed | cancelled | timed_out | interrupted
     model             = Column(String, nullable=True)                        # the model spec actually used
     session_id        = Column(String, nullable=True)                        # Odysseus chat / thread it ran in
     error             = Column(Text, nullable=True)

@@ -237,11 +237,54 @@ def ollama_max_ctx() -> int:
     return max(2048, n)
 
 
+_OLLAMA_PROBE_TTL = 600.0
+_ollama_probe_cache: Dict[str, Tuple[float, bool]] = {}
+
+
+def probe_is_ollama(url: str) -> bool:
+    """Whether a self-hosted OpenAI-style /v1 URL on a port other than 11434
+    is really Ollama (a second instance on 11435, say): its /api/version
+    answers with a version. Private and loopback hosts only, cached for ten
+    minutes either way, so vLLM, llama.cpp and LM Studio servers are asked
+    once and hosted APIs never."""
+    import os
+    import time
+    if os.getenv("ODYSSEUS_OLLAMA_PROBE", "1").strip().lower() in ("0", "false", "no", "off"):
+        return False
+    try:
+        parsed = urlparse(url or "")
+        parsed.port
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host or not (host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES)):
+        return False
+    root = ollama_root(url)
+    now = time.monotonic()
+    hit = _ollama_probe_cache.get(root)
+    if hit and now - hit[0] < _OLLAMA_PROBE_TTL:
+        return hit[1]
+    found = False
+    # An endpoint marked api or proxy is never treated as Ollama. Looked up
+    # only on a cache miss: this runs on every chat call to such a URL.
+    if _configured_endpoint_kind(url) not in ("api", "proxy"):
+        try:
+            r = httpx.get(f"{root}/api/version", timeout=2)
+            found = bool(r.is_success and isinstance(r.json(), dict) and r.json().get("version"))
+        except Exception as e:
+            logger.debug(f"Ollama probe of {root} failed: {e}")
+    _ollama_probe_cache[root] = (now, found)
+    if found:
+        logger.info(f"{root} is Ollama (/api/version answered): num_ctx applies")
+    return found
+
+
 def is_local_ollama_url(url: str) -> bool:
     """A self-hosted Ollama: its native /api surface on loopback or port
     11434 (as llm_core detects it), or its OpenAI-style /v1 surface on port
-    11434. A /v1 URL on another port is some other server (vLLM, llama.cpp,
-    LM Studio). Ollama Cloud is not included: it manages its own windows."""
+    11434, or on another port when /api/version says it is Ollama
+    (probe_is_ollama). Other /v1 servers (vLLM, llama.cpp, LM Studio) are
+    not. Ollama Cloud is not included: it manages its own windows."""
     try:
         parsed = urlparse(url or "")
         port = parsed.port
@@ -252,7 +295,7 @@ def is_local_ollama_url(url: str) -> bool:
         return False
     path = (parsed.path or "").rstrip("/")
     if path == "/v1" or path.startswith("/v1/"):
-        return port == 11434
+        return port == 11434 or probe_is_ollama(url)
     if not (host in _LOCAL_HOSTS or port == 11434):
         return False
     return path in ("", "/api") or path.startswith("/api/")
@@ -330,7 +373,7 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     # capped proxy vs. the full provider), so caching by model id alone would
     # serve one endpoint's window for the other (issue #2603).
     cache_key = (endpoint_url, model)
-    if is_local_ollama_url(endpoint_url) and configured_kind not in ("api", "proxy"):
+    if configured_kind not in ("api", "proxy") and is_local_ollama_url(endpoint_url):
         # What Odysseus actually asks Ollama for (see ollama_num_ctx), so the
         # trimming and compaction that read this match the real window.
         n = ollama_num_ctx(endpoint_url, model)

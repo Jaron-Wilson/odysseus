@@ -227,6 +227,19 @@ def resolve_url(url: str) -> str:
     return url
 
 
+def invalid_port_error(url: Optional[str]) -> Optional[str]:
+    """Why `url`'s port can't work (outside 1-65535), or None when it is fine
+    or has no port. A typo like :114335 otherwise saves cleanly and fails
+    only when a request is made."""
+    try:
+        port = urlparse((url or "").strip()).port
+    except ValueError:
+        return "its port is not a number from 1 to 65535"
+    if port is not None and not (1 <= port <= 65535):
+        return f"port {port} is not a number from 1 to 65535"
+    return None
+
+
 def normalize_base(url: str) -> str:
     """Strip known API path suffixes from a base URL."""
     url = (url or "").strip().rstrip("/")

@@ -683,3 +683,161 @@ def test_run_notes_a_suspicious_input_token_cap():
     run = _q(cdb.CompanyRun, id=run_id)[0]
     assert "4096" in (run.usage or {}).get("context_warning", "")
     assert cx.truncated_at(run_id) == 4096
+
+
+# ── Focused tools and honest outcomes ──
+
+def _assigned(owner, c, eng, title="Fix the build"):
+    db = _TS()
+    i = co.create_issue(db, owner, co.user_actor(owner), c["id"],
+                        {"title": title, "status": "todo", "assignee_agent_id": eng["id"]})
+    db.close()
+    return i
+
+
+def _run_with(loop, notes=None):
+    async def go():
+        ex = _executor(loop, notes)
+        started = await ex.tick()
+        await _drain(ex)
+        return started[0]
+    return asyncio.run(go())
+
+
+def test_run_gets_a_focused_tool_set_with_the_coding_agent(tmp_path):
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    db = _TS()
+    co.update_agent(db, owner, co.user_actor(owner), eng["id"], {"coding_agent": "claude", "workdir": str(tmp_path)})
+    db.close()
+    _wake(owner, eng["id"])
+    _wake(owner, ceo["id"])
+    calls = []
+
+    async def go():
+        ex = _executor(_make_loop(lambda ctx: [], calls))
+        await ex.tick()
+        await _drain(ex)
+    asyncio.run(go())
+    by_agent = {("eng" if "You report to Ada" in k["messages"][0]["content"] else "ceo"): k for k in calls}
+    eng_tools = by_agent["eng"]["relevant_tools"]
+    assert set(ct.TOOL_NAMES) <= eng_tools and "claude_code" in eng_tools
+    assert {"bash", "read_file", "grep"} <= eng_tools
+    assert not any(t.startswith("mcp__") for t in eng_tools) and "ask_user" not in eng_tools
+    ceo_tools = by_agent["ceo"]["relevant_tools"]
+    assert set(ct.TOOL_NAMES) <= ceo_tools and "claude_code" not in ceo_tools
+
+
+def test_run_that_only_calls_unrelated_tools_is_no_progress_and_says_blocked():
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    i = _assigned(owner, c, eng)
+    notes = []
+
+    async def loop(url, model, messages, **kw):
+        for tool in ("mcp__6bbb560b__binary_session", "mcp__19d772b0__vscode_status"):
+            yield f'data: {json.dumps({"type": "tool_output", "tool": tool, "output": "{}", "exit_code": 0})}\n\n'
+        msg = (f"I'm blocked from starting {i['identifier']} because the Company issue tools and the "
+               "required claude_code tool are not available in this run.")
+        yield f'data: {json.dumps({"delta": msg})}\n\n'
+        yield "data: [DONE]\n\n"
+    rid = _run_with(loop, notes)
+    run = _q(cdb.CompanyRun, id=rid)[0]
+    assert run.status == "no_progress", run.error
+    assert "blocked" in run.error and "mcp__6bbb560b__binary_session" in run.error
+    assert run.usage["no_progress"] is True and run.usage["blocked"] is True
+    # The agent's own words land on the issue so the blocker is visible there.
+    comments = _q(cdb.CompanyIssueComment, issue_id=i["id"])
+    assert len(comments) == 1 and "blocked" in comments[0].body
+    acts = [a for a in _q(cdb.CompanyActivity, company_id=c["id"]) if a.action == "run.no_progress"]
+    assert acts and acts[0].details["blocked"] is True
+    assert any("no progress" in n for n in notes)
+    assert _q(cdb.CompanyAgent, id=eng["id"])[0].status == "idle"
+
+
+def test_run_with_no_tool_calls_on_assigned_issue_is_flagged():
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    _assigned(owner, c, eng)
+
+    async def loop(url, model, messages, **kw):
+        yield 'data: {"delta": "I will look at this later."}\n\n'
+    rid = _run_with(loop)
+    run = _q(cdb.CompanyRun, id=rid)[0]
+    assert run.status == "no_progress"
+    assert run.usage["warning"] == "The agent made no tool calls"
+    assert "no tool calls" in run.error
+
+
+def test_on_demand_run_without_issues_still_succeeds():
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    _wake(owner, eng["id"])
+    rid = _run_with(_make_loop(lambda ctx: [], []))
+    run = _q(cdb.CompanyRun, id=rid)[0]
+    assert run.status == "succeeded" and "warning" not in (run.usage or {})
+
+
+def test_stalled_model_with_zero_tokens_fails():
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    _wake(owner, ceo["id"])
+    notes = []
+
+    async def loop(url, model, messages, **kw):
+        note = "\n\n_No response from qwen3.8:27b: it accepted the request but sent nothing for 180s._"
+        yield f'data: {json.dumps({"delta": note, "stall": True})}\n\n'
+    rid = _run_with(loop, notes)
+    run = _q(cdb.CompanyRun, id=rid)[0]
+    assert run.status == "failed" and "No response from qwen3.8:27b" in run.error
+    assert run.usage["input_tokens"] == 0 and run.usage["output_tokens"] == 0
+    acts = [a for a in _q(cdb.CompanyActivity, company_id=c["id"]) if a.action == "run.failed"]
+    assert acts and "No response" in acts[0].details["error"]
+    assert any("failed" in n for n in notes)
+
+
+def test_empty_model_reply_with_zero_tokens_fails():
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    _wake(owner, eng["id"])
+
+    async def loop(url, model, messages, **kw):
+        yield "data: [DONE]\n\n"
+    rid = _run_with(loop)
+    run = _q(cdb.CompanyRun, id=rid)[0]
+    assert run.status == "failed" and "0 input and 0 output tokens" in run.error
+
+
+def test_endpoint_with_an_impossible_port_fails_the_run(monkeypatch):
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    from src import ai_interaction
+    monkeypatch.setattr(ai_interaction, "_resolve_model",
+                        lambda spec, owner=None: ("http://totoro:114335/v1/chat/completions", "qwen3.8:27b", {}))
+    _wake(owner, eng["id"])
+    rid = _run_with(_make_loop(lambda ctx: [], []))
+    run = _q(cdb.CompanyRun, id=rid)[0]
+    assert run.status == "failed" and "65535" in run.error
+
+
+def test_validate_model_spec_rejects_an_impossible_port(monkeypatch):
+    from src import ai_interaction
+    monkeypatch.setattr(ai_interaction, "_resolve_model",
+                        lambda spec, owner=None: ("http://totoro:114335/v1/chat/completions", "qwen3.8:27b", {}))
+    with pytest.raises(co.CompanyError) as e:
+        co.validate_model_spec("qwen3.8:27b@totoro", _owner())
+    assert e.value.status == 422 and "65535" in e.value.detail
+
+
+def test_invalid_port_error():
+    from src.endpoint_resolver import invalid_port_error
+    assert invalid_port_error("http://totoro:114335/v1")
+    assert invalid_port_error("http://totoro:0/v1")
+    assert invalid_port_error("http://totoro:11434/v1") is None
+    assert invalid_port_error("https://api.openai.com/v1") is None
+
+
+def test_says_blocked():
+    assert cx.says_blocked("I'm blocked from starting JAR-7")
+    assert cx.says_blocked("this run does not expose company_checkout_issue")
+    assert not cx.says_blocked("Fixed the build and moved JAR-7 to review.")

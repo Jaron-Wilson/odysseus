@@ -23,6 +23,7 @@ from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.tool_utils import get_mcp_manager
+from src import tool_cap as _tool_cap
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -1149,8 +1150,13 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    include_skills: bool = True,
 ) -> List[Dict]:
-    """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
+    """Build agent system prompt, inject MCP/document context, merge consecutive system msgs.
+
+    ``include_skills=False`` leaves out the skills catalog and matched
+    skills (Company runs: their task is in the wake message, and on a small
+    window the catalog crowded the task out)."""
     global _cached_base_prompt, _cached_base_prompt_key
     if suppress_local_context:
         active_document = None
@@ -1417,7 +1423,7 @@ def _build_system_prompt(
     # few. If the teacher wrote a procedure for "open my X chat" last
     # time the student failed, this is where the student finds it
     # before deciding which tool to call.
-    if not suppress_local_context:
+    if not suppress_local_context and include_skills:
         try:
             last_user = _extract_last_user_message(messages)
             # Respect the user's skills-enabled toggle (mirrors memory_enabled).
@@ -1886,6 +1892,38 @@ _VERIFIER_EFFECTFUL_TOOLS = {
 FIRST_TOKEN_TIMEOUT_S = float(os.getenv("ODYSSEUS_FIRST_TOKEN_TIMEOUT_S", "180"))
 
 
+def _fit_tools_to_window(schemas, messages, context_length, max_tokens, *, priority=(), relevant=None,
+                         label=""):
+    """Native tool schemas that fit the model's window next to the messages.
+
+    The input budget trims messages only; schemas go out on top of them. A
+    local model with a 32768 window was sent 252 tool schemas plus its
+    prompt, and the server cut the request to fit, losing the task itself.
+    When messages + schemas + the reply reserve exceed the window, the least
+    relevant schemas go first (tool_cap order), never the messages."""
+    try:
+        window = int(context_length or 0)
+        if window <= 0 or not schemas:
+            return schemas
+        reserve = min(max(int(max_tokens or 1024), 512), 2048)
+        room = window - reserve - estimate_tokens(messages)
+        cost = len(json.dumps(schemas)) // 4
+        if cost <= room:
+            return schemas
+        kept = list(schemas)
+        n = len(kept)
+        while kept and len(json.dumps(kept)) // 4 > max(room, 0):
+            n = n * 3 // 4 if n > 4 else 0
+            kept = _tool_cap.cap_tools(schemas, n, priority=priority, relevant=relevant,
+                                       log=False) if n > 0 else []
+        logger.warning("[agent] %s: tool schemas (~%d tokens) did not fit the %d-token window next to the "
+                       "prompt; sending %d of %d tools", label, cost, window, len(kept), len(schemas))
+        return kept
+    except Exception as e:
+        logger.debug("tool window fit skipped: %s", e)
+        return schemas
+
+
 async def _with_stall_timeout(agen, first_timeout, later_timeout, model_label):
     """Yield from an LLM stream, giving up if it goes silent.
 
@@ -1920,7 +1958,10 @@ async def _with_stall_timeout(agen, first_timeout, later_timeout, model_label):
                         f"endpoint._")
             logger.warning("[agent] %s stalled after %ss (first_token=%s)",
                            model_label, waited, got_any)
-            yield 'data: ' + json.dumps({"delta": note}) + '\n\n'
+            # "stall" marks a model that never answered, so callers that judge
+            # the outcome (Company runs) don't read the note as a reply.
+            evt = {"delta": note} if got_any else {"delta": note, "stall": True}
+            yield 'data: ' + json.dumps(evt) + '\n\n'
             try:
                 await it.aclose()
             except Exception:
@@ -2357,6 +2398,10 @@ async def stream_agent_loop(
     # RAG-based tool selection: retrieve relevant tools for this query.
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
     _relevant_tools = set() if guide_only else relevant_tools
+    # A caller-picked set (a Company run's focused tools, a scheduled task's)
+    # is the whole tool list: topic-based extras are not added to it in a
+    # Company run.
+    _caller_tools = bool(relevant_tools) and not guide_only
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
@@ -2424,7 +2469,7 @@ async def stream_agent_loop(
     if not guide_only and _relevant_tools and _company_run:
         # A Company run always has its Company tools, whatever retrieval picked.
         _relevant_tools = set(_relevant_tools) | set(_company_tools.TOOL_NAMES)
-    if not guide_only and _relevant_tools is not None:
+    if not guide_only and _relevant_tools is not None and not (_company_run and _caller_tools):
         for _domain in (_intent.get("domains") or set()):
             _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))
         if "cookbook" in (_intent.get("domains") or set()):
@@ -2541,6 +2586,18 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
+    if _endpoint_supports is False and not _is_api_model:
+        try:
+            from src.chatgpt_plan import is_chatgpt_plan_base as _is_cgp
+            if _is_cgp(endpoint_url or ""):
+                logger.info("[agent] native tools are switched off for the ChatGPT endpoint; "
+                            "tools go to %s as fenced blocks in the prompt", model)
+        except Exception:
+            pass
+    # Tools a trimmed or reordered list keeps first: a Company run's own
+    # tools and the coding agent.
+    _tool_priority = sorted(_company_tools.TOOL_NAMES) + ["claude_code"] if _company_run else ["claude_code"]
+    _cap_tool_count = _tool_cap.needs_tool_cap(endpoint_url)
     if client_device and client_device.get("registered") and _relevant_tools:
         # Chatting from a registered device: "open it here" needs the tools
         # that reach that device, whatever the wording scored in retrieval.
@@ -2552,6 +2609,7 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
         suppress_local_context=guide_only,
+        include_skills=not _company_run,
     )
     # Derived once per turn: the connected servers cannot change mid-turn, and
     # the local-model gate below is re-evaluated every round.
@@ -2834,6 +2892,32 @@ async def stream_agent_loop(
             _wants_mcp = any(kw in _last_content
                              for kw in (_MCP_KEYWORDS | _mcp_dynamic_keywords))
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+            if all_tool_schemas and _relevant_tools and not _skipped_retrieval:
+                # Same rule as the native path: when tools were selected, only
+                # the selected MCP tools go out. Sending every connected MCP
+                # tool here (252 of them on one server) hid the run's real
+                # tools: a model that gets native schemas treats them as its
+                # whole tool list and ignores the ones described in the prompt.
+                all_tool_schemas = [
+                    s for s in all_tool_schemas
+                    if s.get("function", {}).get("name") in _relevant_tools
+                ]
+            if disabled_tools and all_tool_schemas:
+                all_tool_schemas = [
+                    t for t in all_tool_schemas
+                    if t.get("function", {}).get("name") not in disabled_tools
+                ]
+        if all_tool_schemas:
+            if _company_run:
+                all_tool_schemas = _tool_cap.order_tools(all_tool_schemas, _tool_priority)
+            if _cap_tool_count:
+                all_tool_schemas = _tool_cap.cap_tools(
+                    all_tool_schemas, _tool_cap.SAFE_TOOL_CAP, priority=_tool_priority,
+                    relevant=_relevant_tools, label=f"round {round_num} {model}")
+        if all_tool_schemas and context_length:
+            all_tool_schemas = _fit_tools_to_window(
+                all_tool_schemas, messages, context_length, max_tokens,
+                priority=_tool_priority, relevant=_relevant_tools, label=f"round {round_num} {model}")
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]

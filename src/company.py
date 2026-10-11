@@ -53,8 +53,10 @@ ISSUE_TRANSITIONS: Dict[str, tuple] = {
 PRIORITIES = ("critical", "high", "medium", "low")
 PRIORITY_RANK = {p: i for i, p in enumerate(PRIORITIES)}
 RUN_SOURCES = ("timer", "assignment", "mention", "on_demand", "approval")
-RUN_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "timed_out", "interrupted")
-RUN_TERMINAL = ("succeeded", "failed", "cancelled", "timed_out", "interrupted")
+# no_progress: the run ended normally but never worked on the issues it was
+# woken for (src/company_executor._outcome).
+RUN_STATUSES = ("queued", "running", "succeeded", "no_progress", "failed", "cancelled", "timed_out", "interrupted")
+RUN_TERMINAL = ("succeeded", "no_progress", "failed", "cancelled", "timed_out", "interrupted")
 RUN_LIVE = ("queued", "running")
 APPROVAL_TYPES = ("hire_agent", "strategy", "plan", "budget_override")
 APPROVAL_STATUSES = ("pending", "revision_requested", "approved", "rejected", "cancelled")
@@ -434,13 +436,17 @@ def validate_model_spec(spec: Any, owner: str) -> Optional[str]:
         raise CompanyError(422, "model must be a model spec like 'model@Endpoint Name'")
     spec = spec.strip()
     from src import ai_interaction
+    from src.endpoint_resolver import invalid_port_error
     try:
-        ai_interaction._resolve_model(spec, owner=owner or None)
-        return spec
+        url, _model, _headers = ai_interaction._resolve_model(spec, owner=owner or None)
     except Exception as e:
         if _cached_model_match(spec, owner):
             return spec
         raise CompanyError(422, f"Model '{spec}' is not available to you: {e}")
+    bad = invalid_port_error(url)
+    if bad:
+        raise CompanyError(422, f"Model '{spec}' can't be reached: its endpoint URL {url} is invalid ({bad})")
+    return spec
 
 
 def ser_agent(a: CompanyAgent) -> Dict:

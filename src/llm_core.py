@@ -344,11 +344,19 @@ def _ollama_compat_as_native(url: str) -> Optional[str]:
         port = urlparse(url or "").port
     except ValueError:
         return None
-    # Port 11434 only: _is_ollama_openai_compat_url also matches any loopback
-    # /v1 URL, which may be vLLM, llama.cpp or LM Studio.
-    if port != 11434 or not _is_ollama_openai_compat_url(url) or _host_match(url, "ollama.com"):
+    if _host_match(url, "ollama.com"):
         return None
-    from src.model_context import ollama_root
+    from src.model_context import ollama_root, probe_is_ollama
+    if port == 11434:
+        if not _is_ollama_openai_compat_url(url):
+            return None
+    else:
+        # Another port may be vLLM, llama.cpp or LM Studio: only a server
+        # whose /api/version answers (a second Ollama on 11435, say) is
+        # Ollama. The probe is cached, and private/loopback hosts only.
+        path = (urlparse(url or "").path or "").rstrip("/")
+        if not (path == "/v1" or path.startswith("/v1/")) or not probe_is_ollama(url):
+            return None
     return ollama_root(url) + "/api/chat"
 
 

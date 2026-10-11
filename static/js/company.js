@@ -50,6 +50,9 @@ const CODING = [['', 'Off'], ['opencode', 'OpenCode'], ['claude', 'Claude Code']
 // Stored values keep Paperclip's spelling (cancelled); shown in American English.
 const words = (s) => String(s || '').replace(/_/g, ' ').replace(/cancelled/g, 'canceled');
 const cap = (s) => { s = words(s); return s.charAt(0).toUpperCase() + s.slice(1); };
+// Run outcomes as shown: "no_progress" is a run that ended without working on its issues.
+const RUN_LABEL = { no_progress: 'No progress' };
+const runLabel = (status) => RUN_LABEL[status] || cap(status);
 const money = (cents) => `$${(Number(cents || 0) / 100).toFixed(2)}`;
 
 async function api(path, opts = {}) {
@@ -337,6 +340,7 @@ function activityText(a) {
   const who = a.actor_type === 'agent' ? (agentName(a.actor_id) || 'An agent') : a.actor_type === 'system' ? 'System' : 'You';
   const ent = d.identifier || d.name || d.title || '';
   const ch = d.changes || {};
+  const runOf = a.agent_id && agentName(a.agent_id) ? `${agentName(a.agent_id)}'s ` : 'a ';
   const map = {
     'company.created': `created the company`,
     'company.updated': `updated company settings`,
@@ -365,6 +369,9 @@ function activityText(a) {
     'approval.rejected': `rejected ${d.title || words(d.type)}`,
     'approval.revision_requested': `asked for changes to ${d.title || words(d.type)}`,
     'approval.cancelled': `canceled an approval`,
+    'run.succeeded': `saw ${runOf}run finish${d.warning ? ` (${d.warning.toLowerCase()})` : ''}`,
+    'run.no_progress': `flagged ${runOf}run: no progress${d.blocked ? ', the agent says it is blocked' : ''}`,
+    'run.failed': `saw ${runOf}run fail${d.error ? `: ${d.error}` : ''}`,
   };
   return `<b>${esc(who)}</b> ${esc(map[a.action] || words(a.action))}`;
 }
@@ -461,7 +468,7 @@ function runRow(r) {
     <span class="co-dot run-${esc(r.status)}${live ? ' pulse' : ''}"></span>
     <span class="co-row-title"><b>${esc(agentName(r.agent_id) || 'Agent')}</b> ${esc(RUN_SOURCE[r.invocation_source] || r.invocation_source)}
       <span class="co-hint">${esc((r.model || '').split('@')[0])}${esc(cost)}</span></span>
-    <span class="co-pill">${esc(cap(r.status))}</span>
+    <span class="co-pill run-pill-${esc(r.status)}">${esc(runLabel(r.status))}</span>
     <time>${esc(ago(r.started_at || r.created_at))}</time></button></li>`;
 }
 
@@ -489,9 +496,10 @@ function logHtml(d) {
     parts.push(`<div class="co-hint">Round ${esc(d.live.round)}, working...</div>`);
   }
   return `<div class="co-detail-head"><b>${esc(agentName(r.agent_id) || 'Agent')}</b>
-      <span class="co-pill">${esc(cap(r.status))}</span><span class="co-hint">${esc(r.model || '')}</span>
+      <span class="co-pill run-pill-${esc(r.status)}">${esc(runLabel(r.status))}</span><span class="co-hint">${esc(r.model || '')}</span>
       <span class="co-grow"></span><button type="button" class="co-icon" data-close-sheet aria-label="Close">&times;</button></div>
-    ${r.error ? `<p class="co-note">${esc(r.error)}</p>` : ''}
+    ${r.error ? `<p class="co-note${r.status === 'no_progress' ? ' co-warn' : ''}">${esc(r.error)}</p>` : ''}
+    ${r.usage && r.usage.warning && !r.error ? `<p class="co-note co-warn">${esc(r.usage.warning)}</p>` : ''}
     <div class="co-log">${parts.join('') || '<div class="co-hint">Waiting to start (Odysseus may be busy with your chat).</div>'}</div>
     <div class="co-actions">
       ${r.session_id ? `<a class="co-btn" href="/#${esc(r.session_id)}" data-open-chat>Open as chat</a>` : ''}

@@ -54,7 +54,21 @@ DEFAULT_MAX_CONCURRENT = 2
 DEFAULT_MAX_ROUNDS = 20
 RESULT_CHARS = 4000
 TRIAGE_LIMIT = 20               # unassigned issues listed in a manager's wake message
-SUSPECT_CTX_CAPS = (2048, 4096, 8192)   # a call with exactly this many input tokens was likely cut off
+SUSPECT_CTX_CAPS = (2048, 4096, 8192, 16384, 32768)   # a call with exactly this many input tokens was likely cut off
+
+
+def _suspect_caps() -> set:
+    """Window sizes a cut-off prompt reports as its size: the common ones
+    plus the num_ctx cap Odysseus asks Ollama for."""
+    caps = set(SUSPECT_CTX_CAPS)
+    try:
+        from src.model_context import ollama_max_ctx
+        caps.add(int(ollama_max_ctx()))
+    except Exception:
+        pass
+    return caps
+
+
 SOURCE_RANK = {"approval": 0, "assignment": 1, "mention": 2, "on_demand": 3, "timer": 4}
 FOLDER = "Company"
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S)
@@ -158,6 +172,10 @@ def _collect(chunk: str, st: Dict[str, Any]) -> None:
             st["error"] = str(d.get("error") or d.get("message") or "Model error")[:1000]
         elif isinstance(d.get("delta"), str):
             st["text"] += d["delta"]
+            if d.get("stall"):
+                # The agent loop's note that the model sent nothing in time:
+                # shown as text in the chat, but the model call failed.
+                st["model_error"] = _clean(d["delta"]).strip("_ ") or "The model did not respond"
         elif d.get("type") == "agent_step":
             st["round"] = d.get("round", st["round"])
             st["text"] += "\n\n"
@@ -167,7 +185,42 @@ def _collect(chunk: str, st: Dict[str, Any]) -> None:
 
 
 def _new_state() -> Dict[str, Any]:
-    return {"text": "", "tools": [], "round": 1, "error": None, "stop_reason": None, "notices": []}
+    return {"text": "", "tools": [], "round": 1, "error": None, "stop_reason": None, "notices": [],
+            "model_error": None}
+
+
+# Tools a Company run gets besides its Company tools: what engineering work
+# needs. More only through the agent's enabled_tools; desktop/app (MCP) tools
+# never by default, they crowd out the run's own tools.
+CORE_RUN_TOOLS = ("bash", "python", "read_file", "write_file", "edit_file", "ls", "glob", "grep",
+                  "web_search", "web_fetch", "manage_bg_jobs", "chat_memory", "update_plan")
+# Wake reasons that name issues the agent is expected to work on.
+ISSUE_WAKE_SOURCES = ("assignment", "mention")
+# Company tool calls that count as progress on an issue.
+PROGRESS_TOOLS = frozenset({"company_checkout_issue", "company_comment", "company_update_issue",
+                            "company_create_issue", "company_request_approval", "company_release_issue"})
+_BLOCKED_RE = re.compile(
+    r"\b(?:i'?m|i am|am|is|are|was|were|being|stay|remain)\s+blocked\b|\bblocked from\b|"
+    r"\b(?:can ?not|can'?t|unable to)\s+(?:proceed|start|continue|work on|do)\b|"
+    r"\b(?:does|do) not expose\b|\b(?:is|are) not available\b",
+    re.I)
+
+
+def run_tools(coding_agent: Optional[str], enabled_tools: Optional[List[str]],
+              disabled: Optional[set] = None) -> set:
+    """The focused tool set of a Company run: the Company tools, the coding
+    agent when one is picked, the core engineering tools and the agent's
+    enabled_tools, minus its disabled ones."""
+    from src import company_tools
+    tools = set(company_tools.TOOL_NAMES) | set(CORE_RUN_TOOLS) | set(enabled_tools or [])
+    if coding_agent:
+        tools.add("claude_code")
+    return tools - set(disabled or [])
+
+
+def says_blocked(text: str) -> bool:
+    """True when the agent's reply says it could not go on."""
+    return bool(_BLOCKED_RE.search(text or ""))
 
 
 # ── Prompt ──────────────────────────────────────────────────────────────
@@ -349,7 +402,7 @@ def _triage_section(db, owner: str, company, agent, reports: List[Any], co) -> L
 
 
 def truncated_at(run_id: str) -> Optional[int]:
-    """The suspicious round number (2048, 4096, 8192) a model call of this
+    """The suspicious round number (2048 ... 32768, or the Ollama num_ctx cap) a model call of this
     run used exactly as its input tokens, or None. Local servers that cut a
     prompt to fit their window report the window size as the prompt size."""
     try:
@@ -364,9 +417,10 @@ def truncated_at(run_id: str) -> Optional[int]:
     except Exception as e:
         logger.debug("truncation check failed: %s", e)
         return None
+    caps = _suspect_caps()
     for inp, cached in rows:
         total = int(inp or 0) + int(cached or 0)
-        if total in SUSPECT_CTX_CAPS:
+        if total in caps:
             return total
     return None
 
@@ -777,6 +831,8 @@ class CompanyExecutor:
                 final = {"status": "failed", "error": st["error"] or "The agent run failed"}
             elif st["error"] and not st["text"].strip() and not st["tools"]:
                 final = {"status": "failed", "error": st["error"]}
+            elif st.get("model_error") and not st["tools"]:
+                final = {"status": "failed", "error": st["model_error"][:1000]}
             else:
                 final = {"status": "succeeded", "error": None}
         except asyncio.CancelledError:
@@ -824,10 +880,13 @@ class CompanyExecutor:
                 system += (f"\n\n## Coding\nFor coding work use the claude_code tool (engine "
                            f"{agent.coding_agent}) with cwd {agent.workdir}. Its plans wait for the person's "
                            "approval in your run's chat.")
-            relevant = None
-            if agent.enabled_tools:
-                from src import company_tools
-                relevant = set(agent.enabled_tools) | set(company_tools.TOOL_NAMES)
+            relevant = run_tools(agent.coding_agent, agent.enabled_tools, disabled)
+            # The issues this run was woken for: a run that ends without
+            # touching any of them did not do its job (see _outcome).
+            issue_ids = [w.issue_id for w in wakes if w.issue_id and w.source in ISSUE_WAKE_SOURCES]
+            if run.issue_id and run.invocation_source in ISSUE_WAKE_SOURCES:
+                issue_ids.insert(0, run.issue_id)
+            info["issue_ids"] = list(dict.fromkeys(issue_ids))
             prep = {"spec": spec, "system": system, "user": user, "approved_plan": plan,
                     "max_rounds": int(limits.get("max_steps") or default_max_rounds()),
                     "max_cost_usd": limits.get("max_cost_usd"), "disabled": disabled, "relevant": relevant,
@@ -841,6 +900,11 @@ class CompanyExecutor:
             url, model_id, headers = await asyncio.to_thread(ai_interaction._resolve_model, prep["spec"], owner or None)
         except Exception as e:
             raise RuntimeError(f"Model {prep['spec']} is not available: {e}")
+        from src.endpoint_resolver import invalid_port_error
+        bad_port = invalid_port_error(url)
+        if bad_port:
+            raise RuntimeError(f"Model {prep['spec']} is not reachable: {bad_port}. Fix the endpoint's URL "
+                               "in Settings.")
         # The agent loop sizes its input budget from the model's window; without
         # it the loop falls back to a 6000-token budget and trims the run's own
         # instructions away on local models with long tool prompts.
@@ -1027,10 +1091,12 @@ class CompanyExecutor:
         cap = truncated_at(run_id)
         if cap:
             usage["context_warning"] = (f"A model call used exactly {cap} input tokens, which looks like the model's "
-                                        "context limit: the prompt and tool instructions may have been cut off. "
-                                        "Give the model a larger context window.")
+                                        "context limit: the prompt and tool instructions may have been cut off, "
+                                        "possibly including the task itself. Give the model a larger context "
+                                        "window, or give the agent fewer tools.")
             logger.warning("[company] run %s: a model call used exactly %d input tokens; context may be truncated",
                            run_id[:8], cap)
+        final = _outcome(run_id, info, st, final, usage, summary)
         db = self._db()
         try:
             run = db.query(CompanyRun).filter(CompanyRun.id == run_id).first()
@@ -1039,13 +1105,15 @@ class CompanyExecutor:
             held = [i for i in db.query(CompanyIssue).filter(CompanyIssue.checkout_run_id == run_id)]
             if not run.issue_id and held:
                 run.issue_id = held[0].id
-            target = run.issue_id
+            # The issue the result belongs on: the run's own, else the first
+            # issue it was woken for.
+            target = run.issue_id or next(iter(info.get("issue_ids") or []), None)
             db.commit()
             co.finish_run(db, owner, run_id, final["status"], error=final.get("error"),
                           result_summary=summary, usage=usage)
             # The result, on the issue it was about, unless the agent already said its piece there.
             commented = set((info.get("ctx") or {}).get("comments") or [])
-            if final["status"] == "succeeded" and summary and target and target not in commented:
+            if final["status"] in ("succeeded", "no_progress") and summary and target and target not in commented:
                 try:
                     co.add_comment(db, owner, co.Actor("agent", info["agent_id"], run_id), target, summary)
                 except co.CompanyError as e:
@@ -1063,7 +1131,8 @@ class CompanyExecutor:
                     self.check_budget(db, owner, agent, company, notify_warn=False)
             co.log_activity(db, owner, run.company_id, co.Actor("system"), f"run.{final['status']}", "run", run_id,
                             {"error": final.get("error"), "cost_usd": usage.get("cost_usd"),
-                             "summary": (summary or "")[:200], "context_warning": usage.get("context_warning")},
+                             "summary": (summary or "")[:200], "context_warning": usage.get("context_warning"),
+                             "warning": usage.get("warning"), "blocked": bool(usage.get("blocked"))},
                             agent_id=info["agent_id"], run_id=run_id)
             db.commit()
             name = agent.name if agent is not None else "An agent"
@@ -1071,6 +1140,53 @@ class CompanyExecutor:
             db.close()
         if final["status"] == "failed":
             await self._notify(owner, f"{name}'s run failed", (final.get("error") or "")[:200], kind="company-run")
+        elif final["status"] == "no_progress":
+            await self._notify(owner, f"{name}'s run made no progress", (final.get("error") or "")[:200],
+                               kind="company-run")
+
+
+def _outcome(run_id: str, info: Dict[str, Any], st: Dict[str, Any], final: Dict[str, Any],
+             usage: Dict[str, Any], summary: Optional[str]) -> Dict[str, Any]:
+    """The honest status of a run the loop called a success.
+
+    - A model call that produced nothing (0 input and 0 output tokens, no tool
+      call, no reply) is a failure, not a success.
+    - A run woken for issues that never made a Company progress call (checkout,
+      comment, status change, new issue, approval request) is "no_progress":
+      shown as a warning, with what the agent said (often that it is blocked).
+    Adds the reasons to `usage` for the run's record."""
+    if final.get("status") != "succeeded":
+        return final
+    tools = st.get("tools") or []
+    zero_tokens = ("input_tokens" in usage and not usage.get("input_tokens") and not usage.get("output_tokens"))
+    if zero_tokens and not tools and (not summary or st.get("model_error")):
+        err = st.get("model_error") or ("The model returned nothing: its call used 0 input and 0 output tokens. "
+                                        "Check that the model's endpoint is reachable.")
+        logger.warning("[company] run %s: the model call returned 0 input and 0 output tokens", run_id[:8])
+        return {"status": "failed", "error": err[:1000]}
+    issue_ids = info.get("issue_ids") or []
+    if not issue_ids:
+        return final
+    if not tools:
+        usage["warning"] = "The agent made no tool calls"
+        logger.warning("[company] run %s: woken for %d issue(s) but made no tool calls (rounds=%s)",
+                       run_id[:8], len(issue_ids), st.get("round"))
+    progressed = {t.get("tool") for t in tools if t.get("exit_code") in (0, None)} & PROGRESS_TOOLS
+    commented = (info.get("ctx") or {}).get("comments") or []
+    if progressed or commented:
+        return final
+    blocked = says_blocked(summary or "")
+    usage["no_progress"] = True
+    if blocked:
+        usage["blocked"] = True
+    used = sorted({str(t.get("tool")) for t in tools if t.get("tool")})
+    why = ("The agent ended without working on its issues: no checkout, comment or status change"
+           + (f" (it only called {', '.join(used[:6])})" if used else " (it made no tool calls)") + ".")
+    if blocked:
+        why += " It said it was blocked; its reply is on the issue."
+    logger.warning("[company] run %s: no progress on %d woken issue(s)%s", run_id[:8], len(issue_ids),
+                   "; the agent says it is blocked" if blocked else "")
+    return {"status": "no_progress", "error": why}
 
 
 async def start_executor(session_manager=None) -> Optional[CompanyExecutor]:
