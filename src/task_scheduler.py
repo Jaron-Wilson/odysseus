@@ -696,35 +696,60 @@ class TaskScheduler:
         finally:
             _q_db.close()
 
+        # Every model call made for this run is attributed to it in
+        # usage_events (src/usage.py), including the agent loop's rounds.
+        from src.usage import usage_scope
         try:
-            if bypass_model_slot or not self._task_needs_model_slot(task_id):
-                await self._execute_task_locked(
-                    task_id,
-                    run_id,
-                    release_executing=release_executing,
-                    gate_foreground=not bypass_model_slot,
-                )
-                return
+            with usage_scope(source="task", task_run_id=run_id):
+                if bypass_model_slot or not self._task_needs_model_slot(task_id):
+                    await self._execute_task_locked(
+                        task_id,
+                        run_id,
+                        release_executing=release_executing,
+                        gate_foreground=not bypass_model_slot,
+                    )
+                    return
 
-            async with self._run_semaphore:
-                await self._execute_task_locked(
-                    task_id,
-                    run_id,
-                    release_executing=release_executing,
-                    gate_foreground=True,
-                )
+                async with self._run_semaphore:
+                    await self._execute_task_locked(
+                        task_id,
+                        run_id,
+                        release_executing=release_executing,
+                        gate_foreground=True,
+                    )
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
             # _execute_task_locked never runs and cannot update the Activity row.
             self._mark_run_aborted(task_id, run_id)
             raise
         finally:
+            self._store_run_tokens(run_id)
             handle = self._task_handles.get(task_id)
             if handle is current:
                 self._task_handles.pop(task_id, None)
             if release_executing:
                 async with self._executing_lock:
                     self._executing.discard(task_id)
+
+    @staticmethod
+    def _store_run_tokens(run_id: str) -> None:
+        """task_runs.tokens_used from the run's usage_events (best effort)."""
+        try:
+            from core.database import SessionLocal, TaskRun
+            from src.usage import run_tokens
+            total = run_tokens(run_id)
+            if not total:
+                return
+            db = SessionLocal()
+            try:
+                run = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+                if run is not None:
+                    run.tokens_used = total
+                    db.commit()
+            finally:
+                db.close()
+        except Exception:
+            logger.debug("Could not store tokens for run %s", run_id, exc_info=True)
 
     async def _execute_task_locked(
         self,

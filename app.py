@@ -705,6 +705,9 @@ from routes.deploy_routes import setup_deploy_routes
 app.include_router(setup_deploy_routes())
 from routes.devops_routes import setup_devops_routes
 app.include_router(setup_devops_routes())
+# Usage and cost: the price table, per-user spend, budgets (routes/usage_routes.py).
+from routes.usage_routes import setup_usage_routes
+app.include_router(setup_usage_routes())
 # What's new: the merged PRs, and chats about them (routes/whats_new_routes.py).
 from routes.whats_new_routes import setup_whats_new_routes
 app.include_router(setup_whats_new_routes(session_manager))

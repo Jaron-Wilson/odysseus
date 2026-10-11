@@ -511,6 +511,30 @@ const MODEL_INFO = {
 // Compat alias
 const MODEL_PRICING = MODEL_INFO;
 
+// The server's price table (src/pricing.py, GET /api/pricing) is the source
+// of truth; the table above is the offline fallback. Server prices replace
+// the local input/output per key and add keys the browser does not know;
+// context windows (ctx) stay as they are.
+export function applyServerPricing(models) {
+  if (!models || typeof models !== 'object') return 0;
+  let n = 0;
+  for (const [key, p] of Object.entries(models)) {
+    if (!p || typeof p.input !== 'number' || typeof p.output !== 'number') continue;
+    const k = key.toLowerCase();
+    MODEL_INFO[k] = { ...(MODEL_INFO[k] || {}), input: p.input, output: p.output,
+      cached: typeof p.cached === 'number' ? p.cached : p.input };
+    n++;
+  }
+  return n;
+}
+
+if (typeof window !== 'undefined' && typeof fetch === 'function') {
+  fetch('/api/pricing', { credentials: 'same-origin' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => { if (d) applyServerPricing(d.models); })
+    .catch(() => { /* offline or signed out: keep the built-in table */ });
+}
+
 // Image generation cost lookup (per-image, by model × quality × size)
 const IMAGE_PRICING = {
   'gpt-image-1.5': { 'low': { '1024x1024': 0.009, '1024x1536': 0.013, '1536x1024': 0.013 }, 'medium': { '1024x1024': 0.034, '1024x1536': 0.05, '1536x1024': 0.05 }, 'high': { '1024x1024': 0.133, '1024x1536': 0.2, '1536x1024': 0.2 } },

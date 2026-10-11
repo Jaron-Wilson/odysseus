@@ -1416,3 +1416,9 @@ html.ui-studio .cm-suggest .cn-btn:hover { background: var(--st-hover); color: v
 html.ui-studio .cm-suggest .cn-accept { color: var(--st-accent-fg); background: var(--st-accent); border-color: transparent; }
 html.ui-studio .cm-suggest .cn-accept:hover { background: color-mix(in srgb, var(--st-accent) 88%, #fff); color: var(--st-accent-fg); }
 /* @end */
+
+/* Usage page (usagePage.js): its hover targets stay invisible; the bar lights up. */
+html.ui-studio .us-panel.dv-panel .dv-chart rect.us-hit,
+html.ui-studio .us-panel.dv-panel .dv-chart rect.us-hit:hover { fill: transparent; }
+html.ui-studio .us-panel.dv-panel .dv-chart .us-day:hover rect.us-hit { fill: color-mix(in srgb, var(--st-accent) 8%, transparent); }
+html.ui-studio .us-panel.dv-panel .dv-chart .us-day:hover rect.us-bar { fill: var(--st-accent); }

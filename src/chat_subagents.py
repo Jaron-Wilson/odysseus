@@ -296,8 +296,13 @@ def spawn(sm, parent_id: str, task: str, *, title: Optional[str] = None, model: 
     except Exception:
         pass
     from src.screen_control_resume import _resume_stream
-    agent_runs.start(thread.id, _resume_stream(
-        thread, sm, thread.get_context_messages(), agent_loop=agent_loop, source="subagent"))
+    from src.usage import usage_scope
+    # The run's task copies this context, so its model calls are recorded
+    # as source "subagent" on the thread (src/usage.py).
+    with usage_scope(source="subagent", session_id=thread.id,
+                     owner=owner or getattr(parent, "owner", None)):
+        agent_runs.start(thread.id, _resume_stream(
+            thread, sm, thread.get_context_messages(), agent_loop=agent_loop, source="subagent"))
     logger.info("[threads] subagent %s started in %s: %s", thread.id[:8], parent_id[:8], task[:80])
     return {"id": thread.id, "name": name, "kind": "subagent", "status": "running",
             "parent_session_id": parent_id, "anchor_msg_id": anchor, "model": thread.model}
