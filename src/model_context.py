@@ -206,6 +206,111 @@ KNOWN_CONTEXT_WINDOWS = {
 }
 
 # ---------------------------------------------------------------------------
+# Ollama
+# ---------------------------------------------------------------------------
+# Ollama loads a model with its own default window (4096 tokens on 0.6+, 2048
+# before) unless each request says otherwise with options.num_ctx, and it
+# silently drops whatever doesn't fit. Odysseus tells it a real window: the
+# model's own context_length from /api/show, capped so a 128k-token model
+# doesn't try to allocate a KV cache that blows the GPU's memory.
+DEFAULT_OLLAMA_MAX_CTX = 32768
+_OLLAMA_SHOW_TTL = 300.0
+_ollama_show_cache: Dict[Tuple[str, str], Tuple[float, Optional[int]]] = {}
+
+
+def ollama_max_ctx() -> int:
+    """The largest num_ctx Odysseus asks Ollama for: env
+    ODYSSEUS_OLLAMA_MAX_CTX, else the ``ollama_max_num_ctx`` setting, else
+    32768."""
+    import os
+    raw = os.getenv("ODYSSEUS_OLLAMA_MAX_CTX", "").strip()
+    if not raw:
+        try:
+            from src.settings import get_setting
+            raw = get_setting("ollama_max_num_ctx", None)
+        except Exception:
+            raw = None
+    try:
+        n = int(raw) if raw not in (None, "") else DEFAULT_OLLAMA_MAX_CTX
+    except (TypeError, ValueError):
+        n = DEFAULT_OLLAMA_MAX_CTX
+    return max(2048, n)
+
+
+def is_local_ollama_url(url: str) -> bool:
+    """A self-hosted Ollama: its native /api surface on loopback or port
+    11434 (as llm_core detects it), or its OpenAI-style /v1 surface on port
+    11434. A /v1 URL on another port is some other server (vLLM, llama.cpp,
+    LM Studio). Ollama Cloud is not included: it manages its own windows."""
+    try:
+        parsed = urlparse(url or "")
+        port = parsed.port
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host or host == "ollama.com" or host.endswith(".ollama.com"):
+        return False
+    path = (parsed.path or "").rstrip("/")
+    if path == "/v1" or path.startswith("/v1/"):
+        return port == 11434
+    if not (host in _LOCAL_HOSTS or port == 11434):
+        return False
+    return path in ("", "/api") or path.startswith("/api/")
+
+
+def ollama_root(url: str) -> str:
+    """scheme://host:port (plus any path prefix) of an Ollama URL, without
+    /api/... or /v1/..."""
+    parsed = urlparse(url or "")
+    path = (parsed.path or "").rstrip("/")
+    for marker in ("/api", "/v1"):
+        if path.endswith(marker):
+            path = path[: -len(marker)]
+            break
+        idx = path.find(marker + "/")
+        if idx != -1:
+            path = path[:idx]
+            break
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+def ollama_show_context(url: str, model: str) -> Optional[int]:
+    """The model's own context window from Ollama's /api/show
+    (``model_info["<arch>.context_length"]``), cached for a few minutes."""
+    import time
+    root = ollama_root(url)
+    key = (root, model)
+    hit = _ollama_show_cache.get(key)
+    now = time.monotonic()
+    if hit and now - hit[0] < _OLLAMA_SHOW_TTL:
+        return hit[1]
+    ctx: Optional[int] = None
+    try:
+        r = httpx.post(f"{root}/api/show", json={"model": model}, timeout=REQUEST_TIMEOUT)
+        if r.is_success:
+            info = (r.json() or {}).get("model_info") or {}
+            for k, v in info.items():
+                if k.endswith(".context_length") and isinstance(v, (int, float)) and v > 0:
+                    ctx = int(v)
+                    break
+    except Exception as e:
+        logger.debug(f"Ollama /api/show failed for {model}: {e}")
+    _ollama_show_cache[key] = (now, ctx)
+    return ctx
+
+
+def ollama_num_ctx(url: str, model: str) -> Optional[int]:
+    """The num_ctx to send to a self-hosted Ollama for ``model``: its
+    /api/show context_length (else the known-models table) capped at
+    :func:`ollama_max_ctx`. None when nothing is known, so Ollama keeps its
+    own default rather than a guess."""
+    real = ollama_show_context(url, model) or _lookup_known(model)
+    if not real:
+        return None
+    return min(int(real), ollama_max_ctx())
+
+
+# ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
 _context_cache: Dict[Tuple[str, str], int] = {}
@@ -225,6 +330,13 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     # capped proxy vs. the full provider), so caching by model id alone would
     # serve one endpoint's window for the other (issue #2603).
     cache_key = (endpoint_url, model)
+    if is_local_ollama_url(endpoint_url) and configured_kind not in ("api", "proxy"):
+        # What Odysseus actually asks Ollama for (see ollama_num_ctx), so the
+        # trimming and compaction that read this match the real window.
+        n = ollama_num_ctx(endpoint_url, model)
+        if n:
+            logger.info(f"Context length for {model}: {n} (Ollama num_ctx)")
+            return n
     if not is_local and cache_key in _context_cache:
         return _context_cache[cache_key]
 

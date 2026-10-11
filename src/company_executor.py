@@ -53,6 +53,8 @@ TICK_S = 3.0
 DEFAULT_MAX_CONCURRENT = 2
 DEFAULT_MAX_ROUNDS = 20
 RESULT_CHARS = 4000
+TRIAGE_LIMIT = 20               # unassigned issues listed in a manager's wake message
+SUSPECT_CTX_CAPS = (2048, 4096, 8192)   # a call with exactly this many input tokens was likely cut off
 SOURCE_RANK = {"approval": 0, "assignment": 1, "mention": 2, "on_demand": 3, "timer": 4}
 FOLDER = "Company"
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S)
@@ -174,6 +176,7 @@ PROTOCOL = """## How to work
 - You were woken for the reasons in the message below. Do the work with your tools and the Company tools. Nobody is watching this conversation live, so don't ask questions here: ask in an issue comment instead (@Name wakes another agent).
 - Check an issue out with company_checkout_issue before working on it, and work one issue at a time.
 - Record progress and findings with company_comment. Move the issue with company_update_issue: in_review when it is ready for someone to check, done when finished, blocked (with a comment saying why) when you can't go on.
+- Managers (and whoever is at the top of the org): triage first. When the message lists unassigned issues, give each one to the report whose role fits it best (or to yourself) with company_update_issue {"issue", "assignee", "comment": one line on why}; the assignee is woken to start. Only then do hands-on work of your own.
 - Managers: break large work into sub-issues with company_create_issue and assign them to your reports instead of doing their work yourself.
 - Before a large, risky or costly change, ask first with company_request_approval (type plan, numbered steps) and end your turn; you are woken when it is decided.
 - Keep the run focused. End with a short summary of what you did and what is next: it is posted on the issue."""
@@ -220,6 +223,9 @@ def build_prompt(db, owner: str, agent, company, run, wakes: List[Any],
         org.append(f"Your capabilities: {agent.capabilities.strip()[:1500]}")
     sys_parts += ["\n".join(org), PROTOCOL]
 
+    # Managers and the top of the org also see unassigned work and their reports' load.
+    manages = bool(reports) or not (agent.reports_to and agent.reports_to in by_id)
+
     # Why it woke.
     reasons, approved_plan, limits = [], None, {}
     focus_ids: List[str] = []
@@ -237,9 +243,11 @@ def build_prompt(db, owner: str, agent, company, run, wakes: List[Any],
             body = f": \"{cm.body.strip()[:1500]}\"" if cm else ""
             reasons.append(f"- {who} mentioned you on {ident or 'an issue'}{body}")
         elif w.source == "on_demand":
-            reasons.append("- The person who runs the company asked you to wake up and check your work.")
+            reasons.append("- The person who runs the company asked you to wake up and check your work"
+                           + (", including triaging unassigned issues." if manages else "."))
         elif w.source == "timer":
-            reasons.append("- Your regular heartbeat: check your issues and move your work along.")
+            reasons.append("- Your regular heartbeat: check your issues and move your work along"
+                           + (", and triage any unassigned issues." if manages else "."))
         elif w.source == "approval":
             ap = co._scoped(db, co.CompanyApproval, owner).filter(co.CompanyApproval.id == w.approval_id).first() \
                 if w.approval_id else None
@@ -296,7 +304,71 @@ def build_prompt(db, owner: str, agent, company, run, wakes: List[Any],
     open_rows.sort(key=lambda i: (co.PRIORITY_RANK.get(i.priority, 9), i.number))
     msg += ["", "Your open issues:"]
     msg += [f"- {i.identifier} [{i.status.replace('_', ' ')}, {i.priority}] {i.title}" for i in open_rows[:20]] or ["- none"]
+    if manages:
+        msg += _triage_section(db, owner, company, agent, reports, co)
     return "\n\n".join(sys_parts), "\n".join(msg), approved_plan, limits
+
+
+def _triage_section(db, owner: str, company, agent, reports: List[Any], co) -> List[str]:
+    """For a manager: unassigned open issues (backlog/todo, nobody on them),
+    one line of workload per report, and what to do about it."""
+    unassigned = co._scoped(db, co.CompanyIssue, owner).filter(
+        co.CompanyIssue.company_id == company.id, co.CompanyIssue.status.in_(("backlog", "todo")),
+        co.CompanyIssue.assignee_agent_id.is_(None), co.CompanyIssue.assignee_user.is_(None)).all()
+    unassigned.sort(key=lambda i: (co.PRIORITY_RANK.get(i.priority, 9), i.number))
+    out: List[str] = []
+    if unassigned:
+        more = len(unassigned) - TRIAGE_LIMIT
+        out += ["", f"Unassigned issues ({len(unassigned)}):"]
+        out += [f"- {i.identifier} [{i.status.replace('_', ' ')}, {i.priority}] {i.title}"
+                for i in unassigned[:TRIAGE_LIMIT]]
+        if more > 0:
+            out.append(f"- ...and {more} more (company_list_issues scope unassigned)")
+    if reports:
+        ids = [a.id for a in reports]
+        rows = co._scoped(db, co.CompanyIssue, owner).filter(
+            co.CompanyIssue.company_id == company.id, co.CompanyIssue.assignee_agent_id.in_(ids),
+            co.CompanyIssue.status.notin_(("done", "cancelled"))).all()
+        out += ["", "Your reports' workload:"]
+        for a in reports:
+            theirs = [i for i in rows if i.assignee_agent_id == a.id]
+            busy = sorted((i for i in theirs if i.status == "in_progress"), key=lambda i: i.number)
+            line = f"- {a.name} ({_role_label(a.role)}, {a.status}): {len(theirs)} open"
+            if busy:
+                line += ", in progress: " + ", ".join(i.identifier for i in busy[:5])
+            out.append(line)
+    if unassigned:
+        who = "a report whose role fits it, or yourself" if reports else "yourself, or hire help with company_request_approval"
+        out += ["", f"Triage first: assign each unassigned issue to {who}, using company_update_issue with "
+                "\"assignee\" and a one-line \"comment\" saying why. Assignees are woken to start. Then work "
+                "your own issues. One call per issue, like:",
+                "```company_update_issue",
+                f"{{\"issue\": \"{unassigned[0].identifier}\", \"assignee\": \"<name>\", \"comment\": \"<why them>\"}}",
+                "```"]
+    return out
+
+
+def truncated_at(run_id: str) -> Optional[int]:
+    """The suspicious round number (2048, 4096, 8192) a model call of this
+    run used exactly as its input tokens, or None. Local servers that cut a
+    prompt to fit their window report the window size as the prompt size."""
+    try:
+        from core.database import UsageEvent
+        from src import usage
+        db = usage._session_factory()
+        try:
+            rows = db.query(UsageEvent.input_tokens, UsageEvent.cached_input_tokens).filter(
+                UsageEvent.company_run_id == run_id).all()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("truncation check failed: %s", e)
+        return None
+    for inp, cached in rows:
+        total = int(inp or 0) + int(cached or 0)
+        if total in SUSPECT_CTX_CAPS:
+            return total
+    return None
 
 
 # ── Notifications (the owner only) ──────────────────────────────────────
@@ -769,7 +841,17 @@ class CompanyExecutor:
             url, model_id, headers = await asyncio.to_thread(ai_interaction._resolve_model, prep["spec"], owner or None)
         except Exception as e:
             raise RuntimeError(f"Model {prep['spec']} is not available: {e}")
-        prep.update(url=url, model_id=model_id, headers=headers or {}, gate=should_gate(url))
+        # The agent loop sizes its input budget from the model's window; without
+        # it the loop falls back to a 6000-token budget and trims the run's own
+        # instructions away on local models with long tool prompts.
+        try:
+            from src.model_context import get_context_length
+            ctx_len = await asyncio.to_thread(get_context_length, url, model_id)
+        except Exception as e:
+            logger.debug("context length lookup failed: %s", e)
+            ctx_len = 0
+        prep.update(url=url, model_id=model_id, headers=headers or {}, gate=should_gate(url),
+                    context_length=int(ctx_len or 0))
         return prep
 
     def _workspace(self, sm, owner: str, prep: Dict[str, Any]) -> str:
@@ -856,7 +938,8 @@ class CompanyExecutor:
                       max_rounds=prep["max_rounds"], session_id=info["thread_id"],
                       disabled_tools=set(prep["disabled"]), owner=info["owner"] or None,
                       relevant_tools=set(prep["relevant"]) if prep["relevant"] else None,
-                      approved_plan=prep["approved_plan"])
+                      approved_plan=prep["approved_plan"], context_length=prep.get("context_length") or 0,
+                      auto_input_budget=True)
         try:
             for n in info.get("notices") or []:
                 yield f'data: {json.dumps({"type": "company_notice", "text": n})}\n\n'
@@ -941,6 +1024,13 @@ class CompanyExecutor:
             logger.debug("run usage summary failed: %s", e)
         if st.get("stop_reason"):
             usage["stop_reason"] = st["stop_reason"]
+        cap = truncated_at(run_id)
+        if cap:
+            usage["context_warning"] = (f"A model call used exactly {cap} input tokens, which looks like the model's "
+                                        "context limit: the prompt and tool instructions may have been cut off. "
+                                        "Give the model a larger context window.")
+            logger.warning("[company] run %s: a model call used exactly %d input tokens; context may be truncated",
+                           run_id[:8], cap)
         db = self._db()
         try:
             run = db.query(CompanyRun).filter(CompanyRun.id == run_id).first()
@@ -973,7 +1063,8 @@ class CompanyExecutor:
                     self.check_budget(db, owner, agent, company, notify_warn=False)
             co.log_activity(db, owner, run.company_id, co.Actor("system"), f"run.{final['status']}", "run", run_id,
                             {"error": final.get("error"), "cost_usd": usage.get("cost_usd"),
-                             "summary": (summary or "")[:200]}, agent_id=info["agent_id"], run_id=run_id)
+                             "summary": (summary or "")[:200], "context_warning": usage.get("context_warning")},
+                            agent_id=info["agent_id"], run_id=run_id)
             db.commit()
             name = agent.name if agent is not None else "An agent"
         finally:

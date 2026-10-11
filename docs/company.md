@@ -323,7 +323,13 @@ run status), their issue locks are released and running agents go idle.
    and a short "how to work" protocol. User (saved in the thread): why it
    woke (assignment, the mention's comment, approval decision and note,
    heartbeat), any budget notice, the focus issue(s) with recent comments,
-   and its open issues.
+   and its open issues. A manager (an agent with reports, or the top of the
+   org) also gets the unassigned open issues (backlog/todo, nobody on them;
+   up to 20, priority order), one workload line per report (open count and
+   what is in progress), and a "triage first" instruction: assign each
+   unassigned issue to the best-fitting report or itself with
+   `company_update_issue` `assignee` plus a one-line comment, which wakes the
+   assignee, before doing hands-on work.
 5. **Loop.** `stream_agent_loop` on the resolved model, as an `agent_runs`
    run in the thread, inside `usage_scope(source="company", company_id,
    company_agent_id, company_run_id)` so every model call is attributed.
@@ -331,10 +337,17 @@ run status), their issue locks are released and running agents go idle.
    the usual retrieval plus the Company tools; `disabled_tools` plus
    `ask_user` (nobody is there to answer). An approved plan is pinned with
    `approved_plan`; its `max_steps` caps rounds (default 20,
-   `company_agent_max_rounds`). Between rounds: the run's own `max_cost_usd`,
+   `company_agent_max_rounds`). The loop gets the model's context length and
+   `auto_input_budget`, so its input budget scales to the window instead of
+   the 6000-token default, which would truncate the run's system prompt.
+   Self-hosted Ollama models get `num_ctx` from `/api/show` capped at
+   `ollama_max_num_ctx` (32768, env `ODYSSEUS_OLLAMA_MAX_CTX`); calls for an
+   Ollama `/v1` URL go to native `/api/chat`, since `/v1` ignores `num_ctx`. Between rounds: the run's own `max_cost_usd`,
    the agent's and company's budgets, and the foreground gate.
 6. **Finish.** `finish_run` (status, summary, usage JSON with tokens, cost,
-   rounds, tool calls) releases held issues; the summary is posted as a
+   rounds, tool calls; `context_warning` when a call used exactly 2048, 4096
+   or 8192 input tokens, a sign the prompt was cut to the model's window)
+   releases held issues; the summary is posted as a
    comment on the run's issue (or the one it checked out) unless the agent
    already commented there; the agent goes back to idle (or error); spend
    is copied onto the rows; activity `run.*` is logged.
@@ -355,7 +368,7 @@ them disabled). Every lookup is limited to the agent's own company.
 | `company_list_issues` | mine / team / unassigned / all, open by default |
 | `company_get_issue` | details, parent, sub-issues, recent comments |
 | `company_checkout_issue` | atomic checkout for this run |
-| `company_update_issue` | validated transition (in_progress goes through checkout), priority, optional comment; only its own, its reports' or ones it created |
+| `company_update_issue` | validated transition (in_progress goes through checkout), priority, `assignee` (itself, or for managers anyone below them; "nobody" unassigns; the new assignee is woken), optional comment; only its own, its reports', unassigned ones or ones it created |
 | `company_comment` | @mentions wake other agents |
 | `company_create_issue` | managers only; assign to self or a report, optional parent |
 | `company_request_approval` | plan / strategy (payload plan, issue), or hire_agent (managers; goes through `create_agent`, so the company's hire-approval setting applies) |

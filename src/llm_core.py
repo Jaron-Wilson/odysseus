@@ -327,6 +327,31 @@ def _is_ollama_openai_compat_url(url: str) -> bool:
     return local_ollama_host and (path == "/v1" or path.startswith("/v1/"))
 
 
+def _ollama_compat_as_native(url: str) -> Optional[str]:
+    """The native /api/chat URL to use instead of a self-hosted Ollama's
+    OpenAI-style /v1 URL, or None to leave the URL alone.
+
+    Ollama's /v1 surface ignores options.num_ctx, so a model reached there
+    always runs at the server's default window (4096 tokens on Ollama 0.6+)
+    and longer prompts, such as an agent's system prompt with its tool
+    instructions, are cut off without an error. Chat calls go to the native
+    endpoint, which takes num_ctx, with the same messages and the same
+    thinking suppression. ODYSSEUS_OLLAMA_V1_NATIVE=0 turns this off.
+    """
+    if os.getenv("ODYSSEUS_OLLAMA_V1_NATIVE", "1").strip().lower() in ("0", "false", "no", "off"):
+        return None
+    try:
+        port = urlparse(url or "").port
+    except ValueError:
+        return None
+    # Port 11434 only: _is_ollama_openai_compat_url also matches any loopback
+    # /v1 URL, which may be vLLM, llama.cpp or LM Studio.
+    if port != 11434 or not _is_ollama_openai_compat_url(url) or _host_match(url, "ollama.com"):
+        return None
+    from src.model_context import ollama_root
+    return ollama_root(url) + "/api/chat"
+
+
 def _ollama_api_root(url: str) -> str:
     """Return a native Ollama API root such as https://ollama.com/api."""
     url = (url or "").strip().rstrip("/")
@@ -1289,6 +1314,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         messages_copy = non_sys
 
     provider = _detect_provider(url)
+    native_ollama = _ollama_compat_as_native(url)
+    if native_ollama:
+        provider = "ollama"
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -1305,11 +1333,13 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
     elif provider == "ollama":
-        target_url = _normalize_ollama_url(url)
+        target_url = native_ollama or _normalize_ollama_url(url)
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+        if native_ollama and _supports_thinking(model):
+            payload["think"] = False
     else:
         target_url = url
         if provider == "copilot":
@@ -1430,6 +1460,9 @@ async def llm_call_async(
     ``owner`` is whose ChatGPT sign-in to use for request-scoped providers.
     """
     provider = _detect_provider(url)
+    native_ollama = _ollama_compat_as_native(url)
+    if native_ollama:
+        provider = "ollama"
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
@@ -1502,7 +1535,7 @@ async def llm_call_async(
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
     elif provider == "ollama":
-        target_url = _normalize_ollama_url(url)
+        target_url = native_ollama or _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
@@ -1510,6 +1543,8 @@ async def llm_call_async(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+        if native_ollama and _supports_thinking(model):
+            payload["think"] = False
     else:
         target_url = url
         h = _provider_headers(provider, headers)
@@ -1772,6 +1807,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     provider = _detect_provider(url)
     if provider in ("chatgpt-plan", "chatgpt-subscription"):
         headers = _request_scoped_headers(url, headers, owner)
+    native_ollama = _ollama_compat_as_native(url)
+    if native_ollama:
+        provider = "ollama"
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
@@ -1793,7 +1831,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
     elif provider == "ollama":
-        target_url = _normalize_ollama_url(url)
+        target_url = native_ollama or _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
@@ -1801,6 +1839,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
         )
+        if native_ollama and _supports_thinking(model):
+            payload["think"] = False
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)

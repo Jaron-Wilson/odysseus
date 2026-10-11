@@ -65,6 +65,8 @@ def _bind(monkeypatch, tmp_path):
 
     from src import ai_interaction
     monkeypatch.setattr(ai_interaction, "_resolve_model", fake_resolve)
+    from src import model_context
+    monkeypatch.setattr(model_context, "get_context_length", lambda url, model: 32768)
     monkeypatch.setattr(cx, "max_concurrent", lambda: 2)
     yield seen
 
@@ -181,6 +183,8 @@ def test_run_works_an_issue_as_the_agent_and_finishes():
     sys_msg, user_msg = calls[0]["messages"][0]["content"], calls[0]["messages"][1]["content"]
     assert "You report to Ada" in sys_msg and ident in user_msg and "assigned" in user_msg
     assert "ask_user" in calls[0]["disabled_tools"]
+    # The loop is told the model's window, so it doesn't trim to its 6000-token fallback.
+    assert calls[0]["context_length"] == 32768 and calls[0]["auto_input_budget"] is True
 
 
 def test_wakeups_for_one_agent_coalesce_into_one_run():
@@ -500,3 +504,182 @@ def test_coding_agent_setting_applies_to_the_run_chat(tmp_path):
     assert "claude_code" in by_agent["ceo"]["disabled_tools"]
     tid = by_agent["eng"]["session_id"]
     assert chat_prefs.engine_allowed(tid, "opencode") and not chat_prefs.engine_allowed(tid, "claude")
+
+
+# ── Triage: a woken manager sees unassigned work and its reports' load ──
+
+def _triage_setup(owner):
+    c, ceo, eng = _setup(owner)
+    db = _TS()
+    u = co.user_actor(owner)
+    qa = co.create_agent(db, owner, u, c["id"], {"name": "Cy", "role": "qa", "reports_to": ceo["id"],
+                                                 "model": "qwen3:8b@Local"})
+    mine = co.create_issue(db, owner, u, c["id"], {"title": "Set strategy", "status": "todo",
+                                                   "assignee_agent_id": ceo["id"]})
+    busy = co.create_issue(db, owner, u, c["id"], {"title": "Build login", "status": "todo",
+                                                   "assignee_agent_id": eng["id"]})
+    free = [co.create_issue(db, owner, u, c["id"], {"title": f"Loose end {n}", "status": "todo",
+                                                    "priority": "high" if n == 3 else "medium"})
+            for n in range(1, 4)]
+    backlog = co.create_issue(db, owner, u, c["id"], {"title": "Someday idea", "status": "backlog"})
+    person = co.create_issue(db, owner, u, c["id"], {"title": "Person's task", "status": "todo",
+                                                     "assignee_user": "me"})
+    done = co.create_issue(db, owner, u, c["id"], {"title": "Old done", "status": "todo"})
+    co.update_issue(db, owner, u, done["id"], {"status": "in_progress"})
+    co.update_issue(db, owner, u, done["id"], {"status": "done"})
+    db.query(cdb.CompanyWakeup).filter(cdb.CompanyWakeup.status == "pending").update({"status": "dropped"})
+    db.commit()
+    db.close()
+    return c, ceo, eng, qa, {"mine": mine, "busy": busy, "free": free, "backlog": backlog,
+                             "person": person, "done": done}
+
+
+def _prompt_for(owner, c, agent_id, source="on_demand"):
+    db = _TS()
+    try:
+        agent = db.query(cdb.CompanyAgent).filter_by(id=agent_id).first()
+        company = db.query(cdb.CompanyCompany).filter_by(id=c["id"]).first()
+        wake = co.request_wakeup(db, owner, agent, source)
+        db.flush()
+        run = type("R", (), {"issue_id": None, "model": agent.model})()
+        system, user, _, _ = cx.build_prompt(db, owner, agent, company, run, [wake])
+        db.rollback()
+        return system, user
+    finally:
+        db.close()
+
+
+def test_manager_prompt_lists_unassigned_issues_and_report_workload():
+    owner = _owner()
+    c, ceo, eng, qa, iss = _triage_setup(owner)
+    db = _TS()
+    co.update_issue(db, owner, co.user_actor(owner), iss["busy"]["id"], {"status": "in_progress"})
+    db.close()
+    system, user = _prompt_for(owner, c, ceo["id"])
+    assert "Unassigned issues (4):" in user
+    for i in iss["free"] + [iss["backlog"]]:
+        assert i["identifier"] in user
+    # Assigned, person-held and finished issues are not up for triage.
+    section = user.split("Unassigned issues")[1].split("Your reports' workload")[0]
+    for k in ("mine", "busy", "person", "done"):
+        assert iss[k]["identifier"] + " " not in section
+    # Priority order: the high one leads.
+    assert section.index(iss["free"][2]["identifier"]) < section.index(iss["free"][0]["identifier"])
+    assert f"- Bo (Engineer, idle): 1 open, in progress: {iss['busy']['identifier']}" in user
+    assert "- Cy (QA, idle): 0 open" in user
+    assert "Triage first" in user and "company_update_issue" in user and '"assignee"' in user
+    assert "triage first" in system.lower()
+    assert "triaging unassigned issues" in user
+
+
+def test_unassigned_list_is_capped(monkeypatch):
+    monkeypatch.setattr(cx, "TRIAGE_LIMIT", 2)
+    owner = _owner()
+    c, ceo, eng, qa, iss = _triage_setup(owner)
+    _, user = _prompt_for(owner, c, ceo["id"], source="timer")
+    assert "Unassigned issues (4):" in user and "...and 2 more" in user
+    assert "triage any unassigned issues" in user
+
+
+def test_non_manager_prompt_has_no_triage_section():
+    owner = _owner()
+    c, ceo, eng, qa, iss = _triage_setup(owner)
+    _, user = _prompt_for(owner, c, eng["id"])
+    assert "Unassigned issues" not in user and "workload" not in user and "Triage first" not in user
+    assert iss["busy"]["identifier"] in user           # its own issues are still there
+
+
+def test_top_of_org_without_reports_still_triages():
+    owner = _owner()
+    db = _TS()
+    u = co.user_actor(owner)
+    c = co.create_company(db, owner, u, {"name": "Solo " + owner})
+    solo = co.create_agent(db, owner, u, c["id"], {"name": "Sol", "role": "ceo", "model": "qwen3:8b@Local"})
+    loose = co.create_issue(db, owner, u, c["id"], {"title": "Loose", "status": "todo"})
+    db.close()
+    _, user = _prompt_for(owner, c, solo["id"])
+    assert loose["identifier"] in user and "Triage first" in user and "workload" not in user
+
+
+def test_manager_assigns_an_unassigned_issue_to_a_report_and_wakes_them():
+    owner = _owner()
+    c, ceo, eng, qa, iss = _triage_setup(owner)
+    target = iss["free"][0]
+    calls = []
+
+    def script(ctx):
+        return [(ct.UPDATE_ISSUE, {"issue": target["identifier"], "assignee": "Bo",
+                                   "comment": "Bo owns the backend."})]
+
+    _wake(owner, ceo["id"], "on_demand")
+
+    async def go():
+        ex = _executor(_make_loop(script, calls))
+        started = await ex.tick()
+        await _drain(ex)
+        return started
+    started = asyncio.run(go())
+    assert len(started) == 1
+    res = calls[0]["results"][0]
+    assert res["exit_code"] == 0 and "assigned to Bo" in res["output"], res
+    row = _q(cdb.CompanyIssue, id=target["id"])[0]
+    assert row.assignee_agent_id == eng["id"]
+    wakes = _q(cdb.CompanyWakeup, agent_id=eng["id"], status="pending")
+    assert [(w.source, w.issue_id) for w in wakes] == [("assignment", target["id"])]
+    comments = _q(cdb.CompanyIssueComment, issue_id=target["id"])
+    assert any(cm.author_id == ceo["id"] and "backend" in cm.body for cm in comments)
+    acts = [a for a in _q(cdb.CompanyActivity, company_id=c["id"]) if a.action == "issue.assigned"]
+    assert any(a.actor_type == "agent" for a in acts)
+
+
+def test_assignee_rules_in_update_issue():
+    owner = _owner()
+    c, ceo, eng, qa, iss = _triage_setup(owner)
+    loose = iss["free"][1]["identifier"]
+    ctx_eng = {"owner": owner, "company_id": c["id"], "agent_id": eng["id"], "run_id": "x", "comments": []}
+    # A non-manager can't hand work to others...
+    r = ct.run_tool(ct.UPDATE_ISSUE, json.dumps({"issue": loose, "assignee": "Cy"}), ctx=ctx_eng)
+    assert r["exit_code"] == 1 and "managers" in r["error"].lower()
+    # ...but may pick an unassigned issue up itself.
+    r = ct.run_tool(ct.UPDATE_ISSUE, json.dumps({"issue": loose, "assignee": "me"}), ctx=ctx_eng)
+    assert r["exit_code"] == 0 and "assigned to you" in r["output"], r
+    # A manager can't assign to someone outside its reports.
+    db = _TS()
+    other = co.create_agent(db, owner, co.user_actor(owner), c["id"],
+                            {"name": "Dee", "role": "engineer", "reports_to": eng["id"], "model": "qwen3:8b@Local"})
+    db.close()
+    third = iss["free"][2]
+    r = ct.run_tool(ct.UPDATE_ISSUE, json.dumps({"issue": third["identifier"], "assignee": "Dee"}),
+                    ctx=dict(ctx_eng, agent_id=qa["id"]))
+    assert r["exit_code"] == 1
+    # The CEO reaches the whole tree below it.
+    r = ct.run_tool(ct.UPDATE_ISSUE, json.dumps({"issue": third["identifier"], "assignee": "Dee"}),
+                    ctx=dict(ctx_eng, agent_id=ceo["id"]))
+    assert r["exit_code"] == 0, r
+    assert _q(cdb.CompanyIssue, id=third["id"])[0].assignee_agent_id == other["id"]
+
+
+def test_run_notes_a_suspicious_input_token_cap():
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    _wake(owner, eng["id"])
+
+    async def loop(url, model, messages, **kw):
+        ctx = ct.current()
+        db = _TS()
+        db.add(cdb.UsageEvent(id=str(uuid.uuid4()), owner=owner, source="company", company_id=ctx["company_id"],
+                              company_agent_id=ctx["agent_id"], company_run_id=ctx["run_id"], model=model,
+                              input_tokens=4096, output_tokens=10, idempotency_key=str(uuid.uuid4())))
+        db.commit()
+        db.close()
+        yield 'data: {"delta": "ok"}\n\n'
+
+    async def go():
+        ex = _executor(loop)
+        started = await ex.tick()
+        await _drain(ex)
+        return started[0]
+    run_id = asyncio.run(go())
+    run = _q(cdb.CompanyRun, id=run_id)[0]
+    assert "4096" in (run.usage or {}).get("context_warning", "")
+    assert cx.truncated_at(run_id) == 4096
