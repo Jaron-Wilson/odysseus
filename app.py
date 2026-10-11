@@ -675,6 +675,9 @@ from routes.sip_routes import setup_sip_routes
 app.include_router(setup_sip_routes())
 from routes.meet_routes import setup_meet_routes
 app.include_router(setup_meet_routes())
+# Google products behind one Google connection (routes/google_routes.py, docs/google.md)
+from routes.google_routes import setup_google_routes
+app.include_router(setup_google_routes())
 from routes.special_chat_routes import setup_special_chat_routes
 app.include_router(setup_special_chat_routes(session_manager))
 from routes.mail_listener_routes import setup_mail_listener_routes
@@ -1289,6 +1292,12 @@ async def _startup_event():
             "In-process task scheduler disabled (ODYSSEUS_INPROCESS_TASKS=0); "
             "drive task firing externally (e.g. cron)."
         )
+    # Company agents: wake-ups, heartbeats and runs (src/company_executor.py).
+    try:
+        from src.company_executor import start_executor
+        await start_executor(session_manager)
+    except Exception as e:
+        logger.warning(f"Company executor did not start: {e}")
     # Periodic null-owner sweep — re-runs the legacy-owner assignment hourly
     # so any data created while auth was disabled / localhost-bypassed gets
     # claimed by the admin instead of staying world-visible (M19).
@@ -1353,6 +1362,13 @@ async def _startup_event():
 
 async def _shutdown_event():
     logger.info("Application shutting down...")
+    # Company agent runs first: each is closed as interrupted and its issues released.
+    try:
+        from src.company_executor import get_executor
+        if get_executor() is not None:
+            await get_executor().stop()
+    except Exception as e:
+        logger.warning(f"Company executor shutdown error: {e}")
     # Replies still being written (a restart that did not come from Deploy,
     # which does this itself): note them to carry on after the restart, then
     # stop them so each is saved as far as it got.

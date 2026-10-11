@@ -2,7 +2,9 @@
 
 The data rules live here, not in the routes, so the executor that will run
 agents (PR C) can call the same functions as the HTTP API and get the same
-validation and the same activity log. Nothing in this module runs a model.
+validation and the same activity log. Nothing in this module runs a model;
+src/company_executor.py does, and src/company_tools.py gives agents tools
+that call back into these functions as Actor("agent", agent_id, run_id).
 
 Every function takes ``owner`` (the username, or "" in single-user mode) and
 only ever touches rows of that owner. Errors are raised as ``CompanyError``
@@ -51,8 +53,9 @@ ISSUE_TRANSITIONS: Dict[str, tuple] = {
 PRIORITIES = ("critical", "high", "medium", "low")
 PRIORITY_RANK = {p: i for i, p in enumerate(PRIORITIES)}
 RUN_SOURCES = ("timer", "assignment", "mention", "on_demand", "approval")
-RUN_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "timed_out")
-RUN_TERMINAL = ("succeeded", "failed", "cancelled", "timed_out")
+RUN_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "timed_out", "interrupted")
+RUN_TERMINAL = ("succeeded", "failed", "cancelled", "timed_out", "interrupted")
+RUN_LIVE = ("queued", "running")
 APPROVAL_TYPES = ("hire_agent", "strategy", "plan", "budget_override")
 APPROVAL_STATUSES = ("pending", "revision_requested", "approved", "rejected", "cancelled")
 APPROVAL_DECISIONS = ("approved", "rejected", "revision_requested")
@@ -164,11 +167,11 @@ def _budget(spent: int, month: Optional[str], limit: int) -> Dict[str, Any]:
 
 def log_activity(db, owner: str, company_id: str, actor: Actor, action: str, entity_type: str,
                  entity_id: Optional[str], details: Optional[Dict] = None,
-                 agent_id: Optional[str] = None) -> CompanyActivity:
+                 agent_id: Optional[str] = None, run_id: Optional[str] = None) -> CompanyActivity:
     row = CompanyActivity(
         id=_id(), owner=_owner_val(owner), company_id=company_id, actor_type=actor.type,
         actor_id=actor.id, action=action, entity_type=entity_type, entity_id=entity_id,
-        agent_id=agent_id or actor.agent_id, run_id=actor.run_id, details=details or None,
+        agent_id=agent_id or actor.agent_id, run_id=run_id or actor.run_id, details=details or None,
     )
     db.add(row)
     return row
@@ -367,6 +370,34 @@ def _tool_list(v: Any, field: str) -> Optional[List[str]]:
     return out
 
 
+CODING_AGENTS = ("opencode", "claude", "antigravity")
+
+
+def _coding_agent(v: Any) -> Optional[str]:
+    if v in (None, "", "off"):
+        return None
+    return _choice(v, "coding_agent", CODING_AGENTS)
+
+
+def _workdir(v: Any) -> Optional[str]:
+    """The folder an agent's coding agent works in: an absolute path, and
+    never inside the running Odysseus install (the tool refuses that too)."""
+    import os
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    if not isinstance(v, str) or len(v) > 1000:
+        raise CompanyError(422, "workdir must be a folder path")
+    path = os.path.realpath(os.path.expanduser(v.strip()))
+    if not os.path.isabs(path):
+        raise CompanyError(422, "workdir must be an absolute path")
+    root = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    if path == root or path.startswith(root + os.sep):
+        raise CompanyError(422, "workdir can't be inside the running Odysseus install")
+    if os.path.exists(path) and not os.path.isdir(path):
+        raise CompanyError(422, "workdir is a file, not a folder")
+    return path
+
+
 def _cached_model_match(spec: str, owner: str) -> bool:
     """True when `spec` names a model the owner's endpoint last listed. Lets an
     agent be saved while a local endpoint is briefly offline."""
@@ -420,6 +451,8 @@ def ser_agent(a: CompanyAgent) -> Dict:
             "heartbeat": heartbeat_policy(a.heartbeat or None),
             **_budget(a.spent_cents or 0, a.budget_month, a.monthly_budget_cents or 0),
             "last_heartbeat_at": _iso(a.last_heartbeat_at), "session_id": a.session_id,
+            "pause_reason": a.pause_reason or "",
+            "coding_agent": a.coding_agent or "", "workdir": a.workdir or "",
             "created_at": _iso(a.created_at), "updated_at": _iso(a.updated_at)}
 
 
@@ -539,6 +572,7 @@ def create_agent(db, owner: str, actor: Actor, company_id: str, data: Dict) -> D
         monthly_budget_cents=_cents(data.get("monthly_budget_cents", 0), "monthly_budget_cents"),
         spent_cents=0, budget_month=month_key(),
         session_id=_validate_session(db, owner, data.get("session_id")),
+        coding_agent=_coding_agent(data.get("coding_agent")), workdir=_workdir(data.get("workdir")),
     )
     db.add(a)
     db.flush()
@@ -601,6 +635,8 @@ def update_agent(db, owner: str, actor: Actor, agent_id: str, data: Dict) -> Dic
     setf("role", role)
     setf("reports_to", reports_to)
     setf("status", status)
+    if a.status != "paused" and a.pause_reason:
+        a.pause_reason = None     # resumed: the reason it was paused no longer holds
     if "title" in data:
         setf("title", _text(data["title"], "title", max_len=120))
     if "capabilities" in data:
@@ -626,6 +662,10 @@ def update_agent(db, owner: str, actor: Actor, agent_id: str, data: Dict) -> Dic
         setf("monthly_budget_cents", _cents(data["monthly_budget_cents"], "monthly_budget_cents"))
     if "session_id" in data:
         setf("session_id", _validate_session(db, owner, data["session_id"] or None))
+    if "coding_agent" in data:
+        setf("coding_agent", _coding_agent(data["coding_agent"]))
+    if "workdir" in data:
+        setf("workdir", _workdir(data["workdir"]))
     if changes:
         action = "agent.terminated" if changes.get("status", {}).get("to") == "terminated" else "agent.updated"
         log_activity(db, owner, a.company_id, actor, action, "agent", a.id, {"changes": _jsonable(changes)},
@@ -1034,7 +1074,7 @@ def create_issue(db, owner: str, actor: Actor, company_id: str, data: Dict) -> D
         _set_labels(db, owner, i, data["label_ids"])
     log_activity(db, owner, c.id, actor, "issue.created", "issue", i.id,
                  {"identifier": i.identifier, "title": title, "status": status})
-    if agent:
+    if agent and agent.id != actor.agent_id:   # an agent taking work on itself is already awake
         request_wakeup(db, owner, agent, "assignment", issue_id=i.id)
     db.commit()
     return get_issue(db, owner, i.id)
@@ -1103,7 +1143,7 @@ def update_issue(db, owner: str, actor: Actor, issue_id: str, data: Dict) -> Dic
         log_activity(db, owner, i.company_id, actor, action, "issue", i.id,
                      {"identifier": i.identifier, "changes": _jsonable(changes)})
         i.updated_at = utcnow_naive()
-    if woke:
+    if woke and woke.id != actor.agent_id:
         request_wakeup(db, owner, woke, "assignment", issue_id=i.id)
     db.commit()
     return get_issue(db, owner, i.id)
@@ -1206,8 +1246,12 @@ def checkout_issue(db, owner: str, actor: Actor, issue_id: str, agent_id: str, r
         raise CompanyError(422, "agent_id must be an agent in this company")
     if agent.status in ("terminated", "paused", "pending_approval"):
         raise CompanyError(409, f"{agent.name} is {agent.status.replace('_', ' ')} and can't take work")
+    # Only a live run of this agent may hold an issue: the lock is how the
+    # executor knows which run is working on what, and finish_run frees it.
     run = _scoped(db, CompanyRun, owner).filter(CompanyRun.id == run_id).first()
-    if run is not None and (run.agent_id != agent.id or run.status in RUN_TERMINAL):
+    if run is None:
+        raise CompanyError(422, "run_id must be a live run of this agent")
+    if run.agent_id != agent.id or run.status not in RUN_LIVE:
         raise CompanyError(409, "That run belongs to another agent or has finished")
     statuses = list(expected_statuses or CHECKOUT_STATUSES)
     bad = [s for s in statuses if s not in CHECKOUT_STATUSES]
@@ -1472,33 +1516,130 @@ def get_approval(db, owner: str, approval_id: str) -> Dict:
     return ser_approval(_get(db, CompanyApproval, approval_id, owner, "Approval"))
 
 
+MAX_RUN_STEPS = 200
+
+
+def _plan_options(options: Dict, owner: str) -> Dict:
+    """The run choices made when approving a plan or strategy: the model to
+    carry it out on (any model the owner can use), and run limits."""
+    out: Dict[str, Any] = {}
+    model = options.get("chosen_model")
+    if model is not None and str(model).strip():
+        out["chosen_model"] = validate_model_spec(model, owner)
+    steps = options.get("max_steps")
+    if steps not in (None, ""):
+        if isinstance(steps, bool) or not isinstance(steps, (int, float)) or not 1 <= int(steps) <= MAX_RUN_STEPS:
+            raise CompanyError(422, f"max_steps must be between 1 and {MAX_RUN_STEPS}")
+        out["max_steps"] = int(steps)
+    cost = options.get("max_cost_usd")
+    if cost not in (None, ""):
+        if isinstance(cost, bool) or not isinstance(cost, (int, float)) or not 0 < float(cost) <= 10000:
+            raise CompanyError(422, "max_cost_usd must be a positive amount")
+        out["max_cost_usd"] = round(float(cost), 4)
+    return out
+
+
+def pause_agent(db, owner: str, agent: CompanyAgent, reason: str, *, actor: Optional[Actor] = None,
+                action: str = "agent.paused") -> None:
+    """Pause an agent with a reason (the executor's budget hard stop). Pending
+    wake-ups are dropped: a paused agent wakes for nothing until resumed."""
+    agent.status = "paused"
+    agent.pause_reason = reason[:500]
+    db.query(CompanyWakeup).filter(CompanyWakeup.agent_id == agent.id, CompanyWakeup.status == "pending") \
+        .update({CompanyWakeup.status: "dropped"}, synchronize_session=False)
+    log_activity(db, owner, agent.company_id, actor or Actor("system"), action, "agent", agent.id,
+                 {"name": agent.name, "reason": agent.pause_reason}, agent_id=agent.id)
+
+
 def decide_approval(db, owner: str, actor: Actor, approval_id: str, decision: str,
-                    note: Optional[str] = None) -> Dict:
-    """Record the person's decision. Acting on it (running the requester
-    again, applying a plan) is the executor's job in PR C; the one thing done
-    here is settling a pending hire, since that is just the agent's status."""
+                    note: Optional[str] = None, options: Optional[Dict] = None) -> Dict:
+    """Record the person's decision and apply what it settles here:
+
+    - hire_agent: the pending agent becomes idle (approved) or terminated.
+    - plan / strategy approved: `options` may carry chosen_model, max_steps
+      and max_cost_usd, stored in the payload; the executor runs the
+      requester on that model with the approved plan pinned.
+    - budget_override approved: `options.budget_cents` (0 = no limit) becomes
+      the new monthly limit of the scope that ran out, and the paused agent
+      is resumed and woken.
+    Any decision on an agent's request wakes that agent (source approval)."""
     ap = _get(db, CompanyApproval, approval_id, owner, "Approval")
     _choice(decision, "decision", APPROVAL_DECISIONS)
     if ap.status not in ("pending", "revision_requested"):
         raise CompanyError(409, f"This approval is already {_say(ap.status)}")
+    options = options or {}
+    if not isinstance(options, dict):
+        raise CompanyError(422, "options must be an object")
+    payload = dict(ap.payload or {})
+    if decision == "approved" and ap.type in ("plan", "strategy"):
+        payload.update(_plan_options(options, owner))
     ap.status = decision
     ap.decision_note = _text(note, "note", max_len=4000)
     ap.decided_by = actor.id
     ap.decided_at = utcnow_naive()
-    agent_id = (ap.payload or {}).get("agent_id")
+    agent_id = payload.get("agent_id")
     if ap.type == "hire_agent" and agent_id and decision != "revision_requested":
         a = _scoped(db, CompanyAgent, owner).filter(CompanyAgent.id == agent_id).first()
         if a is not None and a.status == "pending_approval":
             a.status = "idle" if decision == "approved" else "terminated"
+    resumed = None
+    if ap.type == "budget_override" and decision == "approved":
+        if "budget_cents" in options and options["budget_cents"] is not None:
+            limit = _cents(options["budget_cents"], "budget_cents")
+            payload["new_limit_cents"] = limit
+            if payload.get("scope") == "company":
+                c = _scoped(db, CompanyCompany, owner).filter(CompanyCompany.id == ap.company_id).first()
+                if c is not None:
+                    c.monthly_budget_cents = limit
+            elif agent_id:
+                a = _scoped(db, CompanyAgent, owner).filter(CompanyAgent.id == agent_id).first()
+                if a is not None:
+                    a.monthly_budget_cents = limit
+        a = _scoped(db, CompanyAgent, owner).filter(CompanyAgent.id == agent_id).first() if agent_id else None
+        if a is not None and a.status == "paused":
+            a.status = "idle"
+            a.pause_reason = None
+            resumed = a
+    ap.payload = payload
     requester = None
     if ap.requested_by_type == "agent" and ap.requested_by_id:
         requester = _scoped(db, CompanyAgent, owner).filter(CompanyAgent.id == ap.requested_by_id).first()
+    if requester is None and resumed is not None:
+        requester = resumed
+    if requester is None and ap.type in ("plan", "strategy") and agent_id:
+        # A plan the person wrote for an agent: that agent carries it out.
+        requester = _scoped(db, CompanyAgent, owner).filter(CompanyAgent.id == agent_id).first()
     if requester is not None:
-        request_wakeup(db, owner, requester, "approval", approval_id=ap.id)
+        request_wakeup(db, owner, requester, "approval", approval_id=ap.id, issue_id=payload.get("issue_id"))
     log_activity(db, owner, ap.company_id, actor, f"approval.{decision}", "approval", ap.id,
-                 {"type": ap.type, "title": ap.title, "note": ap.decision_note})
+                 {"type": ap.type, "title": ap.title, "note": ap.decision_note,
+                  **({"chosen_model": payload["chosen_model"]} if decision == "approved" and payload.get("chosen_model") else {})})
     db.commit()
     return ser_approval(ap)
+
+
+def approval_defaults(db, owner: str, approval_id: str) -> Dict:
+    """What the Approve dialog starts with: the model last chosen for this
+    agent's approved plans (so the choice is remembered per agent), else the
+    agent's own model, and the limits used last time."""
+    ap = _get(db, CompanyApproval, approval_id, owner, "Approval")
+    agent_id = (ap.payload or {}).get("agent_id") or (ap.requested_by_id if ap.requested_by_type == "agent" else None)
+    agent = _scoped(db, CompanyAgent, owner).filter(CompanyAgent.id == agent_id).first() if agent_id else None
+    out: Dict[str, Any] = {"model": agent.model if agent else None, "max_steps": None, "max_cost_usd": None,
+                           "agent_model": agent.model if agent else None, "remembered": False}
+    if agent is not None:
+        prev = _scoped(db, CompanyApproval, owner).filter(
+            CompanyApproval.company_id == ap.company_id, CompanyApproval.type.in_(("plan", "strategy")),
+            CompanyApproval.status == "approved", CompanyApproval.id != ap.id,
+            CompanyApproval.requested_by_id == agent.id).order_by(CompanyApproval.decided_at.desc()).first()
+        p = (prev.payload or {}) if prev is not None else {}
+        if p.get("chosen_model"):
+            out.update(model=p["chosen_model"], remembered=True)
+        out["max_steps"] = p.get("max_steps")
+        out["max_cost_usd"] = p.get("max_cost_usd")
+    if ap.type == "budget_override":
+        out["budget_cents"] = (ap.payload or {}).get("limit_cents")
+    return out
 
 
 def cancel_approval(db, owner: str, actor: Actor, approval_id: str) -> Dict:

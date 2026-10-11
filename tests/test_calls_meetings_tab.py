@@ -91,7 +91,7 @@ def test_pointers_name_the_new_tab():
     from routes import meet_routes
     from src.meet import google_calendar
     assert "Settings > Calls & Meetings" in meet_routes.TURN_ON
-    assert google_calendar.RECONNECT == "Connect Google Calendar again in Settings > Calls & Meetings > Google Meet."
+    assert google_calendar.RECONNECT == "Connect Google Calendar again in Settings > Google."
 
 
 # ── In a browser: the real devicesSettings.js ────────────────────────────

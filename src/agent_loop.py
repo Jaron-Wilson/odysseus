@@ -595,6 +595,21 @@ from src import tool_pages as _tool_pages  # noqa: E402
 _DOMAIN_RULES["ui"] = (_DOMAIN_RULES["ui"].replace("{pages}", _tool_pages.names_for_prompt())
                        .replace("{aliases}", _tool_pages.aliases_for_prompt()))
 TOOL_SECTIONS["ui_control"] = TOOL_SECTIONS["ui_control"].replace("{pages}", _tool_pages.names_for_prompt())
+# Company agents' tools (src/company_tools.py), for models that use fenced blocks.
+from src import company_tools as _company_tools  # noqa: E402
+TOOL_SECTIONS.update(_company_tools.PROMPT_SECTIONS)
+
+# Google products (src/google_workspace/products.py): one-line sections, a
+# domain and its rules. Tools of a product that is off are hidden per owner
+# in run_agent_loop.
+from src.google_workspace import products as _google_products  # noqa: E402
+for _gname, _gsection in _google_products.prompt_sections().items():
+    TOOL_SECTIONS.setdefault(_gname, _gsection)
+_DOMAIN_TOOL_MAP["google"] = set(_google_products.ALL_TOOLS)
+_DOMAIN_RULES["google"] = _google_products.PROMPT_RULES
+_GOOGLE_DOMAIN_RE = re.compile(
+    r"\b(google (?:drive|docs?|sheets?|slides|tasks?|contacts?|account|workspace)|my drive|g ?docs?|"
+    r"g ?sheets?|spreadsheets?|slide deck|docs\.google\.com|drive\.google\.com)\b", re.IGNORECASE)
 
 # The user's Company from a chat (src/agent_tools/company_chat_tools.py).
 from src.agent_tools.company_chat_tools import TOOL_SECTIONS as _COMPANY_CHAT_SECTIONS  # noqa: E402
@@ -1039,6 +1054,9 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
            r"try joining|join(?:ing)? (?:the |this |that |my )?(?:meeting|call|meet)|"
            r"through (?:my|the) browser)\b"):
         domains.add("meet")
+    # Google products (google_* tools): "find my google doc", a Sheets link.
+    if _GOOGLE_DOMAIN_RE.search(q):
+        domains.add("google")
     # What changed in Odysseus itself: the merged PRs (whats_new). "what
     # changed with the voice call?" otherwise reads as a plain chat message.
     if has(r"\b(what'?s new|what is new|what (?:has )?changed|changelog|change log|release notes|merged|"
@@ -2268,6 +2286,10 @@ async def stream_agent_loop(
         disabled_tools.update(tool_policy.all_disabled_names())
         if tool_policy.disable_mcp:
             mcp_mgr = None
+    # Company tools exist only inside a Company agent's run (src/company_tools.py).
+    _company_run = _company_tools.active()
+    if not _company_run:
+        disabled_tools.update(_company_tools.TOOL_NAMES)
     guide_only = bool(tool_policy and tool_policy.mode == "guide_only")
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
@@ -2275,13 +2297,23 @@ async def stream_agent_loop(
         # MCP tools are namespaced dynamically, so hide all MCP schemas for
         # public/non-admin users rather than trying to enumerate every tool.
         mcp_mgr = None
-    # Company chat tools exist only for an owner with a company
-    # (src/agent_tools/company_chat_tools.py).
+    # The user's Company chat tools (src/agent_tools/company_chat_tools.py):
+    # only for an owner with a company, and never inside a Company agent's
+    # run, where an agent must act as itself, not as the user.
     try:
-        from src.agent_tools import company_chat_tools as _company_tools
-        disabled_tools.update(_company_tools.hidden_tools(owner))
+        from src.agent_tools import company_chat_tools as _company_chat_tools
+        if _company_run:
+            disabled_tools.update(_company_chat_tools.ALL_TOOLS)
+        else:
+            disabled_tools.update(_company_chat_tools.hidden_tools(owner))
     except Exception as _e:
-        logger.debug("company tool gating skipped: %s", _e)
+        logger.debug("company chat tool gating skipped: %s", _e)
+    # Google products this owner has not connected: their tools stay hidden.
+    try:
+        from src.google_workspace import tools as _google_tools
+        disabled_tools.update(_google_tools.disabled_for(owner))
+    except Exception:
+        pass
 
     if plan_mode:
         # Plan mode: investigate read-only, propose a plan, don't execute. The
@@ -2382,6 +2414,9 @@ async def stream_agent_loop(
     # tool names. It prevents obvious requests like "last 5 emails" from
     # collapsing to only ask_user/manage_memory when vector retrieval misses or
     # times out.
+    if not guide_only and _relevant_tools and _company_run:
+        # A Company run always has its Company tools, whatever retrieval picked.
+        _relevant_tools = set(_relevant_tools) | set(_company_tools.TOOL_NAMES)
     if not guide_only and _relevant_tools is not None:
         for _domain in (_intent.get("domains") or set()):
             _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))
@@ -2412,12 +2447,14 @@ async def stream_agent_loop(
         # has the coding tool: "carry on" names no tool at all.
         if session_id and "claude_code" not in disabled_tools and _attached_claude_note(session_id):
             _relevant_tools.add("claude_code")
-        # A message about the Company (a mention, an issue like JAR-1): its tools.
-        try:
-            from src.agent_tools import company_chat_tools as _company_tools
-            _relevant_tools.update(_company_tools.relevant_tools(owner, _last_user) - disabled_tools)
-        except Exception as _e:
-            logger.debug("company tool selection skipped: %s", _e)
+        # A chat message about the Company (a mention, an issue like JAR-1):
+        # the user's Company tools. Not in a Company agent's run.
+        if not _company_run:
+            try:
+                from src.agent_tools import company_chat_tools as _company_chat_tools
+                _relevant_tools.update(_company_chat_tools.relevant_tools(owner, _last_user) - disabled_tools)
+            except Exception as _e:
+                logger.debug("company chat tool selection skipped: %s", _e)
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
@@ -3594,6 +3631,15 @@ async def stream_agent_loop(
                 if isinstance(_sm, dict) and str(_sm.get("link", "")).startswith("/api/device-media/"):
                     _line = f"\n\n[{_sm.get('name') or 'Play'}]({_sm['link']})\n"
                     yield f'data: {json.dumps({"delta": _line})}\n\n'
+
+            # A Google file made or edited (google_* tools): its link goes
+            # into the reply, so it is there after a reload whatever the
+            # model writes.
+            if block.tool_type.startswith("google_") and isinstance(result.get("google_link"), dict):
+                from src.google_workspace.common import link_line as _google_link_line
+                _gline = _google_link_line(result["google_link"])
+                if _gline:
+                    yield f'data: {json.dumps({"delta": _gline})}\n\n'
 
             # Native document tools open in the editor + carry the REAL doc id.
             # Emit a doc_update so the frontend opens/activates it and sends it

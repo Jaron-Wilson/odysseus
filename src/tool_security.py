@@ -109,6 +109,9 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "suggest_document", "manage_documents", "create_session", "manage_session",
     "send_to_session", "pipeline", "manage_memory", "manage_skills",
     "branch_thread", "spawn_subagent",
+    # Company agents' tools that change issues (src/company_tools.py).
+    "company_checkout_issue", "company_update_issue", "company_comment",
+    "company_create_issue", "company_request_approval", "company_release_issue",
     "manage_tasks", "manage_notes", "manage_endpoints", "manage_mcp",
     "manage_webhooks", "manage_tokens", "manage_settings", "manage_contact",
     "manage_calendar", "api_call", "app_api", "ui_control",
@@ -125,6 +128,13 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "company_issue_create", "company_issue_update", "company_issue_comment",
     "company_agent_wake", "company_approval_decide",
 }
+
+
+# Google products (src/google_workspace/products.py): reads stay usable in
+# plan mode like list_emails/read_email; creates and edits are mutators.
+from src.google_workspace.products import READ_TOOLS as _GOOGLE_READ, WRITE_TOOLS as _GOOGLE_WRITE  # noqa: E402
+PLAN_MODE_READONLY_TOOLS.update(_GOOGLE_READ)
+_PLAN_MODE_KNOWN_MUTATORS.update(_GOOGLE_WRITE)
 
 
 def plan_mode_disabled_tools() -> Set[str]:

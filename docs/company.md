@@ -259,47 +259,153 @@ mentioned item is promoted to agent mode.
 
 ## Phases
 
-- **PR A (this one)**: data model, rules, API, UI, tests. Nothing runs.
-- **PR B (`cost-tracking`, in parallel)**: server-side usage and cost per
-  model call (a `usage_events`-style table and a pricing module).
-- **PR C**: the executor. Heartbeat scheduling, running an agent on its
-  model with its instructions and tools, checkout and release around each
-  run, comments and status changes as the agent, acting on approvals,
-  budget enforcement.
+- **PR A**: data model, rules, API, UI, tests. Nothing runs.
+- **PR B (`cost-tracking`)**: server-side usage and cost per model call
+  (`usage_events`, `src/usage.py`, `src/budgets.py`).
+- **PR C (this one, `company-execution`)**: the executor. Agents run.
 
-## Seams for PR B and PR C
+## PR C: agents run (src/company_executor.py, src/company_tools.py)
 
-- **Service functions.** PR C calls `src/company.py` directly with
-  `Actor("agent", agent_id, run_id)`. Comments, transitions and checkouts
-  made that way are attributed to the agent and the run in the activity log.
-- **Runs.** `create_run(db, owner, agent_id, source, issue_id=, model=)` and
-  `finish_run(db, owner, run_id, status, error=, result_summary=, usage=)`
-  exist; `finish_run` also releases any issue the run held. PR C sets
-  `running`, `started_at`, `session_id` and `last_heartbeat_at`.
-- **Checkout.** Today any `run_id` string is accepted when no matching
-  `company_runs` row exists (so the API can be exercised before the
-  executor). PR C should require a real, live run of that agent.
-- **Wake-ups.** `company_wakeups` with `status = pending` is the queue. PR C
-  consumes rows (set `consumed`, `run_id`, `consumed_at`), coalesces several
-  for one agent into one run, and adds its own `timer` wake-ups from each
-  agent's heartbeat policy.
-- **Approvals.** `decide_approval` records the decision and wakes the
-  requesting agent (`source = approval`). Applying a strategy or plan is PR C.
-- **Budgets.** `monthly_budget_cents`, `spent_cents` and `budget_month` on
-  companies and agents. Serializers already report `spent_cents` as 0 when
-  `budget_month` is not the current month. PR B's usage rows should carry
-  the run id (and so the agent and company); PR C adds each run's cost to
-  the agent and company in the run's month and pauses an agent (status
-  `paused`, activity `agent.budget_paused`) when it reaches its limit or the
-  company's. `run.usage` holds the per-run summary for the UI.
-- **Sessions.** `agent.session_id` and `run.session_id` point at Odysseus
-  chats, so a run's transcript opens like any other chat (or a side thread
-  of the agent's workspace chat).
+### The executor loop
+
+Started with the app after the task scheduler (`app.py`), stopped first on
+shutdown. Every 3 seconds, or at once when a route queues a wake-up:
+
+1. **Timer heartbeats.** An agent (idle, active or error, in an active
+   company) whose heartbeat is enabled gets a `timer` wake-up once
+   `interval_sec` has passed since `last_heartbeat_at` (or since it was
+   hired), unless one is already waiting.
+2. **Claiming.** Pending wake-ups are grouped per agent and ALL of an
+   agent's pending rows become one run (status `consumed`, `run_id` set).
+   The run's `invocation_source` is the most important reason: approval,
+   assignment, mention, on demand, timer. Paused, pending and terminated
+   agents' wake-ups are dropped; a paused company's wait.
+3. **Concurrency.** At most `company_max_concurrent_runs` runs at once
+   (default 2, Company settings > "Agents running at once"), one per agent.
+4. **Foreground gate.** A run on a LOCAL model (loopback, private, tailnet
+   CGNAT, a bare LAN host name) waits for Odysseus to be quiet before it
+   starts (`src/interactive_gate.py`, as scheduled tasks do), and between
+   agent rounds waits again if the user came back, each wait capped at
+   `COMPANY_GATE_MAX_WAIT_S` (60 s) so a busy open page can't hold an agent
+   forever. A run the person asked for (Wake now, an approval decision)
+   starts at once. Cloud models are not gated. `COMPANY_FOREGROUND_GATE=always|never` overrides. Company runs are
+   flagged `background` in `src/agent_runs.py`, so they don't count as the
+   user's activity (one agent doesn't block the next) and a restart doesn't
+   carry them on as chats.
+5. **Notifications** to the owner only: a plan / strategy / hire waiting for
+   approval, a budget warning (once a month per agent or company) or stop,
+   and a failed run. A web push to the owner's browsers, and a toast on an
+   open Company page.
+
+At startup, runs left `queued` or `running` are marked `interrupted` (a new
+run status), their issue locks are released and running agents go idle.
+
+### A run
+
+1. Budgets are checked for the agent and the company (`budgets.check`);
+   spend is copied onto their `spent_cents`. Hard stop: the agent is paused
+   with `pause_reason`, its wake-ups are dropped, a `budget_override`
+   approval opens, and nothing runs. Local and plan models cost $0 here, so
+   they never stop a run.
+2. The model spec (the approved plan's `chosen_model`, else the agent's) is
+   resolved with `_resolve_model`. Failure fails the run; the agent shows
+   `error` until the next good run.
+3. **Workspace.** Answer to the open question: one workspace chat per agent
+   (`agent.session_id`, filed in the "Company" folder), and a **fresh thread
+   per run** under it (`run.session_id`). Why: a run's context stays small
+   and bounded, which matters on 8-32K local models, so nothing has to be
+   compacted; the durable memory is the issues and their comments, which
+   every run reads back; each run's transcript opens on its own (Runs >
+   Open as chat) and shows as a thread of the agent's chat; and runs never
+   interleave in one history.
+4. **Prompt.** System: the agent's instructions, its place in the org
+   (company description, goals, manager, reports and their capabilities)
+   and a short "how to work" protocol. User (saved in the thread): why it
+   woke (assignment, the mention's comment, approval decision and note,
+   heartbeat), any budget notice, the focus issue(s) with recent comments,
+   and its open issues.
+5. **Loop.** `stream_agent_loop` on the resolved model, as an `agent_runs`
+   run in the thread, inside `usage_scope(source="company", company_id,
+   company_agent_id, company_run_id)` so every model call is attributed.
+   Tools: the agent's `enabled_tools` (plus the Company tools) when set, else
+   the usual retrieval plus the Company tools; `disabled_tools` plus
+   `ask_user` (nobody is there to answer). An approved plan is pinned with
+   `approved_plan`; its `max_steps` caps rounds (default 20,
+   `company_agent_max_rounds`). Between rounds: the run's own `max_cost_usd`,
+   the agent's and company's budgets, and the foreground gate.
+6. **Finish.** `finish_run` (status, summary, usage JSON with tokens, cost,
+   rounds, tool calls) releases held issues; the summary is posted as a
+   comment on the run's issue (or the one it checked out) unless the agent
+   already commented there; the agent goes back to idle (or error); spend
+   is copied onto the rows; activity `run.*` is logged.
+7. **Stop.** `POST /api/company/runs/{id}/stop` stops a queued run's wait or
+   a running agent loop (status `cancelled`, "Stopped by you").
+
+### Company tools
+
+Registered like other tools (`src/tool_schemas.py`, `src/agent_tools`
+TOOL_TAGS, `TOOL_SECTIONS` for fenced-block models, `src/tool_execution.py`;
+the mutating ones in `_PLAN_MODE_KNOWN_MUTATORS`). They act through
+`src/company.py` as `Actor("agent", agent_id, run_id)` and only exist inside
+a Company run (a context variable set by the executor; ordinary chats have
+them disabled). Every lookup is limited to the agent's own company.
+
+| Tool | What |
+|---|---|
+| `company_list_issues` | mine / team / unassigned / all, open by default |
+| `company_get_issue` | details, parent, sub-issues, recent comments |
+| `company_checkout_issue` | atomic checkout for this run |
+| `company_update_issue` | validated transition (in_progress goes through checkout), priority, optional comment; only its own, its reports' or ones it created |
+| `company_comment` | @mentions wake other agents |
+| `company_create_issue` | managers only; assign to self or a report, optional parent |
+| `company_request_approval` | plan / strategy (payload plan, issue), or hire_agent (managers; goes through `create_agent`, so the company's hire-approval setting applies) |
+| `company_release_issue` | give up the checkout |
+
+Checkout now requires a real, live (`queued` or `running`) run of that
+agent; any other `run_id` is a 422 (unknown) or 409 (finished or another
+agent's).
+
+### Approvals
+
+- **Plan / strategy.** Approve opens a dialog with a model picker listing
+  every model from `GET /api/models` (local, OpenRouter, ChatGPT plan,
+  anything configured), defaulting to the model last chosen for that
+  agent's approved plans (`GET /approvals/{id}/defaults`), else the agent's
+  model; plus max steps and max cost. Stored as `payload.chosen_model`,
+  `max_steps`, `max_cost_usd`. The agent is woken and runs the pinned plan on
+  that model. Reject and "ask for changes" wake it with the note.
+- **Hire.** Approving activates the pending agent and wakes the manager.
+- **Budget override.** Approve asks for the new monthly limit (0 = none),
+  applies it to the scope that ran out and resumes and wakes the agent.
+
+### Coding agents
+
+Per agent: "Coding agent" (off by default, or OpenCode / Claude Code /
+Antigravity) and a working folder (absolute, never inside the Odysseus
+install). Off adds `claude_code` to the run's disabled tools; on, the run's
+chat allows only that engine (`src/chat_prefs.py`) and the prompt names the
+folder. A coding agent's plan approval appears in the run's chat (Runs >
+Open as chat), not yet in the Company Approvals inbox. The CLI's own token
+costs are not recorded in `usage_events`, so they don't count toward budgets.
+
+### UI
+
+Runs view (live list, a log per run polled while it runs, Stop, Open as
+chat), running dots on agents, budget bars on agent cards, pause reason and
+resume, Wake now, heartbeat and coding-agent settings in the agent form, the
+approve-with-model dialog, plans shown in Approvals, and "Agents running at
+once" in company settings. The page polls `GET /companies/{cid}/live` every
+3 seconds (a passive path for the interactive gate).
+
+### Follow-ups
+
+- Surface coding-agent plan approvals in the Company inbox.
+- Stream the run log over SSE instead of polling.
+- Stale lock window per agent.
 
 ## Open questions
 
-- Should each run get a fresh side thread under the agent's workspace chat,
-  or one long session per agent (and how to compact it)?
+- (Answered in PR C: a fresh thread per run under one workspace chat per agent.)
 - Tool access: are `enabled_tools` / `disabled_tools` enough, or do agents
   need per-company sandboxes (working folder, allowed hosts)?
 - Should the CEO be allowed to create issues and hire without approval when

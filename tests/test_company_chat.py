@@ -347,3 +347,49 @@ def test_mention_directory_route():
         assert {i["identifier"] for i in d["issues"]} == {"JAR-1", "JAR-2"}
         empty = c.get("/api/company/mentions", headers={"x-test-user": _owner()}).json()
         assert empty == {"companies": [], "agents": [], "issues": []}
+
+
+def _tools_sent(monkeypatch, owner, text, *, company_run=False):
+    """Drive the real stream_agent_loop with a fake model; return the tool
+    names it was offered on the first round."""
+    import asyncio
+    import src.agent_loop as al
+    from src import company_tools
+    sent = []
+    monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
+
+    async def fake_stream(_candidates, messages, **kw):
+        sent.append({(t.get("function") or {}).get("name") for t in kw.get("tools") or []})
+        yield f'data: {json.dumps({"delta": "ok"})}\n\n'
+        yield "data: [DONE]\n\n"
+    monkeypatch.setattr(al, "stream_llm_with_fallback", fake_stream)
+
+    async def go():
+        gen = al.stream_agent_loop("http://127.0.0.1:9/v1", "gpt-4o", [{"role": "user", "content": text}],
+                                   owner=owner, max_rounds=1)
+        return [c async for c in gen]
+
+    if company_run:
+        with company_tools.agent_context(owner=owner, company_id="c", agent_id="a", run_id="r"):
+            asyncio.run(go())
+    else:
+        asyncio.run(go())
+    assert sent, "the model was never called"
+    return sent[0]
+
+
+def test_agent_loop_offers_chat_tools_in_chats_only(monkeypatch):
+    from src import company_tools
+    o = _owner()
+    _org(o, prefix="JAR")
+    # A chat about the Company: the user's tools, never the agents' own.
+    names = _tools_sent(monkeypatch, o, "please assign JAR-1 to @CEO")
+    assert tools.ALL_TOOLS <= names
+    assert not (set(company_tools.TOOL_NAMES) & names)
+    # No company: none of them.
+    names = _tools_sent(monkeypatch, _owner(), "please assign JAR-1 to @CEO")
+    assert not (tools.ALL_TOOLS & names)
+    # Inside a Company agent's run: the agent acts as itself, never as the user.
+    names = _tools_sent(monkeypatch, o, "please assign JAR-1 to @CEO", company_run=True)
+    assert not (tools.ALL_TOOLS & names)
+    assert set(company_tools.TOOL_NAMES) <= names

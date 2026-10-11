@@ -1,0 +1,17 @@
+/* Settings > Google (static/js/googleSettings.js) */
+.google-products { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.google-products .google-product { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.google-product.on { border-color: color-mix(in srgb, #2e7d32 45%, var(--border)); }
+.google-product-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.google-product-head h2 { margin: 0; }
+.google-pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); opacity: .8; }
+.google-pill.on { color: #2e7d32; border-color: color-mix(in srgb, #2e7d32 55%, transparent); opacity: 1; }
+.google-scopes code, .google-scope-list code { font-size: 11px; margin-right: 4px; word-break: break-all; }
+.google-scope-list { margin: 4px 0; padding-left: 18px; }
+.google-actions { margin-top: auto; }
+.google-actions a.admin-btn-add { text-decoration: none; }
+.google-sub { margin-top: 4px; padding: 8px 10px; border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--fg) 20%, transparent); }
+.google-sub.on { border-style: solid; border-color: color-mix(in srgb, #2e7d32 45%, transparent); }
+[data-settings-panel="google"] [hidden] { display: none !important; }

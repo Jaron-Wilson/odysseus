@@ -259,6 +259,7 @@
   <link rel="stylesheet" href="/static/css/adsbPanel.css">
   <link rel="stylesheet" href="/static/css/plans.css">
   <link rel="stylesheet" href="/static/css/company.css">
+  <link rel="stylesheet" href="/static/css/googleSettings.css">
   <link rel="stylesheet" href="/static/css/settingsNav.css">
   <link rel="stylesheet" href="/static/css/whatsNew.css">
   <link rel="stylesheet" href="/static/css/chatThreads.css">
@@ -1715,6 +1716,10 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
             <span>Calls &amp; Meetings</span>
           </button>
+          <button class="settings-nav-item" data-goto-keywords="google drive docs sheets slides tasks contacts calendar gmail workspace" data-settings-tab="google">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 12h-9"/></svg>
+            <span>Google</span>
+          </button>
           <div class="settings-sidebar-divider"></div>
           <!-- Section 3: UX (Appearance → Shortcuts) -->
           <button class="settings-nav-item" data-settings-tab="appearance">
@@ -2875,7 +2880,7 @@
                 <button class="admin-btn-add" id="meet-join" type="button">Join</button>
               </div>
               <div class="admin-toggle-label">Make a meeting</div>
-              <div class="admin-toggle-sub">From your own Google account, through Google Calendar: Google makes the Meet link and emails the invites. Making a meeting does not need Join meetings switched on; having Odysseus join it does.</div>
+              <div class="admin-toggle-sub">From your own Google account, through Google Calendar: Google makes the Meet link and emails the invites. Making a meeting does not need Join meetings switched on; having Odysseus join it does. The same Google connection covers Drive, Docs, Sheets and the rest in Settings &gt; Google.</div>
               <div class="settings-row">
                 <span class="admin-toggle-sub" id="meet-google-state">Loading…</span>
                 <a class="admin-btn-add" id="meet-google-connect" href="/api/meet/google/connect" target="_blank" rel="noopener" hidden>Connect Google Calendar</a>
@@ -3028,6 +3033,45 @@
               </ol>
             </details>
           </div>
+        </div>
+
+        <!-- ═══ GOOGLE TAB: routes/google_routes.py, filled in by googleSettings.js ═══ -->
+        <div data-settings-panel="google" class="hidden">
+          <div class="admin-card" id="google-account-card" data-goto-keywords="google account connect disconnect oauth client scopes permissions">
+            <h2>Google account</h2>
+            <div class="admin-toggle-sub">One Google account connection for every Google product below. Each product asks Google for its own permission only when you connect it, and its tools appear in chats only while it is connected.</div>
+            <div class="settings-row">
+              <span class="admin-toggle-sub" id="google-account-state">Loading…</span>
+              <button class="settings-btn" id="google-disconnect-all" type="button" style="padding:3px 10px;font-size:12px" hidden>Disconnect Google</button>
+            </div>
+            <details id="google-scopes-box" hidden>
+              <summary class="admin-toggle-sub">Permissions Google has granted</summary>
+              <ul class="admin-toggle-sub google-scope-list" id="google-scopes"></ul>
+              <div class="admin-toggle-sub">Turning off one product stops Odysseus using it; Google keeps the permission until you press Disconnect Google, which revokes everything.</div>
+            </details>
+            <div id="google-setup" class="settings-col" hidden>
+              <div class="admin-toggle-sub">No Google OAuth client is set up on this server yet. One free client covers Sign in with Google, Meet and every product here (full steps in docs/google.md):</div>
+              <ol class="admin-toggle-sub" style="margin:0;padding-left:18px">
+                <li>In the <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud Console</a>, make a project (free) and enable the APIs of the products you want (APIs &amp; Services &gt; Library).</li>
+                <li>OAuth consent screen: External, add the scopes listed on each card, and set the publishing status to In production (Testing mode drops the connection every 7 days).</li>
+                <li>Credentials &gt; Create credentials &gt; OAuth client ID &gt; Web application. Under Authorized redirect URIs add exactly: <code id="google-redirect"></code> <button class="settings-btn" id="google-copy" type="button" style="padding:1px 8px;font-size:11px">Copy</button></li>
+                <li>Paste the client ID and secret here, then Connect a product below.</li>
+              </ol>
+            </div>
+            <div id="google-client" class="settings-col" hidden>
+              <div class="settings-row">
+                <label class="settings-label" for="google-cid">Client ID</label>
+                <input id="google-cid" class="settings-select" type="text" autocomplete="off" placeholder="1234-abc.apps.googleusercontent.com" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="google-secret">Client secret</label>
+                <input id="google-secret" class="settings-select" type="password" autocomplete="new-password" placeholder="Saved on the server, never shown again" />
+                <button class="admin-btn-add" id="google-save-client" type="button">Save client</button>
+              </div>
+            </div>
+            <div class="admin-toggle-sub" id="google-msg" role="status"></div>
+          </div>
+          <div class="google-products" id="google-products"></div>
         </div>
 
         <!-- ═══ ADMIN: USERS TAB ═══ -->
@@ -3444,6 +3488,7 @@
 <script type="module" src="/static/js/plans.js"></script>
 <script type="module" src="/static/js/company.js"></script>
 <script type="module" src="/static/js/companyMentions.js"></script>
+<script type="module" src="/static/js/googleSettings.js"></script>
 <script type="module" src="/static/js/whatsNew.js"></script>
 <script type="module" src="/static/js/codePanel.js"></script>
 <script type="module" src="/static/js/cloudBrowser.js"></script>
