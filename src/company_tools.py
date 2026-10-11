@@ -92,7 +92,9 @@ SCHEMAS: List[Dict] = [
     {"type": "function", "function": {
         "name": UPDATE_ISSUE,
         "description": ("Move an issue you work on (or one of your reports' issues) to a new status, "
-                        "optionally with a comment. Allowed moves: backlog->todo/in_progress/blocked; "
+                        "and/or assign it, optionally with a comment. Managers triage with this: set assignee "
+                        "on an unassigned issue to give it to a report (or yourself); the assignee is woken. "
+                        "Allowed moves: backlog->todo/in_progress/blocked; "
                         "todo->in_progress/blocked; in_progress->in_review/done/blocked/todo; "
                         "in_review->done/in_progress/todo; blocked->todo/in_progress. Use in_review when "
                         "the work is ready for someone to check, done when it is finished."),
@@ -100,6 +102,8 @@ SCHEMAS: List[Dict] = [
             "issue": _ISSUE_ARG,
             "status": {"type": "string", "enum": ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"]},
             "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+            "assignee": {"type": "string", "description": ("Name of the agent to assign: yourself or (managers) "
+                                                           "an agent who reports to you. \"nobody\" unassigns.")},
             "comment": {"type": "string", "description": "Optional comment saying what changed and why."},
         }, "required": ["issue"]}}},
     {"type": "function", "function": {
@@ -148,7 +152,7 @@ PROMPT_SECTIONS: Dict[str, str] = {
     LIST_ISSUES: "- ```company_list_issues```: Your Company issues. Args (JSON): {\"scope\": \"mine\"} (or \"team\", \"unassigned\", \"all\"), optional \"status\".",
     GET_ISSUE: "- ```company_get_issue```: Read one issue and its comments. Args (JSON): {\"issue\": \"ENG-12\"}.",
     CHECKOUT: "- ```company_checkout_issue```: Claim an issue for this run before working on it (moves it to in_progress). Args (JSON): {\"issue\": \"ENG-12\"}.",
-    UPDATE_ISSUE: "- ```company_update_issue```: Move an issue along, with an optional comment. Args (JSON): {\"issue\": \"ENG-12\", \"status\": \"in_review\", \"comment\": \"Ready: ...\"}.",
+    UPDATE_ISSUE: "- ```company_update_issue```: Move an issue along and/or assign it (managers: give unassigned issues to a report, who is woken), with an optional comment. Args (JSON): {\"issue\": \"ENG-12\", \"status\": \"in_review\", \"comment\": \"Ready: ...\"} or {\"issue\": \"ENG-12\", \"assignee\": \"Name\", \"comment\": \"Why them\"}.",
     COMMENT: "- ```company_comment```: Comment on an issue; @Name wakes that agent. Args (JSON): {\"issue\": \"ENG-12\", \"body\": \"...\"}.",
     CREATE_ISSUE: "- ```company_create_issue```: Managers: open a (sub-)issue for yourself or a report. Args (JSON): {\"title\": \"...\", \"description\": \"...\", \"assignee\": \"Name\", \"parent\": \"ENG-12\"}.",
     REQUEST_APPROVAL: "- ```company_request_approval```: Ask the person to approve a plan, strategy or hire, then end your turn. Args (JSON): {\"type\": \"plan\", \"title\": \"...\", \"plan\": \"1. ...\", \"issue\": \"ENG-12\"}.",
@@ -320,6 +324,22 @@ def _update_issue(r: _Run, a: Dict) -> str:
     if not r.may_change(i):
         raise _Refused(f"{i.identifier} is assigned to {r.name(i.assignee_agent_id) or 'someone else'}; comment instead")
     done = []
+    if a.get("assignee"):
+        ref = str(a["assignee"]).strip()
+        if ref.lower() in ("nobody", "none", "unassigned"):
+            if i.assignee_agent_id or i.assignee_user:
+                co.update_issue(r.db, r.owner, r.actor, i.id, {"assignee_agent_id": None, "assignee_user": None})
+                done.append("unassigned")
+        else:
+            who = r.agent if ref.lower() in ("me", "myself", "self") else r.agent_named(ref)
+            if who.id != r.agent.id:
+                if not r.is_manager():
+                    raise _Refused("Only managers assign issues to others; you can assign it to yourself")
+                if who.id not in r.reports():
+                    raise _Refused(f"{who.name} does not report to you")
+            if who.id != i.assignee_agent_id:
+                co.update_issue(r.db, r.owner, r.actor, i.id, {"assignee_agent_id": who.id})
+                done.append("assigned to you" if who.id == r.agent.id else f"assigned to {who.name}")
     status = a.get("status")
     if status and status != i.status:
         if status == "in_progress":

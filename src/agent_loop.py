@@ -2260,8 +2260,15 @@ async def stream_agent_loop(
     tool_policy: Optional[ToolPolicy] = None,
     _is_teacher_run: bool = False,
     client_device: Optional[Dict] = None,
+    auto_input_budget: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
+
+    ``auto_input_budget``: treat an ``agent_input_token_budget`` that equals
+    the default as unset, so the input budget scales to ``context_length``.
+    The settings file stores every key once it has been saved, which makes
+    the default look like an explicit choice. Company runs pass it: their
+    system prompt alone is larger than the 6000-token default.
 
     Yields SSE events:
       - data: {"delta": "text"}                             (text chunks)
@@ -2619,7 +2626,7 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
+        from src.context_budget import compute_input_token_budget, DEFAULT_BUDGET, DEFAULT_HARD_MAX
         from src.settings import is_setting_overridden
 
         soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
@@ -2639,10 +2646,13 @@ async def stream_agent_loop(
             # Scale the default budget to the model's context window so long-context
             # models aren't silently capped at 6000; an explicit user setting is
             # still honoured (clamped to the window). (#1170)
+            _explicit_budget = is_setting_overridden("agent_input_token_budget")
+            if auto_input_budget and soft_budget == DEFAULT_BUDGET:
+                _explicit_budget = False
             effective_budget = compute_input_token_budget(
                 soft_budget,
                 context_length,
-                is_setting_overridden("agent_input_token_budget"),
+                _explicit_budget,
                 hard_max=hard_max,
             )
             trimmed_messages = trim_for_context(
