@@ -1,5 +1,7 @@
 """The Google OAuth client this server uses, shared by Sign in with Google
-(routes/auth_routes.py) and Google Calendar for Meet (src/meet/google_calendar.py).
+(routes/auth_routes.py) and the Google account connection
+(src/google_workspace/connection.py: Calendar for Meet, Drive, Docs, Sheets,
+Slides, Tasks and Contacts).
 
 One client ID and secret, from settings first then the environment
 (GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET), and one redirect URI,
@@ -25,6 +27,20 @@ CALLBACK_PATH = "/api/auth/google/callback"
 STATE_TTL_S = 600
 
 _states: Dict[str, Dict] = {}
+
+# Test-only: send every Google call (consent page, token endpoint, APIs) to a
+# local fake instead, as <base>/<google host>/<path>. An environment variable
+# only, never a setting, so nothing in the UI can point tokens elsewhere.
+API_BASE_ENV = "ODYSSEUS_GOOGLE_API_BASE"
+
+
+def api_url(url: str) -> str:
+    """`url` unchanged, or rewritten onto ODYSSEUS_GOOGLE_API_BASE when set."""
+    base = os.getenv(API_BASE_ENV, "").strip().rstrip("/")
+    if not base:
+        return url
+    p = urllib.parse.urlsplit(url)
+    return f"{base}/{p.netloc}{p.path}" + (f"?{p.query}" if p.query else "")
 
 
 def _pkce() -> Tuple[str, str]:
@@ -110,10 +126,11 @@ def authorize_url(request, payload: Dict, **params) -> str:
     q = {"client_id": cfg["client_id"], "redirect_uri": uri, "response_type": "code", "state": state,
          "code_challenge": challenge, "code_challenge_method": "S256"}
     q.update(params)
-    return AUTH_URL + "?" + urllib.parse.urlencode(q)
+    return api_url(AUTH_URL) + "?" + urllib.parse.urlencode(q)
 
 
-async def exchange_code(code: str, state_entry: Dict, timeout: float = 20) -> httpx.Response:
+async def exchange_code(code: str, state_entry: Dict, timeout: float = 20,
+                        transport: Optional[httpx.AsyncBaseTransport] = None) -> httpx.Response:
     """Trade an authorization code for tokens, including the PKCE verifier.
 
     All callers that used to post to TOKEN_URL directly should call this
@@ -130,5 +147,5 @@ async def exchange_code(code: str, state_entry: Dict, timeout: float = 20) -> ht
     verifier = state_entry.get("code_verifier")
     if verifier:
         data["code_verifier"] = verifier
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        return await client.post(TOKEN_URL, data=data)
+    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        return await client.post(api_url(TOKEN_URL), data=data)

@@ -6,14 +6,10 @@ inserted with conferenceData.createRequest (hangoutsMeet,
 conferenceDataVersion=1) comes back with its hangoutLink, and Google sends
 the invites from the user's account (sendUpdates=all).
 
-Each user connects their own Google account once (Settings > Calls & Meetings >
-Google Meet > Connect Google Calendar). It uses the server's Google OAuth
-client (src/google_oauth.py, the one Sign in with Google uses) and comes
-back through the same callback, with access_type=offline so there is a
-refresh token. That token is kept per user in DATA_DIR/google_calendar/,
-Fernet-encrypted with the app key (src/secret_storage.py), in a 0600 file.
-It is never sent to the browser and never logged; access tokens are made
-from it as needed and kept only in memory.
+Each user connects their own Google account once (Settings > Google >
+Google Calendar, or Connect Google Calendar on the Google Meet card). The
+connection, its encrypted refresh token and the access tokens are shared with
+the other Google products: src/google_workspace/connection.py.
 
 Meeting access: Meet turns a guest away when the meeting's access is
 "Trusted" or "Restricted" (and Google may refuse a signed-out automated
@@ -27,13 +23,8 @@ controls.
 """
 
 import asyncio
-import base64
-import hashlib
-import json
 import logging
-import os
 import re
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
@@ -42,231 +33,62 @@ import httpx
 
 from src import google_oauth
 
+from src.google_workspace import connection
+from src.google_workspace.connection import GoogleError  # noqa: F401  (re-exported)
+from src.google_workspace.products import CALENDAR_SCOPE, MEET_SETTINGS_SCOPE  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
-CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
-MEET_SETTINGS_SCOPE = "https://www.googleapis.com/auth/meetings.space.settings"
-SCOPES = f"openid email {CALENDAR_SCOPE} {MEET_SETTINGS_SCOPE}"
 EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 MEET_API = "https://meet.googleapis.com/v2"
 DEFAULT_MINUTES = 60
 MAX_MINUTES = 24 * 60
 MAX_ATTENDEES = 50
 MAX_TITLE = 200
-RECONNECT = "Connect Google Calendar again in Settings > Calls & Meetings > Google Meet."
+RECONNECT = "Connect Google Calendar again in Settings > Google."
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
-# Tests swap in an httpx.MockTransport; nothing here talks to Google then.
-_transport: Optional[httpx.AsyncBaseTransport] = None
 _sleep = asyncio.sleep
-# user key -> (access token, expires at)
-_access: Dict[str, Tuple[str, float]] = {}
 
 
-class GoogleError(Exception):
-    """A sentence for the user about why it did not work."""
-
-
-# ── storage ──
-
-def _dir() -> str:
-    from src.constants import DATA_DIR
-    return os.path.join(DATA_DIR, "google_calendar")
-
-
-def _key(user: Optional[str]) -> str:
-    u = user or ""
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", u)[:40] or "_default"
-    return f"{safe}-{hashlib.sha256(u.encode('utf-8')).hexdigest()[:8]}"
-
-
-def _path(user: Optional[str]) -> str:
-    return os.path.join(_dir(), _key(user) + ".json")
-
-
-def _load(user: Optional[str]) -> Dict:
-    try:
-        with open(_path(user), "r", encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except (FileNotFoundError, ValueError):
-        return {}
-
-
-def _save(user: Optional[str], data: Dict) -> None:
-    from core.atomic_io import atomic_write_json
-    from core.platform_compat import safe_chmod
-    os.makedirs(_dir(), exist_ok=True)
-    atomic_write_json(_path(user), data, indent=2)
-    safe_chmod(_path(user), 0o600)
-
-
-def _forget(user: Optional[str]) -> None:
-    _access.pop(_key(user), None)
-    try:
-        os.remove(_path(user))
-    except FileNotFoundError:
-        pass
-
-
-def _refresh_token(user: Optional[str]) -> str:
-    from src import secret_storage
-    return secret_storage.decrypt(str(_load(user).get("refresh_token") or ""))
-
-
-# ── connecting ──
+# ── connecting (the shared Google connection, Calendar product) ──
 
 def status(user: Optional[str]) -> Dict:
-    """What the card shows. Nothing secret."""
-    d = _load(user)
-    scopes = str(d.get("scopes") or "").split()
+    """What the Meet card shows. Nothing secret."""
+    d = connection.load(user)
     return {
         "configured": google_oauth.client_config()["configured"],
-        "connected": bool(d.get("refresh_token")),
+        "connected": connection.is_enabled(user, "calendar"),
         "email": str(d.get("email") or ""),
-        "can_open_access": MEET_SETTINGS_SCOPE in scopes,
+        "can_open_access": MEET_SETTINGS_SCOPE in connection.granted_scopes(user),
         "connected_at": d.get("connected_at") or 0,
     }
 
 
 def connect_url(request, user: Optional[str]) -> str:
-    if not google_oauth.client_config()["configured"]:
-        raise GoogleError("No Google OAuth client is set up on this server yet.")
-    return google_oauth.authorize_url(
-        request, {"purpose": "calendar", "user": user or ""},
-        scope=SCOPES,
-        # Offline with consent so Google hands over a refresh token every
-        # time, even for an account that connected before.
-        access_type="offline",
-        prompt="consent",
-        include_granted_scopes="true",
-    )
-
-
-def _claims(id_token: str) -> Dict:
-    # Straight from Google's token endpoint over TLS, as in auth_routes.
-    try:
-        payload = id_token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        return json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
-    except Exception:
-        return {}
-
-
-def _client(timeout: float = 20) -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=timeout, transport=_transport)
+    return connection.connect_url(request, user, ["calendar"])
 
 
 async def finish_connect(user: str, code: str, state_entry: Dict) -> Tuple[bool, str]:
-    """Trade the code for tokens and keep the refresh token. (ok, message).
-
-    state_entry is the full payload from google_oauth.pop_state(), which
-    carries the PKCE code_verifier and the redirect_uri.
-    """
-    cfg = google_oauth.client_config()
-    if not cfg["configured"]:
-        return False, "No Google OAuth client is set up on this server."
-    try:
-        r = await google_oauth.exchange_code(code, state_entry)
-    except Exception as e:
-        logger.warning("[meet] Google Calendar connect: %s", type(e).__name__)
-        return False, "Could not reach Google to finish connecting."
-    if r.status_code != 200:
-        redirect_uri = state_entry.get("redirect_uri", "")
-        logger.warning("[meet] Google Calendar connect: token endpoint said %s", r.status_code)
-        return False, ("Google turned the connection down. The redirect URI must match the one "
-                       f"registered in the Google console exactly: {redirect_uri}")
-    tok = r.json()
-    granted = str(tok.get("scope") or "").split()
-    if CALENDAR_SCOPE not in granted:
-        return False, ("Google did not grant access to your calendar. Connect again and leave the "
-                       "calendar box ticked on Google's consent screen.")
-    refresh = str(tok.get("refresh_token") or "")
-    if not refresh:
-        return False, ("Google did not send a refresh token. Remove Odysseus from your Google "
-                       "account's third-party access, then connect again.")
-    from src import secret_storage
-    email = str(_claims(str(tok.get("id_token") or "")).get("email") or "")
-    _save(user, {"email": email, "refresh_token": secret_storage.encrypt(refresh),
-                 "scopes": " ".join(granted), "connected_at": time.time()})
-    if tok.get("access_token"):
-        _access[_key(user)] = (str(tok["access_token"]), time.time() + int(tok.get("expires_in") or 3600) - 60)
-    logger.info("[meet] Google Calendar connected for %s", user or "-")
-    extra = "" if MEET_SETTINGS_SCOPE in granted else (
-        " Meet settings were not allowed, so meetings it makes keep your default access.")
-    return True, (f"Odysseus can now make Google Meet meetings as {email or 'your Google account'}."
-                  f"{extra} You can close this tab.")
+    return await connection.finish_connect(user, code, state_entry)
 
 
 async def disconnect(user: Optional[str]) -> None:
-    """Forget the token, and ask Google to revoke it (best effort)."""
-    refresh = _refresh_token(user)
-    _forget(user)
-    if refresh:
-        try:
-            async with _client(10) as client:
-                await client.post(google_oauth.REVOKE_URL, data={"token": refresh})
-        except httpx.HTTPError:
-            pass
-    logger.info("[meet] Google Calendar disconnected for %s", user or "-")
+    """Stop making meetings; the connection goes too when nothing else uses it."""
+    await connection.disconnect(user, "calendar")
 
 
-async def _token(client: httpx.AsyncClient, user: Optional[str], fresh: bool = False) -> str:
-    k = _key(user)
-    cached = _access.get(k)
-    if cached and not fresh and cached[1] > time.time():
-        return cached[0]
-    refresh = _refresh_token(user)
-    if not refresh:
-        raise GoogleError("Google Calendar is not connected. " + RECONNECT)
-    cfg = google_oauth.client_config()
-    if not cfg["configured"]:
-        raise GoogleError("The Google OAuth client is no longer set up on this server.")
-    try:
-        r = await client.post(google_oauth.TOKEN_URL, data={
-            "client_id": cfg["client_id"], "client_secret": cfg["client_secret"],
-            "refresh_token": refresh, "grant_type": "refresh_token"})
-    except httpx.HTTPError:
-        raise GoogleError("Could not reach Google.")
-    if r.status_code != 200:
-        err = ""
-        try:
-            err = str(r.json().get("error") or "")
-        except ValueError:
-            pass
-        if err in ("invalid_grant", "unauthorized_client", "invalid_client"):
-            _forget(user)
-            raise GoogleError("Google no longer accepts the saved connection (revoked or expired). " + RECONNECT)
-        raise GoogleError(f"Google would not refresh access ({r.status_code}).")
-    tok = r.json()
-    access = str(tok.get("access_token") or "")
-    _access[k] = (access, time.time() + int(tok.get("expires_in") or 3600) - 60)
-    return access
-
-
-def _google_reason(r: httpx.Response) -> str:
-    try:
-        err = r.json().get("error") or {}
-    except ValueError:
-        return ""
-    if not isinstance(err, dict):
-        return str(err)
-    reasons = " ".join(str(e.get("reason") or "") for e in err.get("errors") or [] if isinstance(e, dict))
-    details = " ".join(str(d.get("reason") or "") for d in err.get("details") or [] if isinstance(d, dict))
-    return f"{err.get('status') or ''} {reasons} {details} {err.get('message') or ''}"
+def _client(timeout: float = 20) -> httpx.AsyncClient:
+    return connection.client(timeout)
 
 
 async def _call(client: httpx.AsyncClient, user: Optional[str], method: str, url: str, **kw) -> httpx.Response:
-    """One API call with a fresh access token, retried once on a 401."""
-    for attempt in (0, 1):
-        token = await _token(client, user, fresh=bool(attempt))
-        try:
-            r = await client.request(method, url, headers={"Authorization": f"Bearer {token}"}, **kw)
-        except httpx.HTTPError:
-            raise GoogleError("Could not reach Google.")
-        if r.status_code != 401:
-            return r
-    return r
+    if not connection.is_enabled(user, "calendar"):
+        raise GoogleError("Google Calendar is not connected. " + RECONNECT)
+    return await connection.call(client, user, method, url, **kw)
+
+
+_google_reason = connection.reason
 
 
 # ── making a meeting ──
@@ -314,7 +136,7 @@ def _space_code(event: Dict) -> str:
 
 async def _open_access(client: httpx.AsyncClient, user: Optional[str], code: str) -> Tuple[bool, str]:
     """Set the meeting's space to OPEN so a guest gets in. (done, why not)."""
-    if MEET_SETTINGS_SCOPE not in str(_load(user).get("scopes") or "").split():
+    if MEET_SETTINGS_SCOPE not in connection.granted_scopes(user):
         return False, "Odysseus was not allowed to change Meet settings when Google Calendar was connected."
     r = await _call(client, user, "GET", f"{MEET_API}/spaces/{code}")
     if r.status_code == 200:

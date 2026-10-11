@@ -376,7 +376,9 @@ Setup, once per server (the same OAuth client Sign in with Google uses):
 
 Then each user presses Connect Google Calendar. The refresh token is kept in
 `DATA_DIR/google_calendar/`, encrypted with the app key, never sent to the
-browser and never logged.
+browser and never logged. It is the same connection Drive, Docs, Sheets,
+Slides, Tasks and Contacts use (Settings > Google, docs/google.md), where
+Google Calendar is one product card.
 
 ## Testing
 

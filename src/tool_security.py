@@ -119,6 +119,13 @@ _PLAN_MODE_KNOWN_MUTATORS = {
 }
 
 
+# Google products (src/google_workspace/products.py): reads stay usable in
+# plan mode like list_emails/read_email; creates and edits are mutators.
+from src.google_workspace.products import READ_TOOLS as _GOOGLE_READ, WRITE_TOOLS as _GOOGLE_WRITE  # noqa: E402
+PLAN_MODE_READONLY_TOOLS.update(_GOOGLE_READ)
+_PLAN_MODE_KNOWN_MUTATORS.update(_GOOGLE_WRITE)
+
+
 def plan_mode_disabled_tools() -> Set[str]:
     """Tool names to add to the denylist in plan mode.
 
