@@ -408,6 +408,18 @@ def test_labels_sub_issues_and_relations(client):
 
 # ── Checkout ─────────────────────────────────────────────────────────────
 
+def _run(h, agent_id, status="running"):
+    """A live run of the agent: checkout only accepts one of those."""
+    db = _TS()
+    try:
+        run = co.create_run(db, h["x-test-user"], agent_id, "on_demand")
+        run.status = status
+        db.commit()
+        return run.id
+    finally:
+        db.close()
+
+
 def _team(client, h):
     cid = _company(client, h)["id"]
     ceo = _agent(client, h, cid)
@@ -419,19 +431,20 @@ def test_checkout_claims_and_the_holder_can_repeat(client):
     h = _user()
     cid, ceo, eng = _team(client, h)
     i = _issue(client, h, cid, status="todo")
-    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": "run-1"})
+    run1, run2, run3 = _run(h, eng["id"]), _run(h, eng["id"]), _run(h, ceo["id"])
+    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": run1})
     assert r.status_code == 200
     j = r.json()
-    assert j["status"] == "in_progress" and j["checkout_run_id"] == "run-1" and j["assignee_agent_id"] == eng["id"]
+    assert j["status"] == "in_progress" and j["checkout_run_id"] == run1 and j["assignee_agent_id"] == eng["id"]
     assert client.post(f"{API}/issues/{i['id']}/checkout", headers=h,
-                       json={"agent_id": eng["id"], "run_id": "run-1"}).status_code == 200
-    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": "run-2"})
+                       json={"agent_id": eng["id"], "run_id": run1}).status_code == 200
+    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": run2})
     assert r.status_code == 409 and "another run" in r.json()["detail"]
-    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": ceo["id"], "run_id": "run-3"})
+    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": ceo["id"], "run_id": run3})
     assert r.status_code == 409 and "assigned to someone else" in r.json()["detail"]
     # Only the holder releases, unless forced.
-    assert client.post(f"{API}/issues/{i['id']}/release", headers=h, json={"run_id": "run-2"}).status_code == 409
-    r = client.post(f"{API}/issues/{i['id']}/release", headers=h, json={"run_id": "run-1"})
+    assert client.post(f"{API}/issues/{i['id']}/release", headers=h, json={"run_id": run2}).status_code == 409
+    r = client.post(f"{API}/issues/{i['id']}/release", headers=h, json={"run_id": run1})
     assert r.status_code == 200 and r.json()["checkout_run_id"] is None and r.json()["status"] == "todo"
     acts = _actions(client, h, cid)
     assert acts.count("issue.checked_out") == 1 and "issue.released" in acts
@@ -440,9 +453,22 @@ def test_checkout_claims_and_the_holder_can_repeat(client):
     client.patch(f"{API}/issues/{d['id']}", headers=h, json={"status": "in_progress"})
     client.patch(f"{API}/issues/{d['id']}", headers=h, json={"status": "done"})
     assert client.post(f"{API}/issues/{d['id']}/checkout", headers=h,
-                       json={"agent_id": eng["id"], "run_id": "r"}).status_code == 409
+                       json={"agent_id": eng["id"], "run_id": run2}).status_code == 409
     assert client.post(f"{API}/issues/{d['id']}/checkout", headers=h,
-                       json={"agent_id": eng["id"], "run_id": "r", "expected_statuses": ["done"]}).status_code == 422
+                       json={"agent_id": eng["id"], "run_id": run2, "expected_statuses": ["done"]}).status_code == 422
+
+
+def test_checkout_needs_a_live_run_of_that_agent(client):
+    h = _user()
+    cid, ceo, eng = _team(client, h)
+    i = _issue(client, h, cid, status="todo")
+    url = f"{API}/issues/{i['id']}/checkout"
+    r = client.post(url, headers=h, json={"agent_id": eng["id"], "run_id": "made-up"})
+    assert r.status_code == 422 and "live run" in r.json()["detail"]
+    assert client.post(url, headers=h, json={"agent_id": eng["id"], "run_id": _run(h, eng["id"], "succeeded")}).status_code == 409
+    assert client.post(url, headers=h, json={"agent_id": eng["id"], "run_id": _run(h, ceo["id"])}).status_code == 409
+    # Queued counts as live (the executor claims before the run starts).
+    assert client.post(url, headers=h, json={"agent_id": eng["id"], "run_id": _run(h, eng["id"], "queued")}).status_code == 200
 
 
 def test_concurrent_checkouts_have_exactly_one_winner(client):
@@ -457,7 +483,7 @@ def test_concurrent_checkouts_have_exactly_one_winner(client):
         barrier.wait()
         r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": agent["id"], "run_id": run})
         results.append((r.status_code, run))
-    ts = [threading.Thread(target=go, args=(a, f"run-{n}")) for n, a in enumerate([eng] + others)]
+    ts = [threading.Thread(target=go, args=(a, _run(h, a["id"]))) for a in [eng] + others]
     for t in ts:
         t.start()
     for t in ts:
@@ -472,24 +498,26 @@ def test_stale_and_finished_locks_are_taken_over(client, monkeypatch):
     h = _user()
     cid, ceo, eng = _team(client, h)
     i = _issue(client, h, cid, status="todo", assignee_agent_id=eng["id"])
+    old, new = _run(h, eng["id"]), _run(h, eng["id"])
     assert client.post(f"{API}/issues/{i['id']}/checkout", headers=h,
-                       json={"agent_id": eng["id"], "run_id": "old"}).status_code == 200
+                       json={"agent_id": eng["id"], "run_id": old}).status_code == 200
     # Age the lock past the stale limit.
     db = _TS()
     row = db.get(cdb.CompanyIssue, i["id"])
     row.execution_locked_at = row.execution_locked_at - timedelta(seconds=co.STALE_LOCK_SECONDS + 5)
     db.commit()
     db.close()
-    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": "new"})
-    assert r.status_code == 200 and r.json()["checkout_run_id"] == "new"
+    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": new})
+    assert r.status_code == 200 and r.json()["checkout_run_id"] == new
     took = [a for a in client.get(f"{API}/companies/{cid}/activity", headers=h).json()["activity"]
             if a["action"] == "issue.checked_out"][0]
-    assert took["details"]["took_over_from"] == "old" and took["run_id"] == "new"
+    assert took["details"]["took_over_from"] == old and took["run_id"] == new
     # A run that has finished gives up its lock even when the lock is fresh.
     db = _TS()
     run = co.create_run(db, h["x-test-user"], eng["id"], "assignment", issue_id=i["id"])
     run_id = run.id
     db.close()
+    nxt = _run(h, eng["id"])
     client.post(f"{API}/issues/{i['id']}/release", headers=h, json={"force": True})
     assert client.post(f"{API}/issues/{i['id']}/checkout", headers=h,
                        json={"agent_id": eng["id"], "run_id": run_id}).status_code == 200
@@ -497,10 +525,10 @@ def test_stale_and_finished_locks_are_taken_over(client, monkeypatch):
     db.query(cdb.CompanyRun).filter(cdb.CompanyRun.id == run_id).update({"status": "failed"})
     db.commit()
     db.close()
-    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": "next"})
-    assert r.status_code == 200 and r.json()["checkout_run_id"] == "next"
+    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": nxt})
+    assert r.status_code == 200 and r.json()["checkout_run_id"] == nxt
     runs = client.get(f"{API}/companies/{cid}/runs", headers=h).json()["runs"]
-    assert runs[0]["id"] == run_id and runs[0]["status"] == "failed"
+    assert next(x for x in runs if x["id"] == run_id)["status"] == "failed"
 
 
 def test_paused_agent_cannot_check_out(client):
@@ -508,7 +536,7 @@ def test_paused_agent_cannot_check_out(client):
     cid, ceo, eng = _team(client, h)
     client.patch(f"{API}/agents/{eng['id']}", headers=h, json={"status": "paused"})
     i = _issue(client, h, cid, status="todo")
-    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": "r"})
+    r = client.post(f"{API}/issues/{i['id']}/checkout", headers=h, json={"agent_id": eng["id"], "run_id": _run(h, eng["id"])})
     assert r.status_code == 409
 
 

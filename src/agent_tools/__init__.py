@@ -103,6 +103,9 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.
              "app_api"}
+# Company agents' tools (src/company_tools.py); only offered in a Company run.
+from src.company_tools import TOOL_NAMES as _COMPANY_TOOL_NAMES  # noqa: E402
+TOOL_TAGS |= set(_COMPANY_TOOL_NAMES)
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 

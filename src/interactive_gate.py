@@ -80,6 +80,10 @@ _PASSIVE_PREFIXES = (
     "/api/prefs",
 )
 
+# Company page polls (static/js/company.js): live run status and a running
+# agent's log. They tick while the page is merely open.
+_PASSIVE_COMPANY_SUFFIXES = ("/live", "/log")
+
 
 def should_track_interactive_request(path: str, method: str = "GET") -> bool:
     if not _enabled():
@@ -89,6 +93,8 @@ def should_track_interactive_request(path: str, method: str = "GET") -> bool:
     if path in _PASSIVE_EXACT_PATHS:
         return False
     if any(path.startswith(prefix) for prefix in _PASSIVE_PREFIXES):
+        return False
+    if path.startswith("/api/company/") and path.endswith(_PASSIVE_COMPANY_SUFFIXES) and (method or "GET").upper() == "GET":
         return False
     return True
 
@@ -132,7 +138,10 @@ def _has_active_chat_stream() -> bool:
     try:
         from src import agent_runs
         runs = getattr(agent_runs, "_RUNS", {}) or {}
-        return any(getattr(run, "status", None) == "running" for run in runs.values())
+        # Background runs (Company agents) are what this gate holds back,
+        # not the user's work: counting them would let one agent block the next.
+        return any(getattr(run, "status", None) == "running" and not getattr(run, "background", False)
+                   for run in runs.values())
     except Exception:
         return False
 

@@ -783,6 +783,15 @@ async def execute_tool_block(
         desc = "chat_memory"
         from src import chat_memory
         result = chat_memory.run_tool(content, session_id=session_id, owner=owner)
+    elif tool.startswith("company_"):
+        # A Company agent working its issues (src/company_tools.py).
+        from src import company_tools
+        if tool in company_tools.TOOL_NAMES:
+            result = await asyncio.to_thread(company_tools.run_tool, tool, content)
+        else:
+            result = {"error": f"Unknown tool {tool}", "exit_code": 1}
+        first = (result.get("output") or result.get("error") or "").splitlines()
+        desc = f"{tool}: {first[0][:80] if first else ''}"
     elif tool in ("branch_thread", "spawn_subagent"):
         # Threads of this chat (src/chat_subagents.py).
         from src import chat_subagents

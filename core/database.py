@@ -1007,6 +1007,20 @@ def _migrate_add_task_run_model_column():
         except Exception:
             pass
 
+def _migrate_add_company_agent_pause_reason():
+    """company_agents.pause_reason (PR C, the Company executor)."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(company_agents)"))]
+            for col, typ in (("pause_reason", "TEXT"), ("coding_agent", "VARCHAR"), ("workdir", "TEXT")):
+                if cols and col not in cols:
+                    conn.execute(text(f"ALTER TABLE company_agents ADD COLUMN {col} {typ}"))
+                    conn.commit()
+                    logging.getLogger(__name__).info(f"Migrated: added '{col}' to company_agents")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"company_agents pause_reason migration failed: {e}")
+
+
 def _migrate_chatgpt_plan_native_tools():
     """Sign in with ChatGPT endpoints first shipped with supports_tools=False;
     turn native tools on for them once (src/chatgpt_plan.py)."""
@@ -1818,6 +1832,12 @@ class CompanyAgent(TimestampMixin, Base):
     budget_month  = Column(String, nullable=True)
     last_heartbeat_at = Column(DateTime, nullable=True)
     session_id    = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+    # Why the executor paused this agent (a budget hard stop); cleared on resume.
+    pause_reason  = Column(Text, nullable=True)
+    # Coding agent its runs may use through the claude_code tool: None (off),
+    # "opencode", "claude" or "antigravity"; and the folder it works in.
+    coding_agent  = Column(String, nullable=True)
+    workdir       = Column(Text, nullable=True)
 
 
 class CompanyIssue(TimestampMixin, Base):
@@ -1936,7 +1956,7 @@ class CompanyRun(Base):
     agent_id          = Column(String, ForeignKey("company_agents.id", ondelete="CASCADE"), nullable=False, index=True)
     issue_id          = Column(String, ForeignKey("company_issues.id", ondelete="SET NULL"), nullable=True, index=True)
     invocation_source = Column(String, nullable=False, default="on_demand")  # timer | assignment | mention | on_demand | approval
-    status            = Column(String, nullable=False, default="queued")     # queued | running | succeeded | failed | cancelled | timed_out
+    status            = Column(String, nullable=False, default="queued")     # queued | running | succeeded | failed | cancelled | timed_out | interrupted
     model             = Column(String, nullable=True)                        # the model spec actually used
     session_id        = Column(String, nullable=True)                        # Odysseus chat / thread it ran in
     error             = Column(Text, nullable=True)
@@ -2088,6 +2108,7 @@ def init_db():
     _migrate_add_supports_tools_column()
     _migrate_chatgpt_plan_native_tools()
     _migrate_add_task_run_model_column()
+    _migrate_add_company_agent_pause_reason()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()

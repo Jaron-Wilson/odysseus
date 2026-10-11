@@ -595,6 +595,9 @@ from src import tool_pages as _tool_pages  # noqa: E402
 _DOMAIN_RULES["ui"] = (_DOMAIN_RULES["ui"].replace("{pages}", _tool_pages.names_for_prompt())
                        .replace("{aliases}", _tool_pages.aliases_for_prompt()))
 TOOL_SECTIONS["ui_control"] = TOOL_SECTIONS["ui_control"].replace("{pages}", _tool_pages.names_for_prompt())
+# Company agents' tools (src/company_tools.py), for models that use fenced blocks.
+from src import company_tools as _company_tools  # noqa: E402
+TOOL_SECTIONS.update(_company_tools.PROMPT_SECTIONS)
 
 def get_builtin_overrides() -> dict:
     """User overrides for built-in tool descriptions (TOOL_SECTIONS).
@@ -2264,6 +2267,10 @@ async def stream_agent_loop(
         disabled_tools.update(tool_policy.all_disabled_names())
         if tool_policy.disable_mcp:
             mcp_mgr = None
+    # Company tools exist only inside a Company agent's run (src/company_tools.py).
+    _company_run = _company_tools.active()
+    if not _company_run:
+        disabled_tools.update(_company_tools.TOOL_NAMES)
     guide_only = bool(tool_policy and tool_policy.mode == "guide_only")
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
@@ -2371,6 +2378,9 @@ async def stream_agent_loop(
     # tool names. It prevents obvious requests like "last 5 emails" from
     # collapsing to only ask_user/manage_memory when vector retrieval misses or
     # times out.
+    if not guide_only and _relevant_tools and _company_run:
+        # A Company run always has its Company tools, whatever retrieval picked.
+        _relevant_tools = set(_relevant_tools) | set(_company_tools.TOOL_NAMES)
     if not guide_only and _relevant_tools is not None:
         for _domain in (_intent.get("domains") or set()):
             _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))

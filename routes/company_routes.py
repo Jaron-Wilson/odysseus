@@ -17,10 +17,15 @@ live in src/company.py so the agent executor can share them.
               POST /issues/{iid}/relations, DELETE /relations/{rid}
   Comments    GET/POST /issues/{iid}/comments, DELETE /comments/{cmid}
   Activity    GET /companies/{cid}/activity
-  Runs        GET /companies/{cid}/runs, GET /runs/{rid}  (written by the executor, PR C)
-  Wake-ups    GET /companies/{cid}/wakeups                (queued for the executor, PR C)
-  Approvals   GET/POST /companies/{cid}/approvals, GET /approvals/{apid}
+  Runs        GET /companies/{cid}/runs, GET /runs/{rid}, GET /runs/{rid}/log, POST /runs/{rid}/stop
+              GET /companies/{cid}/live (agent and run status for the page, polled)
+  Wake-ups    GET /companies/{cid}/wakeups
+  Approvals   GET/POST /companies/{cid}/approvals, GET /approvals/{apid}, GET /approvals/{apid}/defaults
               POST /approvals/{apid}/decide, POST /approvals/{apid}/cancel
+  Settings    GET/PUT /settings (runs at once, across companies)
+
+The executor that runs agents is src/company_executor.py; these routes nudge
+it after a change that may have queued a wake-up, so it doesn't wait a tick.
 """
 from typing import Any, Dict, Optional
 
@@ -31,6 +36,16 @@ from src import company as co
 from src.auth_helpers import require_user
 
 PREFIX = "/api/company"
+
+
+def _kick() -> None:
+    try:
+        from src.company_executor import get_executor
+        ex = get_executor()
+        if ex is not None:
+            ex.kick()
+    except Exception:
+        pass
 
 
 def _call(fn, *args, **kwargs):
@@ -48,6 +63,55 @@ def _body(body: Any) -> Dict:
     if not isinstance(body, dict):
         raise HTTPException(422, "Expected a JSON object")
     return body
+
+
+def _run_log(db, owner: str, rid: str) -> Dict:
+    from src import agent_runs
+    from src.company_executor import _collect, _new_state
+    run = co.get_run(db, owner, rid)
+    out = {"run": run, "messages": [], "live": None}
+    sid = run.get("session_id")
+    if not sid:
+        return out
+    from core.database import ChatMessage as DbMsg
+    rows = db.query(DbMsg).filter(DbMsg.session_id == sid).order_by(DbMsg.timestamp).all()
+    import json as _json
+    for m in rows:
+        try:
+            meta = _json.loads(m.meta_data) if m.meta_data else {}
+        except (ValueError, TypeError):
+            meta = {}
+        out["messages"].append({"role": m.role, "content": m.content or "",
+                                "tools": (meta or {}).get("tool_events") or []})
+    r = agent_runs._RUNS.get(sid)
+    if r is not None and r.status == "running":
+        st = _new_state()
+        for ev in list(r.buffer):
+            _collect(ev, st)
+        out["live"] = {"text": st["text"], "tools": st["tools"], "round": st["round"]}
+    return out
+
+
+def _live(db, owner: str, cid: str, since: float) -> Dict:
+    from src.company_executor import get_executor, recent_notices
+    c = co.get_company(db, owner, cid)
+    agents = co._company_agents(db, owner, c.id)
+    runs = co._scoped(db, cdb.CompanyRun, owner).filter(cdb.CompanyRun.company_id == c.id,
+                                                       cdb.CompanyRun.status.in_(co.RUN_LIVE)).all()
+    by_agent = {r.agent_id: r.id for r in runs}
+    pending = co._scoped(db, cdb.CompanyApproval, owner).filter(cdb.CompanyApproval.company_id == c.id,
+                                                               cdb.CompanyApproval.status == "pending").count()
+    waiting = co._scoped(db, cdb.CompanyWakeup, owner).filter(cdb.CompanyWakeup.company_id == c.id,
+                                                             cdb.CompanyWakeup.status == "pending").all()
+    import time as _time
+    return {"now": _time.time(), "executor": get_executor() is not None,
+            "agents": {a.id: {"status": a.status, "run_id": by_agent.get(a.id), "pause_reason": a.pause_reason or "",
+                              "spent_cents": a.spent_cents if a.budget_month == co.month_key() else 0,
+                              "monthly_budget_cents": a.monthly_budget_cents or 0} for a in agents},
+            "runs": [co.ser_run(r) for r in runs], "pending_approvals": pending,
+            "waiting_wakeups": {w.agent_id: 1 for w in waiting},
+            "company": co.ser_company(c),
+            "notices": recent_notices(owner or "", since)}
 
 
 def setup_company_routes() -> APIRouter:
@@ -140,7 +204,9 @@ def setup_company_routes() -> APIRouter:
             co.log_activity(db, user, a.company_id, actor, "agent.wake_requested", "agent", a.id, agent_id=a.id)
             db.commit()
             return co.ser_wakeup(w)
-        return _call(go)
+        out = _call(go)
+        _kick()
+        return out
 
     @r.get("/companies/{cid}/wakeups")
     def wakeups(request: Request, cid: str, status: Optional[str] = "pending"):
@@ -222,7 +288,9 @@ def setup_company_routes() -> APIRouter:
     @r.post("/companies/{cid}/issues")
     def create_issue(request: Request, cid: str, body: Dict[str, Any] = Body(...)):
         user, actor = who(request)
-        return _call(co.create_issue, user, actor, cid, _body(body))
+        out = _call(co.create_issue, user, actor, cid, _body(body))
+        _kick()
+        return out
 
     @r.get("/issues/{iid}")
     def get_issue(request: Request, iid: str):
@@ -232,7 +300,9 @@ def setup_company_routes() -> APIRouter:
     @r.patch("/issues/{iid}")
     def update_issue(request: Request, iid: str, body: Dict[str, Any] = Body(...)):
         user, actor = who(request)
-        return _call(co.update_issue, user, actor, iid, _body(body))
+        out = _call(co.update_issue, user, actor, iid, _body(body))
+        _kick()
+        return out
 
     @r.delete("/issues/{iid}")
     def delete_issue(request: Request, iid: str):
@@ -276,7 +346,9 @@ def setup_company_routes() -> APIRouter:
     @r.post("/issues/{iid}/comments")
     def add_comment(request: Request, iid: str, body: Dict[str, Any] = Body(...)):
         user, actor = who(request)
-        return _call(co.add_comment, user, actor, iid, _body(body).get("body"))
+        out = _call(co.add_comment, user, actor, iid, _body(body).get("body"))
+        _kick()
+        return out
 
     @r.delete("/comments/{cmid}")
     def delete_comment(request: Request, cmid: str):
@@ -305,6 +377,63 @@ def setup_company_routes() -> APIRouter:
         user, _ = who(request)
         return _call(co.get_run, user, rid)
 
+    @r.get("/runs/{rid}/log")
+    def run_log(request: Request, rid: str):
+        """The run's transcript: the wake message, the reply so far (live while
+        it runs) and its tool calls."""
+        user, _ = who(request)
+        return _call(_run_log, user, rid)
+
+    @r.post("/runs/{rid}/stop")
+    def stop_run(request: Request, rid: str):
+        user, actor = who(request)
+        run = _call(co.get_run, user, rid)
+        if run["status"] not in co.RUN_LIVE:
+            raise HTTPException(409, "This run has already finished")
+        from src.company_executor import get_executor
+        ex = get_executor()
+        if ex is not None and ex.stop_run(user or "", rid):
+            return {"ok": True, "stopping": True}
+
+        def orphan(db):
+            # Not running in this process (left over): close it here.
+            co.finish_run(db, user, rid, "cancelled", error="Stopped by you")
+            return {"ok": True, "stopping": False}
+        return _call(orphan)
+
+    @r.get("/companies/{cid}/live")
+    def live(request: Request, cid: str, since: float = 0.0):
+        """Polled by the page: each agent's status and live run, runs going
+        now, waiting approvals and wake-ups, and notices since `since`."""
+        user, _ = who(request)
+        return _call(_live, user, cid, since)
+
+    @r.get("/settings")
+    def get_settings(request: Request):
+        who(request)
+        from src.company_executor import default_max_rounds, max_concurrent
+        return {"max_concurrent_runs": max_concurrent(), "max_rounds": default_max_rounds()}
+
+    @r.put("/settings")
+    def put_settings(request: Request, body: Dict[str, Any] = Body(...)):
+        user, _ = who(request)
+        from src.tool_security import owner_is_admin_or_single_user
+        if not owner_is_admin_or_single_user(user):
+            raise HTTPException(403, "Only an admin can change this")
+        b = _body(body)
+        from src.settings import load_settings, save_settings
+        s = load_settings()
+        for key, field, lo, hi in (("company_max_concurrent_runs", "max_concurrent_runs", 1, 8),
+                                   ("company_agent_max_rounds", "max_rounds", 1, 200)):
+            if field in b:
+                v = b[field]
+                if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
+                    raise HTTPException(422, f"{field} must be between {lo} and {hi}")
+                s[key] = v
+        save_settings(s)
+        _kick()
+        return get_settings(request)
+
     # ── Approvals ────────────────────────────────────────────────────────
     @r.get("/companies/{cid}/approvals")
     def list_approvals(request: Request, cid: str, status: Optional[str] = None):
@@ -323,10 +452,26 @@ def setup_company_routes() -> APIRouter:
 
     @r.post("/approvals/{apid}/decide")
     def decide(request: Request, apid: str, body: Dict[str, Any] = Body(...)):
-        """{decision: approved | rejected | revision_requested, note?}"""
+        """{decision: approved | rejected | revision_requested, note?, options?}.
+
+        options (or the same keys at the top level): for a plan or strategy,
+        chosen_model (any model spec from GET /api/models), max_steps and
+        max_cost_usd for the run that carries it out; for a budget_override,
+        budget_cents, the new monthly limit (0 = no limit)."""
         user, actor = who(request)
         b = _body(body)
-        return _call(co.decide_approval, user, actor, apid, b.get("decision"), b.get("note"))
+        options = b.get("options")
+        if options is None:
+            options = {k: b[k] for k in ("chosen_model", "max_steps", "max_cost_usd", "budget_cents") if k in b}
+        out = _call(co.decide_approval, user, actor, apid, b.get("decision"), b.get("note"), options)
+        _kick()
+        return out
+
+    @r.get("/approvals/{apid}/defaults")
+    def approval_defaults(request: Request, apid: str):
+        """What the Approve dialog starts with (the model last chosen for this agent)."""
+        user, _ = who(request)
+        return _call(co.approval_defaults, user, apid)
 
     @r.post("/approvals/{apid}/cancel")
     def cancel(request: Request, apid: str):

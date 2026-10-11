@@ -1439,6 +1439,9 @@ FUNCTION_TOOL_SCHEMAS = [
         }
     },
 ]
+# Company agents' tools (src/company_tools.py): hidden outside a Company run.
+from src.company_tools import SCHEMAS as _COMPANY_SCHEMAS  # noqa: E402
+FUNCTION_TOOL_SCHEMAS.extend(_COMPANY_SCHEMAS)
 
 
 # ---------------------------------------------------------------------------
