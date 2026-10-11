@@ -15,6 +15,10 @@
 //   from the sidebar, shown as a card under the message. Merge posts it into
 //   the main chat.
 // - Branches, subagents and the Threads panel: see the threads section below.
+// - The row of threads under the chat's tab, the split view and the
+//   "Open side by side?" prompt: chatThreadTabs.js.
+
+import ThreadTabs from './chatThreadTabs.js';
 
 function _esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -176,10 +180,14 @@ document.addEventListener('click', (ev) => {
 //   report back to the chat. Both show as cards under the message they
 //   started from, like side threads.
 // - Inside a thread, a breadcrumb leads back up to the main chat.
+// - Threads open under their chat's tab, in place or side by side
+//   (chatThreadTabs.js), never as a chat of their own.
 
 let _threads = [];            // for the chat on screen
 let _threadsFor = null;
 let _where = null;            // /thread-info for the chat on screen
+let _rootId = null;           // the top-level chat above the chat on screen
+let _rootThreads = [];        // its threads, for the row under the tab
 let _panelOpen = false;
 let _composeOpen = false;
 const _lastStatus = new Map();   // thread id -> status, to say when a subagent is done
@@ -216,6 +224,21 @@ async function _open(id) {
   const sm = window.sessionModule;
   if (sm && sm.selectSession) await sm.selectSession(id);
 }
+// The top-level chat above `id` (itself when it is one).
+function _rootOf(id) {
+  let cur = id;
+  for (let i = 0; i < 12 && cur; i++) {
+    const meta = _session(cur);
+    if (!meta || !meta.parent_session_id) break;
+    cur = meta.parent_session_id;
+  }
+  if (cur === id && _where && _where.id === id && _where.path && _where.path.length) return _where.path[0].id;
+  return cur;
+}
+// Inside the split view's pane (chatThreadTabs.js): tell the page around it.
+function _toParent(msg) {
+  try { window.parent.postMessage({ odyThread: 1, ...msg }, location.origin); } catch (_) { /* no parent */ }
+}
 async function _reloadSessions() {
   const sm = window.sessionModule;
   if (sm && sm.loadSessions) { try { await sm.loadSessions(); } catch (_) { /* keep going */ } }
@@ -228,21 +251,25 @@ async function startThread(msgEl) {
   try {
     const d = await _post(`/api/session/${_enc(sid)}/threads`, { anchor_msg_id: id });
     await _reloadSessions();
-    await _open(d.id);
+    await refreshThreads(true);
     _toast('Side thread started: it only reads this exchange. Merge brings it back.');
+    ThreadTabs.openThread(d.id, { anchor: msgEl.querySelector('.msg-more-btn') || msgEl });
   } catch (e) { _toast(`Could not start a side thread: ${e.message}`); }
 }
 
 // A branch: the conversation up to `anchor` (the whole chat when omitted).
-async function branch({ anchor = null, title = '' } = {}) {
+// `from`: what was clicked, where "Open side by side?" shows.
+async function branch({ anchor = null, title = '', from = null } = {}) {
   const sid = _sid();
   if (!sid) { _toast('Open a chat first'); return null; }
   try {
     const d = await _post(`/api/session/${_enc(sid)}/branch`, { anchor_msg_id: anchor, title });
     await _reloadSessions();
+    const at = from && from.isConnected ? from.getBoundingClientRect() : from;
     _panelOpen = false;
-    await _open(d.id);
+    await refreshThreads(true);
     _toast(`Branched with ${d.seeded} message${d.seeded === 1 ? '' : 's'}. The main chat is unchanged.`);
+    ThreadTabs.openThread(d.id, { anchor: at });
     return d;
   } catch (e) { _toast(`Could not branch: ${e.message}`); return null; }
 }
@@ -258,6 +285,7 @@ async function subagent(task, { title = '' } = {}) {
     await _reloadSessions();
     _lastStatus.set(d.id, 'running');
     await refreshThreads(true);
+    if (ThreadTabs.IN_PANE) _toParent({ action: 'changed' });
     _toast('Subagent started: it works in the background and reports back here.');
     return d;
   } catch (e) { _toast(`Could not start a subagent: ${e.message}`); return null; }
@@ -267,6 +295,7 @@ async function stopThread(id) {
   try {
     await _post(`/api/chat/stop/${_enc(id)}`, {});
     _toast('Stopping the subagent');
+    if (ThreadTabs.IN_PANE) _toParent({ action: 'changed' });
   } catch (e) { _toast(`Could not stop it: ${e.message}`); }
   setTimeout(() => refreshThreads(true), 600);
 }
@@ -288,20 +317,28 @@ function _noteFinished(list) {
 
 async function refreshThreads(force = false) {
   const sid = _sid();
-  if (!sid) { _threads = []; _threadsFor = null; _where = null; renderAll(); return; }
+  if (!sid) { _threads = []; _threadsFor = null; _where = null; _rootId = null; _rootThreads = []; renderAll(); return; }
   if (!force && _threadsFor === sid) { renderAll(); return; }
   try {
-    const [rt, rw] = await Promise.all([
+    // Inside a thread, the row under the tab lists the top chat's threads.
+    const guess = _rootOf(sid);
+    const [rt, rw, rr] = await Promise.all([
       fetch(`/api/session/${_enc(sid)}/threads`, { credentials: 'same-origin' }),
       fetch(`/api/session/${_enc(sid)}/thread-info`, { credentials: 'same-origin' }),
+      guess !== sid && !ThreadTabs.IN_PANE
+        ? fetch(`/api/session/${_enc(guess)}/threads`, { credentials: 'same-origin' }) : null,
     ]);
     const d = rt.ok ? await rt.json() : { threads: [] };
     const w = rw.ok ? await rw.json() : null;
+    const r = rr && rr.ok ? await rr.json() : null;
     if (_sid() !== sid) return;
     _noteFinished(d.threads || []);
     _threads = d.threads || [];
     _threadsFor = sid;
     _where = w;
+    _rootId = (w && w.path && w.path.length ? w.path[0].id : guess) || sid;
+    if (_rootId === sid) _rootThreads = _threads;
+    else if (r && _rootId === guess) { _noteFinished(r.threads || []); _rootThreads = r.threads || []; }
   } catch (_) { /* keep what we had */ }
   renderAll();
 }
@@ -311,6 +348,25 @@ function renderAll() {
   renderPanel();
   renderCards();
   renderBanner();
+  renderRow();
+}
+
+// ── the row under the chat's tab (chatThreadTabs.js) ────────────────────
+function renderRow() {
+  if (ThreadTabs.IN_PANE) return;
+  const sid = _sid();
+  if (!sid || _threadsFor !== sid) { ThreadTabs.renderRow({ root: null, view: sid, threads: [] }); return; }
+  const root = _rootId || sid;
+  const list = (root === sid ? _threads : _rootThreads).slice();
+  // A thread deeper down (a thread of a thread) gets a tab while it is open.
+  const path = (_where && _where.id === sid && _where.path) || [];
+  for (const p of path.slice(1)) {
+    if (!list.some((t) => t.id === p.id)) {
+      list.push({ id: p.id, name: p.name, kind: p.kind, status: p.id === sid ? _where.status : null });
+    }
+  }
+  const meta = _session(root);
+  ThreadTabs.renderRow({ root, rootName: meta ? meta.name : (path[0] && path[0].name) || '', view: sid, threads: list });
 }
 
 // ── the Threads button in the chat header ────────────────────────────────
@@ -369,8 +425,20 @@ function _panel() {
         <button type="submit" class="tp-primary">Start</button>
       </div>
     </form>
-    <div class="tp-list" role="list"></div>`;
+    <div class="tp-list" role="list"></div>
+    <label class="tp-pref">Open threads
+      <select name="thread-open" aria-label="How threads open">
+        <option value="ask">Ask each time</option>
+        <option value="split">Side by side</option>
+        <option value="switch">In place</option>
+      </select>
+    </label>`;
   document.body.appendChild(p);
+  p.querySelector('select[name=thread-open]').addEventListener('change', (ev) => {
+    const v = ev.currentTarget.value;
+    ThreadTabs.setOpenMode(v);
+    _toast(v === 'ask' ? 'Opening a thread asks first' : v === 'split' ? 'Threads open side by side' : 'Threads open in place');
+  });
   p.querySelector('.tp-compose').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const f = ev.currentTarget;
@@ -456,6 +524,8 @@ function renderPanel() {
         <p><b>Branch</b> to try another direction without losing this one, or hand a task to a <b>subagent</b> that works in the background and reports back here.</p>
         <p>You can also tell the chat "branch this out" or "subagent this out", or type <code>/branch</code> or <code>/subagent</code>.</p></div>`;
   if (list.dataset.html !== html) { list.innerHTML = html; list.dataset.html = html; }
+  const sel = p.querySelector('select[name=thread-open]');
+  if (sel && document.activeElement !== sel && sel.value !== ThreadTabs.getOpenMode()) sel.value = ThreadTabs.getOpenMode();
 }
 
 function openPanel({ compose = false } = {}) {
@@ -573,7 +643,7 @@ document.addEventListener('click', async (ev) => {
     ev.stopPropagation();
     if (t.dataset.threadsToggle) { if (_panelOpen) closePanel(); else openPanel(); return; }
     if (t.dataset.threadsClose) { closePanel(); return; }
-    if (t.dataset.threadsBranch) { branch(); return; }
+    if (t.dataset.threadsBranch) { branch({ from: t }); return; }
     if (t.dataset.threadsCompose) { _composeOpen = !_composeOpen; renderPanel(); return; }
     if (t.dataset.threadsComposeCancel) { _composeOpen = false; renderPanel(); return; }
     if (t.dataset.threadStop) { stopThread(t.dataset.threadStop); return; }
@@ -591,30 +661,47 @@ document.addEventListener('click', async (ev) => {
   const b = ev.target.closest('[data-thread-open],[data-thread-merge],[data-thread-ref],[data-thread-back]');
   if (!b) return;
   ev.preventDefault();
-  if (b.dataset.threadOpen) { closePanel(); _open(b.dataset.threadOpen); return; }
-  if (b.dataset.threadBack) { closePanel(); _open(b.dataset.threadBack); return; }
+  if (b.dataset.threadOpen) {
+    const at = b.getBoundingClientRect();
+    closePanel();
+    ThreadTabs.openThread(b.dataset.threadOpen, { anchor: at });
+    return;
+  }
+  if (b.dataset.threadBack) { closePanel(); ThreadTabs.goTo(b.dataset.threadBack); return; }
   const tid = b.dataset.threadMerge || b.dataset.threadRef;
   const tmeta = _session(tid);
   const parentId = (tmeta && tmeta.parent_session_id) || _sid();
   if (b.dataset.threadRef) {
     const t = _threads.find((x) => x.id === tid);
-    addReference(parentId, { kind: 'thread', id: tid, label: (tmeta && tmeta.name) || (t && t.name) || 'Thread' });
-    if (_sid() !== parentId) await _open(parentId);
-    renderRefs();
-    _toast('The thread goes with your next message');
+    const ref = { kind: 'thread', id: tid, label: (tmeta && tmeta.name) || (t && t.name) || 'Thread' };
+    // In the split view's pane, the reference goes to the chat beside it.
+    if (ThreadTabs.IN_PANE) {
+      _toParent({ action: 'reference', sid: parentId, ref });
+      _toast('The thread goes with your next message in the main chat');
+      return;
+    }
+    _useReference(parentId, ref);
     return;
   }
   if (b.disabled || b.dataset.busy) return;
   b.dataset.busy = '1';
   try {
     await _post(`/api/session/${_enc(tid)}/merge`, {});
-    if (_sid() !== parentId) await _open(parentId);
+    if (ThreadTabs.IN_PANE) _toParent({ action: 'merged', sid: parentId });
+    else if (_sid() !== parentId) await _open(parentId);
     await refreshThreads(true);
     _toast('Merged: the chat now has the thread’s conversation');
   } catch (e) {
     _toast(`Could not merge: ${e.message}`);
   } finally { delete b.dataset.busy; }
 });
+
+async function _useReference(sid, ref) {
+  addReference(sid, ref);
+  if (_sid() !== sid) await _open(sid);
+  renderRefs();
+  _toast('The thread goes with your next message');
+}
 
 // ── menu actions for both message footers (chatRenderer.js) ─────────────
 function actions(msgEl) {
@@ -639,7 +726,7 @@ function actions(msgEl) {
       e.stopPropagation();
       const id = msgEl && msgEl.dataset.dbId;
       if (!id) { _toast('This message is not saved yet: try again in a moment'); return; }
-      branch({ anchor: id });
+      branch({ anchor: id, from: msgEl.querySelector('.msg-more-btn') || msgEl });
     }},
   ];
 }
@@ -652,16 +739,36 @@ function _tick() {
   const box = document.getElementById('chat-history');
   if (box) box.querySelectorAll('.msg.msg-excluded:not(:has(.msg-excluded-tag))').forEach(_decorate);
   renderAll();
+  ThreadTabs.tick();
   // Every 3 s while something is running or the panel is open, else 15 s.
-  const busy = _panelOpen || _threads.some((t) => t.status === 'running') || (_where && _where.status === 'running');
+  const busy = _panelOpen || _threads.some((t) => t.status === 'running') || (_where && _where.status === 'running')
+    || _rootThreads.some((t) => t.status === 'running');
   const every = document.visibilityState !== 'visible' ? 60000 : busy ? 3000 : 15000;
   if (Date.now() - _lastFetch >= every) { _lastFetch = Date.now(); refreshThreads(true); }
 }
 setInterval(_tick, 1000);
 
+ThreadTabs.init({
+  current: _sid,
+  root: () => (_threadsFor === _sid() && _rootId) || _rootOf(_sid()),
+  select: (id) => _open(id),
+  session: _session,
+  name: _name,
+  kind: (k) => KINDS[k] || KINDS.side,
+  rerender: () => renderAll(),
+  refresh: () => refreshThreads(true),
+  openPanel: () => openPanel(),
+  reference: (sid, ref) => _useReference(sid, ref),
+  merged: async () => {
+    await refreshThreads(true);
+    _toast('Merged: the chat now has the thread\u2019s conversation');
+  },
+});
+
 const chatThreads = {
   actions, prune, referenceMessage, addReference, takeReferences, startThread, refreshThreads, renderRefs,
   branch, subagent, stopThread, slashBranch, slashSubagent, openPanel, closePanel,
+  openThread: (id, opts) => ThreadTabs.openThread(id, opts), goTo: (id) => ThreadTabs.goTo(id),
 };
 window.chatThreads = chatThreads;
 export default chatThreads;

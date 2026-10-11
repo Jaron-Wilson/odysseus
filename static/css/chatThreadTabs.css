@@ -1,0 +1,156 @@
+/* Threads under their chat's tab: the sub-tab row, the "Open side by side?"
+   prompt, the split view, and the thread's own page inside the split
+   (html.ody-pane). Built by static/js/chatThreadTabs.js. Colors for the
+   thread kinds come from chatThreads.css. */
+
+/* ── the row ─────────────────────────────────────────────────────────── */
+.thread-tabs {
+  flex-shrink: 0; position: relative; z-index: 3; display: flex; align-items: stretch; min-width: 0;
+  margin: 6px auto 0; width: 100%; max-width: var(--chat-max, 900px); box-sizing: border-box;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  font-size: 12.5px;
+}
+.thread-tabs[hidden] { display: none; }
+.tt-list {
+  display: flex; align-items: flex-end; gap: 2px; min-width: 0; flex: 1; overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none; padding: 0 2px;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent);
+}
+.tt-list::-webkit-scrollbar { display: none; }
+.tt-tab {
+  flex: 0 0 auto; display: inline-flex; align-items: center; min-width: 0; max-width: 220px; position: relative;
+  border-radius: 8px 8px 0 0; color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.tt-tab:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); }
+.tt-tab.active { color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.tt-tab.active::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; border-radius: 2px;
+  background: var(--accent, var(--red, #7c8cff));
+}
+.tt-tab.in-split { color: var(--fg); background: color-mix(in srgb, var(--accent, var(--red, #7c8cff)) 10%, transparent); }
+button.tt-tab, .tt-open {
+  height: 30px; display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 0 10px; margin: 0;
+  font: inherit; color: inherit; background: none; border: 0; border-radius: 8px 8px 0 0; cursor: pointer; white-space: nowrap;
+}
+.tt-open { padding-right: 4px; flex: 1; }
+.tt-main { flex-shrink: 0; font-weight: 600; }
+.tt-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tt-kind { display: inline-flex; flex-shrink: 0; color: var(--th-side); font-size: 12px; }
+.th-kind-branch .tt-kind { color: var(--th-branch); }
+.th-kind-subagent .tt-kind { color: var(--th-agent); }
+.tt-dot { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; }
+.tt-dot-running { background: var(--th-agent); animation: th-pulse 1.4s ease-in-out infinite; }
+.tt-dot-done { box-sizing: border-box; border: 1.5px solid color-mix(in srgb, var(--th-agent) 70%, transparent); }
+.tt-dot-failed { background: #e0655b; }
+.tt-dot-stopped { background: #c9a13b; }
+.tt-split-mark { display: inline-flex; flex-shrink: 0; opacity: .7; }
+.tt-x {
+  height: 20px; width: 20px; flex-shrink: 0; display: grid; place-items: center; margin: 0 4px 0 0; padding: 0;
+  font: inherit; font-size: 15px; line-height: 1; color: inherit; background: none; border: 0; border-radius: 5px;
+  cursor: pointer; opacity: 0;
+}
+.tt-tab:hover .tt-x, .tt-tab.active .tt-x, .tt-tab.in-split .tt-x, .tt-x:focus-visible { opacity: .6; }
+.tt-x:hover { opacity: 1 !important; background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.tt-more {
+  flex-shrink: 0; align-self: center; height: 22px; margin-left: 4px; padding: 0 8px; font: inherit; font-size: 11.5px;
+  color: inherit; opacity: .75; cursor: pointer; background: none; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+}
+.tt-more:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+
+@media (max-width: 768px) {
+  .thread-tabs { margin-top: 2px; }
+  .tt-tab { max-width: 150px; }
+  .tt-x { opacity: .5; }
+}
+
+/* Workspace: the row hangs right under the chat's tab, as its second level. */
+html.ui-workspace.ws-on .thread-tabs {
+  margin-top: 0; max-width: none; padding: 0 6px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+html.ui-workspace.ws-on .tt-tab { border-radius: 7px 7px 0 0; }
+
+/* ── the prompt ──────────────────────────────────────────────────────── */
+.tt-ask {
+  position: fixed; z-index: 1300; width: 290px; box-sizing: border-box; padding: 12px 14px;
+  background: var(--panel, var(--bg, #1b1b1b)); color: var(--fg); font-size: 13px;
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent); border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .35); animation: tt-in .12s ease-out;
+}
+@keyframes tt-in { from { opacity: 0; transform: translateY(-4px); } }
+.tt-ask-q { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13.5px; }
+.tt-ask-sub { margin: 4px 0 10px; font-size: 12px; opacity: .7; line-height: 1.45; }
+.tt-ask-btns { display: flex; gap: 8px; }
+.tt-ask-btns button {
+  flex: 1; height: 30px; font: inherit; font-size: 12.5px; cursor: pointer; color: inherit; background: none; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.tt-ask-btns button:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.tt-ask-btns .tt-primary {
+  font-weight: 600; color: #fff; background: var(--accent, var(--red, #7c8cff)); border-color: transparent;
+}
+.tt-ask-btns .tt-primary:hover { background: color-mix(in srgb, var(--accent, var(--red, #7c8cff)) 85%, #000); }
+.tt-ask-remember { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; opacity: .8; cursor: pointer; }
+.tt-ask-remember input { margin: 0; }
+
+/* The choice, changeable in the Threads panel. */
+.tp-pref {
+  display: flex; align-items: center; gap: 8px; padding: 9px 14px 11px; font-size: 12px; opacity: .85;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.tp-pref select {
+  margin-left: auto; height: 26px; font: inherit; font-size: 12px; color: inherit; padding: 0 6px; border-radius: 7px;
+  background: color-mix(in srgb, var(--bg, #000) 60%, transparent); border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+}
+@media (max-width: 768px) { .tp-pref { display: none; } }
+
+/* ── split view ──────────────────────────────────────────────────────── */
+/* The main chat keeps the left side; the pane takes the right of the chat
+   area, under the row (which spans both). */
+html.th-split-on #chat-container { padding-right: calc(var(--th-split-w, 50%) + 12px) !important; }
+html.th-split-on #chat-container > .thread-tabs {
+  max-width: none; width: auto; margin-left: 0; margin-right: calc(-1 * (var(--th-split-w, 50%) + 12px));
+}
+html.th-split-on #chat-container.welcome-active .chat-input-bar { max-width: 100%; }
+.thread-split {
+  position: absolute; z-index: 4; right: 0; bottom: 0; top: var(--th-split-top, 0px); width: var(--th-split-w, 50%);
+  display: flex; flex-direction: column; box-sizing: border-box; min-width: 0;
+  border-left: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  background: var(--bg);
+}
+.thread-split.focused { border-left-color: color-mix(in srgb, var(--accent, var(--red, #7c8cff)) 60%, transparent); }
+.thread-split.ts-flash { animation: ts-flash .6s ease-out; }
+@keyframes ts-flash { 30% { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent, var(--red, #7c8cff)) 55%, transparent); } }
+.ts-divider {
+  position: absolute; left: -5px; top: 0; bottom: 0; width: 9px; cursor: col-resize; z-index: 2; touch-action: none;
+}
+.ts-divider:hover, .ts-divider:focus-visible { background: color-mix(in srgb, var(--accent, var(--red, #7c8cff)) 25%, transparent); outline: none; }
+html.ts-resizing, html.ts-resizing * { cursor: col-resize !important; user-select: none !important; }
+html.ts-resizing .ts-frame { pointer-events: none; }
+.ts-head {
+  flex-shrink: 0; display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 6px 0 12px; font-size: 12.5px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ts-kind { display: inline-flex; color: var(--th-side); }
+.thread-split.th-kind-branch .ts-kind { color: var(--th-branch); }
+.thread-split.th-kind-subagent .ts-kind { color: var(--th-agent); }
+.ts-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ts-status { display: inline-flex; }
+.ts-fill { flex: 1; }
+.ts-btn {
+  height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; font: inherit; font-size: 12px;
+  color: inherit; opacity: .75; cursor: pointer; background: none; border: 0; border-radius: 7px; white-space: nowrap;
+}
+.ts-btn:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.ts-close { font-size: 18px; width: 28px; justify-content: center; padding: 0; }
+.ts-frame { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: var(--bg); }
+@media (max-width: 1100px) { .ts-btn span { display: none; } }
+
+/* ── the thread's own page, inside the pane ──────────────────────────── */
+html.ody-pane #sidebar, html.ody-pane .sidebar, html.ody-pane #icon-rail, html.ody-pane #mobile-menu-btn,
+html.ody-pane #hamburger-btn, html.ody-pane #mobile-backdrop, html.ody-pane .chat-top-bar,
+html.ody-pane #thread-tabs, html.ody-pane .build-badge, html.ody-pane #build-badge,
+html.ody-pane .tour-hint, html.ody-pane .music-bar-float { display: none !important; }
+html.ody-pane body { padding: 0 !important; }
+html.ody-pane #chat-container { margin: 0 !important; padding-top: 6px; }
