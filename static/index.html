@@ -252,6 +252,7 @@
   <link rel="stylesheet" href="/static/css/claudeSessions.css">
   <link rel="stylesheet" href="/static/css/adsbPanel.css">
   <link rel="stylesheet" href="/static/css/plans.css">
+  <link rel="stylesheet" href="/static/css/company.css">
   <link rel="stylesheet" href="/static/css/settingsNav.css">
   <link rel="stylesheet" href="/static/css/whatsNew.css">
   <link rel="stylesheet" href="/static/css/chatThreads.css">
@@ -1053,6 +1054,18 @@
               </svg>
               <span class="grow">Background</span>
               <span id="bg-tasks-count" class="bg-tasks-count" hidden></span>
+            </div>
+            <!-- Company: an org of AI agents on any Odysseus model (company.js, docs/company.md) -->
+            <div class="list-item" id="tool-company-btn" title="An organization of AI agents: org chart, goals, issues, approvals">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="flex-shrink:0;opacity:0.5;">
+                <rect x="9" y="2" width="6" height="5" rx="1"/>
+                <rect x="2" y="17" width="6" height="5" rx="1"/>
+                <rect x="16" y="17" width="6" height="5" rx="1"/>
+                <path d="M12 7v5M5 17v-3h14v3"/>
+              </svg>
+              <span class="grow">Company</span>
             </div>
             <!-- Claude Code sessions on this host, to read like chats (claudeSessions.js). Admin only. -->
             <div class="list-item" id="tool-claude-sessions-btn" title="Read your Claude Code sessions on this host: live ones first">
@@ -3410,6 +3423,7 @@
 <script type="module" src="/static/js/claudeSessions.js"></script>
 <script type="module" src="/static/js/adsbPanel.js"></script>
 <script type="module" src="/static/js/plans.js"></script>
+<script type="module" src="/static/js/company.js"></script>
 <script type="module" src="/static/js/whatsNew.js"></script>
 <script type="module" src="/static/js/codePanel.js"></script>
 <script type="module" src="/static/js/cloudBrowser.js"></script>

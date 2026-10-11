@@ -39,7 +39,7 @@ _JS = (_STATIC / "js" / "toolPages.js").read_text()
 _TAXONOMY = json.loads(re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-pages:end\s*\*/", _JS, re.S).group(1))
 
 _TOOL_IDS = ["tool-memory-btn", "tool-calendar-btn", "tool-compare-btn", "tool-cookbook-btn", "tool-research-btn",
-             "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-plans-btn", "tool-tasks-btn", "tool-bg-btn",
+             "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-plans-btn", "tool-tasks-btn", "tool-bg-btn", "tool-company-btn",
              "tool-devops-btn", "tool-code-btn", "tool-browser-btn", "tool-devices-btn", "tool-terminal-btn",
              "tool-claude-sessions-btn", "tool-adsb-btn",
              "tool-odysseus-dev-btn", "tool-theme-btn", "tool-whats-new-btn"]
@@ -223,7 +223,7 @@ def test_the_groups_render_in_every_design(make_page, design):
     assert [g["items"] for g in gs] == [
         ["tool-calendar-btn", "tool-tasks-btn", "tool-notes-btn", "tool-plans-btn", "tool-memory-btn"],
         ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn"],
-        ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-claude-sessions-btn", "tool-devops-btn",
+        ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-company-btn", "tool-claude-sessions-btn", "tool-devops-btn",
          "tool-odysseus-dev-btn"],
         ["tool-devices-btn", "tool-adsb-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-whats-new-btn"]]
     assert all(not g["folded"] and g["expanded"] == "true" and g["shown"] == g["items"] for g in gs)
@@ -277,13 +277,14 @@ def test_a_folded_group_with_news_shows_a_dot(make_page):
 def test_non_admins_lose_the_admin_tools_and_empty_groups_hide(make_page):
     pg = make_page("studio", admin=False)
     g = {x["id"]: x for x in _groups(pg)}
-    assert g["build"]["items"] == ["tool-browser-btn", "tool-bg-btn"]
+    assert g["build"]["items"] == ["tool-browser-btn", "tool-bg-btn", "tool-company-btn"]
     assert g["build"]["folded"], "Build starts folded for someone who isn't an admin"
-    assert g["build"]["summary"] == "Browser, Background"
+    assert g["build"]["summary"] == "Browser, Background, Company"
     assert g["system"]["items"] == ["tool-cookbook-btn", "tool-theme-btn", "tool-whats-new-btn"]
     # A tool that removes its own button (Terminal does) and a group left empty.
     pg.evaluate("""() => { document.getElementById('tool-browser-btn').style.display = 'none';
-                           document.getElementById('tool-bg-btn').remove(); }""")
+                           document.getElementById('tool-bg-btn').remove();
+                           document.getElementById('tool-company-btn').remove(); }""")
     pg.wait_for_timeout(100)
     assert {x["id"]: x for x in _groups(pg)}["build"]["hidden"]
     assert not pg.is_visible('.tool-group[data-tool-group="build"] .tool-group-head')
@@ -316,7 +317,7 @@ def test_the_new_tab_menu_lists_the_tools_in_the_same_groups(make_page):
     assert menu["groups"] == [
         ["Organize", ["Calendar", "Tasks", "Notes", "Plans", "Brain"]],
         ["Create & research", ["Library", "Gallery", "Deep Research", "Compare"]],
-        ["Build", ["Code", "Terminal", "Browser", "Background", "Claude sessions", "DevOps", "Odysseus dev"]],
+        ["Build", ["Code", "Terminal", "Browser", "Background", "Company", "Claude sessions", "DevOps", "Odysseus dev"]],
         ["System", ["Devices", "ADS-B receiver", "Cookbook", "Theme", "What's new"]]]
     pg.click(".ws-menu-group button:has-text('Devices')")
     pg.wait_for_function("() => [...document.querySelectorAll('.ws-tab')].some(t => t.dataset.tab === 'tool:devices')")
@@ -391,7 +392,7 @@ def test_ctrl_k_lists_pages_above_settings_and_enter_opens_it(make_page):
 @pytest.mark.parametrize("panel,clicked", [
     ("devices", "tool-devices-btn"), ("terminal", "tool-terminal-btn"), ("code", "tool-code-btn"),
     ("browser", "tool-browser-btn"), ("background", "tool-bg-btn"), ("devops", "tool-devops-btn"),
-    ("claude sessions", "tool-claude-sessions-btn"),
+    ("claude sessions", "tool-claude-sessions-btn"), ("company", "tool-company-btn"), ("org chart", "tool-company-btn"),
     ("odysseus-dev", "tool-odysseus-dev-btn"), ("calendar", "tool-calendar-btn"), ("tasks", "tool-tasks-btn"),
     ("compare", "tool-compare-btn"), ("research", "tool-research-btn"), ("theme", "tool-theme-btn"),
     ("memories", "tool-memory-btn"), ("documents", "tool-library-btn"), ("email", "email-section-title"),
