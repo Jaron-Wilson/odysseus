@@ -8,6 +8,7 @@ import json
 import logging
 import hashlib
 import threading
+import uuid
 import re
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
@@ -1565,9 +1566,13 @@ async def llm_call_async(
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
                 _set_cached_response(cache_key, response)
-                return response
             except Exception:
                 raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
+            _u = _usage_from_response(provider, data)
+            if _u:
+                _record_call_usage(url, data.get("model") or model, _u, f"llm:{uuid.uuid4()}",
+                                   session_id=session_id, owner=owner)
+            return response
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
             duration = time.time() - start
@@ -1692,11 +1697,59 @@ async def stream_llm(url: str, model: str, messages: List[Dict], *args, **kwargs
             "status": 503,
         }) + '\n\n')
         return
+    _usage_seen: Dict = {}
+    _usage_key = f"llm:{uuid.uuid4()}"
     try:
         async for _chunk in _stream_llm_inner(url, model, messages, *args, **kwargs):
+            if '"usage"' in _chunk and _chunk.startswith("data: "):
+                try:
+                    _evt = json.loads(_chunk[6:])
+                    if isinstance(_evt, dict) and _evt.get("type") == "usage" and isinstance(_evt.get("data"), dict):
+                        _usage_seen = _evt["data"]  # cumulative: the last one wins
+                except Exception:
+                    pass
             yield _chunk
     finally:
         sem.release()
+        if _usage_seen:
+            _record_call_usage(url, _usage_seen.get("model") or model, _usage_seen, _usage_key,
+                               session_id=kwargs.get("session_id"), owner=kwargs.get("owner"))
+
+
+def _record_call_usage(url: str, model: str, usage: Dict, key: str, *,
+                       session_id: Optional[str] = None, owner: Optional[str] = None) -> None:
+    """Store one finished call's tokens in usage_events (src/usage.py).
+    Never raises: a usage-tracking failure must not break a chat."""
+    try:
+        from src import usage as _usage
+        provider = _detect_provider(url)
+        toks = _usage.tokens_from_usage(provider, usage)
+        _usage.record_usage(endpoint_url=url, model=model, provider=provider,
+                            idempotency_key=key, session_id=session_id, owner=owner, **toks)
+    except Exception:
+        logger.debug("[usage] record failed", exc_info=True)
+
+
+def _usage_from_response(provider: str, data) -> Dict:
+    """Usage from a non-streamed response body, in the shape stream_llm's
+    usage events use."""
+    if not isinstance(data, dict):
+        return {}
+    if provider == "ollama":
+        i, o = data.get("prompt_eval_count") or 0, data.get("eval_count") or 0
+        return {"input_tokens": i, "output_tokens": o} if (i or o) else {}
+    u = data.get("usage")
+    if not isinstance(u, dict):
+        return {}
+    if provider == "anthropic":
+        out = {"input_tokens": u.get("input_tokens") or 0, "output_tokens": u.get("output_tokens") or 0,
+               "cached_input_tokens": u.get("cache_read_input_tokens") or 0,
+               "cache_write_tokens": u.get("cache_creation_input_tokens") or 0}
+    else:
+        out = {"input_tokens": u.get("prompt_tokens") or u.get("input_tokens") or 0,
+               "output_tokens": u.get("completion_tokens") or u.get("output_tokens") or 0,
+               "cached_input_tokens": (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0}
+    return out if (out["input_tokens"] or out["output_tokens"]) else {}
 
 
 async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
@@ -1841,8 +1894,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                         usage = (data.get("response") or {}).get("usage") or data.get("usage") or {}
                         input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or input_tokens
                         output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or output_tokens
+                        _cached_in = ((usage.get("input_tokens_details") or usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
                         if input_tokens or output_tokens:
-                            yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": input_tokens, "output_tokens": output_tokens}})}\n\n'
+                            yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": input_tokens, "output_tokens": output_tokens, "cached_input_tokens": _cached_in}})}\n\n'
                         yield "data: [DONE]\n\n"
                         return
                     elif evt in ("response.failed", "error"):
@@ -1931,6 +1985,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     if provider == "anthropic":
         _anth_input_tokens = 0
         _anth_output_tokens = 0
+        _c_read = _c_write = 0
         # Track tool_use blocks: {index: {id, name, arguments_json}}
         _anth_tool_blocks: Dict[int, Dict] = {}
         _anth_block_idx = -1
@@ -2010,7 +2065,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                     })
                                 yield f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
                             if _anth_input_tokens or _anth_output_tokens:
-                                yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": _anth_input_tokens, "output_tokens": _anth_output_tokens}})}\n\n'
+                                yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": _anth_input_tokens, "output_tokens": _anth_output_tokens, "cached_input_tokens": _c_read, "cache_write_tokens": _c_write}})}\n\n'
                             yield "data: [DONE]\n\n"
                             return
                         elif evt == "error":
@@ -2132,6 +2187,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                 if "usage" in j and not _delta_has_output:
                                     u = j["usage"] or {}
                                     _usage_data = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
+                                    _cached_in = ((u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+                                    if _cached_in:
+                                        _usage_data["cached_input_tokens"] = _cached_in
                                     # llama.cpp puts a `timings` block alongside `usage` with the
                                     # TRUE generation speed (predicted_per_second) — pure decode,
                                     # excluding prefill/network. Pass it through so the UI shows the

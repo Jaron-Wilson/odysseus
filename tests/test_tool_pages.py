@@ -43,7 +43,7 @@ def test_the_agent_reads_the_same_list_as_the_page():
     assert [g["id"] for g in tool_pages.GROUPS] == ["organize", "create", "build", "system"]
     assert {"devices", "terminal", "browser", "code", "calendar", "tasks", "devops", "background", "claude-sessions", "adsb",
             "odysseus-dev", "research", "compare", "library", "notes", "plans", "brain", "gallery", "cookbook",
-            "theme", "whats-new", "email", "chats", "skills", "settings"} == set(tool_pages.keys())
+            "theme", "usage", "whats-new", "email", "chats", "skills", "settings"} == set(tool_pages.keys())
 
 
 @pytest.mark.parametrize("name,key", [

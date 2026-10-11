@@ -2,7 +2,7 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, Float, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -663,6 +663,42 @@ class TaskRun(Base):
 
     __table_args__ = (
         Index('ix_task_runs_task', 'task_id', 'started_at'),
+    )
+
+
+class UsageEvent(Base):
+    """One finished model call: tokens in and out, and what it cost.
+
+    Written by src/usage.py::record_usage from the stream_llm / llm_call_async
+    choke points in src/llm_core.py, attributed via src/usage.py::usage_scope.
+    Read by the /api/usage routes and src/budgets.py. The company_* columns
+    are plain strings (no foreign keys) so they can point at company tables
+    that land in a later change.
+    """
+    __tablename__ = "usage_events"
+
+    id = Column(String, primary_key=True)
+    owner = Column(String, nullable=True, index=True)
+    occurred_at = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
+    source = Column(String, nullable=False, default="other")   # chat/task/subagent/company/tts/other
+    session_id = Column(String, nullable=True, index=True)
+    task_run_id = Column(String, nullable=True, index=True)
+    company_id = Column(String, nullable=True, index=True)
+    company_agent_id = Column(String, nullable=True, index=True)
+    company_run_id = Column(String, nullable=True)
+    endpoint_id = Column(String, nullable=True)
+    provider = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    billing_type = Column(String, nullable=False, default="unknown")  # local_free/subscription/metered/unknown
+    input_tokens = Column(Integer, nullable=False, default=0)          # uncached input
+    cached_input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    cost_usd = Column(Float, nullable=False, default=0.0)
+    cost_status = Column(String, nullable=False, default="unpriced")  # priced/unpriced/free
+    idempotency_key = Column(String, nullable=False, unique=True)
+
+    __table_args__ = (
+        Index('ix_usage_events_owner_time', 'owner', 'occurred_at'),
     )
 
 
