@@ -894,6 +894,10 @@ app.include_router(setup_note_routes(task_scheduler))
 from routes.plans_routes import setup_plans_routes
 app.include_router(setup_plans_routes())
 
+# Company: an organization of AI agents on any Odysseus model (routes/company_routes.py, docs/company.md)
+from routes.company_routes import setup_company_routes
+app.include_router(setup_company_routes())
+
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()

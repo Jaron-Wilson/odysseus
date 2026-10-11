@@ -1741,6 +1741,260 @@ class Integration(TimestampMixin, Base):
     enabled = Column(Boolean, default=True)
 
 
+# ── Company: an organization of AI agents (docs/company.md, src/company.py) ──
+# Every table carries its own indexed `owner` so each query can be scoped by
+# owner_filter without joining back to the company. Ids are uuid hex strings.
+# Status / role / priority values are validated in src/company.py, not here.
+
+class CompanyCompany(TimestampMixin, Base):
+    __tablename__ = "company_companies"
+
+    id            = Column(String, primary_key=True, index=True)
+    owner         = Column(String, nullable=True, index=True)
+    name          = Column(String, nullable=False)
+    description   = Column(Text, nullable=True)
+    status        = Column(String, nullable=False, default="active")   # active | paused | archived
+    issue_prefix  = Column(String, nullable=False)                     # "ODY" -> ODY-12
+    issue_counter = Column(Integer, nullable=False, default=0)
+    monthly_budget_cents = Column(Integer, nullable=False, default=0)  # 0 = no limit
+    spent_cents   = Column(Integer, nullable=False, default=0)         # this budget_month
+    budget_month  = Column(String, nullable=True)                      # "YYYY-MM"
+    require_approval_for_new_agents = Column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (
+        Index("ux_company_companies_owner_prefix", "owner", "issue_prefix", unique=True),
+    )
+
+
+class CompanyGoal(TimestampMixin, Base):
+    __tablename__ = "company_goals"
+
+    id             = Column(String, primary_key=True, index=True)
+    owner          = Column(String, nullable=True, index=True)
+    company_id     = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_id      = Column(String, ForeignKey("company_goals.id", ondelete="SET NULL"), nullable=True, index=True)
+    title          = Column(String, nullable=False)
+    description    = Column(Text, nullable=True)
+    level          = Column(String, nullable=False, default="company")   # company | team | agent | task
+    status         = Column(String, nullable=False, default="planned")   # planned | active | achieved | cancelled
+    owner_agent_id = Column(String, ForeignKey("company_agents.id", ondelete="SET NULL"), nullable=True)
+
+
+class CompanyProject(TimestampMixin, Base):
+    __tablename__ = "company_projects"
+
+    id            = Column(String, primary_key=True, index=True)
+    owner         = Column(String, nullable=True, index=True)
+    company_id    = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    goal_id       = Column(String, ForeignKey("company_goals.id", ondelete="SET NULL"), nullable=True)
+    name          = Column(String, nullable=False)
+    description   = Column(Text, nullable=True)
+    status        = Column(String, nullable=False, default="backlog")  # backlog | planned | in_progress | completed | cancelled
+    lead_agent_id = Column(String, ForeignKey("company_agents.id", ondelete="SET NULL"), nullable=True)
+    target_date   = Column(String, nullable=True)                      # "YYYY-MM-DD"
+    color         = Column(String, nullable=True)                      # "#rrggbb"
+
+
+class CompanyAgent(TimestampMixin, Base):
+    __tablename__ = "company_agents"
+
+    id            = Column(String, primary_key=True, index=True)
+    owner         = Column(String, nullable=True, index=True)
+    company_id    = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    name          = Column(String, nullable=False)
+    role          = Column(String, nullable=False, default="general")
+    title         = Column(String, nullable=True)
+    capabilities  = Column(Text, nullable=True)
+    reports_to    = Column(String, ForeignKey("company_agents.id", ondelete="SET NULL"), nullable=True, index=True)
+    status        = Column(String, nullable=False, default="idle")
+    # An Odysseus model spec, "model@Endpoint Name" (src/ai_interaction.py::_resolve_model).
+    model         = Column(String, nullable=True)
+    instructions  = Column(Text, nullable=True)                        # the agent's system prompt
+    enabled_tools = Column(JSON, nullable=True)                        # list of tool names; null = defaults
+    disabled_tools = Column(JSON, nullable=True)
+    heartbeat     = Column(JSON, nullable=True)                        # {enabled, interval_sec, wake_on_*}
+    monthly_budget_cents = Column(Integer, nullable=False, default=0)
+    spent_cents   = Column(Integer, nullable=False, default=0)
+    budget_month  = Column(String, nullable=True)
+    last_heartbeat_at = Column(DateTime, nullable=True)
+    session_id    = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+
+
+class CompanyIssue(TimestampMixin, Base):
+    __tablename__ = "company_issues"
+
+    id                = Column(String, primary_key=True, index=True)
+    owner             = Column(String, nullable=True, index=True)
+    company_id        = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    identifier        = Column(String, nullable=False)                 # PREFIX-12
+    number            = Column(Integer, nullable=False)
+    title             = Column(String, nullable=False)
+    description       = Column(Text, nullable=True)
+    status            = Column(String, nullable=False, default="backlog")
+    priority          = Column(String, nullable=False, default="medium")
+    parent_id         = Column(String, ForeignKey("company_issues.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id        = Column(String, ForeignKey("company_projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    goal_id           = Column(String, ForeignKey("company_goals.id", ondelete="SET NULL"), nullable=True)
+    assignee_agent_id = Column(String, ForeignKey("company_agents.id", ondelete="SET NULL"), nullable=True, index=True)
+    assignee_user     = Column(String, nullable=True)
+    created_by_type   = Column(String, nullable=False, default="user")  # user | agent | system
+    created_by_id     = Column(String, nullable=True)
+    # Atomic checkout: the run holding the issue and when it took it.
+    checkout_run_id     = Column(String, nullable=True)
+    execution_locked_at = Column(DateTime, nullable=True)
+    started_at        = Column(DateTime, nullable=True)
+    completed_at      = Column(DateTime, nullable=True)
+    cancelled_at      = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ux_company_issues_company_number", "company_id", "number", unique=True),
+        Index("ix_company_issues_company_status", "company_id", "status"),
+    )
+
+
+class CompanyLabel(TimestampMixin, Base):
+    __tablename__ = "company_labels"
+
+    id         = Column(String, primary_key=True, index=True)
+    owner      = Column(String, nullable=True, index=True)
+    company_id = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    name       = Column(String, nullable=False)
+    color      = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ux_company_labels_company_name", "company_id", "name", unique=True),
+    )
+
+
+class CompanyIssueLabel(Base):
+    __tablename__ = "company_issue_labels"
+
+    issue_id = Column(String, ForeignKey("company_issues.id", ondelete="CASCADE"), primary_key=True)
+    label_id = Column(String, ForeignKey("company_labels.id", ondelete="CASCADE"), primary_key=True, index=True)
+    owner    = Column(String, nullable=True, index=True)
+
+
+class CompanyIssueRelation(Base):
+    __tablename__ = "company_issue_relations"
+
+    id               = Column(String, primary_key=True, index=True)
+    owner            = Column(String, nullable=True, index=True)
+    company_id       = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    issue_id         = Column(String, ForeignKey("company_issues.id", ondelete="CASCADE"), nullable=False, index=True)
+    related_issue_id = Column(String, ForeignKey("company_issues.id", ondelete="CASCADE"), nullable=False, index=True)
+    type             = Column(String, nullable=False, default="blocks")  # issue_id blocks related_issue_id
+    created_at       = Column(DateTime, nullable=False, default=utcnow_naive)
+
+    __table_args__ = (
+        Index("ux_company_issue_relations_pair", "issue_id", "related_issue_id", "type", unique=True),
+    )
+
+
+class CompanyIssueComment(Base):
+    __tablename__ = "company_issue_comments"
+
+    id          = Column(String, primary_key=True, index=True)
+    owner       = Column(String, nullable=True, index=True)
+    company_id  = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    issue_id    = Column(String, ForeignKey("company_issues.id", ondelete="CASCADE"), nullable=False, index=True)
+    body        = Column(Text, nullable=False)
+    author_type = Column(String, nullable=False, default="user")   # user | agent | system
+    author_id   = Column(String, nullable=True)
+    run_id      = Column(String, nullable=True)
+    mentions    = Column(JSON, nullable=True)                      # [agent_id, ...] parsed from @names
+    created_at  = Column(DateTime, nullable=False, default=utcnow_naive)
+
+
+class CompanyActivity(Base):
+    __tablename__ = "company_activity"
+
+    id          = Column(String, primary_key=True, index=True)
+    owner       = Column(String, nullable=True, index=True)
+    company_id  = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_type  = Column(String, nullable=False, default="user")   # user | agent | system
+    actor_id    = Column(String, nullable=True)
+    action      = Column(String, nullable=False)                   # "issue.status_changed", ...
+    entity_type = Column(String, nullable=False)
+    entity_id   = Column(String, nullable=True)
+    agent_id    = Column(String, nullable=True, index=True)
+    run_id      = Column(String, nullable=True)
+    details     = Column(JSON, nullable=True)
+    created_at  = Column(DateTime, nullable=False, default=utcnow_naive)
+
+    __table_args__ = (
+        Index("ix_company_activity_company_created", "company_id", "created_at"),
+    )
+
+
+class CompanyRun(Base):
+    """One heartbeat of one agent. Written by the executor (PR C); read-only API for now."""
+    __tablename__ = "company_runs"
+
+    id                = Column(String, primary_key=True, index=True)
+    owner             = Column(String, nullable=True, index=True)
+    company_id        = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id          = Column(String, ForeignKey("company_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    issue_id          = Column(String, ForeignKey("company_issues.id", ondelete="SET NULL"), nullable=True, index=True)
+    invocation_source = Column(String, nullable=False, default="on_demand")  # timer | assignment | mention | on_demand | approval
+    status            = Column(String, nullable=False, default="queued")     # queued | running | succeeded | failed | cancelled | timed_out
+    model             = Column(String, nullable=True)                        # the model spec actually used
+    session_id        = Column(String, nullable=True)                        # Odysseus chat / thread it ran in
+    error             = Column(Text, nullable=True)
+    result_summary    = Column(Text, nullable=True)
+    usage             = Column(JSON, nullable=True)                          # tokens / cost, filled from PR B
+    created_at        = Column(DateTime, nullable=False, default=utcnow_naive)
+    started_at        = Column(DateTime, nullable=True)
+    finished_at       = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_company_runs_company_created", "company_id", "created_at"),
+    )
+
+
+class CompanyWakeup(Base):
+    """A request to wake an agent (assignment, @mention, on demand). Queued
+    here now; the executor (PR C) consumes them and links the run it started."""
+    __tablename__ = "company_wakeups"
+
+    id          = Column(String, primary_key=True, index=True)
+    owner       = Column(String, nullable=True, index=True)
+    company_id  = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id    = Column(String, ForeignKey("company_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    source      = Column(String, nullable=False)                   # assignment | mention | on_demand | approval
+    issue_id    = Column(String, nullable=True)
+    comment_id  = Column(String, nullable=True)
+    approval_id = Column(String, nullable=True)
+    status      = Column(String, nullable=False, default="pending")  # pending | consumed | dropped
+    run_id      = Column(String, nullable=True)
+    created_at  = Column(DateTime, nullable=False, default=utcnow_naive)
+    consumed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_company_wakeups_pending", "status", "created_at"),
+    )
+
+
+class CompanyApproval(TimestampMixin, Base):
+    __tablename__ = "company_approvals"
+
+    id                = Column(String, primary_key=True, index=True)
+    owner             = Column(String, nullable=True, index=True)
+    company_id        = Column(String, ForeignKey("company_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    type              = Column(String, nullable=False)          # hire_agent | strategy | plan | budget_override
+    title             = Column(String, nullable=True)
+    requested_by_type = Column(String, nullable=False, default="user")  # user | agent
+    requested_by_id   = Column(String, nullable=True)
+    status            = Column(String, nullable=False, default="pending")
+    payload           = Column(JSON, nullable=True)             # hire_agent: {agent_id?, name, role, model, ...}
+    decision_note     = Column(Text, nullable=True)
+    decided_by        = Column(String, nullable=True)
+    decided_at        = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_company_approvals_company_status", "company_id", "status"),
+    )
+
+
 
 
 
