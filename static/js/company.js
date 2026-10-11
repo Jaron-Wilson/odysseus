@@ -10,8 +10,10 @@
 // are offered; open a card for details, labels and comments with @mentions),
 // Goals, Projects, Activity and Approvals.
 //
-// Nothing here runs an agent yet. Assigning, @mentioning and "Wake now" queue
-// a wake-up that the executor (a later change) will pick up.
+// Agents run (src/company_executor.py): assigning, @mentioning, "Wake now",
+// a heartbeat timer or an approval decision queues a wake-up, and the
+// executor runs the agent on its model. While the page is open it polls
+// GET /companies/{cid}/live for running dots, the Runs view and notices.
 
 import uiModule from './ui.js';
 import { addFillChatAreaButton } from './fillChatArea.js';
@@ -42,8 +44,9 @@ const AGENT_STATUSES = ['active', 'paused', 'idle', 'running', 'error', 'pending
 const GOAL_LEVELS = ['company', 'team', 'agent', 'task'];
 const GOAL_STATUSES = ['planned', 'active', 'achieved', 'cancelled'];
 const PROJECT_STATUSES = ['backlog', 'planned', 'in_progress', 'completed', 'cancelled'];
-const VIEWS = [['dashboard', 'Dashboard'], ['org', 'Org chart'], ['issues', 'Issues'], ['goals', 'Goals'],
+const VIEWS = [['dashboard', 'Dashboard'], ['org', 'Org chart'], ['issues', 'Issues'], ['runs', 'Runs'], ['goals', 'Goals'],
   ['projects', 'Projects'], ['activity', 'Activity'], ['approvals', 'Approvals']];
+const CODING = [['', 'Off'], ['opencode', 'OpenCode'], ['claude', 'Claude Code'], ['antigravity', 'Antigravity']];
 // Stored values keep Paperclip's spelling (cancelled); shown in American English.
 const words = (s) => String(s || '').replace(/_/g, ' ').replace(/cancelled/g, 'canceled');
 const cap = (s) => { s = words(s); return s.charAt(0).toUpperCase() + s.slice(1); };
@@ -248,7 +251,7 @@ async function show(view) {
   try {
     await loadCompanyData();
     if (seq !== _seq) return;
-    await ({ dashboard: paintDashboard, org: paintOrg, issues: paintIssues, goals: paintGoals,
+    await ({ dashboard: paintDashboard, org: paintOrg, issues: paintIssues, runs: paintRuns, goals: paintGoals,
       projects: paintProjects, activity: paintActivity, approvals: paintApprovals }[view] || paintDashboard)(main);
   } catch (e) {
     if (seq === _seq) main.innerHTML = `<div class="co-empty">Could not load: ${esc(e.message)}</div>`;
@@ -290,6 +293,7 @@ function companyForm(c = null) {
       <label>Monthly budget (USD, 0 for no limit)<input name="budget" type="number" min="0" step="0.01" value="${((c?.monthly_budget_cents || 0) / 100).toFixed(2)}"></label>
       <label class="co-check"><input type="checkbox" name="require_approval_for_new_agents" ${c?.require_approval_for_new_agents ? 'checked' : ''}>
         Agents need my approval to hire other agents</label>
+      ${c ? `<label>Agents running at once (all companies)<input name="max_concurrent_runs" type="number" min="1" max="8" value=""></label>` : ''}
       <div class="co-actions">
         ${c ? '<button type="button" class="co-btn danger" data-act="delete-company">Delete company</button>' : ''}
         <span class="co-grow"></span>
@@ -298,9 +302,11 @@ function companyForm(c = null) {
       </div>
     </form>`);
   const form = card.querySelector('form');
+  if (c) api('/settings').then((st) => { if (form.max_concurrent_runs) form.max_concurrent_runs.value = st.max_concurrent_runs; }).catch(() => {});
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
     const d = formData(form);
+    if (c && d.max_concurrent_runs) api('/settings', { method: 'PUT', body: { max_concurrent_runs: parseInt(d.max_concurrent_runs, 10) } }).catch((e) => toast(e.message));
     const body = { name: d.name, description: d.description, monthly_budget_cents: Math.round(Number(d.budget || 0) * 100),
       require_approval_for_new_agents: d.require_approval_for_new_agents };
     if (d.status) body.status = d.status;
@@ -398,6 +404,129 @@ async function paintDashboard(main) {
   </div>`;
 }
 
+// ── Live status (polled while the page is open) ─────────────────────────
+let _live = null;
+let _liveTimer = null;
+let _liveSince = Date.now() / 1000;
+
+function budgetBar(spent, limit) {
+  if (!limit) return '';
+  const pct = Math.min(100, Math.round((spent / limit) * 100));
+  const cls = pct >= 100 ? 'stop' : pct >= 80 ? 'warn' : '';
+  return `<span class="co-budget ${cls}" title="${money(spent)} of ${money(limit)} this month"><span style="width:${pct}%"></span></span>`;
+}
+
+async function pollLive() {
+  if (!_panel || !_company) return;
+  try {
+    const d = await api(`/companies/${_company.id}/live?since=${_liveSince}`);
+    _liveSince = d.now;
+    _live = d;
+    for (const n of d.notices || []) toast(`${n.heading}: ${n.body}`);
+    for (const a of _agents) {
+      const l = d.agents[a.id];
+      if (!l) continue;
+      a.status = l.status;
+      for (const dot of _panel.querySelectorAll(`[data-agent="${a.id}"] .co-dot`)) {
+        dot.className = `co-dot ag-${l.status}`;
+        dot.title = cap(l.status) + (l.pause_reason ? `: ${l.pause_reason}` : '');
+      }
+    }
+    const b = $('.co-tab[data-view="approvals"] .co-badge');
+    if (b) { b.textContent = d.pending_approvals; b.hidden = !d.pending_approvals; }
+    const rb = $('.co-tab[data-view="runs"] .co-badge');
+    if (rb) { rb.textContent = d.runs.length; rb.hidden = !d.runs.length; }
+    if (_view === 'runs' && !$('.co-sheet')) {
+      const sig = d.runs.map(r => r.id + r.status).join();
+      if (sig !== _runsSig) paintRuns($('.co-view'));
+    }
+  } catch {}
+}
+
+function startLive() {
+  stopLive();
+  _liveTimer = setInterval(pollLive, 3000);
+  pollLive();
+}
+function stopLive() { if (_liveTimer) clearInterval(_liveTimer); _liveTimer = null; }
+
+// ── Runs ─────────────────────────────────────────────────────────────────
+let _runsSig = '';
+const RUN_SOURCE = { timer: 'Heartbeat', assignment: 'Assigned', mention: 'Mentioned', on_demand: 'Woken by you', approval: 'Approval' };
+
+function runRow(r) {
+  const live = ['queued', 'running'].includes(r.status);
+  const cost = r.usage && r.usage.cost_usd ? ` · $${Number(r.usage.cost_usd).toFixed(4)}` : '';
+  return `<li><button type="button" class="co-row-item" data-run="${esc(r.id)}">
+    <span class="co-dot run-${esc(r.status)}${live ? ' pulse' : ''}"></span>
+    <span class="co-row-title"><b>${esc(agentName(r.agent_id) || 'Agent')}</b> ${esc(RUN_SOURCE[r.invocation_source] || r.invocation_source)}
+      <span class="co-hint">${esc((r.model || '').split('@')[0])}${esc(cost)}</span></span>
+    <span class="co-pill">${esc(cap(r.status))}</span>
+    <time>${esc(ago(r.started_at || r.created_at))}</time></button></li>`;
+}
+
+async function paintRuns(main) {
+  const rows = (await api(`/companies/${_company.id}/runs?limit=60`)).runs;
+  _runsSig = rows.filter(r => ['queued', 'running'].includes(r.status)).map(r => r.id + r.status).join();
+  main.innerHTML = `<div class="co-toolbar"><span class="co-grow">Each run is one wake of one agent. Open one for its log.</span></div>
+    ${rows.length ? `<ul class="co-list co-runs">${rows.map(runRow).join('')}</ul>`
+      : '<div class="co-empty">No runs yet. Assign an issue to an agent, or open an agent and press Wake now.</div>'}`;
+}
+
+function logHtml(d) {
+  const r = d.run;
+  const parts = [];
+  for (const m of d.messages) {
+    if (m.role === 'user') parts.push(`<details class="co-log-prompt"><summary>Wake message</summary><pre>${esc(m.content)}</pre></details>`);
+    else {
+      for (const t of m.tools || []) parts.push(`<div class="co-log-tool"><b>${esc(t.tool)}</b> <span>${esc(String(t.output ?? '').slice(0, 600))}</span></div>`);
+      if (m.content) parts.push(`<div class="co-log-text">${esc(m.content)}</div>`);
+    }
+  }
+  if (d.live) {
+    for (const t of d.live.tools) parts.push(`<div class="co-log-tool"><b>${esc(t.tool)}</b> <span>${esc(String(t.output ?? '').slice(0, 600))}</span></div>`);
+    if (d.live.text) parts.push(`<div class="co-log-text">${esc(d.live.text)}</div>`);
+    parts.push(`<div class="co-hint">Round ${esc(d.live.round)}, working...</div>`);
+  }
+  return `<div class="co-detail-head"><b>${esc(agentName(r.agent_id) || 'Agent')}</b>
+      <span class="co-pill">${esc(cap(r.status))}</span><span class="co-hint">${esc(r.model || '')}</span>
+      <span class="co-grow"></span><button type="button" class="co-icon" data-close-sheet aria-label="Close">&times;</button></div>
+    ${r.error ? `<p class="co-note">${esc(r.error)}</p>` : ''}
+    <div class="co-log">${parts.join('') || '<div class="co-hint">Waiting to start (Odysseus may be busy with your chat).</div>'}</div>
+    <div class="co-actions">
+      ${r.session_id ? `<a class="co-btn" href="/#${esc(r.session_id)}" data-open-chat>Open as chat</a>` : ''}
+      <span class="co-grow"></span>
+      ${['queued', 'running'].includes(r.status) ? '<button type="button" class="co-btn danger" data-act="stop-run">Stop</button>' : ''}
+    </div>`;
+}
+
+async function openRun(id) {
+  let d;
+  try { d = await api(`/runs/${id}/log`); } catch (e) { toast(e.message); return; }
+  const card = openSheet(logHtml(d), { wide: true });
+  const log = card.querySelector('.co-log');
+  if (log) log.scrollTop = log.scrollHeight;
+  card.addEventListener('click', async (ev) => {
+    if (ev.target.closest('[data-act="stop-run"]')) {
+      try { await api(`/runs/${id}/stop`, { method: 'POST' }); toast('Stopping'); } catch (e) { toast(e.message); }
+    }
+    if (ev.target.closest('[data-open-chat]')) close();
+  });
+  const tick = async () => {
+    if (!card.isConnected) return;
+    try {
+      const nd = await api(`/runs/${id}/log`);
+      const l = card.querySelector('.co-log');
+      const atEnd = l && l.scrollHeight - l.scrollTop - l.clientHeight < 40;
+      card.innerHTML = logHtml(nd);
+      const l2 = card.querySelector('.co-log');
+      if (l2 && atEnd) l2.scrollTop = l2.scrollHeight;
+      if (['queued', 'running'].includes(nd.run.status)) setTimeout(tick, 1500);
+    } catch {}
+  };
+  if (['queued', 'running'].includes(d.run.status)) setTimeout(tick, 1500);
+}
+
 // ── Org chart ────────────────────────────────────────────────────────────
 function agentCard(a) {
   const model = a.model ? a.model.split('@')[0] : 'No model';
@@ -406,6 +535,8 @@ function agentCard(a) {
       <span class="co-agent-name">${esc(a.name)}</span><span class="co-role">${esc(ROLE_LABEL[a.role] || a.role)}</span></span>
     ${a.title ? `<span class="co-agent-title">${esc(a.title)}</span>` : ''}
     <span class="co-agent-model" title="${esc(a.model || '')}">${esc(model)}</span>
+    ${budgetBar(a.spent_cents, a.monthly_budget_cents)}
+    ${a.status === 'paused' && a.pause_reason ? `<span class="co-agent-title co-warn">${esc(a.pause_reason)}</span>` : ''}
   </button>`;
 }
 
@@ -434,6 +565,8 @@ function agentForm(a = null) {
     <form class="co-form">
       <h3>${a ? esc(a.name) : 'Hire an agent'}</h3>
       ${a && a.status === 'pending_approval' ? '<p class="co-note">Waiting for the hire to be approved.</p>' : ''}
+      ${a && a.status === 'paused' && a.pause_reason ? `<p class="co-note">Paused: ${esc(a.pause_reason)}. Set Status to Idle to resume.</p>` : ''}
+      ${a && a.status === 'running' ? '<p class="co-note">Running now. <button type="button" class="co-link" data-act="agent-runs">See the run</button></p>' : ''}
       <div class="co-row">
         <label>Name<input name="name" required maxlength="80" value="${esc(a?.name || '')}"></label>
         <label>Role<select name="role">${opts(ROLES, role, r => ROLE_LABEL[r])}</select></label>
@@ -460,8 +593,12 @@ function agentForm(a = null) {
           <label class="co-check"><input type="checkbox" name="hb_mention" ${hb.wake_on_mention ? 'checked' : ''}> When @mentioned</label>
           <label class="co-check"><input type="checkbox" name="hb_demand" ${hb.wake_on_demand ? 'checked' : ''}> When I ask</label>
         </div>
-        <span class="co-hint">Agents don't run yet; wake-ups are queued for when they do.</span>
+        <span class="co-hint">A wake runs the agent on its model: it reads its issues, works them with its tools and reports back.</span>
       </fieldset>
+      <div class="co-row">
+        <label>Coding agent<select name="coding_agent">${CODING.map(([v, l]) => `<option value="${v}"${(a?.coding_agent || '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>Working folder<input name="workdir" placeholder="/home/you/projects/site" value="${esc(a?.workdir || '')}"></label>
+      </div>
       <div class="co-row">
         <label>Monthly budget (USD, 0 for no limit)<input name="budget" type="number" min="0" step="0.01" value="${((a?.monthly_budget_cents || 0) / 100).toFixed(2)}"></label>
         ${userStatuses ? `<label>Status<select name="status">${opts(userStatuses, a.status)}</select></label>`
@@ -498,6 +635,7 @@ function agentForm(a = null) {
       heartbeat: { enabled: d.hb_enabled, interval_sec: Math.max(60, Math.round(Number(d.hb_minutes || 60) * 60)),
         wake_on_assignment: d.hb_assign, wake_on_mention: d.hb_mention, wake_on_demand: d.hb_demand },
       monthly_budget_cents: Math.round(Number(d.budget || 0) * 100),
+      coding_agent: d.coding_agent || null, workdir: d.workdir.trim() || null,
     };
     if (form.status && !form.status.disabled && d.status && d.status !== a?.status) {
       if (d.status === 'terminated' && !confirm(`Terminate ${a.name}? Their reports move to their manager and their open issues are unassigned. This can't be undone.`)) return;
@@ -519,8 +657,9 @@ function agentForm(a = null) {
     try { await api(`/agents/${a.id}/make-ceo`, { method: 'POST', body: {} }); await show('org'); } catch (e) { toast(e.message); }
   });
   card.querySelector('[data-act="wake-agent"]')?.addEventListener('click', async () => {
-    try { await api(`/agents/${a.id}/wake`, { method: 'POST' }); toast(`Wake-up queued for ${a.name}`); } catch (e) { toast(e.message); }
+    try { await api(`/agents/${a.id}/wake`, { method: 'POST' }); toast(`Waking ${a.name}: see Runs`); setTimeout(pollLive, 800); } catch (e) { toast(e.message); }
   });
+  card.querySelector('[data-act="agent-runs"]')?.addEventListener('click', () => show('runs'));
 }
 
 // ── Issues board ─────────────────────────────────────────────────────────
@@ -959,10 +1098,12 @@ async function paintActivity(main) {
 }
 
 let _approvalFilter = 'pending';
+let _approvalRows = [];
 
 async function paintApprovals(main) {
   const q = _approvalFilter === 'pending' ? '?status=pending,revision_requested' : '';
   const rows = (await api(`/companies/${_company.id}/approvals${q}`)).approvals;
+  _approvalRows = rows;
   const payload = (ap) => {
     const p = ap.payload || {};
     const bits = [];
@@ -970,6 +1111,10 @@ async function paintApprovals(main) {
     if (p.model) bits.push(`on <code>${esc(p.model)}</code>`);
     if (p.text) bits.push(esc(p.text));
     if (p.amount_cents) bits.push(`for ${money(p.amount_cents)}`);
+    if (p.reason) bits.push(esc(p.reason));
+    if (p.issue) bits.push(`for <b>${esc(p.issue)}</b>`);
+    if (p.chosen_model) bits.push(`runs on <code>${esc(p.chosen_model)}</code>`);
+    if (p.plan) bits.push(`<pre class="co-plan">${esc(p.plan)}</pre>`);
     return bits.join(' ');
   };
   const who = (ap) => ap.requested_by_type === 'agent' ? (agentName(ap.requested_by_id) || 'An agent') : 'You';
@@ -991,9 +1136,50 @@ async function paintApprovals(main) {
     </li>`).join('')}</ul>` : `<div class="co-empty">${_approvalFilter === 'pending' ? 'Nothing is waiting for you.' : 'No approvals yet.'}</div>`}`;
 }
 
+// Approve a plan or strategy: pick ANY model the person can use (GET
+// /api/models), defaulting to the model last chosen for this agent, plus run
+// limits. A budget override asks for the new monthly limit.
+async function approveDialog(ap, note, onDone) {
+  let def = {};
+  try { def = await api(`/approvals/${ap.id}/defaults`); } catch {}
+  const isBudget = ap.type === 'budget_override';
+  const card = openSheet(`
+    <form class="co-form">
+      <h3>Approve: ${esc(ap.title || cap(ap.type))}</h3>
+      ${ap.payload?.plan ? `<pre class="co-plan">${esc(ap.payload.plan)}</pre>` : ''}
+      ${isBudget ? `<label>New monthly budget (USD, 0 for no limit)<input name="budget" type="number" min="0" step="0.01"
+          value="${(((def.budget_cents || 0) * 2) / 100).toFixed(2)}"></label>`
+        : `<label>Carry it out on${modelPickerHtml(def.model)}</label>
+          ${def.remembered ? '<span class="co-hint">The model you chose last time for this agent.</span>' : ''}
+          <div class="co-row">
+            <label>Max steps<input name="max_steps" type="number" min="1" max="200" placeholder="Default" value="${esc(def.max_steps || '')}"></label>
+            <label>Max cost (USD)<input name="max_cost" type="number" min="0.01" step="0.01" placeholder="No limit" value="${esc(def.max_cost_usd || '')}"></label>
+          </div>`}
+      <div class="co-actions"><span class="co-grow"></span>
+        <button type="button" class="co-btn" data-close-sheet>Cancel</button>
+        <button type="submit" class="co-btn primary">Approve</button></div>
+    </form>`);
+  const form = card.querySelector('form');
+  if (!isBudget) fillModelPicker(card, def.model || '');
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const d = formData(form);
+    const options = isBudget ? { budget_cents: Math.round(Number(d.budget || 0) * 100) }
+      : { chosen_model: d.model || null, max_steps: d.max_steps ? parseInt(d.max_steps, 10) : null,
+          max_cost_usd: d.max_cost ? Number(d.max_cost) : null };
+    submitting(form.querySelector('[type=submit]'), async () => {
+      await api(`/approvals/${ap.id}/decide`, { method: 'POST', body: { decision: 'approved', note, options } });
+      closeSheet();
+      toast(isBudget ? 'Budget updated; the agent is resumed' : `Approved${options.chosen_model ? ` · runs on ${options.chosen_model.split('@')[0]}` : ''}`);
+      await onDone();
+    });
+  });
+}
+
 // ── The page ─────────────────────────────────────────────────────────────
 function close() {
   if (!_panel) return;
+  stopLive();
   _panel.remove();
   _panel = null;
   if (location.hash === '#company') history.replaceState(null, '', location.pathname + location.search);
@@ -1013,7 +1199,7 @@ function build() {
         </button>
         <button type="button" class="co-btn" data-act="new-company">New company</button>
         <nav class="co-tabs" role="tablist" aria-label="Views">${VIEWS.map(([k, label]) =>
-          `<button type="button" class="co-tab" role="tab" data-view="${k}">${label}${k === 'approvals' ? ' <span class="co-badge" hidden></span>' : ''}</button>`).join('')}</nav>
+          `<button type="button" class="co-tab" role="tab" data-view="${k}">${label}${['approvals', 'runs'].includes(k) ? ' <span class="co-badge" hidden></span>' : ''}</button>`).join('')}</nav>
       </div>
       <div class="co-main"><div class="co-view"></div></div>
     </div>`;
@@ -1041,10 +1227,17 @@ function build() {
     if (p) { projectForm(_projects.find(x => x.id === p.dataset.project)); return; }
     const f = ev.target.closest('[data-ap-filter]');
     if (f) { _approvalFilter = f.dataset.apFilter; paintApprovals($('.co-view')); return; }
+    const runEl = ev.target.closest('[data-run]');
+    if (runEl) { openRun(runEl.dataset.run); return; }
     const dec = ev.target.closest('[data-decide]');
     if (dec) {
       const li = dec.closest('.co-approval');
       const note = li.querySelector('.co-note-input')?.value || '';
+      const ap = _approvalRows.find(x => x.id === li.dataset.approval);
+      if (dec.dataset.decide === 'approved' && ap && ['plan', 'strategy', 'budget_override'].includes(ap.type)) {
+        approveDialog(ap, note, async () => { await paintApprovals($('.co-view')); refreshApprovalBadge(); });
+        return;
+      }
       submitting(dec, async () => {
         await api(`/approvals/${li.dataset.approval}/decide`, { method: 'POST', body: { decision: dec.dataset.decide, note } });
         await paintApprovals($('.co-view'));
@@ -1071,6 +1264,7 @@ export async function open({ view = null } = {}) {
   try { await loadCompanies(); } catch (e) { toast(`Company: ${e.message}`); }
   if (!_panel) return;
   await show(view || _view);
+  startLive();
 }
 
 function init() {

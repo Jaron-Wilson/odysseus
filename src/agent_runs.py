@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class _Run:
-    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "started")
+    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task", "started", "background")
 
     def __init__(self) -> None:
         self.buffer: list = []          # ordered SSE event strings (replay log)
@@ -33,6 +33,10 @@ class _Run:
         self.task: Optional[asyncio.Task] = None
         self.evict_task: Optional[asyncio.Task] = None
         self.started: float = time.time()   # shown on the DevOps page
+        # A background run (a Company agent's heartbeat, src/company_executor.py):
+        # not the user's foreground work, so the interactive gate does not wait
+        # on it and a restart does not carry it on as a chat.
+        self.background: bool = False
 
 
 _RUNS: Dict[str, _Run] = {}
@@ -165,7 +169,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
 def active_sessions() -> list:
     """Chats with a reply being written right now."""
     return [sid for sid, r in _RUNS.items()
-            if r.status == "running" and r.task and not r.task.done()]
+            if r.status == "running" and r.task and not r.task.done() and not r.background]
 
 
 async def stop_all(timeout: float = 10.0) -> int:
@@ -185,9 +189,10 @@ async def stop_all(timeout: float = 10.0) -> int:
     return len(tasks)
 
 
-def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
+def start(session_id: str, agen: AsyncGenerator[str, None], *, background: bool = False) -> _Run:
     """Start a detached run draining `agen` for a session. If a run is already in
-    flight for this session (e.g. a rapid double-send), it's cancelled first."""
+    flight for this session (e.g. a rapid double-send), it's cancelled first.
+    `background`: see _Run.background."""
     prev = _RUNS.get(session_id)
     prev_task: Optional[asyncio.Task] = None
     if prev:
@@ -197,6 +202,7 @@ def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
         if prev.evict_task and not prev.evict_task.done():
             prev.evict_task.cancel()
     run = _Run()
+    run.background = bool(background)
     _RUNS[session_id] = run
     run.task = asyncio.create_task(_drain(session_id, agen, prev_task))
     try:
