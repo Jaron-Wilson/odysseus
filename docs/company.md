@@ -203,6 +203,40 @@ switcher with create and settings, then:
   **Approvals** (waiting or all; approve, ask for changes, reject, with a
   note).
 
+### Company in chat (src/company_chat.py, src/agent_tools/company_chat_tools.py)
+
+Any chat can mention the Company. Typing `@` in the composer (or an issue
+prefix like `JAR`) opens a popup with companies, agents and issues
+(`static/js/companyMentions.js`, fed by `GET /api/company/mentions`).
+
+| Syntax | Means |
+|---|---|
+| `@Acme Labs`, `@acme-labs`, `@JAR` | a company (name, slug or issue prefix) |
+| `@Ada`, `@CEO` | an agent, by name or role (the longest name wins) |
+| `@JAR/CEO` | that company's CEO, when several companies have one |
+| `JAR-1`, `@JAR-1` | an issue |
+
+Sent messages show mentions as chips that open the Company page at the item
+(in Workspace, its Company tab). A name that fits several things is settled
+by the company the rest of the message names, else shown as ambiguous and
+the model is told the candidates. "Discuss in chat" on an issue opens a new
+chat with it mentioned.
+
+For each mention the server adds a short, fresh snapshot to that turn's user
+message only, inside `<company_context>`: an issue's status, priority,
+assignee, description and last three comments; an agent's role, model,
+status, open issues and last run; a company's goals, agents by status, open
+issues by status and approvals waiting. Owner-scoped, capped at 5000 chars.
+
+Chat tools act as the user (`Actor("user", owner)`) through the same
+functions as the page: read `company_overview`, `company_issue_list`,
+`company_issue_get`, `company_agent_status`; write `company_issue_create`,
+`company_issue_update` (status, priority, assignee), `company_issue_comment`,
+`company_agent_wake`, `company_approval_decide`. Write tools are blocked in
+plan mode. The tools are hidden for an owner with no company and pulled in
+when a message mentions the Company; a plain chat turn asking to change a
+mentioned item is promoted to agent mode.
+
 ---
 
 ## Lifecycle

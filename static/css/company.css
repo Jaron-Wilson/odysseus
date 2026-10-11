@@ -279,6 +279,17 @@
   .company-panel .co-agent { width: 100%; box-sizing: border-box; }
 }
 
+/* ── Company mentions in chat messages (companyMentions.js) ── */
+.co-mention-chip {
+  display: inline-block; padding: 0 6px; margin: 0 1px; border-radius: 6px; line-height: 1.45;
+  font-weight: 600; text-decoration: none; white-space: nowrap; cursor: pointer;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+}
+.co-mention-chip:hover { background: color-mix(in srgb, var(--accent, var(--red)) 24%, transparent); text-decoration: none; }
+.co-mention-chip.co-mention-ambiguous { cursor: help; border-style: dashed; opacity: 0.85; }
+
 /* Runs (PR C): live dots, run log, budget bars, plans */
 .ag-running { animation: co-pulse 1.2s ease-in-out infinite; }
 .co-dot.pulse { animation: co-pulse 1.2s ease-in-out infinite; }

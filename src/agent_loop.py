@@ -611,6 +611,10 @@ _GOOGLE_DOMAIN_RE = re.compile(
     r"\b(google (?:drive|docs?|sheets?|slides|tasks?|contacts?|account|workspace)|my drive|g ?docs?|"
     r"g ?sheets?|spreadsheets?|slide deck|docs\.google\.com|drive\.google\.com)\b", re.IGNORECASE)
 
+# The user's Company from a chat (src/agent_tools/company_chat_tools.py).
+from src.agent_tools.company_chat_tools import TOOL_SECTIONS as _COMPANY_CHAT_SECTIONS  # noqa: E402
+TOOL_SECTIONS.update(_COMPANY_CHAT_SECTIONS)
+
 def get_builtin_overrides() -> dict:
     """User overrides for built-in tool descriptions (TOOL_SECTIONS).
     Stored globally in settings.json so the user can preview + edit how
@@ -2293,6 +2297,17 @@ async def stream_agent_loop(
         # MCP tools are namespaced dynamically, so hide all MCP schemas for
         # public/non-admin users rather than trying to enumerate every tool.
         mcp_mgr = None
+    # The user's Company chat tools (src/agent_tools/company_chat_tools.py):
+    # only for an owner with a company, and never inside a Company agent's
+    # run, where an agent must act as itself, not as the user.
+    try:
+        from src.agent_tools import company_chat_tools as _company_chat_tools
+        if _company_run:
+            disabled_tools.update(_company_chat_tools.ALL_TOOLS)
+        else:
+            disabled_tools.update(_company_chat_tools.hidden_tools(owner))
+    except Exception as _e:
+        logger.debug("company chat tool gating skipped: %s", _e)
     # Google products this owner has not connected: their tools stay hidden.
     try:
         from src.google_workspace import tools as _google_tools
@@ -2432,6 +2447,14 @@ async def stream_agent_loop(
         # has the coding tool: "carry on" names no tool at all.
         if session_id and "claude_code" not in disabled_tools and _attached_claude_note(session_id):
             _relevant_tools.add("claude_code")
+        # A chat message about the Company (a mention, an issue like JAR-1):
+        # the user's Company tools. Not in a Company agent's run.
+        if not _company_run:
+            try:
+                from src.agent_tools import company_chat_tools as _company_chat_tools
+                _relevant_tools.update(_company_chat_tools.relevant_tools(owner, _last_user) - disabled_tools)
+            except Exception as _e:
+                logger.debug("company chat tool selection skipped: %s", _e)
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
