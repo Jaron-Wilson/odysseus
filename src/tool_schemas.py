@@ -1444,6 +1444,12 @@ from src.company_tools import SCHEMAS as _COMPANY_SCHEMAS  # noqa: E402
 FUNCTION_TOOL_SCHEMAS.extend(_COMPANY_SCHEMAS)
 
 
+# Google products: Drive, Docs, Sheets, Slides, Tasks, Contacts
+# (src/google_workspace/products.py). Hidden per turn when the product is off.
+from src.google_workspace import products as _google_products  # noqa: E402
+FUNCTION_TOOL_SCHEMAS.extend(_google_products.function_schemas())
+
+
 # ---------------------------------------------------------------------------
 # Converter: native function call -> ToolBlock
 # ---------------------------------------------------------------------------

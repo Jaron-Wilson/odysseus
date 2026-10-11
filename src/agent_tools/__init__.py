@@ -107,7 +107,12 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
 from src.company_tools import TOOL_NAMES as _COMPANY_TOOL_NAMES  # noqa: E402
 TOOL_TAGS |= set(_COMPANY_TOOL_NAMES)
 
-ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
+# Google products: Drive, Docs, Sheets, Slides, Tasks, Contacts
+# (src/google_workspace/products.py).
+from src.google_workspace.products import ALL_TOOLS as _GOOGLE_TOOLS  # noqa: E402
+TOOL_TAGS |= _GOOGLE_TOOLS
+
+ToolBlock =namedtuple("ToolBlock", ["tool_type", "content"])
 
 # ---------------------------------------------------------------------------
 # Re-exports from sub-modules

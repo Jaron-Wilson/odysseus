@@ -642,3 +642,10 @@ def reset_tool_index() -> None:
     global _tool_index, _last_attempt
     _tool_index = None
     _last_attempt = 0.0
+
+
+# Google products (src/google_workspace/products.py): their descriptions for
+# retrieval and their phrases for the keyword fallback.
+from src.google_workspace import products as _google_products  # noqa: E402
+BUILTIN_TOOL_DESCRIPTIONS.update(_google_products.index_descriptions())
+ToolIndex._KEYWORD_HINTS.update(_google_products.KEYWORD_HINTS)

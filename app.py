@@ -675,6 +675,9 @@ from routes.sip_routes import setup_sip_routes
 app.include_router(setup_sip_routes())
 from routes.meet_routes import setup_meet_routes
 app.include_router(setup_meet_routes())
+# Google products behind one Google connection (routes/google_routes.py, docs/google.md)
+from routes.google_routes import setup_google_routes
+app.include_router(setup_google_routes())
 from routes.special_chat_routes import setup_special_chat_routes
 app.include_router(setup_special_chat_routes(session_manager))
 from routes.mail_listener_routes import setup_mail_listener_routes

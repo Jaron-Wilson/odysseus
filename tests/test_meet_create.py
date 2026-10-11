@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from src import google_oauth
+from src.google_workspace import connection as google_connection
 from src.meet import config as meet_config, google_calendar, session as meet_session
 from tests.test_google_meet import H, env  # noqa: F401  (the fixture)
 
@@ -85,8 +86,10 @@ class FakeGoogle:
 @pytest.fixture
 def google(tmp_path, monkeypatch):
     fake = FakeGoogle()
-    monkeypatch.setattr(google_calendar, "_transport", httpx.MockTransport(fake))
-    monkeypatch.setattr(google_calendar, "_dir", lambda: str(tmp_path / "google_calendar"))
+    # The connection is shared with the other Google products
+    # (src/google_workspace/connection.py); Calendar is one of them.
+    monkeypatch.setattr(google_connection, "_transport", httpx.MockTransport(fake))
+    monkeypatch.setattr(google_connection, "_dir", lambda: str(tmp_path / "google_calendar"))
 
     async def no_sleep(_s):
         return None
@@ -95,14 +98,16 @@ def google(tmp_path, monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "123-abc.apps.googleusercontent.com")
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "client-secret")
     monkeypatch.setattr(google_oauth, "_setting", lambda key: "")
-    google_calendar._access.clear()
+    google_connection._access.clear()
     google_oauth._states.clear()
     yield fake
-    google_calendar._access.clear()
+    google_connection._access.clear()
 
 
 def _connect(user="alice"):
-    ok, msg = asyncio.run(google_calendar.finish_connect(user, "the-code", "https://box.ts.net/api/auth/google/callback"))
+    entry = {"purpose": "calendar", "user": user, "code_verifier": "v",
+             "redirect_uri": "https://box.ts.net/api/auth/google/callback"}
+    ok, msg = asyncio.run(google_calendar.finish_connect(user, "the-code", entry))
     assert ok, msg
     return msg
 
@@ -123,7 +128,7 @@ def test_connect_asks_for_offline_calendar_access_through_the_shared_callback(go
     assert q["access_type"] == "offline" and q["prompt"] == "consent" and q["include_granted_scopes"] == "true"
     assert google_calendar.CALENDAR_SCOPE in q["scope"].split() and "email" in q["scope"].split()
     entry = google_oauth.pop_state(q["state"])
-    assert entry["purpose"] == "calendar" and entry["user"] == "alice"
+    assert entry["purpose"] == "google" and entry["products"] == ["calendar"] and entry["user"] == "alice"
     assert google_oauth.pop_state(q["state"]) is None                               # used once
 
 
@@ -148,7 +153,7 @@ def test_the_refresh_token_is_kept_encrypted_and_never_shown(google, tmp_path):
 
 def test_create_inserts_an_event_with_a_meet_and_opens_its_access(google):
     _connect()
-    google_calendar._access.clear()                       # forces a refresh from the saved token
+    google_connection._access.clear()                       # forces a refresh from the saved token
     google.pending = 1
     from datetime import datetime, timezone
     made = asyncio.run(google_calendar.create_meeting(
@@ -180,11 +185,11 @@ def test_no_invites_without_people_and_access_failure_is_explained(google):
 
 def test_a_revoked_connection_is_forgotten_with_a_way_back(google):
     _connect()
-    google_calendar._access.clear()
+    google_connection._access.clear()
     google.refresh = "invalid_grant"
     with pytest.raises(google_calendar.GoogleError) as e:
         asyncio.run(google_calendar.create_meeting("alice"))
-    assert "Connect Google Calendar again" in str(e.value)
+    assert "Connect it again in Settings > Google" in str(e.value)
     assert google_calendar.status("alice")["connected"] is False
 
 
@@ -291,7 +296,7 @@ def test_the_shared_callback_finishes_a_calendar_connection(tmp_path, google, mo
                                         "redirect_uri": "https://box.ts.net/api/auth/google/callback"})
     with TestClient(app) as c:
         r = c.get("/api/auth/google/callback?state=st1&code=the-code", follow_redirects=False)
-    assert r.status_code == 200 and "Google Calendar connected" in r.text
+    assert r.status_code == 200 and "Google connected" in r.text
     assert REFRESH not in r.text and "set-cookie" not in {k.lower() for k in r.headers}
     assert google_calendar.status("alice")["email"] == "jaron@example.com"
 

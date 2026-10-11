@@ -174,7 +174,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     # ------------------------------------------------------------------
 
     # The client and the redirect URI live in src/google_oauth.py, shared
-    # with connecting Google Calendar for Meet (src/meet/google_calendar.py),
+    # with connecting Google products (src/google_workspace/connection.py),
     # which comes back through this same callback with its own state.
     from src import google_oauth
 
@@ -278,12 +278,13 @@ p{{margin:0 0 1rem;line-height:1.5}}a{{color:{accent}}}</style></head>
             return _google_page("Sign-in failed", "Google did not return an authorization code.")
 
         redirect_uri = entry.get("redirect_uri") or _google_redirect_uri(request)
-        if entry.get("purpose") == "calendar":
-            # Connecting Google Calendar for Meet, started from the Meet card
-            # by a signed-in user: not a sign-in, no session is made here.
-            from src.meet import google_calendar
-            ok, message = await google_calendar.finish_connect(entry.get("user") or "", code, entry)
-            return _google_page("Google Calendar connected" if ok else "Could not connect Google Calendar",
+        if entry.get("purpose") in ("google", "calendar"):
+            # Connecting Google products (Settings > Google, or the Meet
+            # card's Connect Google Calendar), started by a signed-in user:
+            # not a sign-in, no session is made here.
+            from src.google_workspace import connection as google_connection
+            ok, message = await google_connection.finish_connect(entry.get("user") or "", code, entry)
+            return _google_page("Google connected" if ok else "Could not connect Google",
                                 message, ok=ok, back="/", back_label="Back to Odysseus")
         try:
             tok = await google_oauth.exchange_code(code, entry)

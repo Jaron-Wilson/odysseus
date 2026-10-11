@@ -599,6 +599,18 @@ TOOL_SECTIONS["ui_control"] = TOOL_SECTIONS["ui_control"].replace("{pages}", _to
 from src import company_tools as _company_tools  # noqa: E402
 TOOL_SECTIONS.update(_company_tools.PROMPT_SECTIONS)
 
+# Google products (src/google_workspace/products.py): one-line sections, a
+# domain and its rules. Tools of a product that is off are hidden per owner
+# in run_agent_loop.
+from src.google_workspace import products as _google_products  # noqa: E402
+for _gname, _gsection in _google_products.prompt_sections().items():
+    TOOL_SECTIONS.setdefault(_gname, _gsection)
+_DOMAIN_TOOL_MAP["google"] = set(_google_products.ALL_TOOLS)
+_DOMAIN_RULES["google"] = _google_products.PROMPT_RULES
+_GOOGLE_DOMAIN_RE = re.compile(
+    r"\b(google (?:drive|docs?|sheets?|slides|tasks?|contacts?|account|workspace)|my drive|g ?docs?|"
+    r"g ?sheets?|spreadsheets?|slide deck|docs\.google\.com|drive\.google\.com)\b", re.IGNORECASE)
+
 def get_builtin_overrides() -> dict:
     """User overrides for built-in tool descriptions (TOOL_SECTIONS).
     Stored globally in settings.json so the user can preview + edit how
@@ -1038,6 +1050,9 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
            r"try joining|join(?:ing)? (?:the |this |that |my )?(?:meeting|call|meet)|"
            r"through (?:my|the) browser)\b"):
         domains.add("meet")
+    # Google products (google_* tools): "find my google doc", a Sheets link.
+    if _GOOGLE_DOMAIN_RE.search(q):
+        domains.add("google")
     # What changed in Odysseus itself: the merged PRs (whats_new). "what
     # changed with the voice call?" otherwise reads as a plain chat message.
     if has(r"\b(what'?s new|what is new|what (?:has )?changed|changelog|change log|release notes|merged|"
@@ -2278,6 +2293,12 @@ async def stream_agent_loop(
         # MCP tools are namespaced dynamically, so hide all MCP schemas for
         # public/non-admin users rather than trying to enumerate every tool.
         mcp_mgr = None
+    # Google products this owner has not connected: their tools stay hidden.
+    try:
+        from src.google_workspace import tools as _google_tools
+        disabled_tools.update(_google_tools.disabled_for(owner))
+    except Exception:
+        pass
 
     if plan_mode:
         # Plan mode: investigate read-only, propose a plan, don't execute. The
@@ -3587,6 +3608,15 @@ async def stream_agent_loop(
                 if isinstance(_sm, dict) and str(_sm.get("link", "")).startswith("/api/device-media/"):
                     _line = f"\n\n[{_sm.get('name') or 'Play'}]({_sm['link']})\n"
                     yield f'data: {json.dumps({"delta": _line})}\n\n'
+
+            # A Google file made or edited (google_* tools): its link goes
+            # into the reply, so it is there after a reload whatever the
+            # model writes.
+            if block.tool_type.startswith("google_") and isinstance(result.get("google_link"), dict):
+                from src.google_workspace.common import link_line as _google_link_line
+                _gline = _google_link_line(result["google_link"])
+                if _gline:
+                    yield f'data: {json.dumps({"delta": _gline})}\n\n'
 
             # Native document tools open in the editor + carry the REAL doc id.
             # Emit a doc_update so the frontend opens/activates it and sends it
