@@ -1440,6 +1440,10 @@ FUNCTION_TOOL_SCHEMAS = [
     },
 ]
 
+# The user's Company from a chat, acting as the user (src/agent_tools/company_chat_tools.py).
+from src.agent_tools.company_chat_tools import SCHEMAS as _COMPANY_CHAT_SCHEMAS  # noqa: E402
+FUNCTION_TOOL_SCHEMAS.extend(_COMPANY_CHAT_SCHEMAS)
+
 
 # ---------------------------------------------------------------------------
 # Converter: native function call -> ToolBlock

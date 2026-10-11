@@ -503,6 +503,11 @@ _CODE_CLI_RE = re.compile(r"(^|[;&|(`\s/'\"])(claude|opencode|agy)(\s|$|['\"])")
 _CODE_CLI_ENGINE = {"claude": "claude", "opencode": "opencode", "agy": "antigravity"}
 
 
+def _is_company_chat_tool(tool: str) -> bool:
+    from src.agent_tools.company_chat_tools import ALL_TOOLS
+    return tool in ALL_TOOLS
+
+
 async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
@@ -779,6 +784,11 @@ async def execute_tool_block(
         except Exception as e:
             logger.warning("whats_new failed: %s", e, exc_info=True)
             result = {"error": f"whats_new: {type(e).__name__}: {e}"[:400], "exit_code": 1}
+    elif tool.startswith("company_") and _is_company_chat_tool(tool):
+        # The user's Company, acting as the user (src/agent_tools/company_chat_tools.py).
+        from src.agent_tools import company_chat_tools
+        desc = f"{tool}: {content.split(chr(10))[0][:60]}"
+        result = await asyncio.to_thread(company_chat_tools.run_tool, tool, content, owner)
     elif tool == "chat_memory":
         desc = "chat_memory"
         from src import chat_memory

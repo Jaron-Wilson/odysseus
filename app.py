@@ -897,6 +897,9 @@ app.include_router(setup_plans_routes())
 # Company: an organization of AI agents on any Odysseus model (routes/company_routes.py, docs/company.md)
 from routes.company_routes import setup_company_routes
 app.include_router(setup_company_routes())
+# Company mentions in chats: the composer's @ autocomplete (routes/company_chat_routes.py)
+from routes.company_chat_routes import setup_company_chat_routes
+app.include_router(setup_company_chat_routes())
 
 # Email
 from routes.email_routes import setup_email_routes

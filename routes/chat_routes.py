@@ -535,6 +535,17 @@ def setup_chat_routes(
                 _tool_intent.category,
                 _tool_intent.reason,
             )
+        # Asking for a change to a mentioned Company item ("assign JAR-2 to
+        # @CEO") needs the Company tools (src/agent_tools/company_chat_tools.py).
+        if chat_mode == "chat" and isinstance(message, str):
+            try:
+                from src import company_chat
+                if company_chat.wants_company_action(message, get_current_user(request)):
+                    chat_mode = "agent"
+                    auto_escalated = True
+                    logger.info("chat→agent auto-escalation: Company action")
+            except Exception as e:
+                logger.debug(f"Company intent check skipped: {e}")
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
@@ -656,6 +667,15 @@ def setup_chat_routes(
                                               session_manager=session_manager)
             except Exception as e:
                 logger.warning(f"Could not attach references: {e}")
+
+        # Company mentions (@CEO, @Acme, JAR-1): a fresh snapshot of each, for
+        # this turn only (src/company_chat.py).
+        if not compare_mode:
+            try:
+                from src import company_chat
+                company_chat.apply_mentions(ctx.messages, message, ctx.user)
+            except Exception as e:
+                logger.warning(f"Could not attach Company context: {e}")
 
         # A turn spoken in the in-app voice call (static/js/voiceCall.js): the
         # model did not know, and answered "I'm not hearing live audio".

@@ -596,6 +596,10 @@ _DOMAIN_RULES["ui"] = (_DOMAIN_RULES["ui"].replace("{pages}", _tool_pages.names_
                        .replace("{aliases}", _tool_pages.aliases_for_prompt()))
 TOOL_SECTIONS["ui_control"] = TOOL_SECTIONS["ui_control"].replace("{pages}", _tool_pages.names_for_prompt())
 
+# The user's Company from a chat (src/agent_tools/company_chat_tools.py).
+from src.agent_tools.company_chat_tools import TOOL_SECTIONS as _COMPANY_CHAT_SECTIONS  # noqa: E402
+TOOL_SECTIONS.update(_COMPANY_CHAT_SECTIONS)
+
 def get_builtin_overrides() -> dict:
     """User overrides for built-in tool descriptions (TOOL_SECTIONS).
     Stored globally in settings.json so the user can preview + edit how
@@ -2271,6 +2275,13 @@ async def stream_agent_loop(
         # MCP tools are namespaced dynamically, so hide all MCP schemas for
         # public/non-admin users rather than trying to enumerate every tool.
         mcp_mgr = None
+    # Company chat tools exist only for an owner with a company
+    # (src/agent_tools/company_chat_tools.py).
+    try:
+        from src.agent_tools import company_chat_tools as _company_tools
+        disabled_tools.update(_company_tools.hidden_tools(owner))
+    except Exception as _e:
+        logger.debug("company tool gating skipped: %s", _e)
 
     if plan_mode:
         # Plan mode: investigate read-only, propose a plan, don't execute. The
@@ -2401,6 +2412,12 @@ async def stream_agent_loop(
         # has the coding tool: "carry on" names no tool at all.
         if session_id and "claude_code" not in disabled_tools and _attached_claude_note(session_id):
             _relevant_tools.add("claude_code")
+        # A message about the Company (a mention, an issue like JAR-1): its tools.
+        try:
+            from src.agent_tools import company_chat_tools as _company_tools
+            _relevant_tools.update(_company_tools.relevant_tools(owner, _last_user) - disabled_tools)
+        except Exception as _e:
+            logger.debug("company tool selection skipped: %s", _e)
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran

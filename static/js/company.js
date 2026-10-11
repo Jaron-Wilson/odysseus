@@ -739,6 +739,7 @@ async function openIssue(id) {
       <div class="co-actions">
         <button type="button" class="co-btn danger" data-act="delete-issue">Delete</button>
         ${i.checkout_run_id ? '<button type="button" class="co-btn" data-act="release">Release lock</button>' : ''}
+        <button type="button" class="co-btn" data-act="discuss" title="A new chat with ${esc(i.identifier)} mentioned">Discuss in chat</button>
         <span class="co-grow"></span><span class="co-saved co-hint" role="status"></span>
         <button type="button" class="co-btn primary" data-act="save-issue">Save</button>
       </div>
@@ -777,6 +778,8 @@ async function openIssue(id) {
       if (!confirm(`Delete ${i.identifier}?`)) return;
       try { await api(`/issues/${i.id}`, { method: 'DELETE' }); closeSheet(); if (_view === 'issues') paintIssues($('.co-view')); }
       catch (e) { toast(e.message); }
+    } else if (act === 'discuss') {
+      window.companyMentions?.discuss(i.identifier);
     } else if (act === 'release') {
       try { await api(`/issues/${i.id}/release`, { method: 'POST', body: { force: true } }); openIssue(i.id); }
       catch (e) { toast(e.message); }
@@ -1065,12 +1068,21 @@ function build() {
   if (fill && !isPhone()) requestAnimationFrame(() => fill.fill(false));
 }
 
-/** Open Company; `view` picks the view (dashboard, org, issues, ...). */
-export async function open({ view = null } = {}) {
+/** Open Company; `view` picks the view (dashboard, org, issues, ...).
+ *  `companyId`, `issueId`, `agentId` open it at one item (a chat mention's
+ *  chip, companyMentions.js). */
+export async function open({ view = null, companyId = null, issueId = null, agentId = null } = {}) {
   if (!_panel) build();
   try { await loadCompanies(); } catch (e) { toast(`Company: ${e.message}`); }
   if (!_panel) return;
+  if (companyId && companyId !== _company?.id && _companies.some(c => c.id === companyId)) {
+    _company = _companies.find(c => c.id === companyId);
+    try { localStorage.setItem(LAST_KEY, companyId); } catch {}
+    paintSwitcher();
+  }
   await show(view || _view);
+  if (issueId) await openIssue(issueId);
+  else if (agentId) { const a = _agents.find(x => x.id === agentId); if (a) agentForm(a); }
 }
 
 function init() {

@@ -83,6 +83,11 @@ PLAN_MODE_READONLY_TOOLS = {
     "resolve_contact",
     "chat_with_model",
     "ask_teacher",
+    # The user's Company, read-only (src/agent_tools/company_chat_tools.py READ_TOOLS).
+    "company_overview",
+    "company_issue_list",
+    "company_issue_get",
+    "company_agent_status",
 }
 
 
@@ -116,6 +121,9 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "bash", "python",
     # Controls shell processes (kill); plan mode can't run bash anyway.
     "manage_bg_jobs",
+    # The user's Company (src/agent_tools/company_chat_tools.py WRITE_TOOLS).
+    "company_issue_create", "company_issue_update", "company_issue_comment",
+    "company_agent_wake", "company_approval_decide",
 }
 
 
