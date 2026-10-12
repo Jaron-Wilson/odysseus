@@ -23,12 +23,12 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def test_the_odysseus_install_is_refused_and_workspaces_are_made(tmp_path, monkeypatch):
     for cwd in (HERE, os.path.join(HERE, "src")):
-        out = asyncio.run(cct.ClaudeCodeTool().execute(json.dumps({"prompt": "x", "cwd": cwd}), {}))
+        out = asyncio.run(cct.ClaudeCodeTool().execute(json.dumps({"prompt": "x", "cwd": cwd}), {"user_initiated": True}))
         assert "running Odysseus install" in out["error"] and "workspaces" in out["error"]
     monkeypatch.setattr(cct, "WORKSPACES_DIR", str(tmp_path / "workspaces"))
     monkeypatch.setattr(cct.shutil, "which", lambda name: None)       # stop before spawning
     new = tmp_path / "workspaces" / "donate-giving"
-    out = asyncio.run(cct.ClaudeCodeTool().execute(json.dumps({"prompt": "x", "cwd": str(new)}), {}))
+    out = asyncio.run(cct.ClaudeCodeTool().execute(json.dumps({"prompt": "x", "cwd": str(new)}), {"user_initiated": True}))
     assert "CLI not found" in out["error"]            # got past the cwd checks
     loop = open(os.path.join(HERE, "src", "agent_loop.py"), encoding="utf-8").read()
     assert "never use the Odysseus install (/home/jaron/odysseus) as cwd" in loop

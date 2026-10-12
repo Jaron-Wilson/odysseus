@@ -310,7 +310,7 @@ def _calls(log, want=None):
 
 
 def _run(args, chat="chat-1"):
-    return asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(args), {"session_id": chat}))
+    return asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(args), {"user_initiated": True, "session_id": chat}))
 
 
 def test_an_ask_resumes_the_attached_session_in_its_folder(home, cli):

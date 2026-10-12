@@ -105,7 +105,7 @@ def test_an_unnamed_model_is_sonnet_and_shown(cli, tmp_path):
         seen.append(p)
 
     out = asyncio.run(cct.ClaudeCodeTool().execute(
-        json.dumps({"prompt": "fix it", "cwd": str(tmp_path)}), {"progress_cb": cb}))
+        json.dumps({"prompt": "fix it", "cwd": str(tmp_path)}), {"user_initiated": True, "progress_cb": cb}))
     argv = _argv(argv_file)[0]
     assert argv[argv.index("--model") + 1] == "sonnet"
     assert out["model"] == "sonnet"
@@ -120,11 +120,11 @@ def test_an_unnamed_model_is_sonnet_and_shown(cli, tmp_path):
 def test_execute_keeps_the_plan_model(cli, tmp_path):
     argv_file = cli()
     plan = asyncio.run(cct.ClaudeCodeTool().execute(
-        json.dumps({"prompt": "fix it", "cwd": str(tmp_path), "model": "haiku"}), {}))
+        json.dumps({"prompt": "fix it", "cwd": str(tmp_path), "model": "haiku"}), {"user_initiated": True}))
     approvals.set_status(plan["session_id"], "approved")
     asyncio.run(cct.ClaudeCodeTool().execute(json.dumps({
         "action": "execute", "session_id": plan["session_id"], "cwd": str(tmp_path),
-        "prompt": "Approved."}), {}))
+        "prompt": "Approved."}), {"user_initiated": True}))
     runs = _argv(argv_file)
     assert runs[1][runs[1].index("--model") + 1] == "haiku"
 
@@ -149,7 +149,7 @@ def test_a_running_run_can_be_sent_to_the_background(cli, tmp_path, monkeypatch)
     async def run():
         task = asyncio.create_task(cct.ClaudeCodeTool().execute(
             json.dumps({"prompt": "big refactor", "cwd": str(tmp_path)}),
-            {"session_id": "chat-1", "owner": ""}))
+            {"user_initiated": True, "session_id": "chat-1", "owner": ""}))
         for _ in range(100):
             await asyncio.sleep(0.02)
             if jobs.list_jobs():
@@ -178,7 +178,7 @@ def test_stop_kills_a_background_run(cli, tmp_path):
 
     async def run():
         task = asyncio.create_task(cct.ClaudeCodeTool().execute(
-            json.dumps({"prompt": "x", "cwd": str(tmp_path)}), {}))
+            json.dumps({"prompt": "x", "cwd": str(tmp_path)}), {"user_initiated": True}))
         for _ in range(100):
             await asyncio.sleep(0.02)
             if jobs.list_jobs():
@@ -221,22 +221,22 @@ def test_each_chat_carries_on_its_own_agent(cli, tmp_path):
     tool = cct.ClaudeCodeTool()
     first = asyncio.run(tool.execute(json.dumps(
         {"action": "ask", "prompt": "how is routing done?", "cwd": str(tmp_path)}),
-        {"session_id": "chat-A"}))
+        {"user_initiated": True, "session_id": "chat-A"}))
     sid = first["session_id"]
     again = asyncio.run(tool.execute(json.dumps(
         {"action": "ask", "prompt": "and the auth?", "cwd": str(tmp_path)}),
-        {"session_id": "chat-A"}))
+        {"user_initiated": True, "session_id": "chat-A"}))
     runs = _argv(argv_file)
     assert _resume_of(runs[0]) is None and _resume_of(runs[1]) == sid
     assert again["session_id"] == sid and "this chat's Claude Code agent" in again["agent"]
     # Another chat does not pick it up by itself...
     asyncio.run(tool.execute(json.dumps(
-        {"action": "ask", "prompt": "hi", "cwd": str(tmp_path)}), {"session_id": "chat-B"}))
+        {"action": "ask", "prompt": "hi", "cwd": str(tmp_path)}), {"user_initiated": True, "session_id": "chat-B"}))
     assert _resume_of(_argv(argv_file)[2]) is None
     # ...and new_agent starts fresh even in the same chat.
     asyncio.run(tool.execute(json.dumps(
         {"action": "ask", "prompt": "fresh", "cwd": str(tmp_path), "new_agent": True}),
-        {"session_id": "chat-A"}))
+        {"user_initiated": True, "session_id": "chat-A"}))
     assert _resume_of(_argv(argv_file)[3]) is None
 
 
@@ -245,18 +245,18 @@ def test_another_chat_can_carry_on_an_agent(cli, tmp_path):
     tool = cct.ClaudeCodeTool()
     first = asyncio.run(tool.execute(json.dumps(
         {"action": "plan", "prompt": "rebrand the site", "cwd": str(tmp_path)}),
-        {"session_id": "chat-A"}))
+        {"user_initiated": True, "session_id": "chat-A"}))
     listing = tool._chat_agents("chat-B")
     assert 'chat "Website rebrand" `chat-A`' in listing["output"]
     assert "rebrand the site" in listing["output"]
     # By name, and with no cwd: it defaults to the agent's folder.
     out = asyncio.run(tool.execute(json.dumps(
         {"action": "ask", "prompt": "what did you change?", "from_chat": "rebrand"}),
-        {"session_id": "chat-B"}))
+        {"user_initiated": True, "session_id": "chat-B"}))
     assert _resume_of(_argv(argv_file)[1]) == first["session_id"]
     assert out["cwd"] == str(tmp_path.resolve()) and "Website rebrand" in out["agent"]
     bad = asyncio.run(tool.execute(json.dumps(
-        {"action": "ask", "prompt": "x", "from_chat": "nope"}), {"session_id": "chat-B"}))
+        {"action": "ask", "prompt": "x", "from_chat": "nope"}), {"user_initiated": True, "session_id": "chat-B"}))
     assert "no chat matching" in bad["error"]
 
 
@@ -267,11 +267,11 @@ def test_a_busy_agent_is_not_driven_twice(cli, tmp_path):
     async def run():
         first = asyncio.create_task(tool.execute(json.dumps(
             {"action": "ask", "prompt": "long one", "cwd": str(tmp_path),
-             "session_id": "11111111-2222-3333-4444-555555555555"}), {"session_id": "chat-A"}))
+             "session_id": "11111111-2222-3333-4444-555555555555"}), {"user_initiated": True, "session_id": "chat-A"}))
         await asyncio.sleep(0.5)
         second = await tool.execute(json.dumps(
             {"action": "ask", "prompt": "me too", "cwd": str(tmp_path),
-             "session_id": "11111111-2222-3333-4444-555555555555"}), {"session_id": "chat-B"})
+             "session_id": "11111111-2222-3333-4444-555555555555"}), {"user_initiated": True, "session_id": "chat-B"})
         await first
         return second
 

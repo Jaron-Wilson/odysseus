@@ -55,7 +55,7 @@ def _run(tmp_path, monkeypatch, prompt):
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
     args = {"action": "plan", "engine": "opencode", "cwd": str(work), "prompt": prompt}
-    out = asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(args), {"session_id": ""}))
+    out = asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(args), {"user_initiated": True, "session_id": ""}))
     argv = json.loads(open(log).read().splitlines()[-1])
     pending = [e for e in json.loads((tmp_path / "a.json").read_text() or "{}").values()] \
         if (tmp_path / "a.json").exists() else []
@@ -87,4 +87,6 @@ def test_a_used_approval_says_not_to_plan_again(monkeypatch, tmp_path):
 def test_the_tool_tells_the_model_to_ask_for_checks():
     from src import tool_schemas
     text = json.dumps(tool_schemas.__dict__.get("TOOL_SCHEMAS") or open(tool_schemas.__file__, encoding="utf-8").read())
-    assert "never send a check as a plan" in text
+    # Checks go to 'ask'; plans are written natively with propose_plan.
+    assert "Use 'ask' for every check" in text
+    assert "There is no 'plan' action" in text

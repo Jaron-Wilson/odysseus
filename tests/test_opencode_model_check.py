@@ -59,7 +59,7 @@ def _plan(work, model):
     args = {"action": "plan", "engine": "opencode", "cwd": str(work), "prompt": "Plan the CI previews."}
     if model:
         args["model"] = model
-    return asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(args), {"session_id": ""}))
+    return asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(args), {"user_initiated": True, "session_id": ""}))
 
 
 def _calls(log):

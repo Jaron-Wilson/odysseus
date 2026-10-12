@@ -88,6 +88,9 @@ PLAN_MODE_READONLY_TOOLS = {
     "company_issue_list",
     "company_issue_get",
     "company_agent_status",
+    # Writing the plan itself is how plan mode ends: it only saves a Plans
+    # document and waits for the user's answer (src/native_plans.py).
+    "propose_plan",
 }
 
 

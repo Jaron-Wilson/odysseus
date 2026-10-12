@@ -380,19 +380,20 @@ Use this instead of `bash`, `curl`, `python`, `requests`, or scraping code for w
 Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this when you already have a concrete URL. For open-ended lookups use `web_search`, and for "research X" jobs use `trigger_research`.""",
 
     "claude_code": """\
+First write the plan yourself with propose_plan and wait for the user to approve it. Then:
 ```claude_code
-{"prompt": "<the coding task, stated in full>", "cwd": "/abs/path/to/project"}
+{"action": "execute", "plan_id": "<plan_id of the approved plan>", "cwd": "/abs/path/to/project", "prompt": "Carry out the approved plan. <any changes the user asked for>"}
 ```
-Then, only after the user approves the plan it returns:
+Read-only questions about a codebase need no plan:
 ```claude_code
-{"action": "execute", "session_id": "<id from the plan result>", "cwd": "/abs/path/to/project", "prompt": "Approved. <any changes the user asked for>"}
+{"action": "ask", "prompt": "<the question>", "cwd": "/abs/path/to/project"}
 ```
 Hand a CODING task to a coding agent on this host (the tool is named claude_code, but it runs OpenCode by default; Claude Code only with engine "claude"). When you mention it to the user, name the engine that runs it: "OpenCode" unless the engine is claude, never "Claude Code" for an OpenCode run. It reads the project, edits files, runs commands and can fan work out to its own subagents, with its console streaming back live. Use it for work too large or intricate for single tool calls here — a multi-file refactor, a bug hunt across a codebase, a build that has to be run and iterated on — or when the user asks for it by name.
-It runs on OpenCode with this host's LOCAL models by default (`vllm3090/qwen3.8-27b`, free). Add `"engine": "claude"` for Claude Code on the user's Claude plan only when they ask for Claude by name or have said yes to it for this task. PLANS always run on OpenCode unless the user's own message names Claude: the server moves a plan asked for on "claude" to OpenCode otherwise, and the approved run keeps the plan's engine. The plan-and-approve gate is identical either way. Add `"engine": "antigravity"` for Google Antigravity (the `agy` CLI) on the user's Google subscription, which has plenty of credits and models (Gemini and more), when the user asks for Antigravity, Gemini or Google; name it "Antigravity" to the user. Its `model` is a slug from `agy models` (e.g. `gemini-3.8-flash-high`), or omit it for Antigravity's default.
-Run limits (any action): `"max_turns": N`, `"max_cost_usd": X` (it stops near the budget and writes a short wrap-up of what is done and left), or `"take_your_time": true` for no limits. Pass them when the user asks for a limit ("max 10 turns", "keep it under $2", "take your time"); for an approved plan, the limits the user chose when approving are used automatically. `{"action":"attach", "job_id":"<id>"}` follows a run that was sent to the background, in this turn, and returns its result: use it when the user brings a run back ("[Brought back from the background …]"), then carry on from the result. Other actions: `{"action":"ask", "prompt":"...", "cwd":"..."}` converses with a READ-ONLY agent that explores the codebase and answers — no approval needed because it cannot change anything, so use it for "what does this do", "where is X handled", "is this safe". Pass the returned `session_id` back on the next ask to keep the thread. `{"action":"list"}` shows the Claude Code sessions running on this host.
-Each chat keeps its own Claude Code agent per folder: a later ask/plan in the same chat carries it on automatically (pass `"new_agent": true` for a fresh one). `{"action":"agents"}` lists every chat's agents; to carry on another chat's agent, add `"from_chat": "<chat id or name>"` to an ask/plan. Do that when the user names another chat or pastes its id, or when `agents` shows a chat already working in the same project. When the user has attached one of their own Claude Code sessions to the chat (/claude attach, said in the system prompt), an ask/plan without session_id, engine or from_chat carries that session on, in its own folder.
-ALWAYS plan first. The default `action` is `plan`: it reads with read-only tools and writes up what it intends to do, changing NOTHING. Show that plan to the user in full, then show the two links from the result's `approval` field on their own line so they can click one. Only call `action:"execute"` after they click Approve, passing the `session_id` from the plan so it keeps everything it already read. The server records the approval and refuses any execute it did not authorise, so executing early just fails — wait for them.
-`cwd` is REQUIRED and absolute: it is the only limit on what can be read or edited, so name the project directory and nothing broader. The coding agent runs on THIS server: never use the Odysseus install (/home/jaron/odysseus) as cwd. For a project on another machine (the laptop, the PC), use ~/odysseus-data/workspaces/<project name> (created for you) and have the agent reach the machine over ssh. To build a feature for Odysseus ITSELF: never touch /home/jaron/odysseus (it is the live, running install). Use its own copy, ~/odysseus-data/workspaces/odysseus: clone it there if it is missing (git clone the remote of /home/jaron/odysseus), then git fetch and branch from origin/dev, make the change there (plan, approval, execute as usual), run its tests, commit, push the branch, and open a PR against dev with gh pr create. Do not merge it and do not push to dev or main: the user merges, then it is deployed. Say this is how it works when asked. With engine "claude" or "antigravity" code goes to a cloud model, so keep anything the user has said must stay local on the default OpenCode engine.
+It runs on OpenCode with this host's LOCAL models by default (`vllm3090/qwen3.8-27b`, free). Add `"engine": "claude"` for Claude Code on the user's Claude plan only when they ask for Claude by name or have said yes to it for this task. The approved-plan gate is identical either way. Add `"engine": "antigravity"` for Google Antigravity (the `agy` CLI) on the user's Google subscription, which has plenty of credits and models (Gemini and more), when the user asks for Antigravity, Gemini or Google; name it "Antigravity" to the user. Its `model` is a slug from `agy models` (e.g. `gemini-3.8-flash-high`), or omit it for Antigravity's default.
+Run limits (any action): `"max_turns": N`, `"max_cost_usd": X` (it stops near the budget and writes a short wrap-up of what is done and left), or `"take_your_time": true` for no limits. Pass them when the user asks for a limit ("max 10 turns", "keep it under $2", "take your time"). `{"action":"attach", "job_id":"<id>"}` follows a run that was sent to the background, in this turn, and returns its result: use it when the user brings a run back ("[Brought back from the background …]"), then carry on from the result. Other actions: `{"action":"ask", "prompt":"...", "cwd":"..."}` converses with a READ-ONLY agent that explores the codebase and answers — no approval needed because it cannot change anything, so use it for "what does this do", "where is X handled", "is this safe". Pass the returned `session_id` back on the next ask to keep the thread. `{"action":"list"}` shows the Claude Code sessions running on this host.
+Each chat keeps its own Claude Code agent per folder: a later ask in the same chat carries it on automatically (pass `"new_agent": true` for a fresh one). `{"action":"agents"}` lists every chat's agents; to carry on another chat's agent, add `"from_chat": "<chat id or name>"` to an ask. Do that when the user names another chat or pastes its id, or when `agents` shows a chat already working in the same project. When the user has attached one of their own Claude Code sessions to the chat (/claude attach, said in the system prompt), an ask without session_id, engine or from_chat carries that session on, in its own folder.
+PLANS ARE YOURS. There is no 'plan' action and the server refuses one: write the plan yourself with propose_plan (steps, files, risks, and the engine and cwd the run will use), then STOP. When the user approves it in the chat you are told so; then call `action:"execute"` with its `plan_id` and the same `cwd`. It starts writing straight away (no planning phase: the plan is already approved). The server refuses an execute without an approved plan for this chat, and runs each approved plan once.
+`cwd` is REQUIRED and absolute: it is the only limit on what can be read or edited, so name the project directory and nothing broader. The coding agent runs on THIS server: never use the Odysseus install (/home/jaron/odysseus) as cwd. For a project on another machine (the laptop, the PC), use ~/odysseus-data/workspaces/<project name> (created for you) and have the agent reach the machine over ssh. To build a feature for Odysseus ITSELF: never touch /home/jaron/odysseus (it is the live, running install). Use its own copy, ~/odysseus-data/workspaces/odysseus: clone it there if it is missing (git clone the remote of /home/jaron/odysseus), then git fetch and branch from origin/dev, make the change there (your plan, the user's approval, then execute), run its tests, commit, push the branch, and open a PR against dev with gh pr create. Do not merge it and do not push to dev or main: the user merges, then it is deployed. Say this is how it works when asked. With engine "claude" or "antigravity" code goes to a cloud model, so keep anything the user has said must stay local on the default OpenCode engine.
 For a one-line edit you could make with edit_file, just do that instead — this spawns a whole second agent.
 NOT for chores: committing, pushing, opening a PR (`gh pr create`), checking git status or running a known command. Do those yourself with `bash`; handing them to Claude Code spends the user's Claude plan for nothing.
 Before the first call for a task, say in one line which engine and model you are using (default: OpenCode, local qwen3.8-27b). With engine "claude", omitting `model` uses `sonnet`; use `haiku` for small changes and `opus` only when the user asks for it.""",
@@ -548,6 +549,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "chat_memory": "- ```chat_memory``` — This chat's \"Needs to know\": a short list of facts kept for this chat, which you see on every turn (like memory, but per chat). {\"action\": \"suggest\", \"text\": \"Waiting on Will to merge PR #3\"} proposes an item: the user is asked to add it or not, and it is kept only if they accept, so do not ask again in your reply. Suggest when something worth keeping comes up (the task, a decision, who or what you are waiting on, a branch or folder that matters), one fact per item. {\"action\": \"add\", \"text\": \"...\"} only when the user asked you to put something in Needs to know. {\"action\": \"remove\", \"id\": \"...\"} when an item is done or wrong. {\"action\": \"list\"}.",
     "branch_thread": "- ```branch_thread```: Branch this chat: the conversation so far is copied into a new thread of this chat that the user carries on separately; this chat stays as it is. Args (JSON): {\"title\": \"Try Postgres instead\"}. Use when the user says \"branch this out\", \"branch off\" or wants to try another direction without losing this one. Give the user the returned link and do not carry on the branched work here.",
     "spawn_subagent": "- ```spawn_subagent```: Hand a task to a subagent: a new thread of this chat where the agent, with the same tools, works on it in the background while the user keeps talking here; its final report is posted back to this chat when it finishes. Args (JSON): {\"task\": \"Find the three cheapest flights from DEN to SJO in March and report prices and times\", \"title\"?: \"Flights\", \"model\"?: \"model name\"}. Use when the user says \"subagent this out\", \"subagent out\", \"have a subagent do it\" or \"in parallel\". State the task in full (the subagent sees only the last few messages), tell the user it is running, and end your turn: do not wait for it or do the work yourself.",
+    "propose_plan": "- ```propose_plan```: Write a plan YOURSELF for the user to approve. Args (JSON): {\"title\": \"...\", \"plan\": \"<Markdown: a `- [ ]` checklist of steps, files/areas affected, risks, what runs once approved>\", \"engine\": \"opencode|claude|antigravity\"?, \"cwd\": \"/abs/project\"?, \"revises\": \"<plan_id>\"?}. Pass engine and cwd when a coding agent will carry it out. It is saved in the user's Plans and shown in the chat with Approve, Deny and Edit; calling it ENDS your turn and the user's answer comes back as the next message. The ONLY way to make a plan: never draft one with claude_code, chat_with_model, ask_teacher, pipeline, sub-agents or MCP tools.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
@@ -2110,12 +2112,14 @@ PLAN_MODE_DIRECTIVE = (
     "ground the plan. If the task is 'write a file', your plan is to DESCRIBE "
     "writing it — you do NOT write it now.\n"
     "\n"
-    "OUTPUT: present the plan as a GitHub-style checklist, one concrete step per line:\n"
+    "OUTPUT: finish by calling `propose_plan` with a title and the plan as Markdown, "
+    "the steps as a GitHub-style checklist, one concrete step per line:\n"
     "- [ ] first action you will take once approved\n"
     "- [ ] next action\n"
     "Each item = one concrete action (file to create/edit, command to run, side "
     "effect). Do not execute. Do not end with 'Done' or anything implying the work "
-    "is finished. End your turn with the checklist."
+    "is finished. propose_plan shows the plan to the user with Approve and Deny and "
+    "ends your turn. Never have another model, agent or tool write the plan."
 )
 
 
@@ -2338,6 +2342,9 @@ async def stream_agent_loop(
     _company_run = _company_tools.active()
     if not _company_run:
         disabled_tools.update(_company_tools.TOOL_NAMES)
+    else:
+        # A Company agent asks for a plan's approval with company_request_approval.
+        disabled_tools.add("propose_plan")
     guide_only = bool(tool_policy and tool_policy.mode == "guide_only")
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
@@ -2650,6 +2657,23 @@ async def stream_agent_loop(
                 messages[0]["content"] = (messages[0].get("content") or "") + "\n\n" + _attach_note
             else:
                 messages.insert(0, {"role": "system", "content": _attach_note})
+    # Native plans only (src/native_plans.py): the model writes its plans
+    # itself with propose_plan, and is told where this chat's newest plan
+    # stands (waiting for the user, or approved and not yet carried out).
+    if not guide_only and "propose_plan" not in disabled_tools:
+        try:
+            from src import native_plans as _native_plans
+            _plan_note = _native_plans.RULE
+            if session_id:
+                _state = _native_plans.context_note(session_id)
+                if _state:
+                    _plan_note += "\n\n" + _state
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = (messages[0].get("content") or "") + "\n\n" + _plan_note
+            else:
+                messages.insert(0, {"role": "system", "content": _plan_note})
+        except Exception as _e:
+            logger.debug("native plan note skipped: %s", _e)
     # "Needs to know" (src/chat_memory.py): this chat's running notes, and in
     # a brand-new chat the user's recent chats' notes. Kept out of the system
     # role, since the user and the model both write it.
@@ -3635,6 +3659,20 @@ async def stream_agent_loop(
                 except Exception:
                     pass
 
+            # propose_plan: the model's own plan, saved in Plans and waiting for
+            # the user's Approve / Deny in the chat (src/native_plans.py). The
+            # card is drawn from the tool event; a line in the reply says what
+            # is waiting, so the saved message and the model's next turn see it.
+            # The turn ends here, like ask_user.
+            if isinstance(result.get("native_plan"), dict):
+                _np = result["native_plan"]
+                _np_line = (("\n\n" if full_response.strip() else "")
+                            + f"Plan proposed: **{_np.get('title')}** (plan_id {_np.get('id')}). "
+                              "Approve, deny or edit it below.")
+                full_response += _np_line
+                yield 'data: ' + json.dumps({"delta": _np_line}) + '\n\n'
+                _awaiting_user = True
+
             # update_plan: agent wrote back to the plan (ticked a step / revised).
             # Push it to the frontend so the stored plan + docked window update
             # live. Does NOT end the turn — the agent keeps working.
@@ -3708,6 +3746,8 @@ async def stream_agent_loop(
             # Forward a file-write diff for inline before/after rendering
             if "diff" in result:
                 tool_output_data["diff"] = result["diff"]
+            if isinstance(result.get("native_plan"), dict):
+                tool_output_data["native_plan_id"] = result["native_plan"].get("id")
             if result.get("engine_label"):
                 tool_output_data["label"] = result["engine_label"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
@@ -3836,6 +3876,9 @@ async def stream_agent_loop(
             # this the diff shows live but vanishes from saved history.
             if result.get("diff"):
                 tool_event["diff"] = result["diff"]
+            if isinstance(result.get("native_plan"), dict):
+                # The chat card is drawn again from this on reload (chatRenderer).
+                tool_event["native_plan_id"] = result["native_plan"].get("id")
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True

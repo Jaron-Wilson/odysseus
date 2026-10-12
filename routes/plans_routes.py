@@ -45,7 +45,17 @@ def setup_plans_routes() -> APIRouter:
     @router.get("/api/plans")
     async def list_plans(request: Request, q: str = ""):
         owner = require_user(request)
-        return {"plans": _run(plans.list_plans, owner, q[:200])}
+        rows = _run(plans.list_plans, owner, q[:200])
+        # Plans a chat model proposed (src/native_plans.py) carry their status.
+        try:
+            from src import native_plans
+            linked = native_plans.by_name(owner)
+            for p in rows:
+                if p["name"] in linked:
+                    p["proposal"] = linked[p["name"]]
+        except Exception:
+            pass
+        return {"plans": rows}
 
     @router.post("/api/plans")
     async def create_plan(request: Request, body: PlanCreate):
@@ -55,7 +65,15 @@ def setup_plans_routes() -> APIRouter:
     @router.get("/api/plans/{name}")
     async def get_plan(request: Request, name: str):
         owner = require_user(request)
-        return _run(plans.get_plan, owner, name)
+        out = _run(plans.get_plan, owner, name)
+        try:
+            from src import native_plans
+            linked = native_plans.by_name(owner).get(name)
+            if linked:
+                out["proposal"] = linked
+        except Exception:
+            pass
+        return out
 
     @router.put("/api/plans/{name}")
     async def save_plan(request: Request, name: str, body: PlanSave):
@@ -65,7 +83,13 @@ def setup_plans_routes() -> APIRouter:
     @router.post("/api/plans/{name}/rename")
     async def rename_plan(request: Request, name: str, body: PlanRename):
         owner = require_user(request)
-        return _run(plans.rename_plan, owner, name, body.title)
+        out = _run(plans.rename_plan, owner, name, body.title)
+        try:
+            from src import native_plans
+            native_plans.renamed(owner, name, out["name"])
+        except Exception:
+            pass
+        return out
 
     @router.delete("/api/plans/{name}")
     async def delete_plan(request: Request, name: str):
