@@ -32,6 +32,11 @@
 .pln-item-sub { font-size: 12px; opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pln-item-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; opacity: .55;
   font-variant-numeric: tabular-nums; }
+.pln-proposal { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px; opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.pln-proposal[data-status="pending"] { background: color-mix(in srgb, var(--accent, #d97a4a) 22%, transparent); }
+.pln-proposal[data-status="approved"] { background: color-mix(in srgb, #3fa66b 22%, transparent); }
+.pln-proposal[data-status="denied"] { background: color-mix(in srgb, #d9534f 20%, transparent); }
 .pln-item-tasks { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
 .pln-mini-bar { display: inline-block; width: 34px; height: 4px; border-radius: 2px; overflow: hidden;
   background: color-mix(in srgb, var(--fg) 14%, transparent); }

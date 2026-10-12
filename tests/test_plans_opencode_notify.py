@@ -80,7 +80,7 @@ def env(tmp_path, monkeypatch):
 def _plan(chat, **extra):
     return asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(
         {"action": "plan", "prompt": "plan it", "cwd": __import__("tempfile").mkdtemp(), **extra}),
-        {"session_id": chat}))
+        {"user_initiated": True, "session_id": chat}))
 
 
 def test_a_plan_asked_for_on_claude_runs_on_opencode(env):
@@ -167,5 +167,7 @@ def test_overlay_shows_plans_above_the_player():
     ov = open(os.path.join(HERE, "tools", "music_overlay", "music_overlay.py"), encoding="utf-8").read()
     assert "def _alert_pos(self):" in ov and "def _sync_plans(self, plans):" in ov
     assert 'api/overlay/plan/{plan_id}/{verb}' in ov and "self.dismissed_plans" in ov
-    loop = open(os.path.join(HERE, "src", "agent_loop.py"), encoding="utf-8").read()
-    assert "PLANS always run on OpenCode" in loop
+    # Models write plans themselves now (src/native_plans.py); a user-initiated
+    # coding-agent plan still moves to OpenCode unless Claude was named.
+    tool = open(os.path.join(HERE, "src", "agent_tools", "claude_code_tool.py"), encoding="utf-8").read()
+    assert "plans use it unless the user" in tool

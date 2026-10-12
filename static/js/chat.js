@@ -2861,6 +2861,10 @@ import './chatThreads.js';
                 if (json.suggestion && currentToolBubble && window.chatNotes) {
                   try { currentToolBubble.after(window.chatNotes.suggestionPrompt(json.suggestion)); } catch (_) {}
                 }
+                // The model proposed a plan (propose_plan): Approve / Deny / Edit under the step.
+                if (json.native_plan_id && currentToolBubble && window.nativePlanCard) {
+                  try { currentToolBubble.after(window.nativePlanCard(json.native_plan_id)); } catch (_) {}
+                }
                 // --- Update the current thread node ---
                 if (currentToolBubble && json.label) {
                   const t = currentToolBubble.querySelector('.agent-thread-tool');

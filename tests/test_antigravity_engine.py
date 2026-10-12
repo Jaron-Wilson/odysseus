@@ -85,7 +85,7 @@ def _calls(log, cli=None):
 
 
 def _run(args, chat=""):
-    return asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(args), {"session_id": chat}))
+    return asyncio.run(cct.ClaudeCodeTool().execute(json.dumps(args), {"user_initiated": True, "session_id": chat}))
 
 
 def _approve(sid, work, *, engine, model="", run_engine="", run_model=""):

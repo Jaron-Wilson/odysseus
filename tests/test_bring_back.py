@@ -65,7 +65,7 @@ def env(tmp_path, monkeypatch):
 async def _start_and_background(tmp_path):
     task = asyncio.create_task(cct.ClaudeCodeTool().execute(
         json.dumps({"action": "ask", "prompt": "questions and a couple of code changes", "cwd": str(tmp_path)}),
-        {"session_id": "chat-1"}))
+        {"user_initiated": True, "session_id": "chat-1"}))
     for _ in range(100):
         await asyncio.sleep(0.02)
         if jobs.list_jobs():
@@ -89,7 +89,7 @@ def test_brought_back_the_chat_follows_it_and_gets_the_result(env):
         async def progress(p):
             seen.append(p)
         out = await cct.ClaudeCodeTool().execute(json.dumps({"action": "attach", "job_id": job.id}),
-                                                 {"session_id": "chat-1", "progress_cb": progress})
+                                                 {"user_initiated": True, "session_id": "chat-1", "progress_cb": progress})
         await asyncio.wait_for(job.task, timeout=10)
         return job, out, seen
     job, out, seen = asyncio.run(run())
@@ -105,7 +105,7 @@ def test_sent_away_again_it_is_posted_as_usual(env):
     async def run():
         job = await _start_and_background(tmp_path)
         attach = asyncio.create_task(cct.ClaudeCodeTool().execute(
-            json.dumps({"action": "attach", "job_id": job.id}), {"session_id": "chat-1"}))
+            json.dumps({"action": "attach", "job_id": job.id}), {"user_initiated": True, "session_id": "chat-1"}))
         await asyncio.sleep(0.5)
         assert job.attached and jobs.detach(job.id)       # Send to background, from the card
         out = await asyncio.wait_for(attach, timeout=5)
@@ -228,7 +228,7 @@ def test_a_brought_back_plan_still_offers_approve_and_deny(env, monkeypatch):
     async def run():
         task = asyncio.create_task(cct.ClaudeCodeTool().execute(
             json.dumps({"action": "plan", "prompt": "a preview for Erik", "cwd": str(tmp_path)}),
-            {"session_id": "chat-1"}))
+            {"user_initiated": True, "session_id": "chat-1"}))
         for _ in range(100):
             await asyncio.sleep(0.02)
             if jobs.list_jobs():
@@ -238,7 +238,7 @@ def test_a_brought_back_plan_still_offers_approve_and_deny(env, monkeypatch):
         assert jobs.detach(job.id)
         assert (await asyncio.wait_for(task, timeout=5))["background"]
         out = await cct.ClaudeCodeTool().execute(json.dumps({"action": "attach", "job_id": job.id}),
-                                                 {"session_id": "chat-1"})
+                                                 {"user_initiated": True, "session_id": "chat-1"})
         await asyncio.wait_for(job.task, timeout=10)
         return out
     out = asyncio.run(run())
@@ -288,7 +288,7 @@ def test_a_brought_back_job_does_not_wake_the_chat(env, monkeypatch):
     async def run():
         job = await _start_and_background(tmp_path)
         await cct.ClaudeCodeTool().execute(json.dumps({"action": "attach", "job_id": job.id}),
-                                           {"session_id": "chat-1"})
+                                           {"user_initiated": True, "session_id": "chat-1"})
         await asyncio.wait_for(job.task, timeout=10)
     asyncio.run(run())
     assert posted == [] and turns == []                         # the turn following it reports

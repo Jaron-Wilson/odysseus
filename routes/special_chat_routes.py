@@ -81,7 +81,7 @@ def mcp_maker_prompt(app: str, device: str, os_name: str, slug: str, repo: str, 
         f"[MCP maker · {app} on {device}]\n\n"
         f"The user wants Odysseus to be able to control **{app}** on **{device}** ({os_name or 'unknown OS'}); "
         "it has no MCP server yet. Build one with a coding agent (claude_code; OpenCode unless the user "
-        "asks for Claude). Plan first, and show the plan for approval.\n\n"
+        "asks for Claude). Write the plan yourself with propose_plan first and wait for approval.\n\n"
         f"1. Work in {ws}/odysseus (clone https://github.com/{repo} there if missing), on a new branch "
         f"mcp-{slug} from origin/dev. Read tools/mcp/{conv} for the conventions: FastMCP 1.x over SSE, "
         "bound to the tailnet address only, one tool per clear action with a docstring saying when to "

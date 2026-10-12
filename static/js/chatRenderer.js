@@ -9,6 +9,7 @@ import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { matchModelKey } from './model/matchKey.js';
+import { nativePlanCard } from './nativePlanCard.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -407,7 +408,7 @@ function _openVisionEditor(att, userMsgEl) {
 // Tool call syntax patterns to strip from displayed text
 const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
 // Only strip fenced tool-call blocks that look like structured invocations, not regular code examples
-const EXEC_FENCE_RE = /```(?:web_search|read_file|write_file|create_document|edit_document|update_document)\s*\n[\s\S]*?```/gi;
+const EXEC_FENCE_RE = /```(?:web_search|read_file|write_file|create_document|edit_document|update_document|propose_plan)\s*\n[\s\S]*?```/gi;
 // XML-style tool calls: <minimax:tool_call>, <tool_call>, <function_call>, bare <invoke>
 const XML_TOOL_CALL_RE = /<(?:[\w]+:)?(?:tool_call|function_call)>[\s\S]*?<\/(?:[\w]+:)?(?:tool_call|function_call)>/gi;
 const XML_INVOKE_RE = /<invoke\s+name=['"][^'"]*['"]>[\s\S]*?<\/invoke>/gi;
@@ -2404,6 +2405,9 @@ export function addMessage(role, content, modelName, metadata) {
                 }
               } catch (_) { /* not JSON: nothing to relaunch */ }
             }
+            // A plan the model wrote (propose_plan): its card, with the answer
+            // the server has for it now (nativePlanCard.js).
+            if (ev.native_plan_id) threadWrap.appendChild(nativePlanCard(ev.native_plan_id));
           }
           // Check if next round has text — extend line down to connect
           const nextTxt = (roundTexts[r + 1] || '').trim();

@@ -6,6 +6,14 @@ it intends to do, changing nothing. The user approves, amends or rejects that
 plan. Only then does `action:"execute"` resume the SAME CLI session with write
 tools, so the agent never edits anything the user has not seen described first.
 
+Native plans only (src/native_plans.py, since 2026-10): a chat model may not
+use the "plan" action at all. It writes its plan itself with propose_plan, the
+user approves it in the chat, and `action:"execute"` with that `plan_id` starts
+a fresh run handed the approved text, skipping this tool's plan phase. The
+"plan" action is kept only for callers that pass ``user_initiated`` in ctx,
+which the model's tool path never does. An execute without a native plan only
+runs a coding agent's plan the user approved before this change.
+
 Resuming by session id is what makes the gate cheap: phase two already has all
 of phase one's reading in context, so approval costs nothing to re-establish.
 
@@ -701,6 +709,46 @@ class ClaudeCodeTool:
                               "Run them yourself with bash (ssh to the machine if needed), one "
                               "command per step, and report what each did."),
                     "chore": True, "exit_code": 1}
+        # Native plans only (src/native_plans.py): "i want it so that the model
+        # never uses anything external to make the plans". A model writes its
+        # plan itself with propose_plan; the coding agent's own plan phase is
+        # not available to it. `user_initiated` is set only by code acting on
+        # the user's own request, never by the model's tool path
+        # (src/tool_execution.py), so a model cannot reach it.
+        if action == "plan" and not (ctx or {}).get("user_initiated"):
+            return {"error": ("There is no 'plan' action for you: coding agents do not write plans. "
+                              "Write the plan yourself with propose_plan (steps as a checklist, files, "
+                              "risks, and the engine and cwd the run will use), then stop and wait for "
+                              "the user to approve it. After approval, call claude_code with action "
+                              "'execute' and its plan_id. For a read-only question use action 'ask'."),
+                    "use": "propose_plan", "exit_code": 1}
+        native = None          # the approved native plan an execute carries out
+        if action == "execute" and str(args.get("plan_id") or "").strip():
+            from src import native_plans
+            native = native_plans.get(str(args.get("plan_id")).strip())
+            if not native:
+                return {"error": ("no native plan with that plan_id. Write the plan with propose_plan "
+                                  "and wait for the user to approve it."), "exit_code": 1}
+            if native.get("status") != "approved":
+                return {"error": ("refusing to execute: " + {
+                    "pending": "the user has not approved this plan yet. End your turn and wait for their answer.",
+                    "denied": "the user denied this plan. Revise it with propose_plan, or stop.",
+                    "superseded": "a newer plan replaced this one."}.get(str(native.get("status")), "this plan is not approved.")),
+                    "exit_code": 1}
+            resume_id = ""
+            args.pop("session_id", None)
+            if not str(args.get("cwd") or "").strip() and native.get("cwd"):
+                args["cwd"] = native["cwd"]
+            if not str(args.get("engine") or "").strip() and native.get("engine"):
+                args["engine"] = native["engine"]
+        elif action == "execute" and not (resume_id and str((approvals.get(resume_id) or {}).get("status")) in ("approved", "used")):
+            # Without a native plan, only a coding agent's plan the user
+            # approved before native plans existed (claude_code_approvals,
+            # approved through the authenticated Approve link) still runs.
+            return {"error": ("refusing to execute: there is no approved plan. Write the plan yourself "
+                              "with propose_plan and wait for the user to approve it in the chat, then "
+                              "call execute with its plan_id."),
+                    "use": "propose_plan", "exit_code": 1}
         # A session the user attached to this chat (/claude attach,
         # src/claude_attach.py): an ask or plan carries THAT session on, in
         # its own folder, on Claude Code, unless another session, chat,
@@ -731,7 +779,7 @@ class ClaudeCodeTool:
                                     if attached_extra else ""))
             else:
                 attached = None
-        if action == "execute" and not resume_id:
+        if action == "execute" and not resume_id and not native:
             return {
                 "error": (
                     "execute requires the session_id returned by a plan run. "
@@ -761,6 +809,11 @@ class ClaudeCodeTool:
             if appr.get("run_model"):
                 args["model"] = str(appr["run_model"])
             plan_text = str(appr.get("plan") or "")
+            if native:
+                # Approved in Odysseus's own planner: a fresh run, handed the
+                # approved text, with no plan phase of its own.
+                run_fresh, plan_engine = True, ""
+                plan_text = str(native.get("approved_content") or native.get("content") or "")
         if engine not in ENGINES:
             return {"error": "engine must be 'opencode', 'claude' or 'antigravity'", "exit_code": 1}
         # Plans are written on OpenCode (the local model) unless the user
@@ -790,7 +843,7 @@ class ClaudeCodeTool:
         except Exception:
             engine_ok, other, other_ok = True, "", False
         if not engine_ok:
-            if action in ("plan", "ask") and other_ok:
+            if (action in ("plan", "ask") or native) and other_ok:
                 engine_note = (f"{engine_label(engine)} is switched off for this chat, so this runs on "
                                f"{engine_label(other)}. Say so.")
                 engine = other
@@ -957,7 +1010,12 @@ class ClaudeCodeTool:
         # browser can have granted. Calling execute straight after plan, without
         # the user answering, fails right here.
         if action == "execute":
-            ok, why = approvals.consume_approval(resume_id, str(cwd_path))
+            if native:
+                from src import native_plans
+                spent, why = native_plans.consume_for_execute(native["id"], chat_id, str(cwd_path))
+                ok = bool(spent)
+            else:
+                ok, why = approvals.consume_approval(resume_id, str(cwd_path))
             if not ok:
                 return {
                     "error": f"refusing to execute: {why}",
@@ -969,7 +1027,11 @@ class ClaudeCodeTool:
         # (verified — it refuses to edit and says so) and `build` writes, so the
         # approval gate above applies to it unchanged. Its prompt rides as a
         # positional argument; exec involves no shell, so nothing needs quoting.
-        if action == "execute" and run_fresh:
+        if action == "execute" and native:
+            prompt = (f"The user approved the plan below, \"{native.get('title')}\", in Odysseus and chose "
+                      "you to carry it out. It is already approved: do not plan or ask for approval "
+                      f"again, do the work.\n\n<approved-plan>\n{plan_text}\n</approved-plan>\n\n{prompt}")
+        elif action == "execute" and run_fresh:
             prompt = (f"The user approved the plan below (written by {engine_label(plan_engine)} for this "
                       f"folder) and chose you to carry it out.\n\n<approved-plan>\n{plan_text}\n"
                       f"</approved-plan>\n\n{prompt}")
@@ -986,6 +1048,9 @@ class ClaudeCodeTool:
             if known and str(args["model"]) not in known:
                 if action == "execute" and resume_id:
                     approvals.restore_approval(resume_id)     # nothing ran: the approval still stands
+                if action == "execute" and native:
+                    from src import native_plans
+                    native_plans.restore_execute(native["id"])
                 return {
                     "error": (f"OpenCode has no model {str(args['model'])!r}. Use one of: "
                               f"{', '.join(known)}, or leave `model` out for its default. Do not "
@@ -998,6 +1063,9 @@ class ClaudeCodeTool:
             if known and str(args["model"]) not in known:
                 if action == "execute" and resume_id:
                     approvals.restore_approval(resume_id)     # nothing ran: the approval still stands
+                if action == "execute" and native:
+                    from src import native_plans
+                    native_plans.restore_execute(native["id"])
                 return {"error": (f"Antigravity has no model {str(args['model'])!r}. Use one of: "
                                   f"{', '.join(known)}, or leave `model` out for its default."),
                         "exit_code": 2}
@@ -1139,6 +1207,9 @@ class ClaudeCodeTool:
             prompt=prompt)
         job.cli_session_id = session_id or ""
         job.plan_id = resume_id if action == "execute" else ""
+        if native:
+            from src import native_plans
+            native_plans.set_run_job(native["id"], job.id)
         job.spec = {
             "action": action, "session_id": session_id or "", "cwd": str(cwd_path),
             "model": model, "model_label": model_label, "engine": engine,
@@ -1146,6 +1217,7 @@ class ClaudeCodeTool:
             "chat_id": chat_id, "owner": (ctx or {}).get("owner") or "",
             "prompt": prompt, "agent_note": agent_note, "timeout": timeout, "limits": limits,
             "engine_note": engine_note,
+            "native_plan_id": native["id"] if native else "",
             "attached": resume_id if (attached and agent_note) else "",
         }
 
@@ -1733,6 +1805,19 @@ def _job_status(result: Dict) -> str:
     return "done" if code == 0 else "timed_out" if code == 124 else "failed"
 
 
+def _restore_native(spec: dict) -> bool:
+    """An approved native plan's run, given back after a run that never
+    really ran (src/native_plans.py)."""
+    pid = (spec or {}).get("native_plan_id") or ""
+    if not pid:
+        return False
+    try:
+        from src import native_plans
+        return native_plans.restore_execute(pid)
+    except Exception:
+        return False
+
+
 async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool) -> Dict:
     """The tool result, once the CLI has exited (or been killed)."""
     spec = job.spec
@@ -1771,7 +1856,8 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
                 "engine_label": engine_label(spec.get("engine", job.engine)), "exit_code": 0,
                 "job_id": job.id}
     if spec.get("stalled"):
-        restored = action == "execute" and approvals.restore_approval(session_id)
+        restored = action == "execute" and (approvals.restore_approval(session_id)
+                                            or _restore_native(spec))
         return {
             "error": (
                 f"Stopped: {engine_label(spec.get('engine', job.engine))} wrote nothing for "
@@ -1784,7 +1870,8 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
             "exit_code": 1,
         }
     if timed_out:
-        restored = action == "execute" and approvals.restore_approval(session_id)
+        restored = action == "execute" and (approvals.restore_approval(session_id)
+                                            or _restore_native(spec))
         return {
             "error": (
                 f"claude_code timed out after {timeout}s"
@@ -1798,7 +1885,7 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
         }
     if returncode != 0 and not final_text:
         if action == "execute":
-            approvals.restore_approval(session_id)
+            approvals.restore_approval(session_id) or _restore_native(spec)
         detail = "\n".join(_stderr_tail(job)) or console[-2000:]
         hint = ""
         if spec.get("args_model") and spec.get("engine", job.engine) == "antigravity":
@@ -1948,7 +2035,8 @@ def _user_named_claude(chat_id: str) -> bool:
         if getattr(msg, "role", "") != "user":
             continue
         if (getattr(msg, "metadata", None) or {}).get("source") in (
-                "claude_code_plan_approved", "screen_control_approved"):
+                "claude_code_plan_approved", "screen_control_approved",
+                "native_plan_approved", "native_plan_denied"):
             continue                                 # our own notes, not the user
         if _CLAUDE_NAMED.search(str(getattr(msg, "content", "") or "")):
             return True

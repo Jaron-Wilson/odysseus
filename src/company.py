@@ -1631,6 +1631,13 @@ def decide_approval(db, owner: str, actor: Actor, approval_id: str, decision: st
                  {"type": ap.type, "title": ap.title, "note": ap.decision_note,
                   **({"chosen_model": payload["chosen_model"]} if decision == "approved" and payload.get("chosen_model") else {})})
     db.commit()
+    if ap.type == "plan" and decision in ("approved", "rejected"):
+        # Its copy in Plans (src/native_plans.py) shows the same answer.
+        try:
+            from src import native_plans
+            native_plans.company_decided(ap.id, decision, ap.decision_note or "")
+        except Exception:
+            pass
     return ser_approval(ap)
 
 

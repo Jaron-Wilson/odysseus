@@ -65,7 +65,7 @@ def test_the_tool_refuses_in_a_chat_with_both_off():
     from src.agent_tools import claude_code_tool as cct
     _off("chat-off", "claude", "opencode", "antigravity")
     out = asyncio.run(cct.ClaudeCodeTool().execute(
-        json.dumps({"prompt": "x", "cwd": "/tmp"}), {"session_id": "chat-off"}))
+        json.dumps({"prompt": "x", "cwd": "/tmp"}), {"user_initiated": True, "session_id": "chat-off"}))
     assert out["disabled"] and "all switched off" in out["error"]
 
 
@@ -93,14 +93,14 @@ def test_one_engine_off_moves_a_plan_to_the_other(monkeypatch, tmp_path):
     monkeypatch.setattr(cct, "DEFAULT_ENGINE", "opencode")
     _off("chat-x", "opencode")                            # Claude only in this chat
     out = asyncio.run(cct.ClaudeCodeTool().execute(
-        json.dumps({"prompt": "plan it", "cwd": str(tmp_path)}), {"session_id": "chat-x"}))
+        json.dumps({"prompt": "plan it", "cwd": str(tmp_path)}), {"user_initiated": True, "session_id": "chat-x"}))
     assert ran.read_text() == "claude" and "OpenCode is switched off" in out["engine_note"]
     # An approved plan for the switched-off engine is refused, not moved.
     approvals.record_plan("ses_9", cwd=str(tmp_path), plan="p", engine="opencode")
     approvals.set_status("ses_9", "approved")
     out = asyncio.run(cct.ClaudeCodeTool().execute(
         json.dumps({"action": "execute", "session_id": "ses_9", "prompt": "go", "cwd": str(tmp_path)}),
-        {"session_id": "chat-x"}))
+        {"user_initiated": True, "session_id": "chat-x"}))
     assert out["disabled"] and "cannot run on Claude Code" in out["error"]
 
 

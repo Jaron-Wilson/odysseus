@@ -422,6 +422,13 @@ def _request_approval(r: _Run, a: Dict) -> str:
         "payload": {"plan": plan[:20000], "issue_id": issue.id if issue else None,
                     "issue": issue.identifier if issue else None, "agent_id": r.agent.id,
                     "run_id": r.ctx["run_id"], "model": r.agent.model}})
+    if atype == "plan":
+        # Also a Plans document (src/native_plans.py), so every plan is in one
+        # place. Answered in Company > Approvals as before.
+        from src import native_plans
+        native_plans.mirror_company_plan(r.owner or None, approval_id=ap["id"], title=ap["title"],
+                                         plan=plan, agent_name=r.agent.name,
+                                         issue=issue.identifier if issue else "")
     return (f"Asked for approval of the {atype} \"{ap['title']}\". End your turn now and do not start the work: "
             "you are woken when it is decided.")
 

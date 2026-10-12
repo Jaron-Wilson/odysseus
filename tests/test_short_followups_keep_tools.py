@@ -57,7 +57,7 @@ def test_coding_tasks_default_to_local_opencode(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setattr(cct, "DEFAULT_ENGINE", "opencode")
     out = asyncio.run(cct.ClaudeCodeTool().execute(
-        json.dumps({"prompt": "draft the cuts", "cwd": str(tmp_path)}), {}))
+        json.dumps({"prompt": "draft the cuts", "cwd": str(tmp_path)}), {"user_initiated": True}))
     assert json.loads(argv.read_text())[0] == "run"                  # opencode, not claude
     assert "runs on OpenCode · local default" in out["approval"]["approve"]
     assert approvals.get(out["session_id"])["engine"] == "opencode"

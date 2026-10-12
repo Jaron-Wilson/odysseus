@@ -896,6 +896,9 @@ app.include_router(setup_note_routes(task_scheduler))
 # Plans: the user's own Markdown plans as .md files, no model involved (routes/plans_routes.py)
 from routes.plans_routes import setup_plans_routes
 app.include_router(setup_plans_routes())
+# Native plans: plans a chat model writes as Plans documents, answered in the chat (routes/native_plans_routes.py)
+from routes.native_plans_routes import setup_native_plans_routes
+app.include_router(setup_native_plans_routes())
 
 # Company: an organization of AI agents on any Odysseus model (routes/company_routes.py, docs/company.md)
 from routes.company_routes import setup_company_routes

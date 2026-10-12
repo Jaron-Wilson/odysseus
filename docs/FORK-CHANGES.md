@@ -34,8 +34,14 @@ driven by a local one.
 A tool that hands a coding task to an agent with a real filesystem, gated on a
 plan the user approves first.
 
-- Plan, approve, then execute. The execute phase refuses to run without an
-  authenticated approval, so a model cannot self-grant (`src/claude_code_approvals.py`,
+- Native plans only: the chat model writes the plan itself with `propose_plan`,
+  as a Plans document shown in the chat with Approve, Deny and Edit
+  (`src/native_plans.py`, `docs/plans.md`). The tool's own `plan` action is
+  refused for models, and `execute` needs the approved plan's `plan_id`, runs
+  once, and starts writing with no plan phase of its own.
+- The execute phase refuses to run without an authenticated approval, so a
+  model cannot self-grant (`routes/native_plans_routes.py`; plans a coding
+  agent wrote before native plans: `src/claude_code_approvals.py`,
   `routes/claude_code_routes.py`).
 - Runs detached, so the chat stays usable and you can reattach to a run in
   progress.

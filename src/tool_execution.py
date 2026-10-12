@@ -508,6 +508,74 @@ _CODE_CLI_RE = re.compile(r"(^|[;&|(`\s/'\"])(claude|opencode|agy)(\s|$|['\"])")
 _CODE_CLI_ENGINE = {"claude": "claude", "opencode": "opencode", "agy": "antigravity"}
 
 
+def _native_plans_delegation_tools() -> frozenset:
+    from src.native_plans import DELEGATION_TOOLS
+    return DELEGATION_TOOLS
+
+
+def _pending_plan_block(tool: str, content: str, session_id: str) -> str:
+    """Why `tool` is refused while this chat has a plan waiting, or ""."""
+    from src import native_plans
+    pending = native_plans.pending_for_chat(session_id)
+    if not pending:
+        return ""
+    if tool == "claude_code":
+        try:
+            a = json.loads(content) if (content or "").strip().startswith("{") else {}
+        except (ValueError, TypeError):
+            a = {}
+        if str((a or {}).get("action") or "").strip().lower() in ("list", "status", "agents", "attach"):
+            return ""
+    return (f"Not run: your plan \"{pending.get('title')}\" (plan_id {pending['id']}) is waiting for "
+            "the user to approve or deny it in the chat. Until they answer, nothing may be handed "
+            "to another model, agent or chat, and no other tool may write the plan. End your turn "
+            "and wait. If the user asked for changes, call propose_plan again with the revised plan.")
+
+
+def _propose_plan(content: str, session_id: Optional[str], owner: Optional[str]) -> Tuple[str, Dict]:
+    """The propose_plan tool: save the model's own plan as a Plans document,
+    pending the user's answer in this chat (src/native_plans.py)."""
+    from src import native_plans, plans
+    raw = (content or "").strip()
+    try:
+        args = json.loads(raw) if raw.startswith("{") else {}
+    except (ValueError, TypeError):
+        args = {}
+    if not isinstance(args, dict):
+        args = {}
+    if not args and raw:
+        # Bare Markdown: the first heading (or line) is the title.
+        first = raw.splitlines()[0].lstrip("# ").strip()
+        args = {"title": first, "plan": raw}
+    title = str(args.get("title") or "").strip()
+    body = str(args.get("plan") or args.get("markdown") or args.get("content") or "").strip()
+    if not title or not body:
+        return "propose_plan: invalid", {
+            "error": ("propose_plan needs a `title` and a `plan` (the plan as Markdown: steps as a "
+                      "`- [ ]` checklist, files or areas affected, risks, and what runs once it is "
+                      "approved)."),
+            "exit_code": 1}
+    try:
+        entry = native_plans.propose(
+            owner, session_id or "", title, body,
+            engine=str(args.get("engine") or ""), cwd=str(args.get("cwd") or ""),
+            revises=str(args.get("revises") or ""))
+    except plans.PlanError as e:
+        return "propose_plan: failed", {"error": f"propose_plan: {e.message}", "exit_code": 1}
+    view = native_plans.view(entry)
+    desc = f"propose_plan: {view['title']}"
+    rev = f" (revision {view['revision']})" if view["revision"] > 1 else ""
+    result = {
+        "native_plan": {k: view[k] for k in ("id", "title", "name", "status", "revision")},
+        "output": (f"Plan \"{view['title']}\"{rev} saved to Plans as \"{view['name']}\" (plan_id "
+                   f"{view['id']}) and shown in the chat with Approve, Deny and Edit. Your turn ends "
+                   "here: the user's answer comes back as the next message. Do not start the work."),
+        "exit_code": 0,
+    }
+    logger.info("Tool executed: %s (%s)", desc, view["id"])
+    return desc, result
+
+
 def _is_company_chat_tool(tool: str) -> bool:
     from src.agent_tools.company_chat_tools import ALL_TOOLS
     return tool in ALL_TOOLS
@@ -636,6 +704,19 @@ async def execute_tool_block(
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
+
+    # A plan the model proposed is waiting for the user (src/native_plans.py):
+    # no handing the work, or the planning, to another model or agent until
+    # they answer. claude_code's pure reads (list/status/agents/attach) stay.
+    if session_id and tool in _native_plans_delegation_tools():
+        why = _pending_plan_block(tool, content, session_id)
+        if why:
+            return f"{tool}: BLOCKED", {"error": why, "exit_code": 1}
+
+    # propose_plan: the model writes its plan itself, as a Plans document the
+    # user approves or denies in the chat. Ends the turn, like ask_user.
+    if tool == "propose_plan":
+        return _propose_plan(content, session_id, owner)
 
     # ask_user: the agent poses a multiple-choice question to the user to get a
     # decision/clarification. This is a pure UI-control marker — no subprocess,

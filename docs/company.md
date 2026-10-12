@@ -253,7 +253,8 @@ mentioned item is promoted to agent mode.
    a run that checks out one issue, works it in its own Odysseus session,
    comments, and moves it along.
 6. Hires (when gated), strategies, plans and budget overrides come to the
-   Approvals inbox.
+   Approvals inbox. An agent's plan is also saved as a Plans document
+   (`docs/plans.md`), which follows the decision made here.
 7. Spend is tracked per run and rolled up per agent and company; a budget
    that runs out pauses the agent.
 

@@ -114,11 +114,20 @@ function paintList() {
     return `<li><button type="button" class="pln-item${on ? ' active' : ''}" data-name="${esc(p.name)}"${on ? ' aria-current="true"' : ''}>
       <span class="pln-item-title">${esc(p.name)}</span>
       ${sub ? `<span class="pln-item-sub">${esc(sub)}</span>` : ''}
-      <span class="pln-item-meta"><span>${esc(ago(p.updated_at))}</span>${p.tasks_total ? `
+      <span class="pln-item-meta"><span>${esc(ago(p.updated_at))}</span>${proposalBadge(p.proposal)}${p.tasks_total ? `
         <span class="pln-item-tasks" title="${p.tasks_done} of ${p.tasks_total} tasks done">
           <span class="pln-mini-bar" aria-hidden="true"><span style="width:${pct}%"></span></span>${p.tasks_done}/${p.tasks_total}</span>` : ''}</span>
     </button></li>`;
   }).join('');
+}
+
+// A plan a chat model proposed (src/native_plans.py), or a Company agent's
+// plan: its answer, so a plan waiting for one is easy to spot.
+const PROPOSAL_LABEL = { pending: 'Waiting for you', approved: 'Approved', denied: 'Denied', superseded: 'Replaced' };
+function proposalBadge(pr) {
+  if (!pr || !PROPOSAL_LABEL[pr.status]) return '';
+  const from = pr.source === 'company' ? 'Company plan' : 'Proposed in a chat';
+  return `<span class="pln-proposal" data-status="${esc(pr.status)}" title="${esc(from)}">${PROPOSAL_LABEL[pr.status]}</span>`;
 }
 
 function updateListItem(summary) {
@@ -207,6 +216,8 @@ async function save({ overwrite = false } = {}) {
       if (!_cur || _cur.name !== name) return;
       _cur.version = s.version;
       _saved = text;
+      // A chat's plan card showing this plan redraws with the new text.
+      window.dispatchEvent(new CustomEvent('plans:saved', { detail: { name, version: s.version } }));
       _dirty = ta().value !== text;
       _conflict = false;
       $('.pln-conflict').hidden = true;
@@ -588,7 +599,7 @@ function build() {
             <button type="button" class="pln-new" title="New plan">${ICON.plus}<span>New</span></button>
           </div>
           <ul class="pln-list"></ul>
-          <div class="pln-side-foot">Plain .md files. No AI involved.</div>
+          <div class="pln-side-foot">Plain .md files. Plans a chat proposed are marked.</div>
         </aside>
         <section class="pln-main">
           <div class="pln-empty">
