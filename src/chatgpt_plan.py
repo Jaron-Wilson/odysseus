@@ -48,6 +48,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
+from src import tool_cap as _tool_cap
+
 logger = logging.getLogger(__name__)
 
 PROVIDER = "chatgpt-plan"
@@ -917,6 +919,16 @@ def tools_to_responses(tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, 
     return out
 
 
+def _capped_first() -> List[str]:
+    """Tool names a trimmed tool list keeps before anything else."""
+    try:
+        from src import company_tools
+        names = sorted(company_tools.TOOL_NAMES)
+    except Exception:
+        names = []
+    return names + ["claude_code"]
+
+
 def build_payload(model: str, messages: List[Dict[str, Any]], tools: Optional[List[Dict]] = None) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "model": model,
@@ -925,6 +937,12 @@ def build_payload(model: str, messages: List[Dict[str, Any]], tools: Optional[Li
         "stream": True,
     }
     mapped = tools_to_responses(tools)
+    if len(mapped) > _tool_cap.SAFE_TOOL_CAP:
+        # The backend takes at most 128 function tools; past that the tools at
+        # the end never reach the model. Keep the Company tools and the coding
+        # agent, then the rest in order.
+        mapped = _tool_cap.cap_tools(mapped, _tool_cap.SAFE_TOOL_CAP, priority=_capped_first(),
+                                     label=f"ChatGPT plan {model}")
     if mapped:
         payload["tools"] = mapped
     # store/stream are required by ChatGPT plan usage; set last so nothing

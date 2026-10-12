@@ -23,6 +23,11 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 # for the suite; tests/test_claude_chat_agents.py switches it on per test.
 os.environ.setdefault("ODYSSEUS_CLAUDE_AGENTS", "0")
 
+# Ollama detection on ports other than 11434 asks the server's /api/version
+# (src/model_context.probe_is_ollama). Tests use made-up private URLs, so no
+# probing in the suite; tests/test_company_run_tools.py switches it on.
+os.environ.setdefault("ODYSSEUS_OLLAMA_PROBE", "0")
+
 # Pre-import real heavy modules BEFORE any test file's module-level stubs can
 # replace them with MagicMock. Some test files (e.g. test_llm_core_sanitize_*)
 # stub sqlalchemy/core.database at module scope with `if mod not in sys.modules`,

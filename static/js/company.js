@@ -50,6 +50,9 @@ const CODING = [['', 'Off'], ['opencode', 'OpenCode'], ['claude', 'Claude Code']
 // Stored values keep Paperclip's spelling (cancelled); shown in American English.
 const words = (s) => String(s || '').replace(/_/g, ' ').replace(/cancelled/g, 'canceled');
 const cap = (s) => { s = words(s); return s.charAt(0).toUpperCase() + s.slice(1); };
+// Run outcomes as shown: "no_progress" is a run that ended without working on its issues.
+const RUN_LABEL = { no_progress: 'No progress' };
+const runLabel = (status) => RUN_LABEL[status] || cap(status);
 const money = (cents) => `$${(Number(cents || 0) / 100).toFixed(2)}`;
 
 async function api(path, opts = {}) {
@@ -337,6 +340,7 @@ function activityText(a) {
   const who = a.actor_type === 'agent' ? (agentName(a.actor_id) || 'An agent') : a.actor_type === 'system' ? 'System' : 'You';
   const ent = d.identifier || d.name || d.title || '';
   const ch = d.changes || {};
+  const runOf = a.agent_id && agentName(a.agent_id) ? `${agentName(a.agent_id)}'s ` : 'a ';
   const map = {
     'company.created': `created the company`,
     'company.updated': `updated company settings`,
@@ -346,6 +350,8 @@ function activityText(a) {
     'agent.deleted': `removed ${ent}`,
     'agent.made_ceo': `made ${agentName(a.entity_id)} CEO`,
     'agent.wake_requested': `asked ${agentName(a.entity_id)} to wake up`,
+    'agent.auto_paused': `paused ${agentName(a.entity_id) || d.name || 'an agent'}: ${d.reason || 'its model is offline'}`,
+    'agent.auto_resumed': `resumed ${agentName(a.entity_id) || d.name || 'an agent'}: ${d.endpoint || 'its model'} is back`,
     'issue.created': `opened ${ent}${d.title ? `: ${d.title}` : ''}`,
     'issue.status_changed': `moved ${ent} from ${words(ch.status?.from)} to ${words(ch.status?.to)}`,
     'issue.assigned': `assigned ${ent} to ${agentName(ch.assignee_agent_id?.to) || ch.assignee_user?.to || 'nobody'}`,
@@ -365,6 +371,9 @@ function activityText(a) {
     'approval.rejected': `rejected ${d.title || words(d.type)}`,
     'approval.revision_requested': `asked for changes to ${d.title || words(d.type)}`,
     'approval.cancelled': `canceled an approval`,
+    'run.succeeded': `saw ${runOf}run finish${d.warning ? ` (${d.warning.toLowerCase()})` : ''}`,
+    'run.no_progress': `flagged ${runOf}run: no progress${d.blocked ? ', the agent says it is blocked' : ''}`,
+    'run.failed': `saw ${runOf}run fail${d.error ? `: ${d.error}` : ''}`,
   };
   return `<b>${esc(who)}</b> ${esc(map[a.action] || words(a.action))}`;
 }
@@ -461,7 +470,7 @@ function runRow(r) {
     <span class="co-dot run-${esc(r.status)}${live ? ' pulse' : ''}"></span>
     <span class="co-row-title"><b>${esc(agentName(r.agent_id) || 'Agent')}</b> ${esc(RUN_SOURCE[r.invocation_source] || r.invocation_source)}
       <span class="co-hint">${esc((r.model || '').split('@')[0])}${esc(cost)}</span></span>
-    <span class="co-pill">${esc(cap(r.status))}</span>
+    <span class="co-pill run-pill-${esc(r.status)}">${esc(runLabel(r.status))}</span>
     <time>${esc(ago(r.started_at || r.created_at))}</time></button></li>`;
 }
 
@@ -489,9 +498,10 @@ function logHtml(d) {
     parts.push(`<div class="co-hint">Round ${esc(d.live.round)}, working...</div>`);
   }
   return `<div class="co-detail-head"><b>${esc(agentName(r.agent_id) || 'Agent')}</b>
-      <span class="co-pill">${esc(cap(r.status))}</span><span class="co-hint">${esc(r.model || '')}</span>
+      <span class="co-pill run-pill-${esc(r.status)}">${esc(runLabel(r.status))}</span><span class="co-hint">${esc(r.model || '')}</span>
       <span class="co-grow"></span><button type="button" class="co-icon" data-close-sheet aria-label="Close">&times;</button></div>
-    ${r.error ? `<p class="co-note">${esc(r.error)}</p>` : ''}
+    ${r.error ? `<p class="co-note${r.status === 'no_progress' ? ' co-warn' : ''}">${esc(r.error)}</p>` : ''}
+    ${r.usage && r.usage.warning && !r.error ? `<p class="co-note co-warn">${esc(r.usage.warning)}</p>` : ''}
     <div class="co-log">${parts.join('') || '<div class="co-hint">Waiting to start (Odysseus may be busy with your chat).</div>'}</div>
     <div class="co-actions">
       ${r.session_id ? `<a class="co-btn" href="/#${esc(r.session_id)}" data-open-chat>Open as chat</a>` : ''}
@@ -565,7 +575,7 @@ function agentForm(a = null) {
     <form class="co-form">
       <h3>${a ? esc(a.name) : 'Hire an agent'}</h3>
       ${a && a.status === 'pending_approval' ? '<p class="co-note">Waiting for the hire to be approved.</p>' : ''}
-      ${a && a.status === 'paused' && a.pause_reason ? `<p class="co-note">Paused: ${esc(a.pause_reason)}. Set Status to Idle to resume.</p>` : ''}
+      ${a && a.status === 'paused' && a.pause_reason ? `<p class="co-note">Paused: ${esc(a.pause_reason)}.${a.auto_paused ? ' It resumes on its own when the model answers again.' : ''} <button type="button" class="co-link" data-act="resume-agent">Resume</button></p>` : ''}
       ${a && a.status === 'running' ? '<p class="co-note">Running now. <button type="button" class="co-link" data-act="agent-runs">See the run</button></p>' : ''}
       <div class="co-row">
         <label>Name<input name="name" required maxlength="80" value="${esc(a?.name || '')}"></label>
@@ -660,6 +670,9 @@ function agentForm(a = null) {
     try { await api(`/agents/${a.id}/wake`, { method: 'POST' }); toast(`Waking ${a.name}: see Runs`); setTimeout(pollLive, 800); } catch (e) { toast(e.message); }
   });
   card.querySelector('[data-act="agent-runs"]')?.addEventListener('click', () => show('runs'));
+  card.querySelector('[data-act="resume-agent"]')?.addEventListener('click', async () => {
+    try { await api(`/agents/${a.id}`, { method: 'PATCH', body: { status: 'idle' } }); toast(`${a.name} resumed`); await show('org'); } catch (e) { toast(e.message); }
+  });
 }
 
 // ── Issues board ─────────────────────────────────────────────────────────

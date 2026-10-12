@@ -101,7 +101,7 @@ them; no migration needed. Every table has its own indexed `owner` column.
   run, details JSON.
 - **company_runs**: agent, issue, invocation source (timer / assignment /
   mention / on_demand / approval), status (queued / running / succeeded /
-  failed / cancelled / timed_out), model used, session id, error, result
+  no_progress / failed / cancelled / timed_out / interrupted), model used, session id, error, result
   summary, usage JSON, timestamps.
 - **company_wakeups**: agent, source, issue / comment / approval, status
   (pending / consumed / dropped), the run that consumed it.
@@ -157,7 +157,9 @@ the same functions and gets the same validation and activity log.
   agent's policy allows it.
 - **Wake-ups.** Assignment, mention, "Wake now" and an approval decision on
   an agent's request each add a `company_wakeups` row, unless the agent is
-  paused, pending or terminated, or its heartbeat policy says no.
+  paused, pending or terminated, or its heartbeat policy says no. An agent
+  auto-paused because its model is offline still collects them (not timer
+  ones); they run when the model is back.
 - **Approvals.** Deciding records the decision. The one effect applied now:
   a pending hire (an agent created by another agent while the company
   requires approval) becomes idle when approved and terminated when
@@ -274,7 +276,10 @@ shutdown. Every 3 seconds, or at once when a route queues a wake-up:
 1. **Timer heartbeats.** An agent (idle, active or error, in an active
    company) whose heartbeat is enabled gets a `timer` wake-up once
    `interval_sec` has passed since `last_heartbeat_at` (or since it was
-   hired), unless one is already waiting.
+   hired), unless one is already waiting. `last_heartbeat_at` is set when
+   the timer wake-up is queued, so a heartbeat fires at most once per
+   interval whatever the run's outcome (a run that failed before it started
+   used to make the agent due again on the next tick).
 2. **Claiming.** Pending wake-ups are grouped per agent and ALL of an
    agent's pending rows become one run (status `consumed`, `run_id` set).
    The run's `invocation_source` is the most important reason: approval,
@@ -295,7 +300,23 @@ shutdown. Every 3 seconds, or at once when a route queues a wake-up:
 5. **Notifications** to the owner only: a plan / strategy / hire waiting for
    approval, a budget warning (once a month per agent or company) or stop,
    and a failed run. A web push to the owner's browsers, and a toast on an
-   open Company page.
+   open Company page. Pushes are deduplicated (one per agent and reason an
+   hour) and rate limited (5 per 10 minutes per owner, then one "N more
+   Company notices" summary); the activity feed keeps every event.
+6. **Offline models.** A run that fails because its model can't be reached
+   (connection refused, timeout, not found on any endpoint, no first token)
+   is retried once, 45 s later, with its wake-ups put back. If the retry
+   fails the same way, every agent of that owner on the same endpoint is
+   paused with `pause_reason` "Model offline: ... did not respond twice" and
+   `auto_paused` set, with one push ("<endpoint> is offline. Paused N
+   agents: ...") and an `agent.auto_paused` activity entry each. Their
+   assignment, mention and approval wake-ups stay pending (timer heartbeats
+   don't pile up). While agents are auto-paused, their endpoint is probed
+   (resolving the model, a short model-list request) at most every 2
+   minutes; when it answers, only the auto-paused agents are resumed (a
+   person's pause never is), with one push ("<endpoint> is back. Resumed N
+   agents.") and `agent.auto_resumed` entries, and their waiting work runs.
+   The agent form shows the reason and a Resume button.
 
 At startup, runs left `queued` or `running` are marked `interrupted` (a new
 run status), their issue locks are released and running agents go idle.
@@ -333,23 +354,46 @@ run status), their issue locks are released and running agents go idle.
 5. **Loop.** `stream_agent_loop` on the resolved model, as an `agent_runs`
    run in the thread, inside `usage_scope(source="company", company_id,
    company_agent_id, company_run_id)` so every model call is attributed.
-   Tools: the agent's `enabled_tools` (plus the Company tools) when set, else
-   the usual retrieval plus the Company tools; `disabled_tools` plus
-   `ask_user` (nobody is there to answer). An approved plan is pinned with
+   Tools: a focused set (`company_executor.run_tools`): the Company tools,
+   `claude_code` when a coding agent is picked, the core engineering tools
+   (`CORE_RUN_TOOLS`: bash, python, file read/write/edit, ls, glob, grep, web
+   search/fetch, background jobs, chat memory, plan) and the agent's
+   `enabled_tools`; minus `disabled_tools` plus `ask_user` (nobody is there
+   to answer). No MCP desktop/app tools unless `enabled_tools` names them,
+   and no topic-based extras from the wake message. Company tools and
+   `claude_code` lead the list sent to the model, and requests to OpenAI or
+   the ChatGPT plan never carry more than 120 tools (`src/tool_cap.py`,
+   OpenAI's limit is 128; trimming logs a `[tool-cap]` warning). An approved plan is pinned with
    `approved_plan`; its `max_steps` caps rounds (default 20,
    `company_agent_max_rounds`). The loop gets the model's context length and
    `auto_input_budget`, so its input budget scales to the window instead of
    the 6000-token default, which would truncate the run's system prompt.
    Self-hosted Ollama models get `num_ctx` from `/api/show` capped at
    `ollama_max_num_ctx` (32768, env `ODYSSEUS_OLLAMA_MAX_CTX`); calls for an
-   Ollama `/v1` URL go to native `/api/chat`, since `/v1` ignores `num_ctx`. Between rounds: the run's own `max_cost_usd`,
+   Ollama `/v1` URL go to native `/api/chat`, since `/v1` ignores `num_ctx`
+   (port 11434, or another port on a private/loopback host whose
+   `/api/version` answers, cached ten minutes: a second instance on 11435).
+   Company runs leave out the skills catalog and matched skills, and native
+   tool schemas that would not fit the window next to the prompt are
+   trimmed (least relevant first) so the wake message is never what gets
+   cut. Between rounds: the run's own `max_cost_usd`,
    the agent's and company's budgets, and the foreground gate.
 6. **Finish.** `finish_run` (status, summary, usage JSON with tokens, cost,
-   rounds, tool calls; `context_warning` when a call used exactly 2048, 4096
-   or 8192 input tokens, a sign the prompt was cut to the model's window)
-   releases held issues; the summary is posted as a
-   comment on the run's issue (or the one it checked out) unless the agent
-   already commented there; the agent goes back to idle (or error); spend
+   rounds, tool calls; `context_warning` when a call used exactly 2048, 4096,
+   8192, 16384 or 32768 input tokens or the Ollama `num_ctx` cap, a sign the
+   prompt was cut to the model's window)
+   releases held issues. Status is honest: `failed` for errors, a model that
+   never answered (the loop's stall note) or a call with 0 input and 0
+   output tokens and no reply; `no_progress` (shown as "No progress", a
+   warning) for a run woken for assigned or mentioned issues that made no
+   Company progress call (checkout, comment, status change, new issue,
+   approval request, release), with the agent's reply posted on the issue
+   (flagged `blocked` in usage and activity when it says it is blocked; the
+   issue's status is left to the agent and the person). A run like that with
+   no tool calls at all also gets `usage.warning` "The agent made no tool
+   calls". The summary is posted as a
+   comment on the run's issue (or the one it checked out, or the first issue
+   it was woken for) unless the agent already commented there; the agent goes back to idle (or error); spend
    is copied onto the rows; activity `run.*` is logged.
 7. **Stop.** `POST /api/company/runs/{id}/stop` stops a queued run's wait or
    a running agent loop (status `cancelled`, "Stopped by you").

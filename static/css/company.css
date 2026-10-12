@@ -298,6 +298,10 @@
 .run-running { background: #e0b341; }
 .run-succeeded { background: #5fb36b; }
 .run-failed { background: #e5534b; }
+.run-no_progress { background: #e0b341; }
+.co-pill.run-pill-no_progress { background: color-mix(in srgb, #e0b341 30%, transparent); }
+.co-pill.run-pill-failed { background: color-mix(in srgb, #e5534b 25%, transparent); }
+.co-note.co-warn { border-left: 3px solid #e0b341; background: color-mix(in srgb, #e0b341 12%, transparent); }
 .run-cancelled, .run-interrupted, .run-timed_out { background: #6e7781; }
 .co-runs time { font-size: 11px; opacity: .6; margin-left: 8px; white-space: nowrap; }
 .co-runs .co-row-title .co-hint { margin-left: 6px; }

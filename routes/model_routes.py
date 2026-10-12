@@ -1571,6 +1571,12 @@ def setup_model_routes(model_discovery):
 
     # ---- Admin: model endpoints CRUD ----
 
+    def _check_port(url: str) -> None:
+        from src.endpoint_resolver import invalid_port_error
+        bad = invalid_port_error(url)
+        if bad:
+            raise HTTPException(400, f"Base URL {url}: {bad}")
+
     @router.get("/model-endpoints")
     def list_model_endpoints(request: Request) -> List[Dict[str, Any]]:
         require_admin(request)
@@ -1668,6 +1674,7 @@ def setup_model_routes(model_discovery):
         base_url = _normalize_base(base_url)
         if not base_url:
             raise HTTPException(400, "Base URL is required")
+        _check_port(base_url)
         # Resolve hostname via Tailscale if DNS fails
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
@@ -1863,6 +1870,7 @@ def setup_model_routes(model_discovery):
         base_url = _normalize_base(base_url)
         if not base_url:
             raise HTTPException(400, "Base URL is required")
+        _check_port(base_url)
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
         base_url = _rewrite_loopback_for_docker(base_url)
@@ -2103,6 +2111,7 @@ def setup_model_routes(model_discovery):
                             _new_base = _new_base[: -len(_suffix)].rstrip("/")
                     _new_base = _normalize_base(_new_base)
                     if _new_base:
+                        _check_port(_new_base)
                         ep.base_url = _new_base
             else:
                 ep.is_enabled = not ep.is_enabled
