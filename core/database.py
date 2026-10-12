@@ -1012,7 +1012,8 @@ def _migrate_add_company_agent_pause_reason():
     try:
         with engine.connect() as conn:
             cols = [r[1] for r in conn.execute(text("PRAGMA table_info(company_agents)"))]
-            for col, typ in (("pause_reason", "TEXT"), ("coding_agent", "VARCHAR"), ("workdir", "TEXT")):
+            for col, typ in (("pause_reason", "TEXT"), ("coding_agent", "VARCHAR"), ("workdir", "TEXT"),
+                             ("auto_paused", "BOOLEAN DEFAULT 0")):
                 if cols and col not in cols:
                     conn.execute(text(f"ALTER TABLE company_agents ADD COLUMN {col} {typ}"))
                     conn.commit()
@@ -1834,6 +1835,9 @@ class CompanyAgent(TimestampMixin, Base):
     session_id    = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
     # Why the executor paused this agent (a budget hard stop); cleared on resume.
     pause_reason  = Column(Text, nullable=True)
+    # True when the executor paused it because its model went offline; it is
+    # resumed automatically when the model answers again (a person's pause never is).
+    auto_paused   = Column(Boolean, nullable=False, default=False, server_default="0")
     # Coding agent its runs may use through the claude_code tool: None (off),
     # "opencode", "claude" or "antigravity"; and the folder it works in.
     coding_agent  = Column(String, nullable=True)

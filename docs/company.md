@@ -157,7 +157,9 @@ the same functions and gets the same validation and activity log.
   agent's policy allows it.
 - **Wake-ups.** Assignment, mention, "Wake now" and an approval decision on
   an agent's request each add a `company_wakeups` row, unless the agent is
-  paused, pending or terminated, or its heartbeat policy says no.
+  paused, pending or terminated, or its heartbeat policy says no. An agent
+  auto-paused because its model is offline still collects them (not timer
+  ones); they run when the model is back.
 - **Approvals.** Deciding records the decision. The one effect applied now:
   a pending hire (an agent created by another agent while the company
   requires approval) becomes idle when approved and terminated when
@@ -274,7 +276,10 @@ shutdown. Every 3 seconds, or at once when a route queues a wake-up:
 1. **Timer heartbeats.** An agent (idle, active or error, in an active
    company) whose heartbeat is enabled gets a `timer` wake-up once
    `interval_sec` has passed since `last_heartbeat_at` (or since it was
-   hired), unless one is already waiting.
+   hired), unless one is already waiting. `last_heartbeat_at` is set when
+   the timer wake-up is queued, so a heartbeat fires at most once per
+   interval whatever the run's outcome (a run that failed before it started
+   used to make the agent due again on the next tick).
 2. **Claiming.** Pending wake-ups are grouped per agent and ALL of an
    agent's pending rows become one run (status `consumed`, `run_id` set).
    The run's `invocation_source` is the most important reason: approval,
@@ -295,7 +300,23 @@ shutdown. Every 3 seconds, or at once when a route queues a wake-up:
 5. **Notifications** to the owner only: a plan / strategy / hire waiting for
    approval, a budget warning (once a month per agent or company) or stop,
    and a failed run. A web push to the owner's browsers, and a toast on an
-   open Company page.
+   open Company page. Pushes are deduplicated (one per agent and reason an
+   hour) and rate limited (5 per 10 minutes per owner, then one "N more
+   Company notices" summary); the activity feed keeps every event.
+6. **Offline models.** A run that fails because its model can't be reached
+   (connection refused, timeout, not found on any endpoint, no first token)
+   is retried once, 45 s later, with its wake-ups put back. If the retry
+   fails the same way, every agent of that owner on the same endpoint is
+   paused with `pause_reason` "Model offline: ... did not respond twice" and
+   `auto_paused` set, with one push ("<endpoint> is offline. Paused N
+   agents: ...") and an `agent.auto_paused` activity entry each. Their
+   assignment, mention and approval wake-ups stay pending (timer heartbeats
+   don't pile up). While agents are auto-paused, their endpoint is probed
+   (resolving the model, a short model-list request) at most every 2
+   minutes; when it answers, only the auto-paused agents are resumed (a
+   person's pause never is), with one push ("<endpoint> is back. Resumed N
+   agents.") and `agent.auto_resumed` entries, and their waiting work runs.
+   The agent form shows the reason and a Resume button.
 
 At startup, runs left `queued` or `running` are marked `interrupted` (a new
 run status), their issue locks are released and running agents go idle.

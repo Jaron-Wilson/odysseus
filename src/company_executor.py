@@ -13,6 +13,19 @@ like the task scheduler) does three things every few seconds:
    agent.
 3. Notifications for new approvals waiting on the person.
 
+Offline models: a run that fails because its model's endpoint is down
+(unreachable, not listed, no first token) is retried once after
+OFFLINE_RETRY_S, with its wake-ups put back. If the retry fails the same
+way, every agent on that endpoint is paused with a reason and marked
+auto_paused (one push for the endpoint). Their assignment and mention
+wake-ups stay pending. While any agent is auto-paused its endpoint is
+probed every OFFLINE_PROBE_S; when it answers, only the auto-paused agents
+are resumed (one push) and their waiting work runs.
+
+Pushes are deduplicated (one per agent and reason an hour) and rate limited
+(PUSH_MAX_PER_WINDOW per PUSH_WINDOW_S, then one "N more" summary); the
+activity feed keeps every event.
+
 A run: budgets are checked (hard stop pauses the agent and opens a
 budget_override approval instead of running), the agent's model spec is
 resolved, the run gets a fresh thread under the agent's workspace chat (the
@@ -55,6 +68,11 @@ DEFAULT_MAX_ROUNDS = 20
 RESULT_CHARS = 4000
 TRIAGE_LIMIT = 20               # unassigned issues listed in a manager's wake message
 SUSPECT_CTX_CAPS = (2048, 4096, 8192, 16384, 32768)   # a call with exactly this many input tokens was likely cut off
+OFFLINE_RETRY_S = 45            # an offline model gets one retry this much later
+OFFLINE_PROBE_S = 120           # how often an endpoint with auto-paused agents is probed
+PUSH_DEDUPE_S = 3600            # one push per agent and reason in this window
+PUSH_WINDOW_S = 600             # at most PUSH_MAX_PER_WINDOW Company pushes per owner in this window
+PUSH_MAX_PER_WINDOW = 5
 
 
 def _suspect_caps() -> set:
@@ -425,6 +443,42 @@ def truncated_at(run_id: str) -> Optional[int]:
     return None
 
 
+# ── Offline endpoints ───────────────────────────────────────────────────
+
+_OFFLINE_RE = re.compile(
+    r"is not available:|not found on any configured endpoint|no enabled endpoints|cannot reach|unreachable|"
+    r"connection refused|connecterror|connecttimeout|connect(?:ion)? timed out|timed out|no response from|"
+    r"sent nothing|name or service not known|temporary failure in name resolution|no route to host|"
+    r"network is unreachable|all connection attempts failed", re.I)
+
+
+def endpoint_unavailable(error: Optional[str]) -> bool:
+    """True when a run's error says its model or endpoint could not be
+    reached (as opposed to the agent's own work going wrong)."""
+    return bool(error) and bool(_OFFLINE_RE.search(error))
+
+
+def endpoint_key(spec: Optional[str]) -> str:
+    """What an offline model is tracked by: the endpoint of a "model@endpoint"
+    spec (every agent on that endpoint is affected), else the bare model."""
+    spec = (spec or "").strip()
+    if "@" in spec:
+        return spec.rsplit("@", 1)[1].strip().lower()
+    return spec.lower()
+
+
+def endpoint_label(spec: Optional[str]) -> str:
+    """The endpoint as the person named it, for notices."""
+    spec = (spec or "").strip()
+    return spec.rsplit("@", 1)[1].strip() if "@" in spec else spec
+
+
+def _reason_key(text: Optional[str]) -> str:
+    """An error with its ids and numbers blanked, so the same failure twice
+    is one reason."""
+    return re.sub(r"[0-9a-f]{8,}|\d+", "#", (text or "").lower())[:160]
+
+
 # ── Notifications (the owner only) ──────────────────────────────────────
 
 _NOTICES: Dict[str, Deque[Dict[str, Any]]] = {}
@@ -468,6 +522,13 @@ class CompanyExecutor:
         self._stopping = False
         self.runs: Dict[str, Dict[str, Any]] = {}     # run_id -> {task, agent_id, owner, thread_id, stop}
         self._notified: set = set()
+        self._clock: Callable[[], float] = time.time
+        # (owner, endpoint key) -> {spec, since, retry_at}: failed once, its one retry is due at retry_at
+        self._retrying: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._probed: Dict[Tuple[str, str], float] = {}   # (owner, endpoint key) -> last probe (auto-paused agents)
+        self._pushed: Dict[Tuple, float] = {}         # dedupe key -> when it was last pushed
+        self._push_times: Dict[str, Deque[float]] = {}   # owner -> recent push times
+        self._held: Dict[str, int] = {}               # owner -> pushes held back by the rate limit
 
     # lifecycle
     async def start(self) -> None:
@@ -515,9 +576,142 @@ class CompanyExecutor:
 
     async def tick(self) -> List[str]:
         self.add_timer_wakeups()
+        await self.probe_offline()
         started = self.dispatch()
         await self.notify_new_approvals()
+        await self.flush_held()
         return started
+
+    # pushes: deduplicated and rate limited
+    async def _alert(self, owner: str, heading: str, body: str, *, kind: str = "company",
+                     dedupe: Optional[Tuple] = None) -> bool:
+        """Push a Company notice unless the same one went out in the last
+        PUSH_DEDUPE_S, or the owner already got PUSH_MAX_PER_WINDOW pushes in
+        the last PUSH_WINDOW_S (those are counted and summed up by
+        flush_held). The activity feed has every event either way."""
+        owner = owner or ""
+        now = self._clock()
+        if dedupe is not None:
+            k = (owner, kind) + tuple(dedupe)
+            last = self._pushed.get(k)
+            if last is not None and now - last < PUSH_DEDUPE_S:
+                logger.debug("[company] push deduplicated: %s", heading)
+                return False
+            self._pushed[k] = now
+            if len(self._pushed) > 2000:
+                self._pushed = {kk: t for kk, t in self._pushed.items() if now - t < PUSH_DEDUPE_S}
+        q = self._push_times.setdefault(owner, deque())
+        while q and now - q[0] >= PUSH_WINDOW_S:
+            q.popleft()
+        if len(q) >= PUSH_MAX_PER_WINDOW:
+            self._held[owner] = self._held.get(owner, 0) + 1
+            logger.info("[company] push held back by the rate limit: %s", heading)
+            return False
+        q.append(now)
+        await self._notify(owner, heading, body, kind=kind)
+        return True
+
+    async def flush_held(self) -> None:
+        """One summary push for the notices the rate limit held back, once
+        the window has room again."""
+        now = self._clock()
+        for owner, n in list(self._held.items()):
+            q = self._push_times.setdefault(owner, deque())
+            while q and now - q[0] >= PUSH_WINDOW_S:
+                q.popleft()
+            if len(q) >= PUSH_MAX_PER_WINDOW:
+                continue
+            del self._held[owner]
+            q.append(now)
+            await self._notify(owner, f"{n} more Company notice{'s' if n != 1 else ''}",
+                               "See the Company activity feed.", kind="company")
+
+    # offline endpoints
+    def _auto_pause(self, db, owner: str, key: str, spec: str, error: str) -> List[str]:
+        """The retry failed too: pause every agent of `owner` on endpoint
+        `key` (not ones already paused). Their pending wake-ups are kept for
+        when the model is back. Returns the paused agents' names."""
+        from core.database import CompanyAgent
+        from src import company as co
+        reason = f"Model offline: {spec} did not respond twice"
+        paused: List[str] = []
+        rows = db.query(CompanyAgent).filter(CompanyAgent.status.in_(("idle", "active", "error", "running"))) \
+            .order_by(CompanyAgent.created_at).all()
+        for a in rows:
+            if (a.owner or "") != owner or not a.model or endpoint_key(a.model) != key:
+                continue
+            a.status, a.pause_reason, a.auto_paused = "paused", reason[:500], True
+            co.log_activity(db, owner, a.company_id, co.Actor("system"), "agent.auto_paused", "agent", a.id,
+                            {"name": a.name, "reason": reason, "model": a.model, "endpoint": key,
+                             "error": (error or "")[:300]}, agent_id=a.id)
+            paused.append(a.name)
+        logger.warning("[company] model endpoint %s offline (%s): paused %d agent(s)", key, (error or "")[:120],
+                       len(paused))
+        return paused
+
+    async def _paused_push(self, owner: str, key: str, spec: str, names: List[str]) -> None:
+        n = len(names)
+        heading = f"{endpoint_label(spec)} is offline. Paused {n} agent{'s' if n != 1 else ''}: {', '.join(names)}."
+        await self._alert(owner, heading,
+                          "They resume on their own when it answers again; their queued work waits.",
+                          kind="company-model", dedupe=("offline", key))
+
+    async def probe_offline(self) -> None:
+        """While agents are auto-paused, probe their endpoints at most every
+        OFFLINE_PROBE_S: resolving a model lists the endpoint's models (one
+        short request). The agents whose model answers are resumed (never
+        ones a person paused); their pending wake-ups then run."""
+        from core.database import CompanyAgent
+        from src import company as co
+        now = self._clock()
+        db = self._db()
+        try:
+            groups: Dict[Tuple[str, str], set] = {}      # (owner, endpoint key) -> model specs
+            for a in db.query(CompanyAgent).filter(CompanyAgent.status == "paused",
+                                                   CompanyAgent.auto_paused.is_(True)):
+                if a.model:
+                    groups.setdefault((a.owner or "", endpoint_key(a.model)), set()).add(a.model)
+        finally:
+            db.close()
+        for k in [k for k in self._probed if k not in groups]:
+            del self._probed[k]
+        for (owner, key), specs in groups.items():
+            last = self._probed.get((owner, key))
+            if last is not None and now - last < OFFLINE_PROBE_S:
+                continue
+            self._probed[(owner, key)] = now
+            back = set()
+            from src import ai_interaction
+            for spec in sorted(specs):
+                try:
+                    await asyncio.to_thread(ai_interaction._resolve_model, spec, owner or None)
+                    back.add(spec)
+                except Exception as e:
+                    logger.info("[company] model %s still offline: %s", spec, str(e)[:120])
+            if not back:
+                continue
+            resumed: List[str] = []
+            db = self._db()
+            try:
+                for a in db.query(CompanyAgent).filter(CompanyAgent.status == "paused",
+                                                       CompanyAgent.auto_paused.is_(True)) \
+                        .order_by(CompanyAgent.created_at):
+                    if (a.owner or "") != owner or a.model not in back:
+                        continue
+                    a.status, a.pause_reason, a.auto_paused = "idle", None, False
+                    co.log_activity(db, owner, a.company_id, co.Actor("system"), "agent.auto_resumed",
+                                    "agent", a.id, {"name": a.name, "model": a.model, "endpoint": key},
+                                    agent_id=a.id)
+                    resumed.append(a.name)
+                db.commit()
+            finally:
+                db.close()
+            logger.info("[company] model endpoint %s is back: resumed %d agent(s)", key, len(resumed))
+            if resumed:
+                n = len(resumed)
+                await self._alert(owner, f"{endpoint_label(min(back))} is back. Resumed {n} agent{'s' if n != 1 else ''}.",
+                                  ", ".join(resumed), kind="company-model", dedupe=("online", key))
+            self.kick()
 
     def _db(self):
         from core import database as cdb
@@ -595,6 +789,10 @@ class CompanyExecutor:
                 if (now - last).total_seconds() < int(pol.get("interval_sec") or 3600):
                     continue
                 if co.request_wakeup(db, a.owner or "", a, "timer") is not None:
+                    # The heartbeat counts from when it fired, whatever the run's
+                    # outcome: a run that fails before it starts (model offline)
+                    # must not make the agent due again on the next tick.
+                    a.last_heartbeat_at = now
                     added += 1
             if added:
                 db.commit()
@@ -628,6 +826,8 @@ class CompanyExecutor:
                     continue
                 agent = db.query(CompanyAgent).filter(CompanyAgent.id == agent_id).first()
                 owner = (agent.owner or "") if agent else ""
+                if agent is not None and agent.status == "paused" and agent.auto_paused:
+                    continue            # its model is offline: the wake-ups wait for it
                 if agent is None or agent.status in ("paused", "terminated", "pending_approval"):
                     for w in wakes:
                         w.status = "dropped"
@@ -656,6 +856,9 @@ class CompanyExecutor:
                         if ap is not None and ap.status == "approved" and p.get("chosen_model"):
                             model = p["chosen_model"]
                         issue_id = issue_id or p.get("issue_id")
+                retry = self._retrying.get((owner, endpoint_key(model))) if model else None
+                if retry is not None and self._clock() < retry["retry_at"]:
+                    continue            # its model just failed: the wake-ups wait for the one retry
                 run = CompanyRun(id=uuid.uuid4().hex, owner=agent.owner, company_id=agent.company_id,
                                  agent_id=agent.id, issue_id=issue_id, invocation_source=lead.source,
                                  status="queued", model=model)
@@ -674,6 +877,7 @@ class CompanyExecutor:
                                 run_id=run.id)
                 db.commit()
                 info = {"agent_id": agent.id, "owner": owner, "company_id": agent.company_id,
+                        "queued_at": self._clock(),
                         "thread_id": None, "stop": None, "notices": verdict.get("notices") or []}
                 self.runs[run.id] = info
                 info["task"] = asyncio.create_task(self._execute(run.id))
@@ -723,8 +927,9 @@ class CompanyExecutor:
                     self._notified.add(ap.id)
                     co.log_activity(db, owner, company.id, co.Actor("system"), "approval.created", "approval", ap.id,
                                     {"type": "budget_override", "title": ap.title})
-                self._spawn(self._notify(owner, f"{agent.name} paused: budget reached",
-                                         f"{reason}. Raise it in Company > Approvals.", kind="company-budget"))
+                self._spawn(self._alert(owner, f"{agent.name} paused: budget reached",
+                                        f"{reason}. Raise it in Company > Approvals.", kind="company-budget",
+                                        dedupe=("budget", agent.id, scope)))
                 out["state"] = "hard_stop"
                 out["reason"] = reason
                 return out
@@ -740,7 +945,8 @@ class CompanyExecutor:
                                 "agent" if scope == "company_agent" else "company", entity.id,
                                 {"month": month, "pct": b["pct"], "spent_cents": b["spent_cents"],
                                  "limit_cents": b["limit_cents"], "name": label}, agent_id=agent.id)
-                self._spawn(self._notify(owner, f"Budget warning: {label}", text, kind="company-budget"))
+                self._spawn(self._alert(owner, f"Budget warning: {label}", text, kind="company-budget",
+                                        dedupe=("budget-warn", entity.id)))
         return out
 
     def _warned_this_month(self, db, owner, company_id, entity_id, month) -> bool:
@@ -771,8 +977,8 @@ class CompanyExecutor:
                 if not who:
                     continue        # the person's own requests need no push
                 kind = {"plan": "A plan", "strategy": "A strategy", "hire_agent": "A hire"}.get(ap.type, "A request")
-                await self._notify(ap.owner or "", f"{kind} is waiting for your approval",
-                                   f"{who}: {ap.title or ap.type}", kind="company-approval")
+                await self._alert(ap.owner or "", f"{kind} is waiting for your approval",
+                                  f"{who}: {ap.title or ap.type}", kind="company-approval")
         finally:
             db.close()
 
@@ -1097,6 +1303,9 @@ class CompanyExecutor:
             logger.warning("[company] run %s: a model call used exactly %d input tokens; context may be truncated",
                            run_id[:8], cap)
         final = _outcome(run_id, info, st, final, usage, summary)
+        offline = final["status"] == "failed" and endpoint_unavailable(final.get("error"))
+        paused: List[str] = []
+        key = None
         db = self._db()
         try:
             run = db.query(CompanyRun).filter(CompanyRun.id == run_id).first()
@@ -1120,8 +1329,19 @@ class CompanyExecutor:
                     logger.debug("result comment skipped: %s", e.detail)
             agent = db.query(CompanyAgent).filter(CompanyAgent.id == info["agent_id"]).first()
             company = db.query(CompanyCompany).filter(CompanyCompany.id == info["company_id"]).first()
+            spec = run.model or (agent.model if agent is not None else None)
+            key = endpoint_key(spec) if spec else None
+            if offline and key:
+                paused = self._model_offline(db, run_id, info, agent, key, spec, final.get("error") or "")
+            elif key and final["status"] in ("succeeded", "no_progress"):
+                self._retrying.pop((owner, key), None)      # the model answered
             if agent is not None:
-                if final["status"] == "failed" and agent.status in ("running", "idle", "active"):
+                if offline and agent.status == "running":
+                    prev = info.get("prev_status")
+                    agent.status = prev if prev in ("active", "idle") else "idle"
+                elif offline:
+                    pass                # not the agent's fault: no error state
+                elif final["status"] == "failed" and agent.status in ("running", "idle", "active"):
                     agent.status = "error"
                 elif agent.status == "running":
                     prev = info.get("prev_status")
@@ -1138,11 +1358,52 @@ class CompanyExecutor:
             name = agent.name if agent is not None else "An agent"
         finally:
             db.close()
-        if final["status"] == "failed":
-            await self._notify(owner, f"{name}'s run failed", (final.get("error") or "")[:200], kind="company-run")
+        if offline:
+            if paused:
+                await self._paused_push(owner, key, spec, paused)
+        elif final["status"] == "failed":
+            await self._alert(owner, f"{name}'s run failed", (final.get("error") or "")[:200], kind="company-run",
+                              dedupe=("failed", info["agent_id"], _reason_key(final.get("error"))))
         elif final["status"] == "no_progress":
-            await self._notify(owner, f"{name}'s run made no progress", (final.get("error") or "")[:200],
-                               kind="company-run")
+            await self._alert(owner, f"{name}'s run made no progress", (final.get("error") or "")[:200],
+                              kind="company-run",
+                              dedupe=("no_progress", info["agent_id"], _reason_key(final.get("error"))))
+
+    def _model_offline(self, db, run_id: str, info: Dict[str, Any], agent, key: str, spec: str,
+                       error: str) -> List[str]:
+        """A run failed because its model is unreachable. The first time, its
+        wake-ups go back to pending and the endpoint gets one retry after
+        OFFLINE_RETRY_S. If that retry (any run on the endpoint queued after
+        the first failure) fails too, every agent on the endpoint is paused.
+        Returns the paused agents' names for the one push."""
+        from core.database import CompanyWakeup
+        now = self._clock()
+        already_paused = agent is not None and agent.status == "paused" and agent.auto_paused
+        rkey = (info["owner"] or "", key)
+        retry = self._retrying.get(rkey)
+        if retry is not None and now - retry["since"] > OFFLINE_RETRY_S + 3600:
+            self._retrying.pop(rkey, None)     # a stale first failure: start over
+            retry = None
+        pend = db.query(CompanyWakeup).filter(CompanyWakeup.run_id == run_id)
+        if already_paused or retry is None or info.get("queued_at", 0) < retry["since"]:
+            # The first failure (or a run already going when it happened, or
+            # one whose agent was paused meanwhile): its work is kept.
+            if not already_paused and retry is None:
+                self._retrying[rkey] = {"spec": spec, "since": now, "retry_at": now + OFFLINE_RETRY_S}
+                logger.warning("[company] model %s did not respond (%s); one retry in %ds", spec, error[:120],
+                               OFFLINE_RETRY_S)
+            if already_paused:
+                pend = pend.filter(CompanyWakeup.source != "timer")
+            pend.update({CompanyWakeup.status: "pending", CompanyWakeup.run_id: None,
+                         CompanyWakeup.consumed_at: None}, synchronize_session=False)
+            return []
+        # The retry failed too: pause the endpoint's agents. Their assignment
+        # and mention wake-ups wait; a timer one is simply skipped.
+        self._retrying.pop(rkey, None)
+        pend.filter(CompanyWakeup.source != "timer").update(
+            {CompanyWakeup.status: "pending", CompanyWakeup.run_id: None, CompanyWakeup.consumed_at: None},
+            synchronize_session=False)
+        return self._auto_pause(db, info["owner"] or "", key, spec, error)
 
 
 def _outcome(run_id: str, info: Dict[str, Any], st: Dict[str, Any], final: Dict[str, Any],

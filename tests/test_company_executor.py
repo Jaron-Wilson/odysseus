@@ -79,6 +79,7 @@ def _setup(owner, *, hb=None, budget=0, company_budget=0):
     db = _TS()
     # Wake-ups left by earlier tests would be claimed too (the executor serves everyone).
     db.query(cdb.CompanyWakeup).filter(cdb.CompanyWakeup.status == "pending").update({"status": "dropped"})
+    db.query(cdb.CompanyAgent).filter(cdb.CompanyAgent.auto_paused.is_(True)).update({"auto_paused": False})
     db.commit()
     u = co.user_actor(owner)
     c = co.create_company(db, owner, u, {"name": "Acme " + owner, "monthly_budget_cents": company_budget})
@@ -115,9 +116,12 @@ def _make_loop(script, calls):
     return loop
 
 
-def _executor(loop, notes=None):
-    async def notifier(owner, heading, body, kind="company"):
-        (notes if notes is not None else []).append(heading)
+def _executor(loop, notes=None, owner=None):
+    """`owner`: keep only that owner's pushes (the executor serves every
+    owner, and earlier tests leave approvals and paused agents behind)."""
+    async def notifier(o, heading, body, kind="company"):
+        if owner is None or o == owner:
+            (notes if notes is not None else []).append(heading)
     return cx.CompanyExecutor(FakeSM(), agent_loop=loop, notifier=notifier)
 
 
@@ -246,6 +250,15 @@ def test_timer_heartbeats_respect_the_interval():
     ws = _q(cdb.CompanyWakeup, agent_id=eng["id"])
     assert [w.source for w in ws] == ["timer"]
     assert _q(cdb.CompanyWakeup, agent_id=ceo["id"]) == []         # heartbeat off by default
+    # The run for it failed before it started (no last_heartbeat_at from a
+    # run): the heartbeat still counts from when it fired.
+    db = _TS()
+    db.query(cdb.CompanyWakeup).filter_by(agent_id=eng["id"]).update({"status": "consumed"})
+    db.commit()
+    db.close()
+    assert ex.add_timer_wakeups(now=now + timedelta(seconds=610)) == 0
+    assert ex.add_timer_wakeups(now=now + timedelta(seconds=1200)) == 0
+    assert ex.add_timer_wakeups(now=now + timedelta(seconds=1202)) == 1
 
 
 def test_company_tools_refuse_other_companies_and_outside_a_run():
@@ -431,27 +444,27 @@ def test_stop_cancels_a_running_run():
     assert _q(cdb.CompanyAgent, id=eng["id"])[0].status == "idle"
 
 
-def test_failed_model_marks_error_and_notifies(monkeypatch):
+def test_failed_model_marks_error_and_notifies():
     owner = _owner()
     c, ceo, eng = _setup(owner)
-    from src import ai_interaction
 
-    def boom(spec, owner=None):
-        raise ValueError("endpoint down")
-    monkeypatch.setattr(ai_interaction, "_resolve_model", boom)
+    async def loop(url, model, messages, **kw):
+        yield 'event: error\ndata: {"error": "Invalid API key", "status": 401}\n\n'
     _wake(owner, eng["id"])
     notes = []
 
     async def go():
-        ex = _executor(_make_loop(lambda ctx: [], []), notes)
+        ex = _executor(loop, notes, owner)
         rid = (await ex.tick())[0]
         await _drain(ex)
         return rid
     rid = asyncio.run(go())
     r = _q(cdb.CompanyRun, id=rid)[0]
-    assert r.status == "failed" and "endpoint down" in r.error
+    assert r.status == "failed" and "Invalid API key" in r.error
     assert _q(cdb.CompanyAgent, id=eng["id"])[0].status == "error"
     assert any("failed" in n for n in notes)
+    # Not an offline model: the agent is not paused and its wake-up is used up.
+    assert {w.status for w in _q(cdb.CompanyWakeup, agent_id=eng["id"])} == {"consumed"}
 
 
 def test_paused_agents_wakeups_are_dropped():
@@ -695,9 +708,9 @@ def _assigned(owner, c, eng, title="Fix the build"):
     return i
 
 
-def _run_with(loop, notes=None):
+def _run_with(loop, notes=None, owner=None):
     async def go():
-        ex = _executor(loop, notes)
+        ex = _executor(loop, notes, owner)
         started = await ex.tick()
         await _drain(ex)
         return started[0]
@@ -741,7 +754,7 @@ def test_run_that_only_calls_unrelated_tools_is_no_progress_and_says_blocked():
                "required claude_code tool are not available in this run.")
         yield f'data: {json.dumps({"delta": msg})}\n\n'
         yield "data: [DONE]\n\n"
-    rid = _run_with(loop, notes)
+    rid = _run_with(loop, notes, owner)
     run = _q(cdb.CompanyRun, id=rid)[0]
     assert run.status == "no_progress", run.error
     assert "blocked" in run.error and "mcp__6bbb560b__binary_session" in run.error
@@ -787,13 +800,17 @@ def test_stalled_model_with_zero_tokens_fails():
     async def loop(url, model, messages, **kw):
         note = "\n\n_No response from qwen3.8:27b: it accepted the request but sent nothing for 180s._"
         yield f'data: {json.dumps({"delta": note, "stall": True})}\n\n'
-    rid = _run_with(loop, notes)
+    rid = _run_with(loop, notes, owner)
     run = _q(cdb.CompanyRun, id=rid)[0]
     assert run.status == "failed" and "No response from qwen3.8:27b" in run.error
     assert run.usage["input_tokens"] == 0 and run.usage["output_tokens"] == 0
     acts = [a for a in _q(cdb.CompanyActivity, company_id=c["id"]) if a.action == "run.failed"]
     assert acts and "No response" in acts[0].details["error"]
-    assert any("failed" in n for n in notes)
+    # A model that sent nothing counts as offline: one retry, no push yet,
+    # the wake-up goes back to pending.
+    assert notes == []
+    assert {w.status for w in _q(cdb.CompanyWakeup, agent_id=ceo["id"])} == {"pending"}
+    assert _q(cdb.CompanyAgent, id=ceo["id"])[0].status == "idle"
 
 
 def test_empty_model_reply_with_zero_tokens_fails():
@@ -841,3 +858,212 @@ def test_says_blocked():
     assert cx.says_blocked("I'm blocked from starting JAR-7")
     assert cx.says_blocked("this run does not expose company_checkout_issue")
     assert not cx.says_blocked("Fixed the build and moved JAR-7 to review.")
+
+
+# ── Offline models: retry once, then pause the endpoint's agents ─────────
+
+def _offline_resolver(monkeypatch, state):
+    from src import ai_interaction
+
+    def resolve(spec, owner=None):
+        state["calls"] += 1
+        state.setdefault("log", []).append(owner)
+        if not state["up"]:
+            raise ValueError(f"Model '{spec}' not found on any configured endpoint")
+        return "http://fake/v1/chat/completions", spec.split("@")[0], {}
+    monkeypatch.setattr(ai_interaction, "_resolve_model", resolve)
+
+
+def _clocked(ex, monkeypatch):
+    """Fake time for the executor and its timer heartbeats."""
+    t = {"now": 1_000_000.0}
+    t0, base = t["now"], cdb.utcnow_naive()
+    ex._clock = lambda: t["now"]
+    monkeypatch.setattr(cdb, "utcnow_naive", lambda: base + timedelta(seconds=t["now"] - t0))
+    return t
+
+
+async def _step(ex, t, seconds):
+    t["now"] += seconds
+    started = await ex.tick()
+    await _drain(ex)
+    return started
+
+
+def test_offline_model_heartbeat_runs_twice_then_pauses_the_endpoint(monkeypatch):
+    owner = _owner()
+    c, ceo, eng = _setup(owner, hb={"enabled": True, "interval_sec": 1800})
+    state = {"up": False, "calls": 0}
+    _offline_resolver(monkeypatch, state)
+    notes, calls = [], []
+
+    async def go():
+        ex = _executor(_make_loop(lambda ctx: [], calls), notes, owner)
+        t = _clocked(ex, monkeypatch)
+        for _ in range(600):                # an hour of ticks, one every 6 s
+            await _step(ex, t, 6)
+    asyncio.run(go())
+    runs = _q(cdb.CompanyRun, agent_id=eng["id"])
+    assert len(runs) == 2 and {r.status for r in runs} == {"failed"}     # the run and its one retry
+    assert calls == []
+    for a in (eng, ceo):                    # Ada never ran: paused with Bo, same endpoint
+        row = _q(cdb.CompanyAgent, id=a["id"])[0]
+        assert row.status == "paused" and row.auto_paused
+        assert row.pause_reason == "Model offline: qwen3:8b@Local did not respond twice"
+    assert notes == ["Local is offline. Paused 2 agents: Ada, Bo."]
+    acts = [a.action for a in _q(cdb.CompanyActivity, company_id=c["id"])]
+    assert acts.count("agent.auto_paused") == 2 and acts.count("run.failed") == 2
+    # Two runs, then a probe at most every OFFLINE_PROBE_S.
+    # (Agents of earlier tests with heartbeats run here too: count this owner's calls.)
+    assert 2 < state["log"].count(owner) <= 2 + 3600 // cx.OFFLINE_PROBE_S + 1
+
+
+def test_offline_recovery_resumes_only_auto_paused_agents_and_runs_waiting_work(monkeypatch):
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    db = _TS()
+    u = co.user_actor(owner)
+    cy = co.create_agent(db, owner, u, c["id"], {"name": "Cy", "role": "engineer", "reports_to": ceo["id"],
+                                                 "model": "qwen3:8b@Local"})
+    co.update_agent(db, owner, u, cy["id"], {"status": "paused"})         # paused by hand
+    di = co.create_agent(db, owner, u, c["id"], {"name": "Di", "role": "engineer", "reports_to": ceo["id"],
+                                                 "model": "gpt-4o@Cloud"})
+    db.close()
+    state = {"up": False, "calls": 0}
+    _offline_resolver(monkeypatch, state)
+    _wake(owner, eng["id"])
+    notes, calls = [], []
+
+    def status(a):
+        row = _q(cdb.CompanyAgent, id=a["id"])[0]
+        return row.status, bool(row.auto_paused)
+
+    async def go():
+        ex = _executor(_make_loop(lambda ctx: [], calls), notes, owner)
+        t = _clocked(ex, monkeypatch)
+        assert len(await _step(ex, t, 0)) == 1            # fails: one retry later
+        assert {w.status for w in _q(cdb.CompanyWakeup, agent_id=eng["id"])} == {"pending"}
+        assert status(eng) == ("idle", False) and notes == []
+        assert await _step(ex, t, 10) == []               # waiting for the retry
+        assert len(await _step(ex, t, cx.OFFLINE_RETRY_S)) == 1   # the retry fails too
+        assert status(eng) == ("paused", True) and status(ceo) == ("paused", True)
+        assert status(cy) == ("paused", False) and status(di) == ("idle", False)
+        assert notes == ["Local is offline. Paused 2 agents: Ada, Bo."]
+        # Work assigned meanwhile waits for the model.
+        _assigned(owner, c, eng)
+        for _ in range(3):
+            assert await _step(ex, t, 30) == []
+        ws = _q(cdb.CompanyWakeup, agent_id=eng["id"])
+        assert sorted(w.source for w in ws) == ["assignment", "on_demand"]
+        assert {w.status for w in ws} == {"pending"}
+        state["up"] = True
+        started = await _step(ex, t, cx.OFFLINE_PROBE_S)
+        assert notes[:2] == ["Local is offline. Paused 2 agents: Ada, Bo.", "Local is back. Resumed 2 agents."]
+        assert status(eng) == ("idle", False) and status(ceo) == ("idle", False)
+        assert status(cy) == ("paused", False)            # a person's pause is theirs to lift
+        assert len(started) == 1
+        run = _q(cdb.CompanyRun, id=started[0])[0]
+        assert run.agent_id == eng["id"] and run.invocation_source == "assignment"
+        assert {w.status for w in _q(cdb.CompanyWakeup, agent_id=eng["id"])} == {"consumed"}
+    asyncio.run(go())
+    acts = [a.action for a in _q(cdb.CompanyActivity, company_id=c["id"])]
+    assert acts.count("agent.auto_resumed") == 2
+
+
+def test_resuming_by_hand_clears_auto_pause():
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    db = _TS()
+    a = db.get(cdb.CompanyAgent, eng["id"])
+    a.status, a.pause_reason, a.auto_paused = "paused", "Model offline: x did not respond twice", True
+    db.commit()
+    co.update_agent(db, owner, co.user_actor(owner), eng["id"], {"status": "idle"})
+    a = db.get(cdb.CompanyAgent, eng["id"])
+    assert (a.status, a.pause_reason, a.auto_paused) == ("idle", None, False)
+    db.close()
+
+
+def test_auto_paused_agents_keep_work_but_not_heartbeats():
+    owner = _owner()
+    c, ceo, eng = _setup(owner, hb={"enabled": True, "interval_sec": 600})
+    db = _TS()
+    a = db.get(cdb.CompanyAgent, eng["id"])
+    a.status, a.auto_paused = "paused", True
+    assert co.request_wakeup(db, owner, a, "mention") is not None
+    assert co.request_wakeup(db, owner, a, "timer") is None
+    a.auto_paused = False                   # paused by a person: nothing queues
+    assert co.request_wakeup(db, owner, a, "mention") is None
+    db.rollback()
+    db.close()
+
+
+def test_pushes_are_deduplicated_and_rate_limited():
+    notes = []
+    ex = _executor(None, notes)
+    t = {"now": 1000.0}
+    ex._clock = lambda: t["now"]
+
+    async def go():
+        for _ in range(10):                 # the same failure ten times: one push
+            await ex._alert("o", "Bo's run failed", "x", kind="company-run", dedupe=("failed", "bo", "x"))
+        assert notes == ["Bo's run failed"]
+        for i in range(8):                  # then the rate limit: 5 per window
+            await ex._alert("o", f"notice {i}", "b")
+        assert notes[1:] == ["notice 0", "notice 1", "notice 2", "notice 3"]
+        await ex.flush_held()
+        assert len(notes) == 5              # the window is still full
+        t["now"] += cx.PUSH_WINDOW_S + 1
+        await ex.flush_held()
+        assert notes[-1] == "4 more Company notices"
+        await ex.flush_held()
+        assert len(notes) == 6
+        t["now"] += cx.PUSH_DEDUPE_S
+        await ex._alert("o", "Bo's run failed", "x", kind="company-run", dedupe=("failed", "bo", "x"))
+        assert notes[-1] == "Bo's run failed"
+    asyncio.run(go())
+
+
+def test_repeated_failures_push_once():
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+
+    async def loop(url, model, messages, **kw):
+        yield 'event: error\ndata: {"error": "Invalid API key", "status": 401}\n\n'
+    notes = []
+
+    async def go():
+        ex = _executor(loop, notes, owner)
+        for _ in range(4):
+            _wake(owner, eng["id"])
+            assert len(await ex.tick()) == 1
+            await _drain(ex)
+    asyncio.run(go())
+    assert notes == ["Bo's run failed"]
+    assert len(_q(cdb.CompanyRun, agent_id=eng["id"])) == 4
+
+
+def test_failure_comments_do_not_wake_their_author():
+    owner = _owner()
+    c, ceo, eng = _setup(owner)
+    i = _assigned(owner, c, eng)
+    db = _TS()
+    db.query(cdb.CompanyWakeup).filter_by(agent_id=eng["id"]).update({"status": "consumed"})
+    db.commit()
+    co.add_comment(db, owner, co.Actor("agent", eng["id"], "r1"), i["id"],
+                   "@Bo could not finish: the model is offline. @Ada FYI")
+    db.close()
+    assert [w.status for w in _q(cdb.CompanyWakeup, agent_id=eng["id"])] == ["consumed"]
+    assert [w.source for w in _q(cdb.CompanyWakeup, agent_id=ceo["id"])] == ["mention"]
+
+
+def test_endpoint_unavailable():
+    for err in ("Model qwen3:8b@100.102.86.125:11434 is not available: Model 'qwen3:8b@100.102.86.125:11434' "
+                "not found on any configured endpoint",
+                "Cannot reach 100.102.86.125:11434", "Upstream x unreachable (cooldown active)",
+                "No response from qwen3.8:27b: it accepted the request but sent nothing for 180s.",
+                "[Errno 111] Connection refused"):
+        assert cx.endpoint_unavailable(err), err
+    for err in ("Invalid API key", "The agent run failed", None, ""):
+        assert not cx.endpoint_unavailable(err)
+    assert cx.endpoint_key("qwen3:8b@100.102.86.125:11434") == cx.endpoint_key("qwen3.8:27b@100.102.86.125:11434")
+    assert cx.endpoint_key("qwen3:8b@100.102.86.125:11434") != cx.endpoint_key("qwen3:8b@100.102.86.125:11435")
