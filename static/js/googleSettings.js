@@ -86,6 +86,14 @@ function productCard(p, children) {
     row.append(el('span', { class: 'admin-toggle-sub', text: 'Set up the OAuth client above first.' }));
   } else if (p.enabled) {
     row.append(el('button', { class: 'settings-btn', type: 'button', 'data-google-off': p.key, text: 'Disconnect' }));
+    // An optional permission it still lacks (e.g. listing your calendars for
+    // Organize > Calendar): connecting again asks Google for it.
+    if ((p.missing_extra || []).length) {
+      card.append(el('div', { class: 'admin-toggle-sub google-missing', text: 'Not allowed yet: ' },
+        ...p.missing_extra.map(s => el('code', { text: shortScope(s) })),
+        el('span', { text: '. Reconnect to allow it.' })));
+      row.append(connectLink(p.key, 'Reconnect'));
+    }
   } else if (p.needs_reconnect) {
     row.append(connectLink(p.key, 'Reconnect'),
       el('button', { class: 'settings-btn', type: 'button', 'data-google-off': p.key, text: 'Turn off' }));

@@ -196,6 +196,10 @@ def status(user: Optional[str]) -> Dict:
             "granted": _granted(key, scopes),
             "enabled": key in on,
             "needs_reconnect": key in lost,
+            # Optional permissions (`extra`) a product that is on still lacks,
+            # e.g. the calendar list for a Calendar connected before it was
+            # asked for. Connecting the product again asks for them.
+            "missing_extra": [s for s in (p.get("extra") or []) if s not in scopes] if key in on else [],
             "unverified": key in on and key in unverified,
             "tools": P.tools_for(key) + list(p.get("tools") or []),
         })
