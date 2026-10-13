@@ -350,6 +350,75 @@ def test_a_batch_of_events_on_google_is_held(env):
     assert _held(out) and "2 events" in out["action_approval"]["title"]
 
 
+# ── Google Calendar through the connected Google account (source "google") ─
+
+@pytest.fixture
+def gcal_remote(monkeypatch):
+    """src/google_calendar_sync.py's Google writes, recorded, never sent."""
+    from src import google_calendar_sync as gs
+    rec = []
+
+    async def create(cal, values):
+        rec.append(("create", cal.id, values["summary"]))
+        return {"id": f"g{len(rec)}", "status": "confirmed"}
+
+    async def update(cal, uid, values):
+        rec.append(("update", cal.id, uid, values["summary"]))
+        return {"id": gs.event_id_of(uid)}
+
+    async def delete(cal, uid):
+        rec.append(("delete", cal.id, uid))
+    monkeypatch.setattr(gs, "remote_create", create)
+    monkeypatch.setattr(gs, "remote_update", update)
+    monkeypatch.setattr(gs, "remote_delete", delete)
+    return rec
+
+
+def test_manage_calendar_on_a_google_account_calendar_is_held(env, client, gcal_remote):
+    from src import google_calendar_sync as gs
+    _add_calendar("gcal-fam", FAMILY_GID := "family1@group.calendar.google.com", source="google", name="Family")
+    assert G.calendar_is_google("ann", type("C", (), {"source": "google", "account_id": FAMILY_GID})())
+    _, out = _call("manage_calendar", {"action": "create_event", "summary": "Soccer",
+                                       "dtstart": "2026-10-20T10:00", "calendar": "Family"}, owner="ann")
+    assert _held(out) and gcal_remote == [] and env["writeback"] == []
+    assert "Soccer" in out["action_approval"]["title"] and "Family" in out["action_approval"]["title"]
+    r = client.post(f"/api/action_approvals/{out['action_approval']['id']}/approve", headers=ANN)
+    assert r.status_code == 200 and r.json()["result"]["exit_code"] == 0, r.text
+    assert gcal_remote == [("create", "gcal-fam", "Soccer")]
+    # The local row carries Google's event id.
+    import core.database as cdb
+    db = cdb.SessionLocal()
+    try:
+        row = db.query(cdb.CalendarEvent).filter(cdb.CalendarEvent.calendar_id == "gcal-fam").one()
+        assert row.uid == gs.local_uid("gcal-fam", "g1") and row.origin == "google"
+    finally:
+        db.close()
+
+    # Update and delete are held too, and run on Google once approved.
+    uid = gs.local_uid("gcal-fam", "g1")
+    _, upd = _call("manage_calendar", {"action": "update_event", "uid": uid, "summary": "Soccer (away)"}, owner="ann")
+    assert _held(upd) and len(gcal_remote) == 1
+    r = client.post(f"/api/action_approvals/{upd['action_approval']['id']}/approve", headers=ANN)
+    assert r.json()["result"]["exit_code"] == 0
+    assert gcal_remote[-1] == ("update", "gcal-fam", uid, "Soccer (away)")
+    _, dele = _call("manage_calendar", {"action": "delete_event", "uid": uid}, owner="ann")
+    assert _held(dele) and dele["action_approval"]["title"].startswith('Delete "Soccer (away)"')
+    r = client.post(f"/api/action_approvals/{dele['action_approval']['id']}/approve", headers=ANN)
+    assert r.json()["result"]["exit_code"] == 0
+    assert gcal_remote[-1] == ("delete", "gcal-fam", uid)
+
+
+def test_a_default_google_account_calendar_is_held_too(env, monkeypatch, gcal_remote):
+    """No calendar named: the "Save new events to" default decides, and a
+    Google one is asked about."""
+    import routes.prefs_routes as prefs
+    _add_calendar("gcal-main", "primary", source="google", name="Main")
+    monkeypatch.setattr(prefs, "_load_for_user", lambda user=None: {"calendar_default_cal_id": "gcal-main"})
+    _, out = _call("manage_calendar", {"action": "create_event", "summary": "Dentist",
+                                       "dtstart": "2026-10-20T10:00"}, owner="ann")
+    assert _held(out) and gcal_remote == []
+
+
 # ── Gmail and other mailboxes ───────────────────────────────────────────
 
 EMAIL_WRITES = {
