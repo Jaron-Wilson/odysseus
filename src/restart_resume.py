@@ -60,9 +60,17 @@ def remember(session_ids: List[str]) -> int:
 
 
 def remember_active() -> int:
-    """The chats with a reply running right now."""
+    """The chats with a reply running right now. A /claude direct chat is
+    left out: its reply comes from a Claude Code session, not a model this
+    could prompt to carry on (src/claude_direct.py marks it interrupted)."""
     from src import agent_runs
-    return remember(agent_runs.active_sessions())
+    ids = agent_runs.active_sessions()
+    try:
+        from src import claude_direct
+        ids = [s for s in ids if not claude_direct.is_on(s)]
+    except Exception:
+        pass
+    return remember(ids)
 
 
 def take() -> List[str]:

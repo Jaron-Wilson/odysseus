@@ -562,6 +562,30 @@ def setup_chat_routes(
             # Verify ownership AFTER coerce (which may resolve a default session)
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
+            # Direct mode (/claude direct, src/claude_direct.py): the attached
+            # Claude Code session answers, word for word - no model, no
+            # context building, so no model has to be picked for the chat.
+            # It runs detached like any reply, so a refresh or another device
+            # reattaches with /api/chat/resume. A second message while one
+            # runs is refused (two writers to one session), not queued; the
+            # page is told and shows the running reply.
+            if not compare_mode and message:
+                from src import claude_direct
+                if claude_direct.is_on(session):
+                    from core.middleware import require_admin
+                    require_admin(request)
+                    sess = session_manager.get_session(session)
+                    if claude_direct.chat_busy(session) or agent_runs.is_active(session):
+                        return StreamingResponse(claude_direct.busy_reply(session),
+                                                 media_type="text/event-stream")
+                    chat_queue.remember_base(session, _public_base(request))
+                    if notify_when_done is not None:
+                        try:
+                            chat_queue.set_notify(session, notify_when_done, base=_public_base(request))
+                        except Exception:
+                            logger.exception("Could not save the notify request for %s", session)
+                    agent_runs.start(session, claude_direct.stream(session, sess, str(message), session_manager))
+                    return StreamingResponse(agent_runs.subscribe(session), media_type="text/event-stream")
             # A reply is already running in this chat: queue the message behind
             # it rather than cutting it off. Asked for: "when I press enter it
             # should queue the message not stop; Ctrl+Enter to force stop and
@@ -582,17 +606,6 @@ def setup_chat_routes(
                 return StreamingResponse(_queued_reply(), media_type="text/event-stream")
             sess = session_manager.get_session(session)
             owner = get_current_user(request)
-            # Direct mode (/claude direct, src/claude_direct.py): the attached
-            # Claude Code session answers, word for word - no model, no
-            # context building, so no model has to be picked for the chat.
-            if not compare_mode and message:
-                from src import claude_direct
-                if claude_direct.is_on(session):
-                    from core.middleware import require_admin
-                    require_admin(request)
-                    return StreamingResponse(
-                        claude_direct.stream(session, sess, str(message), session_manager),
-                        media_type="text/event-stream")
             if _clear_orphaned_session_endpoint(sess, owner=owner):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
             # Issue #587: picker shows a model from the endpoint cache but

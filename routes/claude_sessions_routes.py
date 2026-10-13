@@ -10,6 +10,7 @@
   POST   /api/claude_attach/{chat_id}  {"id": "7238cfa3"} attach one (src/claude_attach.py)
   POST   /api/claude_attach/{chat_id}/direct {"on": true}  replies straight from it (src/claude_direct.py)
   DELETE /api/claude_attach/{chat_id}                     detach it
+  GET    /api/claude_direct/{chat_id}/live                the direct reply so far (src/claude_direct.py)
 
 Admin only, like the Terminal: the transcripts hold everything that was said
 and done in those sessions. Read-only. `project` has to be one of the
@@ -115,6 +116,21 @@ def setup_claude_sessions_routes() -> APIRouter:
         _own_chat_or_404(request, chat_id)
         was = await asyncio.to_thread(claude_attach.detach, chat_id)
         return {"detached": was}
+
+    @router.get("/api/claude_direct/{chat_id}/live")
+    async def direct_live(request: Request, chat_id: str):
+        """The chat's direct reply so far: the one running, else the last
+        saved. A page that opened the chat mid-turn polls this when it cannot
+        reattach to the stream (src/claude_direct.py)."""
+        require_admin(request)
+        _own_chat_or_404(request, chat_id)
+        from src import claude_direct
+        from src.ai_interaction import get_session_manager
+        try:
+            sess = get_session_manager().get_session(chat_id)
+        except Exception:
+            sess = None
+        return {**claude_direct.live_state(chat_id, sess), "now": time.time()}
 
     @router.get("/api/claude_sessions/{project}/{session_id}")
     async def get_session(request: Request, project: str, session_id: str,

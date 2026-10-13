@@ -1097,6 +1097,13 @@ async def _startup_event():
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
+    # A /claude direct reply the previous process left running is marked
+    # interrupted, keeping its text, so no page waits on it (src/claude_direct.py).
+    try:
+        from src import claude_direct as _claude_direct
+        await asyncio.to_thread(_claude_direct.mark_interrupted_on_startup)
+    except Exception as _e:
+        logger.warning("Could not check for Claude Code direct replies left running: %s", _e)
     # Chats a restart cut off mid-reply carry on by themselves (src/restart_resume.py).
     try:
         from src import restart_resume

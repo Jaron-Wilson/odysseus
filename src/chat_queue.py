@@ -405,6 +405,15 @@ async def run_headless(session_id: str, text: str, client_device: Optional[Dict]
             return False
         if not sess or agent_runs.is_active(session_id):
             return False
+        # A /claude direct chat: the attached Claude Code session answers it,
+        # not the chat's model (src/claude_direct.py saves both sides).
+        from src import claude_direct
+        if claude_direct.is_on(session_id):
+            if claude_direct.chat_busy(session_id):
+                return False
+            agent_runs.start(session_id, claude_direct.stream(session_id, sess, text, sm))
+            logger.info("Sent a %s message to Claude Code in %s with no page open", source, session_id)
+            return True
         sm.add_message(session_id, ChatMessage("user", text, metadata={"source": source}))
         sm.save_sessions()
         context = sess.get_context_messages()
