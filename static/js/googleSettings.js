@@ -1,8 +1,10 @@
 // static/js/googleSettings.js
 // Settings > Google: the user's one Google connection and a card per
 // product (routes/google_routes.py, src/google_workspace/). Connect opens
-// Google's consent page in a new tab asking for that product only; the
-// cards refresh when this tab gets focus back.
+// Google's consent page in a new tab asking for that product plus the ones
+// already on; the cards refresh when this tab gets focus back. Loading the
+// status asks Google what the grant holds (cached server-side for a few
+// minutes); Recheck asks right away.
 
 const $ = (id) => document.getElementById(id);
 
@@ -57,12 +59,21 @@ function connectLink(key, label) {
                    target: '_blank', rel: 'noopener', 'data-google-connect': key, text: label });
 }
 
+// A product that was on but whose permission Google no longer holds (a box
+// unticked on a later consent screen, or Google dropped it) says so instead
+// of looking like it was never connected.
+function pillOf(p) {
+  if (p.enabled) return { text: 'Connected', cls: ' on' };
+  if (p.needs_reconnect) return { text: 'Needs reconnect', cls: ' warn' };
+  return { text: p.granted ? 'Off' : 'Not connected', cls: '' };
+}
+
 function productCard(p, children) {
-  const pill = p.enabled ? 'Connected' : (p.granted ? 'Off' : 'Not connected');
-  const card = el('div', { class: 'admin-card google-product' + (p.enabled ? ' on' : ''), 'data-google-product': p.key },
+  const pill = pillOf(p);
+  const card = el('div', { class: 'admin-card google-product' + pill.cls, 'data-google-product': p.key },
     el('div', { class: 'google-product-head' },
       el('h2', { text: p.label }),
-      el('span', { class: 'google-pill' + (p.enabled ? ' on' : ''), text: pill })),
+      el('span', { class: 'google-pill' + pill.cls, text: pill.text })),
     el('div', { class: 'admin-toggle-sub', text: p.about }));
   const tools = (p.tools || []).map(t => TOOL_LABELS[t] || t);
   if (tools.length) card.append(el('div', { class: 'admin-toggle-sub google-tools', text: `Chat tools: ${tools.join(', ')}` }));
@@ -73,6 +84,9 @@ function productCard(p, children) {
     row.append(el('span', { class: 'admin-toggle-sub', text: 'Set up the OAuth client above first.' }));
   } else if (p.enabled) {
     row.append(el('button', { class: 'settings-btn', type: 'button', 'data-google-off': p.key, text: 'Disconnect' }));
+  } else if (p.needs_reconnect) {
+    row.append(connectLink(p.key, 'Reconnect'),
+      el('button', { class: 'settings-btn', type: 'button', 'data-google-off': p.key, text: 'Turn off' }));
   } else {
     row.append(connectLink(p.key, p.granted ? 'Turn on' : 'Connect'));
   }
@@ -89,7 +103,10 @@ function subOption(p, parentOn) {
     el('div', { class: 'admin-toggle-sub google-scopes', text: 'Asks for: ' }, ...p.scopes.map(s => el('code', { text: shortScope(s) }))));
   const row = el('div', { class: 'settings-row google-actions' });
   if (p.enabled) row.append(el('button', { class: 'settings-btn', type: 'button', 'data-google-off': p.key, text: 'Turn off' }));
-  else if (state.configured && parentOn) row.append(connectLink(p.key, p.granted ? 'Turn on' : 'Allow'));
+  else if (p.needs_reconnect && state.configured && parentOn) {
+    row.append(el('span', { class: 'google-pill warn', text: 'Needs reconnect' }), connectLink(p.key, 'Reconnect'),
+      el('button', { class: 'settings-btn', type: 'button', 'data-google-off': p.key, text: 'Turn off' }));
+  } else if (state.configured && parentOn) row.append(connectLink(p.key, p.granted ? 'Turn on' : 'Allow'));
   else row.append(el('span', { class: 'admin-toggle-sub', text: 'Connect Google Drive first.' }));
   box.append(row);
   return box;
@@ -100,11 +117,14 @@ function render(s) {
   if (!$('google-account-state')) return;
   const connected = !!state.connected;
   const on = (state.products || []).filter(p => p.enabled);
+  const lost = (state.products || []).filter(p => p.needs_reconnect);
   $('google-account-state').textContent = !state.configured
     ? 'Not set up: this server has no Google OAuth client yet.' + (state.can_edit_client ? '' : ' Ask an admin of this server to add one.')
     : connected ? `Connected as ${state.email || 'a Google account'}${on.length ? `: ${on.map(p => p.label).join(', ')}` : ''}.`
+        + (lost.length ? ` Needs reconnect: ${lost.map(p => p.label).join(', ')}.` : '')
       : 'Not connected. Connect a product below to sign in to Google.';
   $('google-disconnect-all').hidden = !connected;
+  if ($('google-recheck')) $('google-recheck').hidden = !connected;
   $('google-scopes-box').hidden = !connected;
   $('google-scopes').replaceChildren(...(state.scopes || []).map(sc => el('li', {}, el('code', { text: sc }))));
   $('google-setup').hidden = !!state.configured;
@@ -131,7 +151,7 @@ async function load() {
 }
 
 async function onClick(ev) {
-  const t = ev.target.closest('[data-google-off],#google-disconnect-all,#google-save-client,#google-copy,[data-google-connect]');
+  const t = ev.target.closest('[data-google-off],#google-disconnect-all,#google-recheck,#google-save-client,#google-copy,[data-google-connect]');
   if (!t) return;
   if (t.dataset.googleConnect) {
     say('Finish on Google\'s page in the new tab, then come back here.');
@@ -143,6 +163,12 @@ async function onClick(ev) {
       const label = (state.products || []).find(p => p.key === t.dataset.googleOff)?.label || 'it';
       render(await api('POST', `/api/google/products/${encodeURIComponent(t.dataset.googleOff)}/disconnect`));
       say(state.connected ? `${label} is off; its tools are gone from chats.` : 'Disconnected, and Google revoked the access.');
+    } else if (t.id === 'google-recheck') {
+      say('Asking Google...');
+      const r = await api('POST', '/api/google/recheck');
+      render(r);
+      if (r.message) say(r.message, true);
+      else say(r.checked ? 'Checked with Google just now.' : 'Could not reach Google to check; showing what was saved.', !r.checked);
     } else if (t.id === 'google-disconnect-all') {
       if (!confirm('Disconnect Google? Odysseus loses every Google product and Google revokes its access.')) return;
       render(await api('POST', '/api/google/disconnect'));

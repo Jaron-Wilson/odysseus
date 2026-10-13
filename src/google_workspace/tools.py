@@ -33,12 +33,17 @@ def status_text(owner: Optional[str]) -> str:
         return ("No Google OAuth client is set up on this server yet, so no Google product can be connected. "
                 "An admin adds one in Settings > Google (steps in docs/google.md).")
     on = [p for p in st["products"] if p["enabled"]]
-    off = [p for p in st["products"] if not p["enabled"]]
+    lost = [p for p in st["products"] if p.get("needs_reconnect")]
+    off = [p for p in st["products"] if not p["enabled"] and not p.get("needs_reconnect")]
     lines = []
     if on:
         lines.append(f"Connected as {st['email'] or 'a Google account'}: " + ", ".join(p["label"] for p in on) + ".")
     else:
         lines.append("No Google product is connected.")
+    if lost:
+        lines.append("Needs reconnect (Google no longer holds the permission): " +
+                     ", ".join(p["label"] for p in lost) + ". The user presses Reconnect on its card in "
+                     "Settings > Google and keeps every box ticked on Google's consent screen.")
     if off:
         lines.append("Not connected: " + ", ".join(p["label"] for p in off) +
                      ". The user turns them on with Connect on each card in Settings > Google.")

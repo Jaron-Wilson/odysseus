@@ -3,9 +3,9 @@
 Odysseus can use your Google account for Calendar (making Meet meetings), Drive, Docs, Sheets,
 Slides, Tasks and Contacts. All of them share **one Google connection per Odysseus user**, made
 with the same OAuth client as Sign in with Google and Google Meet. You turn each product on
-separately in **Settings > Google**; Odysseus asks Google for that product's permission only
-when you connect it (incremental authorization), and the product's chat tools only appear
-while it is connected.
+separately in **Settings > Google**; Odysseus asks Google for a product's permission when you
+connect it (incremental authorization), and the product's chat tools only appear while it is
+connected.
 
 Gmail is not here on purpose: mail already works through the Email integration (IMAP/SMTP,
 Settings > Email), which covers Gmail with an app password.
@@ -54,11 +54,34 @@ authorized redirect URI is exactly the one the card shows, ending in
      "unverified app" screen once (Advanced > Go to ... (unsafe)) and limits the app to 100
      users. Sensitive and restricted scopes work this way for personal use.
 4. **Reconnect in Odysseus.** Settings > Google > press **Connect** on each product card. Google's
-   page lists just that product's permission; leave its box ticked. The card turns
-   **Connected** when you come back to the Odysseus tab. Your existing Google Calendar / Meet
+   page lists that product's permission together with the ones of every product already on;
+   **keep every box ticked** (see below). The card turns **Connected** when you come back to the
+   Odysseus tab. Your existing Google Calendar / Meet
    connection carries over: it shows up as Google Calendar, Connected.
 
 Nothing else changes: the same client ID, client secret and redirect URI are used.
+
+## Keep every box ticked on Google's consent screen
+
+Google's consent screen can show one checkbox per permission. Unticking one does not just skip
+it for this connect: Google may drop it from the whole grant, so a product that worked before
+stops working. That is why each Connect asks again for the permissions of every product that is
+already on (they show up ticked; nothing new is granted for them) as well as the new one, and
+why you should leave every box ticked.
+
+Odysseus does not trust the list of permissions that comes back with a connect, because Google
+has been seen to leave out ones it still holds. After each connect, and when Settings > Google
+loads (at most every five minutes), it asks Google's tokeninfo endpoint which permissions the
+grant really has. The **Recheck** button on the Google account card asks right away.
+
+If a permission a product had is gone, its card says **Needs reconnect** (not "Not connected"),
+its tools leave chats, and the connect that lost it says so, for example: "Google did not keep
+access to Docs. Connect Docs again and keep every box ticked on Google's consent screen."
+Press **Reconnect** on the card, or **Turn off** if you meant to drop it.
+
+If Google cannot be asked right after a connect, Odysseus keeps the permissions the same Google
+account had before plus the new ones, and checks them the next time Settings > Google loads. It
+never carries permissions over from a different Google account.
 
 ## Drive: narrow access or read everything
 
@@ -108,7 +131,8 @@ blocked.
 - The refresh token is stored per Odysseus user in `DATA_DIR/google_calendar/<user>.json`
   (file mode 0600), encrypted with the app key (`src/secret_storage.py`). It is never sent to
   the browser, returned by any API, or logged. Access tokens live only in memory and are
-  refreshed when they expire or Google answers 401.
+  refreshed when they expire or Google answers 401. Checking the grant sends the access token
+  to Google's tokeninfo endpoint only; the browser gets the scope names, never a token.
 - Every tool call uses the chat owner's own connection; one user can never reach another's
   Google account.
 - Turning off one product stops Odysseus using it at once (its tools disappear and calls are
@@ -126,6 +150,9 @@ blocked.
   wait a minute, try again.
 - **"Google did not accept the saved access"**: the scope is missing from the grant. Press
   Connect on the card again.
+- **A card says Needs reconnect**: Google no longer holds that product's permission, usually
+  because its box was unticked on a later consent screen. Press Reconnect and keep every box
+  ticked.
 - **Search finds nothing in Drive**: Drive is on narrow access. Turn on Read all my Drive files.
 - **"Google did not send a refresh token"**: remove Odysseus at
   myaccount.google.com/permissions, then connect again.

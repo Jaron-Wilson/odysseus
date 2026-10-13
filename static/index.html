@@ -3040,9 +3040,10 @@
         <div data-settings-panel="google" class="hidden">
           <div class="admin-card" id="google-account-card" data-goto-keywords="google account connect disconnect oauth client scopes permissions">
             <h2>Google account</h2>
-            <div class="admin-toggle-sub">One Google account connection for every Google product below. Each product asks Google for its own permission only when you connect it, and its tools appear in chats only while it is connected.</div>
+            <div class="admin-toggle-sub">One Google account connection for every Google product below. Each product asks Google for its permission when you connect it (keep every box ticked on Google's page), and its tools appear in chats only while it is connected.</div>
             <div class="settings-row">
               <span class="admin-toggle-sub" id="google-account-state">Loading…</span>
+              <button class="settings-btn" id="google-recheck" type="button" style="padding:3px 10px;font-size:12px" title="Ask Google which permissions it holds now" hidden>Recheck</button>
               <button class="settings-btn" id="google-disconnect-all" type="button" style="padding:3px 10px;font-size:12px" hidden>Disconnect Google</button>
             </div>
             <details id="google-scopes-box" hidden>
