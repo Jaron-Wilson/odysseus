@@ -66,7 +66,9 @@ function render(card, a) {
   card.dataset.status = a.status;
   const label = STATUS[a.status] || a.status;
   const url = safeUrl(a.target && a.target.url);
-  const target = a.target && (a.target.name || url)
+  // The target line adds something only with a link, or a name the details do not already show.
+  const named = a.target && a.target.name && (a.details || []).some(([, v]) => v === a.target.name);
+  const target = a.target && (url || (a.target.name && !named))
     ? `<div class="aa-target">Target: ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(a.target.name || url)}</a>` : esc(a.target.name)}</div>` : '';
   const details = (a.details || []).length
     ? `<dl class="aa-details">${a.details.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : '';
