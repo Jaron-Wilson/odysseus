@@ -4084,7 +4084,13 @@ import './chatThreads.js';
     const contentDiv = holder.querySelector('.stream-content');
     // A /claude direct reply saved as it streams (src/claude_direct.py) is
     // in the history already; the replay below shows all of it, live.
-    box.querySelectorAll('.msg.cc-direct-running').forEach((el) => el.remove());
+    const _ccSaved = box.querySelectorAll('.msg.cc-direct-running');
+    const _ccDirect = _ccSaved.length > 0;
+    _ccSaved.forEach((el) => el.remove());
+    if (_ccDirect) {
+      const _roleText = holder.querySelector('.role').firstChild;
+      if (_roleText) _roleText.textContent = 'Claude Code (direct) ';
+    }
     box.appendChild(holder);
     // A reply is running here: the button is Stop for it until it ends.
     watchRun(sessionId);
@@ -4099,7 +4105,9 @@ import './chatThreads.js';
     const _markLive = () => {
       if (_spinnerLive) return;
       _spinnerLive = true;
-      try { spinner.updateMessage('Generating response\u2026'); } catch (_) {}
+      try {
+        spinner.updateMessage(_ccDirect ? 'Claude Code is still working\u2026' : 'Generating response\u2026');
+      } catch (_) {}
     };
 
     const reader = res.body.getReader();
@@ -4245,7 +4253,9 @@ import './chatThreads.js';
             roundText += _d;
             liveRoundText[liveRound] = (liveRoundText[liveRound] || '') + _d;
             if (liveTools.length || liveRunning) { queueLiveTools(); continue; }
-            if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
+            // A direct turn keeps its "still working" line under the text
+            // until it ends: it can be quiet for minutes between messages.
+            if (!gotDelta) { gotDelta = true; if (!_ccDirect) { try { spinner.destroy(); } catch (_) {} } }
             renderDelta();
           } else if (json.type === 'queued_delivered') {
             rich = true;

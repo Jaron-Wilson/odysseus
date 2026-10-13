@@ -127,6 +127,7 @@ class _Live:
         self.started = started
         self._saved_at = started
         self._saved_len = 0
+        self._dirty = False
         _live[chat_id] = self
 
     def snapshot(self) -> Dict:
@@ -140,11 +141,20 @@ class _Live:
             self.text = text
         if activity is not None:
             self.activity = activity
+        self._dirty = True
         if (time.time() - self._saved_at >= LIVE_SAVE_EVERY_S
                 or len(self.text) - self._saved_len >= LIVE_SAVE_EVERY_CHARS):
             self._write()
 
+    def flush(self) -> None:
+        """Write what came in since the last write. A turn can go quiet for
+        minutes after a message (a long tool call), so this runs on a timer
+        too, not only when the next event arrives."""
+        if self._dirty and time.time() - self._saved_at >= LIVE_SAVE_EVERY_S:
+            self._write()
+
     def _write(self) -> None:
+        self._dirty = False
         self._saved_at = time.time()
         self._saved_len = len(self.text)
         cd = dict((self.msg.metadata or {}).get("claude_direct") or {})
@@ -202,6 +212,13 @@ async def _run_turn(chat_id: str, session_id: str, cwd: str, prompt: str,
         error = f"The session's folder {cwd or '(none)'} is not on this host, so it cannot run."
     was_parked = False
     proc = None
+
+    async def flusher() -> None:
+        while True:
+            await asyncio.sleep(max(LIVE_SAVE_EVERY_S, 0.5))
+            live.flush()
+
+    flushing = asyncio.create_task(flusher())
     try:
         # Take a background agent over for this turn (see the module notes).
         if not error:
@@ -290,6 +307,7 @@ async def _run_turn(chat_id: str, session_id: str, cwd: str, prompt: str,
                 pass
         error = ("The server restarted during this turn, so it was stopped here."
                  if stopped == "restart" else "Stopped.")
+    flushing.cancel()
 
     if error:
         put({"delta": ("\n\n" if text_parts else "") + error})

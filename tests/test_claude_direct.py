@@ -367,6 +367,26 @@ def test_the_reply_is_saved_at_the_start_and_filled_in_as_it_streams(home, cli, 
     assert after["running"] is False and after["text"] == FINAL
 
 
+def test_text_before_a_quiet_spell_is_saved_on_a_timer(home, cli, store, monkeypatch):
+    """Seen on the restart check: the first message came in under the write
+    interval, then a long tool call said nothing, so it was never written
+    until the end and a crash lost it."""
+    sm, chat = store
+    monkeypatch.setenv("FAKE_FIRST", FIRST)
+    monkeypatch.setenv("FAKE_SLEEP", "2.0")
+    monkeypatch.setattr(claude_direct, "LIVE_SAVE_EVERY_S", 0.5)
+
+    async def go():
+        turn = asyncio.create_task(_drain_all(claude_direct.stream(chat, sm.get_session(chat), "status?", sm)))
+        await asyncio.sleep(1.4)
+        midway = _rows(chat)
+        await turn
+        return midway
+
+    midway = asyncio.run(go())
+    assert midway[1][2] == FIRST and midway[1][3]["claude_direct"]["running"] is True
+
+
 def test_writes_are_spaced_out(home, cli, store, monkeypatch):
     """Updates go to the store every few seconds, not on every word."""
     sm, chat = store

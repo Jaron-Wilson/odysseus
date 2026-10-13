@@ -2255,6 +2255,9 @@ async function _checkServerStreamOnce(sessionId) {
     // Fallback: server is still streaming, show spinner and poll.
     const box = document.getElementById('chat-history');
     if (!box) return;
+    // A /claude direct reply saved as it streams is on screen already and
+    // follows itself (claudeDirectLive.js): no second "generating" bubble.
+    if (box.querySelector('.msg.cc-direct-running')) return;
 
     const holder = document.createElement('div');
     holder.className = 'msg msg-ai';
