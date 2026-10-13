@@ -245,9 +245,10 @@ def test_without_the_list_permission_only_primary_and_a_reconnect_hint(api):
     # Settings > Google says the optional permission is missing.
     card = next(p for p in connection.status(OWNER)["products"] if p["key"] == "calendar")
     assert card["enabled"] and P.CALENDAR_LIST_SCOPE in card["missing_extra"]
-    # The primary calendar still syncs on calendar.events alone.
+    # The primary calendar still syncs on calendar.events alone (the first
+    # look linked and pulled it).
     res = run(gs.sync(OWNER))
-    assert res["errors"] == [] and res["events"] == 3
+    assert res["errors"] == [] and len(_events(_cals()["primary"].id)) == 3
 
 
 def test_picking_a_family_calendar_links_and_pulls_it(api):
@@ -463,3 +464,39 @@ def test_another_owner_does_not_see_anns_google_calendar(api):
     assert all(c["source"] != "google" for c in listed["calendars"])
     st = run(gs.status("bob"))
     assert not st["connected"] and st["calendars"] == []
+
+
+def test_a_read_only_calendar_says_so(api, monkeypatch):
+    from fastapi import HTTPException
+    _connect(api)
+    hol_id = "en.usa#holiday@group.v.calendar.google.com"
+    run(gs.set_selection(OWNER, ["primary", hol_id]))
+    hol = _cals()[hol_id]
+
+    def refuse(request):
+        if request.method == "POST":
+            return httpx.Response(403, json={"error": {
+                "code": 403, "message": "You need to have writer access to this calendar.",
+                "errors": [{"reason": "requiredAccessLevel"}]}})
+        return api(request)
+    monkeypatch.setattr(connection, "_transport", httpx.MockTransport(refuse))
+    with pytest.raises(HTTPException) as e:
+        run(_endpoint("POST", "/events")(_req(), EventCreate(summary="X", dtstart="2026-10-22T17:00:00Z",
+                                                              calendar_href=hol.id)))
+    assert e.value.status_code == 502
+    assert "Holidays" in e.value.detail and "writer access" in e.value.detail
+
+
+def test_status_links_primary_on_first_look_and_pulls_it(api):
+    _connect(api)
+    st = run(gs.status(OWNER))
+    assert st["selected"] == ["primary"]
+    assert len(_events(_cals()["primary"].id)) == 3
+
+
+def test_revoked_after_linking_says_it_stopped_syncing(api):
+    _connect(api)
+    run(gs.sync(OWNER))
+    connection._forget(OWNER)
+    res = run(gs.sync(OWNER))
+    assert "not connected anymore" in res["errors"][0] and res["reconnect"]

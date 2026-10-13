@@ -160,13 +160,17 @@ def can_list(guser: Optional[str]) -> bool:
     return any(s in scopes for s in LIST_SCOPES)
 
 
-def _not_ready(guser: Optional[str]) -> str:
-    """Why Calendar cannot be used right now, or "" when it can."""
+def _not_ready(guser: Optional[str], linked: bool = False) -> str:
+    """Why Calendar cannot be used right now, or "" when it can. `linked`:
+    Google calendars are on the Calendar page, so say they stopped syncing."""
     from src import google_oauth
     if not google_oauth.client_config()["configured"]:
         return "No Google OAuth client is set up on this server yet (Settings > Google)."
     d = connection.load(guser)
     if not d.get("refresh_token"):
+        if linked:
+            return ("Google Calendar is not connected anymore (disconnected, or its access was revoked), so "
+                    "your Google calendars here are not syncing. Connect Google Calendar again in Settings > Google.")
         return "Google is not connected. Connect Google Calendar in Settings > Google."
     if "calendar" in connection.needs_reconnect(guser):
         return "Google no longer gives Odysseus access to your calendar. Reconnect Google Calendar in Settings > Google."
@@ -185,7 +189,7 @@ def notice(owner: Optional[str]) -> Optional[Dict]:
         db.close()
     guser = google_user(owner)
     if linked:
-        why = _not_ready(guser)
+        why = _not_ready(guser, linked=True)
         if why:
             return {"text": why, "action": "settings"}
         p = _load_state(owner).get("problem") or {}
@@ -200,11 +204,21 @@ def _cal_url(gid: str) -> str:
     return f"{API}/calendars/{quote(gid, safe='')}/events"
 
 
-def _explain(r, what: str) -> GoogleError:
+def _explain(r, what: str, cal=None) -> GoogleError:
     e = connection.explain(r, "calendar", what)
     why = connection.reason(r)
     if r.status_code == 401 or "insufficient" in why.lower() or "SCOPE" in why:
         return NeedsReconnect(str(e))
+    if cal is not None and r.status_code == 403 and "SERVICE_DISABLED" not in why and "accessNotConfigured" not in why:
+        # A write on a calendar this account can only read (Holidays, a
+        # calendar shared read only).
+        msg = ""
+        try:
+            msg = str((r.json().get("error") or {}).get("message") or "")
+        except Exception:
+            pass
+        return GoogleError(f'Google did not allow the change on "{cal.name}"'
+                           + (f": {msg[:200]}" if msg else ": it is read only for this account."))
     return e
 
 
@@ -287,13 +301,19 @@ async def status(owner: Optional[str]) -> Dict:
         "problem": (_load_state(owner).get("problem") or {}).get("text") or "",
     }
     from core.database import SessionLocal
+    out["auto"] = _selected(owner) is None
+    if enabled and ensure_auto(owner):
+        # Connected since the last look: the main calendar is linked now, so
+        # pull it before answering instead of showing it empty.
+        try:
+            await sync(owner)
+        except Exception as e:
+            logger.info("[gcal] first pull: %s", e)
     db = SessionLocal()
     try:
         linked = {r.account_id: r for r in _rows(db, owner)}
     finally:
         db.close()
-    sel = _selected(owner)
-    out["auto"] = sel is None
     out["selected"] = list(linked)
     if not enabled:
         out["calendars"] = [{"id": g, "name": r.name, "color": r.color, "primary": g == "primary",
@@ -503,7 +523,7 @@ async def remote_create(cal, values: Dict) -> Dict:
     r = await _write(cal, "POST", _cal_url(cal.account_id or "primary"), "event",
                      json=event_body(values), params={"sendUpdates": "none"})
     if r.status_code not in (200, 201):
-        raise _explain(r, "event")
+        raise _explain(r, "event", cal)
     logger.info("[gcal] created an event on %s for %s", cal.id, cal.owner or "-")
     return r.json()
 
@@ -514,7 +534,7 @@ async def remote_update(cal, uid: str, values: Dict) -> Dict:
     r = await _write(cal, "PATCH", f"{_cal_url(cal.account_id or 'primary')}/{quote(event_id_of(uid), safe='')}",
                      "event", json=body, params={"sendUpdates": "none"})
     if r.status_code != 200:
-        raise _explain(r, "event")
+        raise _explain(r, "event", cal)
     return r.json()
 
 
@@ -523,7 +543,7 @@ async def remote_delete(cal, uid: str) -> None:
                      "event", params={"sendUpdates": "none"})
     if r.status_code in (200, 204, 404, 410):
         return
-    raise _explain(r, "event")
+    raise _explain(r, "event", cal)
 
 
 def store_created(cal, item: Dict) -> Optional[str]:
@@ -651,7 +671,7 @@ async def sync(owner: Optional[str], only: Optional[str] = None) -> Dict:
             return out
         out["linked"] = True
         guser = google_user(owner)
-        why = _not_ready(guser)
+        why = _not_ready(guser, linked=True)
         if why:
             out["errors"].append(why)
             out["reconnect"] = True

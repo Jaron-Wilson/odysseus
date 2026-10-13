@@ -2784,6 +2784,12 @@ async function _loadGoogleSection(overlay, reopen) {
     return;
   }
   box.removeAttribute('style');
+  // Checking linked the main Google calendar by itself: show it in the grid.
+  if ((s.selected || []).length && !_calendars.some(c => c.source === 'google')) {
+    _allEvents = {}; _fetchedRanges = [];
+    try { localStorage.removeItem(LS_KEY); } catch (_) {}
+    _fetchCalendars().then(() => _render());
+  }
   const settingsBtn = (label) => `<button class="memory-toolbar-btn" type="button" data-cal-google-settings>${_e(label)}</button>`;
   if (!s.enabled) {
     const linked = (s.calendars || []).length;
@@ -3528,6 +3534,9 @@ function openCalendar() {
     body.querySelector('.cal-loading').appendChild(wp.element);
     body.addEventListener('wheel', _wheelNav, { passive: false });
   }
+  // Pull from Google/CalDAV on every open, not once per page load: a Google
+  // account connected in Settings since the last open shows up right away.
+  _caldavSyncedOnce = false;
   Promise.all([_loadWeekStartPref(), _fetchCalendars()]).then(() => _render());
 }
 
