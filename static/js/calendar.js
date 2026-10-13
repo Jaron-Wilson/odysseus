@@ -898,7 +898,12 @@ function _googleNoticeHTML() {
 function _openGoogleSettings() {
   document.getElementById('cal-settings-panel')?.remove();
   try { closeCalendar(); } catch (_) {}
-  import('./settings.js').then(m => m.default.open('google')).catch(() => {});
+  import('./settings.js').then(m => {
+    m.default.open('google');
+    // The Google tab may already be the open one, which does not reload it
+    // by itself: show what the connection is now.
+    try { window.googleSettings?.load?.(); } catch (_) {}
+  }).catch(() => {});
 }
 
 document.addEventListener('click', (e) => {
