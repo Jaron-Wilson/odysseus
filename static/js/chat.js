@@ -2022,6 +2022,32 @@ import './chatThreads.js';
                 if (currentAbort) { currentAbort._reason = 'queued'; currentAbort.abort(); }
                 break;
               }
+              // /claude direct: Claude Code is still on the last message in
+              // this chat (src/claude_direct.py refuses a second writer). The
+              // message goes back in the box and the running reply is shown,
+              // rather than an error under a message that was never sent.
+              if (json.type === 'claude_direct_busy') {
+                const _hist = document.getElementById('chat-history');
+                const _users = _hist ? _hist.querySelectorAll('.msg.msg-user') : [];
+                if (_users.length) _users[_users.length - 1].remove();
+                if (messageInput && !messageInput.value.trim() && typeof msg === 'string') {
+                  messageInput.value = msg;
+                  messageInput.dispatchEvent(new Event('input'));
+                }
+                if (window.showToast) window.showToast('Claude Code is still working on your last message. Here it is; send this again when it is done.');
+                if (currentAbort) { currentAbort._reason = 'queued'; currentAbort.abort(); }
+                const _busySid = streamSessionId;
+                let _tries = 0;
+                const _showRunning = async () => {
+                  if (sessionModule.getCurrentSessionId() !== _busySid) return;
+                  if (_resumingStreams.has(_busySid)) return;             // already on screen
+                  if (await resumeStream(_busySid)) return;
+                  if (++_tries < 8) setTimeout(_showRunning, 400);
+                  else sessionModule.selectSession(_busySid);             // the saved reply so far
+                };
+                setTimeout(_showRunning, 300);
+                break;
+              }
               // Handle SSE error events (e.g. HTTP 404 from provider)
               if (_nextIsError || json.status >= 400) {
                 _nextIsError = false;
@@ -4060,6 +4086,15 @@ import './chatThreads.js';
       '<div class="body"><div class="stream-content"></div></div>';
     _applyModelColor(holder.querySelector('.role'), meta && meta.model);
     const contentDiv = holder.querySelector('.stream-content');
+    // A /claude direct reply saved as it streams (src/claude_direct.py) is
+    // in the history already; the replay below shows all of it, live.
+    const _ccSaved = box.querySelectorAll('.msg.cc-direct-running');
+    const _ccDirect = _ccSaved.length > 0;
+    _ccSaved.forEach((el) => el.remove());
+    if (_ccDirect) {
+      const _roleText = holder.querySelector('.role').firstChild;
+      if (_roleText) _roleText.textContent = 'Claude Code (direct) ';
+    }
     box.appendChild(holder);
     // A reply is running here: the button is Stop for it until it ends.
     watchRun(sessionId);
@@ -4074,7 +4109,9 @@ import './chatThreads.js';
     const _markLive = () => {
       if (_spinnerLive) return;
       _spinnerLive = true;
-      try { spinner.updateMessage('Generating response\u2026'); } catch (_) {}
+      try {
+        spinner.updateMessage(_ccDirect ? 'Claude Code is still working\u2026' : 'Generating response\u2026');
+      } catch (_) {}
     };
 
     const reader = res.body.getReader();
@@ -4220,7 +4257,9 @@ import './chatThreads.js';
             roundText += _d;
             liveRoundText[liveRound] = (liveRoundText[liveRound] || '') + _d;
             if (liveTools.length || liveRunning) { queueLiveTools(); continue; }
-            if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
+            // A direct turn keeps its "still working" line under the text
+            // until it ends: it can be quiet for minutes between messages.
+            if (!gotDelta) { gotDelta = true; if (!_ccDirect) { try { spinner.destroy(); } catch (_) {} } }
             renderDelta();
           } else if (json.type === 'queued_delivered') {
             rich = true;

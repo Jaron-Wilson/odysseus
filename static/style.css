@@ -3656,6 +3656,27 @@ body.bg-pattern-sparkles {
       font-size:0.85em;
       font-style:italic;
     }
+    /* A /claude direct reply still being written (static/js/claudeDirectLive.js) */
+    .cc-direct-working {
+      margin-top:8px;
+      font-size:0.85em;
+      opacity:0.8;
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .cc-direct-dot {
+      width:8px;
+      height:8px;
+      border-radius:50%;
+      background:var(--accent, #d97757);
+      flex:none;
+      animation:cc-direct-pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes cc-direct-pulse {
+      0%, 100% { opacity:0.3; }
+      50% { opacity:1; }
+    }
     .stopped-indicator {
       color:var(--red);
       margin-top:8px;

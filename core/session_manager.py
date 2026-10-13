@@ -268,6 +268,32 @@ class SessionManager:
         finally:
             db.close()
 
+    def update_message(self, session_id: str, message: ChatMessage) -> bool:
+        """Write a saved message's content and metadata back to its own row
+        (found by metadata['_db_id']): a reply saved early and filled in as
+        it streams (src/claude_direct.py). Returns False if it has no row."""
+        meta = dict(message.metadata or {})
+        msg_id = meta.pop("_db_id", None)
+        if not msg_id:
+            return False
+        db = SessionLocal()
+        try:
+            row = db.query(DbChatMessage).filter(
+                DbChatMessage.id == msg_id, DbChatMessage.session_id == session_id).first()
+            if row is None:
+                return False
+            content = message.content
+            row.content = json.dumps(content) if isinstance(content, list) else (content or "")
+            row.meta_data = json.dumps(meta) if meta else None
+            db.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating message {msg_id}: {e}")
+            db.rollback()
+            return False
+        finally:
+            db.close()
+
     def truncate_messages(self, session_id: str, keep_count: int) -> bool:
         """Truncate session history, keeping only the first `keep_count` messages."""
         session = self.get_session(session_id)

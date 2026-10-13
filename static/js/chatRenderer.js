@@ -10,6 +10,7 @@ import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { matchModelKey } from './model/matchKey.js';
 import { nativePlanCard } from './nativePlanCard.js';
+import * as claudeDirectLive from './claudeDirectLive.js';
 import { actionApprovalCard } from './actionApprovalCard.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -2675,6 +2676,12 @@ export function addMessage(role, content, modelName, metadata) {
         stoppedIndicator.appendChild(continueBtn);
       }
       b.appendChild(stoppedIndicator);
+    }
+
+    // A /claude direct reply (src/claude_direct.py): still being written
+    // (it shows the text so far and keeps updating), or cut off by a restart.
+    if (role === 'assistant' && metadata?.claude_direct) {
+      claudeDirectLive.decorate(wrap, b, metadata);
     }
 
     if (metadata?.edited) {
