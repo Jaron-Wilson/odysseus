@@ -290,12 +290,21 @@ FINAL = FIRST + "\n\nAll 7 emails went out. *Nothing* reworded."
 
 
 @pytest.fixture
-def store(home, monkeypatch):
+def store(home, monkeypatch, tmp_path):
     import uuid
-    from core.database import init_db
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    import core.database as database
+    import core.session_manager as session_manager_mod
     from core.models import set_session_manager_instance, get_session_manager_instance
     from core.session_manager import SessionManager
-    init_db()
+    # A file of its own: the suite's in-memory database is one connection
+    # per thread, which made these flaky.
+    eng = create_engine(f"sqlite:///{tmp_path / 'app.db'}", connect_args={"check_same_thread": False})
+    database.Base.metadata.create_all(eng)
+    local = sessionmaker(autocommit=False, autoflush=False, bind=eng)
+    monkeypatch.setattr(database, "SessionLocal", local)
+    monkeypatch.setattr(session_manager_mod, "SessionLocal", local)
     sm = SessionManager()
     prev = get_session_manager_instance()
     set_session_manager_instance(sm)
@@ -507,3 +516,26 @@ def test_a_short_turn_or_a_bell_already_set_sends_none_from_here(home, cli, monk
     monkeypatch.setattr(claude_direct, "LONG_TURN_S", 0)
     asyncio.run(_turn_then_settle("chat-1", _Sess()))
     assert sent == []
+
+
+# ── The page ────────────────────────────────────────────────────────────
+
+def _js(name):
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return open(os.path.join(here, "static", "js", name), encoding="utf-8").read()
+
+
+def test_the_page_shows_a_running_reply_and_follows_it():
+    live = _js("claudeDirectLive.js")
+    assert "/api/claude_direct/" in live and "/live" in live and "Claude Code is still working" in live
+    renderer = _js("chatRenderer.js")
+    assert "import * as claudeDirectLive from './claudeDirectLive.js'" in renderer
+    assert "claudeDirectLive.decorate(wrap, b, metadata)" in renderer
+    chat = _js("chat.js")
+    # The live stream replaces the saved bubble rather than showing it twice.
+    resume = chat[chat.index("export async function resumeStream("):]
+    assert resume.index(".msg.cc-direct-running") < resume.index("box.appendChild(holder)")
+    # Refused as busy: the message goes back in the box and the running reply shows.
+    busy = chat[chat.index("json.type === 'claude_direct_busy'"):]
+    busy = busy[:busy.index("break;")]
+    assert "messageInput.value = msg" in busy and "resumeStream(_busySid)" in busy
