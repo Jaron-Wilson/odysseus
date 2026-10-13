@@ -77,6 +77,17 @@ def resolve(prefix: str) -> Dict:
                           "(hex, as `claude agents` or the Claude sessions page shows it).")
     matches = ccs.resolve_prefix(prefix)
     if not matches:
+        # A background agent's id (`claude agents`, `claude attach c06db0e3`)
+        # is not its session's: Jaron tried `/claude attach c06db0e3`.
+        try:
+            from src import claude_agent_view
+            for ag in claude_agent_view.list_agents():
+                if str(ag.get("id") or "").lower() == prefix and ccs.valid_session_id(ag.get("sessionId") or ""):
+                    matches = ccs.resolve_prefix(ag["sessionId"])
+                    break
+        except Exception:
+            pass
+    if not matches:
         raise AttachError(f"No Claude Code session on this host starts with {prefix}.", status=404)
     infos = [i for i in (ccs.session_info(p, path) for p, path in matches) if i]
     if len(infos) > 1:
