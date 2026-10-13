@@ -899,6 +899,9 @@ app.include_router(setup_plans_routes())
 # Native plans: plans a chat model writes as Plans documents, answered in the chat (routes/native_plans_routes.py)
 from routes.native_plans_routes import setup_native_plans_routes
 app.include_router(setup_native_plans_routes())
+# Ask before Google writes: held calls answered in the chat (routes/action_approvals_routes.py)
+from routes.action_approvals_routes import setup_action_approvals_routes
+app.include_router(setup_action_approvals_routes())
 
 # Company: an organization of AI agents on any Odysseus model (routes/company_routes.py, docs/company.md)
 from routes.company_routes import setup_company_routes

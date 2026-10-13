@@ -333,6 +333,12 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 | `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
 | `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
 
+### Gmail and Google account changes
+With a Gmail mailbox or a Google product connected, the assistant asks in the chat before it
+sends, replies, deletes, archives or marks Gmail, or creates or changes anything in your Google
+account (Docs, Sheets, Slides, Drive, Tasks, Meet, Google Calendar). Reading never asks. See
+[docs/email-gmail.md](docs/email-gmail.md) and [docs/google.md](docs/google.md).
+
 ### Outlook / Office 365 email
 Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
 and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox

@@ -126,6 +126,63 @@ saying which `offset` or `range` reads on. After a create or edit, the chat repl
 link to the file. In plan mode the read tools stay available and the ones that change things are
 blocked.
 
+## Ask before writing to my Google account (and Gmail)
+
+On by default (Settings > Google > Ask before writing). Anything that would create, change,
+send or delete something in your Google account does not run when the assistant asks for it.
+The chat shows a card instead, saying in plain words what would happen: the action, the
+account, the target (the file's title and link, the calendar and event, the mailbox), and the
+exact text it would write or send. A delete says "Delete <title>". You press **Approve** or
+**Deny** (with an optional note for the assistant). Reading never asks.
+
+What asks first:
+
+| Where | Asks before | Never asks |
+| --- | --- | --- |
+| Drive, Docs, Sheets, Slides, Tasks | every tool in the table above marked "Changes things": `google_drive_upload`, `google_drive_create_folder`, `google_doc_create`, `google_doc_edit`, `google_sheet_write`, `google_sheet_append`, `google_sheet_create`, `google_slides_create`, `google_task_create` | `google_status` and every `*_read`, `*_search`, `*_list` tool |
+| Google Meet | `google_meet` start, now, create, schedule (each makes a Calendar event and a Meet space, and may email invites) | join, status |
+| Google Calendar (CalDAV) | `manage_calendar` create_event, update_event, delete_event, or a batch of events, on a CalDAV calendar whose account URL is Google's (`apidata.googleusercontent.com`, `google.com/calendar/dav`) | list_events, list_calendars; local calendars and other CalDAV servers (Fastmail, iCloud, Nextcloud...) |
+| Gmail | `send_email`, `reply_to_email`, `archive_email`, `delete_email`, `mark_email_read`, `bulk_email` on a mailbox whose IMAP or SMTP server is Google's (`imap.gmail.com`, `smtp.gmail.com`, so Google Workspace mail counts) or whose address is `@gmail.com` | list, read and search email; drafts (`draft_email`, `draft_email_reply`, `ai_draft_email_reply` save a draft in Odysseus, not in Gmail); other mailboxes |
+| `app_api` | a POST, PUT, PATCH or DELETE to `/api/email`, `/api/calendar`, `/api/caldav`, `/api/meet` or `/api/google` is refused outright while this is on (it cannot ask); the named tools above are the way | GETs |
+
+How an answer works:
+
+- **The turn ends** when a change is held, like a question from the assistant. Nothing has
+  changed in your Google account yet.
+- **Approve** runs exactly the call the assistant made (its arguments are pinned when it is
+  held; the assistant cannot change them afterwards), once, on the server, through the same
+  tool path as any other call. The chat then carries on with the result. A second Approve
+  (another tab, a double tap) is refused and never runs it again.
+- **Deny** tells the assistant "the user denied <action>: <your note>". It is told not to
+  make the change another way.
+- **It expires** after 30 minutes unanswered, and then can never run. Ask again if you still
+  want it.
+- **One at a time**: if the assistant asks for two Google changes in one turn, the first gets a
+  card and the second is refused with "one at a time"; it asks again after you answer. A new
+  request in the same chat replaces one still waiting ("Replaced by a newer request").
+- The card is drawn from the server every time, so a reload, another tab, Classic, Studio,
+  Workspace and the phone all show the same state. Changes still waiting are also listed in
+  Settings > Google, where you can answer them too.
+
+Where the request comes from:
+
+- **A chat** (any model, native function calls or fenced tool blocks): the card in the chat.
+- **Company agents** (Build > Company): the request goes to Company > Approvals as a "Google
+  write" approval instead. Approving it there runs it once when the agent wakes, and the agent
+  is told the result. A model cannot answer it, including through the Company chat tools.
+- **Scheduled tasks and the mail listener**: the change is held the same way and you get a
+  notification (push and the Modes listener). It never runs unseen.
+- **Coding agents** (`claude_code`, `/claude direct`) run their own tools outside Odysseus's
+  tool path and are not covered by this. Neither are MCP servers you add yourself, or `bash`
+  scripts that talk to Google with their own credentials.
+
+The switch: anyone can turn it on, only an admin can turn it off, and the page warns first.
+It is stored in `DATA_DIR/google_write_approval.json`, not in `settings.json`, so the
+assistant's `manage_settings` tool cannot reach it, and `app_api` refuses
+`/api/google/write-approval` and `/api/action_approvals`. Every answer (approved, denied,
+expired) is logged with the time, chat, tool, target and outcome in
+`DATA_DIR/google_write_audit.jsonl`; Settings > Google shows your recent ones.
+
 ## Security
 
 - The refresh token is stored per Odysseus user in `DATA_DIR/google_calendar/<user>.json`
@@ -165,6 +222,14 @@ Code: `src/google_workspace/` (connection, products and scopes, one module per A
 routes in `routes/google_routes.py`, the card in `static/js/googleSettings.js`, tests in
 `tests/test_google_workspace.py`. The OAuth client and callback are shared in
 `src/google_oauth.py`.
+
+Ask before writing: `src/google_write_gate.py` decides what is a Google write and describes it
+(`intercept` is called from `execute_tool_block` in `src/tool_execution.py`, so every caller
+goes through it); `src/action_approvals.py` holds the pinned call, runs it once when approved
+and writes the log; routes in `routes/action_approvals_routes.py`; the chat card in
+`static/js/actionApprovalCard.js`; tests in `tests/test_google_write_approval.py`. A new tool
+that writes to Google needs a line in `google_write_gate.classify` (Workspace tools marked
+`mutates` in `products.py` are picked up automatically).
 
 For tests and local UI checks only, `ODYSSEUS_GOOGLE_API_BASE=http://127.0.0.1:PORT` sends
 every Google call (consent page, token endpoint, APIs) to a fake at

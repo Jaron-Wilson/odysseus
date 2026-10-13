@@ -606,6 +606,7 @@ TOOL_SECTIONS.update(_company_tools.PROMPT_SECTIONS)
 # domain and its rules. Tools of a product that is off are hidden per owner
 # in run_agent_loop.
 from src.google_workspace import products as _google_products  # noqa: E402
+from src import google_write_gate as _google_gate  # noqa: E402
 for _gname, _gsection in _google_products.prompt_sections().items():
     TOOL_SECTIONS.setdefault(_gname, _gsection)
 _DOMAIN_TOOL_MAP["google"] = set(_google_products.ALL_TOOLS)
@@ -2844,6 +2845,7 @@ async def stream_agent_loop(
         re.IGNORECASE,
     )
     _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
+    _approval_held = False  # a Google write is waiting for the user's Approve this turn
 
     # Document streaming state (persists across rounds)
     _doc_acc = ""          # accumulated tool-call JSON arguments
@@ -3522,6 +3524,18 @@ async def stream_agent_loop(
                 }
                 logger.info("[agent] refused a %s screenshot in a row", _shot_streak)
                 yield f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "round": round_num})}\n\n'
+            elif _approval_held and await _google_gate.needs_approval(block.tool_type, block.content, owner):
+                # One Google change at a time (src/google_write_gate.py): the
+                # first one in this turn is waiting for the user, so a second
+                # is not shown as well. The model asks again after the answer.
+                desc = f"{block.tool_type}: not run"
+                result = {
+                    "error": ("Not run: another change to the user's Google account is already waiting for "
+                              "their approval in this turn. One at a time: end your turn now, and ask for "
+                              "this one after they answer."),
+                    "exit_code": 1,
+                }
+                yield f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": cmd_display, "round": round_num})}\n\n'
             elif tool_policy and tool_policy.blocks(block.tool_type):
                 desc = f"{block.tool_type}: BLOCKED"
                 result = {
@@ -3673,6 +3687,22 @@ async def stream_agent_loop(
                 yield 'data: ' + json.dumps({"delta": _np_line}) + '\n\n'
                 _awaiting_user = True
 
+            # A Google write held for the user's Approve / Deny
+            # (src/google_write_gate.py, src/action_approvals.py). The card is
+            # drawn from the tool event; a line in the reply says what is
+            # waiting, so the saved message and the next turn see it. The turn
+            # ends here, like ask_user.
+            if isinstance(result.get("action_approval"), dict):
+                _aa = result["action_approval"]
+                _approval_held = True
+                _aa_where = ("It is in Company > Approvals." if _aa.get("source") == "company"
+                             else "Approve or deny it below.")
+                _aa_line = (("\n\n" if full_response.strip() else "")
+                            + f"Waiting for your approval: **{_aa.get('title')}**. {_aa_where}")
+                full_response += _aa_line
+                yield 'data: ' + json.dumps({"delta": _aa_line}) + '\n\n'
+                _awaiting_user = True
+
             # update_plan: agent wrote back to the plan (ticked a step / revised).
             # Push it to the frontend so the stored plan + docked window update
             # live. Does NOT end the turn — the agent keeps working.
@@ -3748,6 +3778,8 @@ async def stream_agent_loop(
                 tool_output_data["diff"] = result["diff"]
             if isinstance(result.get("native_plan"), dict):
                 tool_output_data["native_plan_id"] = result["native_plan"].get("id")
+            if isinstance(result.get("action_approval"), dict):
+                tool_output_data["action_approval_id"] = result["action_approval"].get("id")
             if result.get("engine_label"):
                 tool_output_data["label"] = result["engine_label"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
@@ -3879,6 +3911,8 @@ async def stream_agent_loop(
             if isinstance(result.get("native_plan"), dict):
                 # The chat card is drawn again from this on reload (chatRenderer).
                 tool_event["native_plan_id"] = result["native_plan"].get("id")
+            if isinstance(result.get("action_approval"), dict):
+                tool_event["action_approval_id"] = result["action_approval"].get("id")
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True
