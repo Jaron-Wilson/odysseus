@@ -1,6 +1,7 @@
 """Settings > Google: the user's Google connection and its products.
 
     GET  /api/google/status                       account, granted scopes, each product
+    POST /api/google/recheck                      ask Google now which scopes the grant holds
     GET  /api/google/connect?products=docs,sheets page navigation to Google's consent
     POST /api/google/products/{product}/disconnect stop using one product
     POST /api/google/disconnect                   revoke at Google and forget it
@@ -43,8 +44,21 @@ def setup_google_routes() -> APIRouter:
 
     @router.get("/status")
     async def status(request: Request):
+        """Asks Google what the grant holds first, at most every few
+        minutes (connection.RECHECK_S), so the cards show the truth."""
         user = require_user(request) or None
+        await connection.recheck(user)
         return view(request, user)
+
+    @router.post("/recheck")
+    async def recheck(request: Request):
+        """The Recheck button: ask Google now, ignoring the cache."""
+        user = require_user(request) or None
+        res = await connection.recheck(user, force=True)
+        out = view(request, user)
+        out["checked"] = res["checked"]
+        out["message"] = connection.lost_message(res["lost"])
+        return out
 
     @router.get("/connect")
     async def connect(request: Request, products: str = ""):

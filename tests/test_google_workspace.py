@@ -50,6 +50,9 @@ class FakeGoogle:
         self.expire_once = False        # answer the next API call 401
         self.doc_text = "Hello"
         self.api_status = 200
+        self.returned = None            # the token response's `scope`, when it differs from grant
+        self.tokeninfo = None           # scopes tokeninfo reports (None: same as grant), or "error"
+        self.aud = "123-abc.apps.googleusercontent.com"
 
     def last(self, method, part):
         for c in reversed(self.calls):
@@ -63,12 +66,13 @@ class FakeGoogle:
         self.calls.append({"method": request.method, "url": url, "body": body,
                            "auth": request.headers.get("authorization", ""),
                            "ctype": request.headers.get("content-type", "")})
-        if url.startswith(google_oauth.TOKEN_URL):
+        if url.startswith(google_oauth.TOKEN_URL) and not url.startswith(connection.TOKENINFO_URL):
             form = dict(urllib.parse.parse_qsl(body))
             if form.get("grant_type") == "authorization_code":
                 return httpx.Response(200, json={
                     "access_token": ACCESS, "expires_in": 3600, "refresh_token": self.refresh_token,
-                    "scope": " ".join(["openid", "https://www.googleapis.com/auth/userinfo.email"] + self.grant),
+                    "scope": " ".join(["openid", "https://www.googleapis.com/auth/userinfo.email"] +
+                                      (self.grant if self.returned is None else self.returned)),
                     "id_token": _id_token(self.email)})
             self.refreshes += 1
             if self.refresh == "invalid_grant":
@@ -77,6 +81,15 @@ class FakeGoogle:
             return httpx.Response(200, json={"access_token": ACCESS, "expires_in": 3600})
         if url.startswith(google_oauth.REVOKE_URL):
             return httpx.Response(200)
+        if url.startswith(connection.TOKENINFO_URL):
+            assert request.method == "GET" and "authorization" not in request.headers
+            assert dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query)).get("access_token") == ACCESS
+            if self.tokeninfo == "error":
+                return httpx.Response(503, json={"error": "backendError"})
+            held = self.grant if self.tokeninfo is None else self.tokeninfo
+            return httpx.Response(200, json={
+                "aud": self.aud, "azp": self.aud, "expires_in": "3599", "email": self.email,
+                "scope": " ".join(["openid", "https://www.googleapis.com/auth/userinfo.email"] + held)})
         assert request.headers.get("authorization") == f"Bearer {ACCESS}"
         if self.expire_once:
             self.expire_once = False
@@ -246,7 +259,9 @@ def test_scope_upgrade_adds_a_product_and_keeps_the_others(google, tmp_path):
     google.refresh_token = REFRESH2
     ok, msg, q = _connect(google, ["docs"])
     assert ok and "Google Docs" in msg
-    assert q["scope"].split() == ["openid", "email", P.DOCS_SCOPE]          # only the new one asked for
+    # The new one plus the ones already on, so a granular consent screen
+    # confirms them together.
+    assert q["scope"].split() == ["openid", "email", P.DOCS_SCOPE, P.DRIVE_FILE_SCOPE]
     assert connection.enabled_products("alice") == ["drive", "docs"]
     st = connection.status("alice")
     assert P.DRIVE_FILE_SCOPE in st["scopes"] and P.DOCS_SCOPE in st["scopes"]
@@ -276,6 +291,146 @@ def test_a_meet_era_connection_counts_as_calendar(google, tmp_path):
     assert connection.enabled_products("alice") == ["calendar"]
     from src.meet import google_calendar
     assert google_calendar.status("alice")["connected"] is True
+
+
+# ── What the grant really holds (tokeninfo) ──────────────────────────────
+
+LOST_DOCS = ("Google did not keep access to Docs. Connect Docs again and keep every box ticked on "
+             "Google's consent screen.")
+
+
+def _tokeninfo_calls(fake):
+    return [c for c in fake.calls if c["url"].startswith(connection.TOKENINFO_URL)]
+
+
+def _drive_then_docs(fake):
+    assert _connect(fake, ["drive"])[0]
+    assert _connect(fake, ["docs"])[0]
+    assert connection.enabled_products("alice") == ["drive", "docs"]
+
+
+def test_tokeninfo_keeps_a_scope_the_token_response_left_out(google):
+    """The live bug: Drive, then Docs, then Sheets; the Sheets token
+    response's `scope` leaves out documents though the grant still has it."""
+    _drive_then_docs(google)
+    google.returned = [P.DRIVE_FILE_SCOPE, P.SHEETS_SCOPE]
+    ok, msg, q = _connect(google, ["sheets"])
+    # Every product already on is asked for again alongside the new one.
+    assert set(q["scope"].split()) == {"openid", "email", P.SHEETS_SCOPE, P.DRIVE_FILE_SCOPE, P.DOCS_SCOPE}
+    assert google_oauth._states == {}
+    assert ok and "Google Sheets" in msg and "did not keep" not in msg
+    assert connection.enabled_products("alice") == ["drive", "docs", "sheets"]
+    st = connection.status("alice")
+    assert P.DOCS_SCOPE in st["scopes"] and st["checked_at"] > 0
+    assert not any(p["needs_reconnect"] or p["unverified"] for p in st["products"])
+    assert _tokeninfo_calls(google)
+
+
+def test_a_scope_google_really_dropped_shows_needs_reconnect(google):
+    _drive_then_docs(google)
+    # Unticked on the granular consent screen: neither the token response
+    # nor tokeninfo has documents.
+    ok, msg, _ = _connect(google, ["sheets"], grant=[P.DRIVE_FILE_SCOPE, P.SHEETS_SCOPE])
+    assert ok and "Connected Google Sheets" in msg and LOST_DOCS in msg
+    assert connection.enabled_products("alice") == ["drive", "sheets"]
+    assert connection.needs_reconnect("alice") == ["docs"]
+    docs_card = {p["key"]: p for p in connection.status("alice")["products"]}["docs"]
+    assert docs_card["needs_reconnect"] and not docs_card["enabled"]
+    assert "Needs reconnect" in tools.status_text("alice") and "Google Docs" in tools.status_text("alice")
+    # Reconnect asks for Docs with everything else that is on, and fixes it.
+    ok, msg, q = _connect(google, ["docs"])
+    assert P.SHEETS_SCOPE in q["scope"].split() and P.DOCS_SCOPE in q["scope"].split()
+    assert ok and "did not keep" not in msg
+    assert connection.enabled_products("alice") == ["drive", "docs", "sheets"]
+    assert connection.needs_reconnect("alice") == []
+    # A connect that grants nothing new still says what was lost.
+    ok, msg, _ = _connect(google, ["slides"], grant=[P.DRIVE_FILE_SCOPE, P.SHEETS_SCOPE])
+    assert not ok and "Google Slides" in msg and LOST_DOCS in msg
+
+
+def test_tokeninfo_failing_falls_back_to_the_union_for_the_same_account(google):
+    _drive_then_docs(google)
+    google.tokeninfo = "error"
+    google.returned = [P.DRIVE_FILE_SCOPE, P.SHEETS_SCOPE]
+    ok, msg, _ = _connect(google, ["sheets"])
+    assert ok and "did not keep" not in msg
+    assert connection.enabled_products("alice") == ["drive", "docs", "sheets"]
+    d = connection.load("alice")
+    assert P.DOCS_SCOPE in d["scopes"].split() and d["unverified"] == ["docs"] and d["checked_at"] == 0
+    assert {p["key"] for p in connection.status("alice")["products"] if p["unverified"]} == {"docs"}
+    # The next look at Settings asks Google, and here Google really lost it.
+    google.tokeninfo = [P.DRIVE_FILE_SCOPE, P.SHEETS_SCOPE]
+    res = asyncio.run(connection.recheck("alice"))
+    assert res == {"checked": True, "lost": ["docs"]}
+    assert connection.needs_reconnect("alice") == ["docs"] and connection.load("alice")["unverified"] == []
+
+
+def test_tokeninfo_failing_does_not_carry_scopes_to_another_account(google):
+    _drive_then_docs(google)
+    google.tokeninfo = "error"
+    google.email = "someone-else@example.com"
+    google.refresh_token = REFRESH2
+    ok, msg, _ = _connect(google, ["sheets"], grant=[P.SHEETS_SCOPE])
+    assert ok and "someone-else@example.com" in msg and "did not keep" not in msg
+    d = connection.load("alice")
+    assert P.DOCS_SCOPE not in d["scopes"].split() and P.DRIVE_FILE_SCOPE not in d["scopes"].split()
+    assert d["unverified"] == []
+    assert connection.enabled_products("alice") == ["sheets"] and connection.needs_reconnect("alice") == []
+
+
+def test_tokeninfo_for_another_client_is_not_trusted(google):
+    _drive_then_docs(google)
+    google.aud = "999-other.apps.googleusercontent.com"
+    google.returned = [P.DRIVE_FILE_SCOPE, P.SHEETS_SCOPE]
+    ok, _, _ = _connect(google, ["sheets"])
+    assert ok and connection.load("alice")["unverified"] == ["docs"]
+
+
+def test_status_rechecks_with_google_at_most_every_few_minutes(google, monkeypatch, caplog):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    H = {"x-test-user": "alice"}
+    _drive_then_docs(google)
+    n = len(_tokeninfo_calls(google))
+    with TestClient(_app()) as c:
+        st = c.get("/api/google/status", headers=H).json()
+        assert len(_tokeninfo_calls(google)) == n                       # just checked at connect
+        assert {p["key"] for p in st["products"] if p["enabled"]} == {"drive", "docs"}
+        # Docs dropped at Google meanwhile (say, removed in the Google account).
+        google.tokeninfo = [P.DRIVE_FILE_SCOPE]
+        assert {p["key"] for p in c.get("/api/google/status", headers=H).json()["products"]
+                if p["enabled"]} == {"drive", "docs"}                   # cached
+        # Once the cache is old, loading Settings asks Google again,
+        # refreshing the access token first.
+        d = connection.load("alice")
+        d["checked_at"] = 0
+        connection._save("alice", d)
+        connection._access.clear()
+        refreshes = google.refreshes
+        with caplog.at_level("INFO"):
+            st = c.get("/api/google/status", headers=H).json()
+        assert google.refreshes == refreshes + 1 and len(_tokeninfo_calls(google)) == n + 1
+        cards = {p["key"]: p for p in st["products"]}
+        assert cards["docs"]["needs_reconnect"] and not cards["docs"]["enabled"] and cards["drive"]["enabled"]
+        # Recheck asks now, whatever the cache says, and says what was lost.
+        google.tokeninfo = [P.DRIVE_FILE_SCOPE, P.DOCS_SCOPE]
+        r = c.post("/api/google/recheck", headers=H).json()
+        assert r["checked"] and r["message"] == "" and len(_tokeninfo_calls(google)) == n + 2
+        assert {p["key"] for p in r["products"] if p["enabled"]} == {"drive", "docs"}
+        google.tokeninfo = [P.DRIVE_FILE_SCOPE]
+        r = c.post("/api/google/recheck", headers=H).json()
+        assert r["checked"] and r["message"] == LOST_DOCS
+        # Google unreachable: the saved state stands and the button says so.
+        google.tokeninfo = "error"
+        r = c.post("/api/google/recheck", headers=H).json()
+        assert r["checked"] is False
+        # Not connected: nothing to ask.
+        assert c.post("/api/google/recheck", headers={"x-test-user": "bob"}).json()["checked"] is False
+        # No token value in any response, nor in the log (httpx logs the
+        # tokeninfo URL, which carries the access token).
+        for body in (st, r):
+            text = json.dumps(body)
+            assert ACCESS not in text and REFRESH not in text and "refresh_token" not in text
+        assert ACCESS not in caplog.text and "tokeninfo" in caplog.text
 
 
 # ── Tokens ───────────────────────────────────────────────────────────────
