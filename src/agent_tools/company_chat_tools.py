@@ -503,6 +503,11 @@ def _approval_decide(db, owner, actor, args):
             raise _Miss("No approvals are waiting.")
         raise _Miss(("Which approval? " if len(hit) > 1 or not ref else f"No waiting approval matches '{ref}'. ")
                     + "Waiting: " + "; ".join(f"{r.id} {r.type.replace('_', ' ')}: {r.title or '(untitled)'}" for r in rows[:10]))
+    if hit[0].type == "google_write":
+        # A change to the person's Google account is answered by the person
+        # in Company > Approvals, never by a model (src/google_write_gate.py).
+        raise _Miss("That approval is a change to the user's Google account. Only the user can answer it, "
+                    "in Company > Approvals.")
     ap = co.decide_approval(db, owner, actor, hit[0].id, str(args.get("decision") or ""), args.get("note"))
     return f"Approval '{ap['title'] or ap['type']}' is now {_words(ap['status'])}."
 

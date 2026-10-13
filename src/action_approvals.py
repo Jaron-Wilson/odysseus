@@ -121,6 +121,7 @@ def _expire_in(data: Dict[str, dict], now: Optional[float] = None) -> List[dict]
             e["status"] = "expired"
             e["answered_at"] = now
             out.append(e)
+            audit(e, "expired")
     return out
 
 
@@ -130,8 +131,6 @@ def _sweep() -> List[dict]:
         gone = _expire_in(data)
         if gone:
             _save(data)
-    for e in gone:
-        audit(e, "expired")
     return gone
 
 

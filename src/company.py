@@ -58,7 +58,9 @@ RUN_SOURCES = ("timer", "assignment", "mention", "on_demand", "approval")
 RUN_STATUSES = ("queued", "running", "succeeded", "no_progress", "failed", "cancelled", "timed_out", "interrupted")
 RUN_TERMINAL = ("succeeded", "no_progress", "failed", "cancelled", "timed_out", "interrupted")
 RUN_LIVE = ("queued", "running")
-APPROVAL_TYPES = ("hire_agent", "strategy", "plan", "budget_override")
+# google_write: an agent's change to the person's Google account, held by
+# src/google_write_gate.py and run once when approved (src/action_approvals.py).
+APPROVAL_TYPES = ("hire_agent", "strategy", "plan", "budget_override", "google_write")
 APPROVAL_STATUSES = ("pending", "revision_requested", "approved", "rejected", "cancelled")
 APPROVAL_DECISIONS = ("approved", "rejected", "revision_requested")
 RELATION_TYPES = ("blocks",)
@@ -1631,6 +1633,15 @@ def decide_approval(db, owner: str, actor: Actor, approval_id: str, decision: st
                  {"type": ap.type, "title": ap.title, "note": ap.decision_note,
                   **({"chosen_model": payload["chosen_model"]} if decision == "approved" and payload.get("chosen_model") else {})})
     db.commit()
+    if ap.type == "google_write":
+        # The held Google change (src/action_approvals.py): approved, it runs
+        # once when the agent wakes (company_executor._prepare); anything
+        # else, it never runs.
+        try:
+            from src import action_approvals
+            action_approvals.company_decided(ap.id, decision, ap.decision_note or "", by=actor.id or "")
+        except Exception:
+            pass
     if ap.type == "plan" and decision in ("approved", "rejected"):
         # Its copy in Plans (src/native_plans.py) shows the same answer.
         try:

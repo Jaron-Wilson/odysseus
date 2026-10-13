@@ -327,7 +327,20 @@ def build_prompt(db, owner: str, agent, company, run, wakes: List[Any],
             p = ap.payload or {}
             note = f" Their note: \"{ap.decision_note}\"" if ap.decision_note else ""
             title = ap.title or ap.type
-            if ap.type in ("plan", "strategy") and ap.status == "approved":
+            if ap.type == "google_write":
+                from src import action_approvals
+                held = action_approvals.for_company_approval(ap.id) or {}
+                if ap.status == "approved" and held.get("status") == "approved":
+                    r = held.get("result") or {}
+                    reasons.append(f"- Your Google change \"{title}\" was APPROVED and ran once, exactly as you "
+                                   f"asked.{note} Its result: {(r.get('output') or '')[:3000]} Do not run it again.")
+                elif ap.status == "approved":
+                    reasons.append(f"- Your Google change \"{title}\" was approved too late: the request had "
+                                   f"expired, so it did not run.{note} Ask again if it is still needed.")
+                else:
+                    reasons.append(f"- Your Google change \"{title}\" was NOT approved, so it did not run.{note} "
+                                   "Do not make it another way.")
+            elif ap.type in ("plan", "strategy") and ap.status == "approved":
                 on = f" It runs on {run.model}." if p.get("chosen_model") else ""
                 reasons.append(f"- Your {ap.type} \"{title}\" was APPROVED.{on}{note} Carry it out now, step by step, "
                                "ticking steps off as you go.")
@@ -1078,6 +1091,15 @@ class CompanyExecutor:
             if not spec:
                 raise RuntimeError(f"{agent.name} has no model: pick one in the org chart")
             wakes = db.query(CompanyWakeup).filter(CompanyWakeup.run_id == run_id).all()
+            # A Google change the person approved in Company > Approvals runs
+            # now, once, exactly as the agent asked; the wake message carries
+            # its result (src/action_approvals.py).
+            for w in wakes:
+                if w.source == "approval" and w.approval_id:
+                    ap = db.query(co.CompanyApproval).filter(co.CompanyApproval.id == w.approval_id).first()
+                    if ap is not None and ap.type == "google_write" and ap.status == "approved":
+                        from src import action_approvals
+                        await action_approvals.run_company_queued(ap.id)
             system, user, plan, limits = build_prompt(db, owner, agent, company, run, wakes, info.get("notices"))
             disabled = set(agent.disabled_tools or []) | {"ask_user"}
             if not agent.coding_agent:
