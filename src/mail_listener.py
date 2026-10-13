@@ -314,8 +314,18 @@ async def handle(cfg: Dict, key: str, raw: bytes, meta: Dict) -> Dict:
         else:
             sid = _chat_for(cfg, rule)
             from src.screen_control_resume import start_turn
-            started = start_turn(sid, task_prompt(rule, m, path),
-                                 note_source="mail_listener", reply_source="mail_listener_run")
+            # Marked as mail-listener work, so a Google write it tries is held
+            # for approval with a notification (src/google_write_gate.py).
+            from src.action_approvals import run_context
+            _rc = run_context.set("mail")
+            try:
+                started = start_turn(sid, task_prompt(rule, m, path),
+                                     note_source="mail_listener", reply_source="mail_listener_run")
+            finally:
+                try:
+                    run_context.reset(_rc)
+                except ValueError:
+                    run_context.set("")
             if started:
                 entry["chat_id"] = sid
             else:

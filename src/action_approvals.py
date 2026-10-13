@@ -60,6 +60,12 @@ _approved_call: contextvars.ContextVar[Optional[Tuple[str, str, str]]] = context
     "odysseus_approved_call", default=None)
 
 
+# Where agent work comes from when it is not an interactive chat turn: "mail"
+# for the mail listener (src/mail_listener.py). Scheduled tasks and Company
+# runs are told apart by their own context (usage_scope, company_tools).
+run_context: contextvars.ContextVar[str] = contextvars.ContextVar("odysseus_run_context", default="")
+
+
 class Refused(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(message)
@@ -328,7 +334,7 @@ async def run_pinned(e: dict) -> Dict:
     """Run the approved call exactly as it was pinned, once, through the
     normal tool path (src/tool_execution.py). Only the gate is let past."""
     from src.tool_execution import execute_tool_block
-    from src.tool_parsing import ToolBlock
+    from src.agent_tools import ToolBlock
     token = _approved_call.set((e["tool"], e["content"], e["id"]))
     try:
         _desc, result = await execute_tool_block(
