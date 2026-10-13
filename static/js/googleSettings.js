@@ -6,6 +6,8 @@
 // status asks Google what the grant holds (cached server-side for a few
 // minutes); Recheck asks right away.
 
+import { actionApprovalCard } from './actionApprovalCard.js';
+
 const $ = (id) => document.getElementById(id);
 
 async function api(method, path, body) {
@@ -141,7 +143,64 @@ function render(s) {
   $('google-products').replaceChildren(...cards);
 }
 
+// "Ask before writing to my Google account (and Gmail)": the switch, the
+// changes waiting for an answer, and the recent log (src/google_write_gate.py,
+// routes/action_approvals_routes.py).
+let approval = {};
+
+function whenText(ts) {
+  try { return new Date(ts * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); } catch { return ''; }
+}
+
+function renderApproval(a) {
+  approval = a || {};
+  const box = $('google-approval-toggle');
+  if (!box) return;
+  box.checked = !!approval.enabled;
+  // On, and not an admin: the switch cannot be turned off from here.
+  box.disabled = !!approval.enabled && !approval.can_turn_off;
+  box.title = box.disabled ? 'Only an admin can turn this off' : '';
+  $('google-approval-state').textContent = approval.enabled
+    ? 'On: Odysseus asks you before every Google write.' + (approval.can_turn_off ? '' : ' Only an admin can turn this off.')
+    : `Off: the assistant can change your Google account and Gmail without asking.${approval.changed_by ? ` Turned off by ${approval.changed_by}${approval.changed_at ? ` on ${whenText(approval.changed_at)}` : ''}.` : ''}`;
+  $('google-approval-state').style.color = approval.enabled ? '' : 'var(--red, #d33)';
+  const pend = approval.pending || [];
+  $('google-approval-pending-box').hidden = !pend.length;
+  $('google-approval-pending').replaceChildren(...pend.map((p) => el('li', {}, actionApprovalCard(p.id))));
+  const rows = approval.recent || [];
+  $('google-approval-log').replaceChildren(...(rows.length ? rows.map((r) => el('li', {},
+    el('span', { class: 'gw-when', text: whenText(r.time) }),
+    el('span', { class: `gw-out ${String(r.outcome || '').split(' ')[0]}`, text: r.outcome || '' }),
+    el('span', { text: `${r.action || r.tool}` }),
+    el('div', { class: 'admin-toggle-sub', text: [r.tool, r.chat_title ? `chat "${r.chat_title}"` : (r.chat_id ? `chat ${r.chat_id.slice(0, 8)}` : (r.source && r.source !== 'chat' ? r.source : '')), r.note ? `note: ${r.note}` : ''].filter(Boolean).join(' · ') })))
+    : [el('li', { class: 'admin-toggle-sub', text: 'Nothing yet.' })]));
+}
+
+async function loadApproval() {
+  if (!$('google-approval-toggle')) return;
+  try { renderApproval(await api('GET', '/api/google/write-approval')); } catch (e) {
+    $('google-approval-state').textContent = `Could not load: ${e.message}`;
+  }
+}
+
+async function onApprovalToggle(ev) {
+  const box = ev.target;
+  const on = box.checked;
+  if (!on && !confirm('Turn off asking before Google writes?\n\nThe assistant (and scheduled tasks, the mail listener and Company agents) will then be able to send email from Gmail, delete or archive mail, and create, change or delete things in your Google account and Google Calendar without asking you first.')) {
+    box.checked = true;
+    return;
+  }
+  try {
+    renderApproval(await api('PUT', '/api/google/write-approval', { enabled: on }));
+    say(on ? 'Odysseus asks before every Google write again.' : 'Asking before Google writes is off.', !on);
+  } catch (e) {
+    box.checked = !on;
+    say(e.message, true);
+  }
+}
+
 async function load() {
+  loadApproval();
   if (!$('google-products')) return;
   try {
     render(await api('GET', '/api/google/status'));
@@ -196,6 +255,7 @@ function init() {
   const panel = document.querySelector('[data-settings-panel="google"]');
   if (!panel) return;
   panel.addEventListener('click', onClick);
+  $('google-approval-toggle')?.addEventListener('change', onApprovalToggle);
   // settings.js shows the panel; load whenever it becomes visible.
   new MutationObserver(() => { if (panelShown()) load(); })
     .observe(panel, { attributes: true, attributeFilter: ['class'] });

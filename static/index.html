@@ -259,6 +259,7 @@
   <link rel="stylesheet" href="/static/css/adsbPanel.css">
   <link rel="stylesheet" href="/static/css/plans.css">
   <link rel="stylesheet" href="/static/css/nativePlans.css">
+  <link rel="stylesheet" href="/static/css/actionApprovals.css">
   <link rel="stylesheet" href="/static/css/company.css">
   <link rel="stylesheet" href="/static/css/googleSettings.css">
   <link rel="stylesheet" href="/static/css/settingsNav.css">
@@ -3072,6 +3073,25 @@
               </div>
             </div>
             <div class="admin-toggle-sub" id="google-msg" role="status"></div>
+          </div>
+          <div class="admin-card" id="google-approval-card" data-goto-keywords="google ask approve approval write send email gmail calendar permission confirm">
+            <h2>Ask before writing</h2>
+            <div class="admin-toggle-row">
+              <div>
+                <div class="admin-toggle-label">Ask before writing to my Google account (and Gmail)</div>
+                <div class="admin-toggle-sub">Anything that would create, change, send or delete in your Google account (Docs, Sheets, Slides, Drive, Tasks, Meet, Google Calendar) or a Gmail mailbox waits in the chat for your Approve. Reading never asks. Only an admin can turn this off.</div>
+              </div>
+              <label class="admin-switch"><input type="checkbox" id="google-approval-toggle"><span class="admin-slider"></span></label>
+            </div>
+            <div class="admin-toggle-sub" id="google-approval-state" role="status"></div>
+            <div id="google-approval-pending-box" hidden>
+              <div class="admin-toggle-label" style="margin-top:10px">Waiting for your answer</div>
+              <ul class="gw-list" id="google-approval-pending"></ul>
+            </div>
+            <details id="google-approval-log-box">
+              <summary class="admin-toggle-sub">Recent approved and denied Google writes</summary>
+              <ul class="gw-list" id="google-approval-log"></ul>
+            </details>
           </div>
           <div class="google-products" id="google-products"></div>
         </div>

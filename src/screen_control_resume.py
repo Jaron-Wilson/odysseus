@@ -58,13 +58,18 @@ def _collect(chunk: str, st: dict) -> None:
     elif d.get("type") == "agent_step":
         st["round"] = d.get("round", st["round"])
     elif d.get("type") == "tool_output":
-        st["tools"].append({
+        ev = {
             "round": st["round"],
             "tool": d.get("tool"),
             "command": d.get("command"),
             "output": d.get("output"),
             "exit_code": d.get("exit_code"),
-        })
+        }
+        # The chat cards drawn again on reload: a plan, a held Google write.
+        for k in ("native_plan_id", "action_approval_id"):
+            if d.get(k):
+                ev[k] = d[k]
+        st["tools"].append(ev)
 
 
 async def _resume_stream(sess, sm, context, agent_loop=None, *,

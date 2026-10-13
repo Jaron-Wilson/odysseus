@@ -1131,6 +1131,13 @@ async function paintApprovals(main) {
     if (p.issue) bits.push(`for <b>${esc(p.issue)}</b>`);
     if (p.chosen_model) bits.push(`runs on <code>${esc(p.chosen_model)}</code>`);
     if (p.plan) bits.push(`<pre class="co-plan">${esc(p.plan)}</pre>`);
+    // A change to the person's Google account (src/google_write_gate.py):
+    // what it would do, and the text it would write or send.
+    if (ap.type === 'google_write') {
+      if (Array.isArray(p.details)) bits.push(`<dl class="co-gw">${p.details.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`);
+      if (p.body) bits.push(`<pre class="co-plan">${esc(p.body)}</pre>`);
+      bits.push('<span class="co-hint">Approving runs it once, exactly as shown, when the agent wakes. Unanswered after 30 minutes, it expires.</span>');
+    }
     return bits.join(' ');
   };
   const who = (ap) => ap.requested_by_type === 'agent' ? (agentName(ap.requested_by_id) || 'An agent') : 'You';

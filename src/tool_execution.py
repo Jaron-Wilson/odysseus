@@ -705,6 +705,21 @@ async def execute_tool_block(
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
 
+    # Ask before any write to the user's Google account or Gmail
+    # (src/google_write_gate.py): the call is held for the user's Approve in
+    # the chat and does not run here. Every caller of this function goes
+    # through it, so it holds whatever the model or the call format.
+    from src import google_write_gate
+    held = await google_write_gate.intercept(tool, content, owner, session_id)
+    if held is not None:
+        logger.info("Tool held for approval: %s", tool)
+        return held
+
+    # A fenced ```send_email``` block (and the other email tools) names the
+    # tool bare; they are MCP tools on the email server.
+    if tool in google_write_gate.BARE_EMAIL_TOOLS:
+        tool = f"mcp__email__{tool}"
+
     # A plan the model proposed is waiting for the user (src/native_plans.py):
     # no handing the work, or the planning, to another model or agent until
     # they answer. claude_code's pure reads (list/status/agents/attach) stay.

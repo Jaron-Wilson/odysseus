@@ -1,0 +1,78 @@
+/* A Google write held for the user's answer, in the chat (static/js/actionApprovalCard.js). */
+.aa-card {
+  margin: 8px 0 10px;
+  max-width: 720px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #e0a52c;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--panel, var(--bg)));
+  color: var(--fg);
+  font-size: 13.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.aa-card[data-status="approved"], .aa-card[data-status="queued"] { border-left-color: #3fa66b; }
+.aa-card[data-status="denied"] { border-left-color: #d9534f; }
+.aa-card[data-status="expired"], .aa-card[data-status="superseded"], .aa-card[data-status="missing"] { border-left-color: var(--border); opacity: .8; }
+.aa-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.aa-kicker { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; opacity: .6; flex: 1 1 auto; }
+.aa-title { margin-top: 4px; font-weight: 600; font-size: 14.5px; }
+.aa-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.aa-badge.aa-pending, .aa-badge.aa-running { background: color-mix(in srgb, #e0a52c 26%, transparent); }
+.aa-badge.aa-approved, .aa-badge.aa-queued { background: color-mix(in srgb, #3fa66b 24%, transparent); }
+.aa-badge.aa-denied { background: color-mix(in srgb, #d9534f 22%, transparent); }
+.aa-target { margin-top: 4px; font-size: 12.5px; }
+.aa-target a { color: var(--accent, inherit); }
+.aa-details { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 8px 0 0; font-size: 12.5px; }
+.aa-details dt { opacity: .65; }
+.aa-details dd { margin: 0; white-space: pre-wrap; }
+.aa-body-label { margin-top: 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; opacity: .6; }
+.aa-body, .aa-result {
+  margin: 4px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; white-space: pre-wrap;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: 8px;
+  background: var(--bg); font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12.5px;
+}
+.aa-answer { margin-top: 8px; font-size: 12.5px; opacity: .85; }
+.aa-hint { margin-top: 8px; font-size: 12px; opacity: .65; }
+.aa-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.aa-btn {
+  height: 30px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel, var(--bg)); color: var(--fg);
+}
+.aa-btn:hover:not(:disabled) { border-color: var(--accent, #d97a4a); }
+.aa-btn:disabled { opacity: .5; cursor: default; }
+.aa-btn.aa-primary { background: var(--accent, #d97a4a); border-color: transparent; color: #fff; }
+.aa-btn.aa-danger { background: #c9453f; border-color: transparent; color: #fff; }
+.aa-status { font-size: 12px; opacity: .7; }
+.aa-deny { margin-top: 10px; }
+.aa-note {
+  display: block; width: 100%; box-sizing: border-box; resize: vertical;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  background: var(--bg); color: var(--fg); font-size: 13px;
+}
+.aa-deny[hidden], .aa-actions[hidden] { display: none; }
+
+html.ui-studio .aa-card { border-color: var(--st-line-2, var(--border)); border-radius: var(--st-r-md, 10px); }
+html.ui-studio .aa-btn { border-radius: var(--st-r-sm, 8px); }
+
+/* Settings > Google: the switch, what is waiting, and the log. */
+.gw-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.gw-list li { font-size: 12.5px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
+.gw-list .gw-when { opacity: .6; margin-right: 6px; }
+.gw-list .gw-out { font-weight: 600; margin-right: 6px; }
+.gw-list .gw-out.approved { color: #3fa66b; }
+.gw-list .gw-out.denied { color: #d9534f; }
+.gw-list .aa-card { margin: 0; max-width: none; }
+.co-gw { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0; font-size: 12.5px; }
+.co-gw dt { opacity: .65; }
+.co-gw dd { margin: 0; }
+
+@media (max-width: 768px) {
+  .aa-card { max-width: 100%; padding: 10px 12px; }
+  .aa-details { grid-template-columns: 1fr; }
+  .aa-details dt { margin-top: 4px; }
+  .aa-body { max-height: 45vh; }
+  .aa-btn { height: 38px; flex: 1 1 auto; }
+}
