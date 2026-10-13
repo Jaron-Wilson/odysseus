@@ -2385,6 +2385,10 @@ _APP_API_BLOCKLIST_PREFIXES = (
     "/api/admin",          # admin one-shots (wipe etc.)
     "/api/shell",          # host shell execution must stay behind named command tooling
     "/api/backup/restore", # destructive restore
+    # Only the user answers an approval or changes "ask before Google writes"
+    # (src/action_approvals.py, src/google_write_gate.py), never the model.
+    "/api/action_approvals",
+    "/api/google/write-approval",
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
