@@ -10,6 +10,15 @@ for the chat: each message is sent to the session as its next prompt
 (`claude -p --resume <id>`, in the session's own folder) and Claude's words
 are the reply, as they stream.
 
+- A background agent (`claude --bg`, what `claude agents` lists) holds its
+  session, and the CLI will not resume a session whose agent is running -
+  only fork a copy (seen on the first direct turn, 2026-10-13). Jaron: "well
+  i have all these chats as claude agents though". So a turn takes the agent
+  over the way chat agents are parked (src/claude_agent_view.py): an idle
+  agent is stopped, which keeps its conversation, the turn runs on the real
+  session, and it is parked again afterwards, so `claude agents` and
+  `claude attach` still find it. A busy agent - working on something - is
+  never interrupted: the message is refused until it is done.
 - One turn at a time per session. A second message while one runs is
   refused, never run alongside - two writers to one session would interleave
   its transcript.
@@ -96,6 +105,24 @@ async def _run_turn(chat_id: str, session_id: str, cwd: str, prompt: str,
         error = "The Claude Code CLI (`claude`) is not installed on this host."
     elif not cwd or not os.path.isdir(cwd):
         error = f"The session's folder {cwd or '(none)'} is not on this host, so it cannot run."
+    # Take a background agent over for this turn (see the module notes).
+    was_parked = False
+    if not error:
+        try:
+            from src import claude_agent_view
+            agent = await asyncio.to_thread(claude_agent_view.find, session_id)
+            if agent and agent.get("pid"):
+                if str(agent.get("status") or "") == "busy":
+                    error = (f"That session's agent ({agent.get('id')}) is busy working right now. "
+                             "Send this again when it has finished, so the two never write at once.")
+                else:
+                    why = await asyncio.to_thread(claude_agent_view.unpark, session_id)
+                    if why:
+                        error = f"Could not take the session over: {why}"
+                    else:
+                        was_parked = True
+        except Exception as e:
+            logger.warning("[claude-direct] agent check failed: %s", e)
     proc = None
     if not error:
         try:
@@ -155,6 +182,13 @@ async def _run_turn(chat_id: str, session_id: str, cwd: str, prompt: str,
         text_parts.append(("\n\n" if text_parts else "") + error)
     if new_id and new_id != session_id:
         claude_attach.follow(chat_id, session_id, new_id)
+    if was_parked:
+        # Back where it was: a background agent `claude attach` opens.
+        try:
+            from src import claude_agent_view
+            await asyncio.to_thread(claude_agent_view.park, new_id or session_id, cwd)
+        except Exception as e:
+            logger.warning("[claude-direct] could not park the agent again: %s", e)
     reply = "".join(text_parts).strip() or "(Claude Code finished without saying anything.)"
     metrics = {"response_time": round(time.time() - started, 2), "model": MODEL_LABEL}
     if cost is not None:

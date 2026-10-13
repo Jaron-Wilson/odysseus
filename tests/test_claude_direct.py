@@ -26,6 +26,7 @@ import pytest
 
 from src import claude_attach
 from src import claude_direct
+from src import claude_agent_view as view
 from tests.test_claude_attach import SID, PROJ, _client, _write_session, home  # noqa: F401
 
 NEW_SID = "7238cfa3-e12f-4867-bccd-ba64f3e00799"
@@ -33,8 +34,28 @@ NEW_SID = "7238cfa3-e12f-4867-bccd-ba64f3e00799"
 FAKE = r'''#!{py}
 import json, os, sys, time
 argv = sys.argv[1:]
+state = {state!r}
+agents = json.load(open(state)) if os.path.exists(state) else []
+def save(): json.dump(agents, open(state, "w"))
+def log(prompt=""):
+    open({log!r}, "a").write(json.dumps({{"argv": argv, "cwd": os.getcwd(), "prompt": prompt}}) + "\n")
+if argv[:1] == ["agents"]:
+    print(json.dumps(agents)); sys.exit(0)
+if argv[:1] == ["stop"]:
+    log()
+    for a in agents:
+        if a["id"] == argv[1]: a["pid"] = None; a["status"] = None
+    save(); print("stopped " + argv[1]); sys.exit(0)
+if "--bg" in argv:
+    log()
+    sid = argv[argv.index("--resume") + 1]
+    for a in agents:
+        if a["sessionId"] == sid: a["pid"] = 4242; a["status"] = "idle"
+    save(); print("backgrounded · " + sid[:8]); sys.exit(0)
 prompt = sys.stdin.read()
-open({log!r}, "a").write(json.dumps({{"argv": argv, "cwd": os.getcwd(), "prompt": prompt}}) + "\n")
+log(prompt)
+if any(a["sessionId"] == argv[argv.index("--resume") + 1] and a.get("pid") for a in agents):
+    print("Error: That session is running in the background.", file=sys.stderr); sys.exit(1)
 sid = os.environ.get("FAKE_NEW_SID") or argv[argv.index("--resume") + 1]
 def say(obj): print(json.dumps(obj), flush=True)
 say({{"type": "system", "subtype": "init", "session_id": sid}})
@@ -53,12 +74,26 @@ def cli(home, tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     log = tmp_path / "calls.jsonl"
+    state = tmp_path / "agents.json"
     exe = bindir / "claude"
-    exe.write_text(FAKE.format(py=sys.executable, log=str(log)))
+    exe.write_text(FAKE.format(py=sys.executable, log=str(log), state=str(state)))
     exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
     claude_direct._running.clear()
+    monkeypatch.setattr(view, "ENABLED", True)
+    monkeypatch.setattr(view, "_LIST_TTL_S", 0.0)
+    cj = tmp_path / "claude.json"
+    cj.write_text(json.dumps({"projects": {}}))
+    monkeypatch.setattr(view, "CLAUDE_JSON", str(cj))
     return log
+
+
+def _agent(cli_log, status):
+    """This session as a background agent with its own id, as `claude agents` lists it."""
+    state = cli_log.parent / "agents.json"
+    state.write_text(json.dumps([{"id": "c06db0e3", "sessionId": SID, "kind": "background",
+                                  "pid": 1143561, "status": status, "name": "pearson-figure-descriptions"}]))
+    return state
 
 
 class _Sess:
@@ -182,6 +217,40 @@ def test_detached_meanwhile_explains(home):
     sess = _Sess()
     chunks = asyncio.run(_collect("chat-1", sess, "hello"))
     assert "/claude attach" in _deltas(chunks) and sess.history == []
+
+
+# ── Background agents ───────────────────────────────────────────────────
+# "well i have all these chats as claude agents though": the CLI will not
+# resume a session its running agent holds.
+
+def test_an_idle_agent_is_taken_over_for_the_turn_and_parked_again(home, cli):
+    state = _agent(cli, "idle")
+    claude_attach.attach("chat-1", "7238cfa3")
+    claude_attach.set_direct("chat-1", True)
+    sess = _Sess()
+    chunks = asyncio.run(_collect("chat-1", sess, "status of feature"))
+    assert _deltas(chunks) == "All 7 emails went out. *Nothing* reworded."
+    calls = [json.loads(l)["argv"] for l in cli.read_text().splitlines()]
+    assert calls[0] == ["stop", "c06db0e3"]
+    assert "-p" in calls[1] and "--fork-session" not in calls[1], "the real session, not a copy"
+    assert "--bg" in calls[2] and calls[2][calls[2].index("--resume") + 1] == SID
+    assert json.loads(state.read_text())[0]["pid"], "it is a background agent again afterwards"
+
+
+def test_a_busy_agent_is_never_interrupted(home, cli):
+    _agent(cli, "busy")
+    claude_attach.attach("chat-1", "7238cfa3")
+    claude_attach.set_direct("chat-1", True)
+    sess = _Sess()
+    chunks = asyncio.run(_collect("chat-1", sess, "status of feature"))
+    assert "busy working" in _deltas(chunks) and "c06db0e3" in _deltas(chunks)
+    assert not cli.exists() or cli.read_text().strip() == "", "no stop, no turn"
+    assert sess.history[-1].role == "assistant"
+
+
+def test_attach_takes_an_agent_id_too(home, cli):
+    _agent(cli, "idle")
+    assert claude_attach.attach("chat-1", "c06db0e3")["id"] == SID
 
 
 # ── The chat route ──────────────────────────────────────────────────────
