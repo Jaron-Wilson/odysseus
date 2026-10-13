@@ -2865,6 +2865,10 @@ import './chatThreads.js';
                 if (json.native_plan_id && currentToolBubble && window.nativePlanCard) {
                   try { currentToolBubble.after(window.nativePlanCard(json.native_plan_id)); } catch (_) {}
                 }
+                // A Google write held for the user's answer: Approve / Deny under the step.
+                if (json.action_approval_id && currentToolBubble && window.actionApprovalCard) {
+                  try { currentToolBubble.after(window.actionApprovalCard(json.action_approval_id)); } catch (_) {}
+                }
                 // --- Update the current thread node ---
                 if (currentToolBubble && json.label) {
                   const t = currentToolBubble.querySelector('.agent-thread-tool');
