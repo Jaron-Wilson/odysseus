@@ -493,6 +493,49 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
     }
 
 
+def _merge_sync(caldav: dict, google: dict) -> dict:
+    """One answer for POST /sync from the CalDAV pull and the Google
+    Calendar pull. "CalDAV is not configured" is not an error when Google
+    calendars are linked; Google's problems carry `google_reconnect` so the
+    page can link to Settings > Google."""
+    caldav = dict(caldav or {})
+    google = google or {}
+    errors = list(caldav.get("errors") or [])
+    if google.get("linked") and errors == ["CalDAV is not configured"]:
+        errors = []
+    out = {k: v for k, v in caldav.items() if k not in ("errors",)}
+    for k in ("calendars", "events", "deleted"):
+        out[k] = int(caldav.get(k) or 0) + int(google.get(k) or 0)
+    out["errors"] = errors + [f"Google Calendar: {e}" for e in google.get("errors") or []]
+    out["google"] = google
+    if google.get("reconnect"):
+        out["google_reconnect"] = True
+    return out
+
+
+async def _google_write(cal, op: str, uid: str = "", values: Optional[dict] = None):
+    """Send a Calendar page write on a Google calendar to Google. The user
+    did it themselves in the UI, so no approval card. Errors become an HTTP
+    error with Google's reason, so the page shows why."""
+    from src import google_calendar_sync as gsync
+    try:
+        if op == "create":
+            return await gsync.remote_create(cal, values or {})
+        if op == "update":
+            return await gsync.remote_update(cal, uid, values or {})
+        return await gsync.remote_delete(cal, uid)
+    except gsync.NeedsReconnect as e:
+        raise HTTPException(409, str(e))
+    except gsync.GoogleError as e:
+        raise HTTPException(502, str(e))
+
+
+def _values_of(ev) -> dict:
+    return {"summary": ev.summary, "description": ev.description, "location": ev.location,
+            "dtstart": ev.dtstart, "dtend": ev.dtend, "all_day": ev.all_day,
+            "is_utc": bool(ev.is_utc), "rrule": ev.rrule or ""}
+
+
 # ── Recurrence expansion ──
 
 _RRULE_EXPANSION_LIMIT = 1000
@@ -873,7 +916,46 @@ def setup_calendar_routes() -> APIRouter:
         on calendar open and by the periodic scheduler loop."""
         owner = _require_user(request)
         from src.caldav_sync import sync_caldav
-        return await sync_caldav(owner)
+        from src import google_calendar_sync as gsync
+        result = await sync_caldav(owner)
+        try:
+            g = await gsync.sync(owner)
+        except Exception as e:
+            logger.exception("Google Calendar sync raised")
+            g = {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)[:200]], "linked": True}
+        return _merge_sync(result, g)
+
+    # ── Google Calendar through the connected Google account ─────────────────
+    # (src/google_calendar_sync.py). Settings > Google holds the connection;
+    # these pick which Google calendars the Calendar page shows.
+
+    @router.get("/google")
+    async def google_calendar_status(request: Request):
+        owner = _require_user(request)
+        from src import google_calendar_sync as gsync
+        return await gsync.status(owner)
+
+    @router.put("/google/calendars")
+    async def google_calendar_pick(request: Request):
+        owner = _require_user(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        ids = body.get("ids") if isinstance(body, dict) else None
+        if not isinstance(ids, list):
+            raise HTTPException(400, "ids must be a list of Google calendar ids")
+        from src import google_calendar_sync as gsync
+        try:
+            return await gsync.set_selection(owner, [str(i) for i in ids][:100])
+        except gsync.GoogleError as e:
+            raise HTTPException(409, str(e))
+
+    @router.delete("/google")
+    async def google_calendar_unlink(request: Request):
+        owner = _require_user(request)
+        from src import google_calendar_sync as gsync
+        return await gsync.unlink(owner)
 
 
     @router.delete("/calendars/{cal_id}")
@@ -882,9 +964,16 @@ def setup_calendar_routes() -> APIRouter:
         db = SessionLocal()
         try:
             cal = _get_or_404_calendar(db, cal_id, owner)
+            gid = cal.account_id if cal.source == "google" else None
             db.query(CalendarEvent).filter(CalendarEvent.calendar_id == cal_id).delete()
             db.delete(cal)
             db.commit()
+            if gid:
+                # Removing a Google calendar here only stops showing it (it
+                # stays in Google); keep the pick in step so it is not re-added.
+                from src import google_calendar_sync as gsync
+                picked = gsync._selected(owner)
+                gsync._save_selected(owner, [g for g in (picked if picked is not None else [gid]) if g != gid])
             return {"ok": True}
         except HTTPException:
             raise
@@ -903,10 +992,19 @@ def setup_calendar_routes() -> APIRouter:
         try:
             _ensure_default_calendar(db, owner)
             cals = db.query(CalendarCal).filter(CalendarCal.owner == owner).all()
-            return {"calendars": [
+            out = {"calendars": [
                 {"name": c.name, "href": c.id, "color": c.color, "source": c.source}
                 for c in cals
             ]}
+            try:
+                from src import google_calendar_sync as gsync
+                n = gsync.notice(owner)
+            except Exception as e:
+                logger.warning("Google Calendar notice failed: %s", e)
+                n = None
+            if n:
+                out["google_notice"] = n
+            return out
         except HTTPException:
             raise
         except Exception as e:
@@ -1014,6 +1112,31 @@ def setup_calendar_routes() -> APIRouter:
             else:
                 dtend = dtstart + timedelta(hours=1)
 
+            if cal.source == "google":
+                # Google first: the event exists only once Google has it.
+                from src import google_calendar_sync as gsync
+                item = await _google_write(cal, "create", values={
+                    "summary": data.summary, "description": data.description,
+                    "location": data.location, "dtstart": dtstart, "dtend": dtend,
+                    "all_day": data.all_day, "is_utc": _is_utc and not data.all_day,
+                    "rrule": data.rrule or "",
+                })
+                new_uid = gsync.store_created(cal, item)
+                if new_uid is None:
+                    await gsync.after_series_change(cal)
+                    return {"ok": True, "uid": gsync.local_uid(cal.id, str(item.get("id") or "")),
+                            "refetch": True}
+                if data.color:
+                    db2 = SessionLocal()
+                    try:
+                        row = db2.query(CalendarEvent).filter(CalendarEvent.uid == new_uid).first()
+                        if row:
+                            row.color = data.color
+                            db2.commit()
+                    finally:
+                        db2.close()
+                return {"ok": True, "uid": new_uid}
+
             ev = CalendarEvent(
                 uid=uid,
                 calendar_id=cal.id,
@@ -1084,8 +1207,15 @@ def setup_calendar_routes() -> APIRouter:
                 ev.rrule = data.rrule
             if data.color is not None:
                 ev.color = data.color if data.color else None
-            db.commit()
             cal = db.query(CalendarCal).filter(CalendarCal.id == ev.calendar_id).first()
+            if cal and cal.source == "google":
+                # Google first; the local copy changes only when Google took it.
+                try:
+                    await _google_write(cal, "update", ev.uid, _values_of(ev))
+                except HTTPException:
+                    db.rollback()
+                    raise
+            db.commit()
             if cal and cal.source == "caldav":
                 from src.caldav_writeback import writeback_event
                 await writeback_event(owner, cal.source, cal.id, {
@@ -1117,6 +1247,8 @@ def setup_calendar_routes() -> APIRouter:
             _cal = db.query(CalendarCal).filter(CalendarCal.id == ev.calendar_id).first()
             _is_caldav = bool(_cal and _cal.source == "caldav")
             _cal_id, _ev_uid = ev.calendar_id, ev.uid
+            if _cal and _cal.source == "google":
+                await _google_write(_cal, "delete", ev.uid)
             db.delete(ev)
             db.commit()
             if _is_caldav:

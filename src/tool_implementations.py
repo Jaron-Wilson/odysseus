@@ -1950,6 +1950,27 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             minutes_before = _reminder_minutes(args)
 
             uid = str(_uuid.uuid4())
+            _google_series = False
+            _origin = None
+            if cal.source == "google":
+                # A calendar linked through the connected Google account
+                # (src/google_calendar_sync.py): Google first, and the local
+                # row takes Google's event id. The approval gate
+                # (src/google_write_gate.py) already held this call for the
+                # user's Approve before it got here.
+                from src import google_calendar_sync as _gsync
+                try:
+                    _item = await _gsync.remote_create(cal, {
+                        "summary": summary, "description": _event_description(args, minutes_before),
+                        "location": args.get("location", "") or "", "dtstart": dtstart, "dtend": dtend,
+                        "all_day": all_day, "is_utc": dtstart_is_utc and not all_day,
+                        "rrule": args.get("rrule", "") or "",
+                    })
+                except _gsync.GoogleError as _ge:
+                    return {"error": f"Google Calendar did not take the event: {_ge}", "exit_code": 1}
+                uid = _gsync.local_uid(cal.id, str(_item.get("id") or ""))
+                _google_series = bool(_item.get("recurrence"))
+                _origin = _gsync.ORIGIN
             ev = CalendarEvent(
                 uid=uid, calendar_id=cal.id, summary=summary,
                 description=_event_description(args, minutes_before),
@@ -1959,8 +1980,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 rrule=args.get("rrule", "") or "",
                 event_type=event_type,
                 importance=importance,
+                origin=_origin,
             )
-            db.add(ev)
+            if not _google_series:
+                db.add(ev)
             reminder_note_id = None
             reminder_skipped_reason = None
             if minutes_before is not None:
@@ -1973,6 +1996,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     dtstart_is_utc and not all_day,
                 )
             db.commit()
+            if _google_series:
+                # Google answers a series; the pull brings its occurrences.
+                await _gsync.after_series_change(cal)
             if cal.source == "caldav":
                 # Agent-created events need the same push as the UI's
                 # create_event route (routes/calendar_routes.py), or an event
@@ -2041,6 +2067,16 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.event_type = _tag or None
             if args.get("importance") is not None:
                 ev.importance = args["importance"]
+            if ev.calendar and ev.calendar.source == "google":
+                from src import google_calendar_sync as _gsync
+                try:
+                    await _gsync.remote_update(ev.calendar, ev.uid, {
+                        "summary": ev.summary, "description": ev.description, "location": ev.location,
+                        "dtstart": ev.dtstart, "dtend": ev.dtend, "all_day": ev.all_day,
+                        "is_utc": bool(ev.is_utc), "rrule": ev.rrule or ""})
+                except _gsync.GoogleError as _ge:
+                    db.rollback()
+                    return {"error": f"Google Calendar did not take the change: {_ge}", "exit_code": 1}
             db.commit()
             if ev.calendar and ev.calendar.source == "caldav":
                 from src.caldav_writeback import writeback_event
@@ -2066,6 +2102,12 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             _cal = ev.calendar
             _is_caldav = bool(_cal and _cal.source == "caldav")
             _cal_id, _ev_uid = ev.calendar_id, ev.uid
+            if _cal and _cal.source == "google":
+                from src import google_calendar_sync as _gsync
+                try:
+                    await _gsync.remote_delete(_cal, ev.uid)
+                except _gsync.GoogleError as _ge:
+                    return {"error": f"Google Calendar did not delete it: {_ge}", "exit_code": 1}
             db.delete(ev)
             db.commit()
             if _is_caldav:

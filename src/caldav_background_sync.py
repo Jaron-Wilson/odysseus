@@ -58,6 +58,21 @@ async def sync_all_owners() -> dict:
         except Exception as e:
             logger.warning("Background CalDAV sync failed for %s: %s", owner, e)
             results[owner] = {"errors": [str(e)[:200]]}
+    # Google calendars linked through the connected Google account
+    # (src/google_calendar_sync.py). Every owner with one, auth.json or not:
+    # with auth off the calendar owner is FALLBACK_OWNER.
+    try:
+        from src import google_calendar_sync as gsync
+        from routes.calendar_routes import _merge_sync
+        for owner in gsync.owners_with_google():
+            try:
+                g = await gsync.sync(owner)
+            except Exception as e:
+                logger.warning("Background Google Calendar sync failed for %s: %s", owner, e)
+                g = {"errors": [str(e)[:200]], "linked": True}
+            results[owner] = _merge_sync(results.get(owner) or {"errors": ["CalDAV is not configured"]}, g)
+    except Exception as e:
+        logger.warning("Background Google Calendar sync pass failed: %s", e)
     return results
 
 

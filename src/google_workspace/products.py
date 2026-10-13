@@ -9,6 +9,10 @@ from typing import Dict, List, Set
 G = "https://www.googleapis.com/auth/"
 
 CALENDAR_SCOPE = G + "calendar.events"
+# Lists the user's calendars (primary, shared, family) for the Calendar page.
+# Optional ("extra"): a connection made before it still syncs the primary
+# calendar, and the Calendar page asks to reconnect for the rest.
+CALENDAR_LIST_SCOPE = G + "calendar.calendarlist.readonly"
 MEET_SETTINGS_SCOPE = G + "meetings.space.settings"
 DRIVE_FILE_SCOPE = G + "drive.file"
 DRIVE_READONLY_SCOPE = G + "drive.readonly"
@@ -29,11 +33,11 @@ PRODUCTS: Dict[str, Dict] = {
     "calendar": {
         "label": "Google Calendar",
         "scopes": [CALENDAR_SCOPE],
-        "extra": [MEET_SETTINGS_SCOPE],
+        "extra": [CALENDAR_LIST_SCOPE, MEET_SETTINGS_SCOPE],
         "api": "Google Calendar API (and Google Meet REST API)",
         "tools": ["google_meet"],
-        "about": "Make Google Meet meetings and send invites from your calendar (the google_meet tool). "
-                 "Your calendar itself syncs over CalDAV in the Calendar page.",
+        "about": "Your Google calendars in Organize > Calendar (pick which ones, see and edit their events), "
+                 "and Google Meet meetings with invites from your calendar (the google_meet tool).",
     },
     "drive": {
         "label": "Google Drive",
