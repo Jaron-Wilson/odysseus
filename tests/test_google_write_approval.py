@@ -636,3 +636,50 @@ def test_every_answer_is_logged_and_listed(env, client):
     assert [p["id"] for p in s["pending"]] == [c["action_approval"]["id"]]
     # Someone else's log is not shown.
     assert client.get("/api/google/write-approval", headers=BOB).json()["recent"] == []
+
+
+def test_company_flow_end_to_end(env):
+    """A real Company approval: held, decided by the person, run once when the
+    agent wakes, and the wake message carries the result. A model cannot
+    decide it through the Company chat tools."""
+    import types
+    import core.database as cdb
+    from src import company as co
+    from src import company_tools as ct
+    from src import company_executor as cx
+    from src.agent_tools import company_chat_tools as cct
+    db = cdb.SessionLocal()
+    try:
+        me = co.user_actor("ann")
+        c = co.create_company(db, "ann", me, {"name": "Acme"})
+        ag = co.create_agent(db, "ann", me, c["id"], {"name": "Writer", "role": "ceo"})
+    finally:
+        db.close()
+    with ct.agent_context(owner="ann", company_id=c["id"], agent_id=ag["id"], run_id="r1"):
+        _, out = _call("google_doc_create", WRITE_ARGS["google_doc_create"], chat="run-thread", owner="ann")
+    assert _held(out) and env["google"] == []
+    held = AA.get(out["action_approval"]["id"])
+    db = cdb.SessionLocal()
+    try:
+        ap = db.query(co.CompanyApproval).filter(co.CompanyApproval.id == held["company_approval_id"]).one()
+        assert ap.type == "google_write" and ap.status == "pending"
+        assert ap.payload["action_approval_id"] == held["id"]
+        with pytest.raises(cct._Miss):
+            cct._approval_decide(db, "ann", me, {"approval": ap.id, "decision": "approved"})
+        co.decide_approval(db, "ann", me, ap.id, "approved")
+    finally:
+        db.close()
+    assert AA.get(held["id"])["status"] == "queued" and env["google"] == []
+    asyncio.run(AA.run_company_queued(held["company_approval_id"]))
+    assert len(env["google"]) == 1
+    db = cdb.SessionLocal()
+    try:
+        agent = db.query(cdb.CompanyAgent).filter(cdb.CompanyAgent.id == ag["id"]).one()
+        company = db.query(cdb.CompanyCompany).filter(cdb.CompanyCompany.id == c["id"]).one()
+        run = types.SimpleNamespace(model=None, issue_id=None, invocation_source="approval", id="r2")
+        wake = types.SimpleNamespace(source="approval", approval_id=held["company_approval_id"], issue_id=None,
+                                     comment_id=None, created_at=datetime.now())
+        _system, user, _plan, _limits = cx.build_prompt(db, "ann", agent, company, run, [wake])
+    finally:
+        db.close()
+    assert "APPROVED and ran once" in user and "did google_doc_create" in user
