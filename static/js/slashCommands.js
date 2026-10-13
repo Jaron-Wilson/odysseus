@@ -1769,7 +1769,7 @@ async function _cmdCall() {
 // "claude attach 7238cfa3": the chat's coding agent carries that session on
 // (routes/claude_sessions_routes.py, src/claude_attach.py).
 
-const _CC_BARE_RE = /^claude\s+(?:attach\s+[0-9a-f][0-9a-f-]{5,35}|detach|status)\s*$/i;
+const _CC_BARE_RE = /^claude\s+(?:attach\s+[0-9a-f][0-9a-f-]{5,35}|detach|status|direct(?:\s+(?:on|off))?)\s*$/i;
 
 function _ccAgo(t) {
   const s = Math.max(0, Date.now() / 1000 - (t || 0));
@@ -1825,7 +1825,9 @@ function _ccCardHtml(a, { heading, warning } = {}) {
     </div>
     ${a.live ? '<div class="cc-attach-note">It is live, so it may be open in a terminal. Finish there before this chat uses it, or both will write to it.</div>' : ''}
     ${warning ? `<div class="cc-attach-note cc-attach-warn">${esc(warning)}</div>` : ''}
-    <div class="cc-attach-sub">This chat's coding agent now carries this session on, with all of its context.</div>
+    <div class="cc-attach-sub">${a.direct
+      ? '<b>Direct:</b> every message here goes straight to this session, and its replies are Claude Code\'s own words. <code>/claude direct off</code> hands the chat back to its model.'
+      : 'This chat\'s coding agent now carries this session on, with all of its context. <code>/claude direct</code> makes the session answer every message itself.'}</div>
     <div class="cc-attach-actions">
       <button type="button" class="cc-attach-detach">Detach</button>
       <a href="${esc(_ccSessionsHref(a))}" class="cc-attach-open">Open in Claude sessions</a>
@@ -1840,6 +1842,7 @@ function _ccPersistText(a, { heading, warning } = {}) {
     `**${heading || 'Claude Code session attached'}:** ${a.title || 'Untitled session'}`,
     `\`${id.slice(0, 8)}\` in \`${_ccShortCwd(a.cwd)}\`${branch}`,
     warning || '',
+    a.direct ? 'Direct: every message here goes straight to this session; /claude direct off hands the chat back to its model.' : '',
     `[Open in Claude sessions](${_ccSessionsHref(a)}) · /claude detach to let it go`,
   ].filter(Boolean).join('\n\n');
 }
@@ -1934,6 +1937,22 @@ async function _cmdClaudeDetach(args, ctx) {
   const was = r.data.detached;
   slashReply(was ? `Detached Claude Code session <code>${uiModule.esc(String(was.session_id || '').slice(0, 8))}</code>. This chat's coding agent starts its own again.`
     : 'No Claude Code session is attached to this chat.');
+  return true;
+}
+
+// `/claude direct` [on|off]: the attached session answers every message itself,
+// word for word, with no chat model in between (src/claude_direct.py).
+// Asked for: "it uses this claude code session only to respond".
+async function _cmdClaudeDirect(args, ctx) {
+  const word = (args[0] || 'on').toLowerCase();
+  if (!['on', 'off'].includes(word)) { slashReply('Usage: <code>/claude direct</code> or <code>/claude direct off</code>.'); return true; }
+  if (!ctx.sid) { slashReply('Open a chat first, then <code>/claude attach &lt;session id&gt;</code>.'); return true; }
+  const r = await _ccApi('POST', `/api/claude_attach/${encodeURIComponent(ctx.sid)}/direct`, { on: word === 'on' });
+  if (!r.ok) { slashReply(uiModule.esc(_ccErrorText(r))); return true; }
+  _ccShowCard(r.data.attached, ctx, {
+    heading: word === 'on' ? 'Direct to Claude Code' : 'Direct mode off',
+    warning: r.data.warning,
+  });
   return true;
 }
 
@@ -6085,7 +6104,8 @@ const COMMANDS = {
       '_default': { handler: _cmdClaudeDefault, alias: [], help: 'Attach an id, or show the attached session', usage: '/claude [session id]' },
       'attach': { handler: _cmdClaudeAttach, alias: ['use'],   help: 'Carry a Claude Code session on in this chat', usage: '/claude attach <session id>' },
       'detach': { handler: _cmdClaudeDetach, alias: ['drop'],  help: 'Let the attached session go',                usage: '/claude detach' },
-      'status': { handler: _cmdClaudeStatus, alias: ['info'],  help: 'Show the attached session',                  usage: '/claude status' }
+      'status': { handler: _cmdClaudeStatus, alias: ['info'],  help: 'Show the attached session',                  usage: '/claude status' },
+      'direct': { handler: _cmdClaudeDirect, alias: [],        help: 'Replies come straight from the attached session', usage: '/claude direct [on|off]' }
     }
   },
   todo: {

@@ -152,6 +152,21 @@ def detach(chat_id: str) -> Optional[Dict]:
     return rec if isinstance(rec, dict) else None
 
 
+def set_direct(chat_id: str, on: bool) -> Optional[Dict]:
+    """Direct mode on or off for the chat's attachment (src/claude_direct.py):
+    its replies come straight from the session, not from the chat's model.
+    Returns info(), or None when nothing is attached. Attaching again or
+    detaching turns it off."""
+    with _lock:
+        data = _load()
+        rec = data.get(chat_id)
+        if not isinstance(rec, dict):
+            return None
+        rec["direct"] = bool(on)
+        _save(data)
+    return info(chat_id)
+
+
 def follow(chat_id: str, old_id: str, new_id: str) -> None:
     """The CLI carried the session on under a new id: keep attached to it."""
     if not chat_id or not new_id or old_id == new_id or not ccs.valid_session_id(new_id):
@@ -167,7 +182,7 @@ def follow(chat_id: str, old_id: str, new_id: str) -> None:
 def context_note(chat_id: str) -> str:
     """One short paragraph for the model's system prompt, or ""."""
     a = get(chat_id)
-    if not a:
+    if not a or a.get("direct"):
         return ""
     path = ccs.transcript_path(a["project"], a["session_id"])
     s = ccs.session_info(a["project"], path) if path else None

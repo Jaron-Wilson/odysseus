@@ -582,6 +582,17 @@ def setup_chat_routes(
                 return StreamingResponse(_queued_reply(), media_type="text/event-stream")
             sess = session_manager.get_session(session)
             owner = get_current_user(request)
+            # Direct mode (/claude direct, src/claude_direct.py): the attached
+            # Claude Code session answers, word for word - no model, no
+            # context building, so no model has to be picked for the chat.
+            if not compare_mode and message:
+                from src import claude_direct
+                if claude_direct.is_on(session):
+                    from core.middleware import require_admin
+                    require_admin(request)
+                    return StreamingResponse(
+                        claude_direct.stream(session, sess, str(message), session_manager),
+                        media_type="text/event-stream")
             if _clear_orphaned_session_endpoint(sess, owner=owner):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
             # Issue #587: picker shows a model from the endpoint cache but
