@@ -1,7 +1,8 @@
 """Making Google Meet meetings from the user's own Google account.
 
-The calendar Odysseus syncs (src/caldav_sync.py) is CalDAV, which cannot ask
-for a Meet link. This goes through the Google Calendar API instead: an event
+CalDAV cannot ask for a Meet link, and the Calendar page's own Google writes
+(src/google_calendar_sync.py) do not ask for one. This goes through the
+Google Calendar API with a conference request instead: an event
 inserted with conferenceData.createRequest (hangoutsMeet,
 conferenceDataVersion=1) comes back with its hangoutLink, and Google sends
 the invites from the user's account (sendUpdates=all).
