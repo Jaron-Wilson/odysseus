@@ -8,6 +8,7 @@
 
   GET    /api/claude_attach/{chat_id}                     the session attached to a chat
   POST   /api/claude_attach/{chat_id}  {"id": "7238cfa3"} attach one (src/claude_attach.py)
+  POST   /api/claude_attach/{chat_id}/direct {"on": true}  replies straight from it (src/claude_direct.py)
   DELETE /api/claude_attach/{chat_id}                     detach it
 
 Admin only, like the Terminal: the transcripts hold everything that was said
@@ -92,6 +93,21 @@ def setup_claude_sessions_routes() -> APIRouter:
             raise _attach_error(e)
         return {"attached": out, "warning": claude_attach.cwd_warning(out.get("cwd") or ""),
                 "now": time.time()}
+
+    @router.post("/api/claude_attach/{chat_id}/direct")
+    async def set_direct(request: Request, chat_id: str):
+        """{"on": true|false} - replies straight from the session (src/claude_direct.py)."""
+        require_admin(request)
+        _own_chat_or_404(request, chat_id)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        out = await asyncio.to_thread(claude_attach.set_direct, chat_id, bool((body or {}).get("on")))
+        if out is None:
+            raise HTTPException(409, {"error": "Attach a Claude Code session first: /claude attach <id>.",
+                                      "candidates": []})
+        return {"attached": out, "warning": claude_attach.cwd_warning(out.get("cwd") or ""), "now": time.time()}
 
     @router.delete("/api/claude_attach/{chat_id}")
     async def detach(request: Request, chat_id: str):
