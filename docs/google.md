@@ -1,7 +1,7 @@
 # Google products in Odysseus
 
-Odysseus can use your Google account for Calendar (making Meet meetings), Drive, Docs, Sheets,
-Slides, Tasks and Contacts. All of them share **one Google connection per Odysseus user**, made
+Odysseus can use your Google account for Calendar (your Google calendars in Organize >
+Calendar, and making Meet meetings), Drive, Docs, Sheets, Slides, Tasks and Contacts. All of them share **one Google connection per Odysseus user**, made
 with the same OAuth client as Sign in with Google and Google Meet. You turn each product on
 separately in **Settings > Google**; Odysseus asks Google for a product's permission when you
 connect it (incremental authorization), and the product's chat tools only appear while it is
@@ -37,6 +37,7 @@ authorized redirect URI is exactly the one the card shows, ending in
    | --- | --- | --- |
    | Always | `openid`, `email` (shows as `.../auth/userinfo.email`) | non-sensitive |
    | Calendar | `https://www.googleapis.com/auth/calendar.events` | sensitive |
+   | Calendar (optional) | `https://www.googleapis.com/auth/calendar.calendarlist.readonly` (lists your calendars for Organize > Calendar) | sensitive |
    | Calendar (optional) | `https://www.googleapis.com/auth/meetings.space.settings` | sensitive |
    | Drive | `https://www.googleapis.com/auth/drive.file` | non-sensitive |
    | Read all my Drive files | `https://www.googleapis.com/auth/drive.readonly` | restricted |
@@ -60,6 +61,56 @@ authorized redirect URI is exactly the one the card shows, ending in
    connection carries over: it shows up as Google Calendar, Connected.
 
 Nothing else changes: the same client ID, client secret and redirect URI are used.
+
+## Google Calendar in Organize > Calendar
+
+The Calendar page shows and syncs your Google calendars through this same Google connection. No
+CalDAV address or app password is involved (Google's CalDAV turns passwords away, so a CalDAV
+account can never sync a Google calendar).
+
+How to connect it:
+
+1. **Settings > Google**, on the **Google Calendar** card press **Connect** (or **Reconnect**).
+   Google's page opens in a new tab; keep every box ticked, including "See the list of Google
+   calendars you're subscribed to", and come back to the Odysseus tab.
+2. **Organize > Calendar**. Your main Google calendar is linked by itself and its events show
+   within a few seconds. The refresh button in the calendar toolbar pulls from Google right
+   away.
+3. To add others (shared and family calendars), open the calendar's **gear (Calendar settings) >
+   Google Calendar** and tick them. Untick one to stop showing it (it stays in Google); **Stop
+   showing Google calendars** unlinks them all.
+
+A Calendar connected before this change has no permission to list calendars yet. It still syncs
+your main calendar; the Calendar settings say **Reconnect Calendar to list your calendars**, and
+the Google Calendar card in Settings > Google shows a **Reconnect** button. Either asks Google
+for the missing permission.
+
+What syncs:
+
+- Events from 90 days back to a year ahead, on every ticked calendar. The first pull fetches the
+  window; after that Odysseus sends Google's sync token and gets only what changed (when you
+  press refresh, when the calendar opens, and every 5 minutes in the background,
+  `CALDAV_SYNC_INTERVAL_S`). Once a day, or when Google says the token expired (410 Gone), it
+  pulls the whole window again, which also moves the window forward.
+- Repeating events arrive as their occurrences, as Google shows them. Editing or deleting one
+  occurrence changes only that one, like in Google Calendar.
+- Events deleted or cancelled in Google disappear here on the next sync.
+
+Writes:
+
+- **Create, edit and delete on the Calendar page go to Google first**, and the page only changes
+  when Google took the change. If Google refuses (a read-only calendar such as Holidays, the
+  connection gone), the page says why instead of keeping an event that never reached Google.
+  These are you acting directly, so there is no approval card.
+- **The assistant's** `manage_calendar` create, update and delete on a Google calendar wait for
+  your **Approve** in the chat (see the next sections), then go to Google.
+- Invitations are not emailed for changes made here (`sendUpdates=none`); use `google_meet` to
+  invite people.
+
+When something is wrong (Google not connected, the connection revoked, Calendar turned off, a
+permission missing, the Calendar API not enabled), the Calendar page shows the reason above the
+grid with **Open Settings > Google**, and the events already pulled stay visible. It never shows
+a silently empty calendar.
 
 ## Keep every box ticked on Google's consent screen
 
@@ -141,7 +192,7 @@ What asks first:
 | --- | --- | --- |
 | Drive, Docs, Sheets, Slides, Tasks | every tool in the table above marked "Changes things": `google_drive_upload`, `google_drive_create_folder`, `google_doc_create`, `google_doc_edit`, `google_sheet_write`, `google_sheet_append`, `google_sheet_create`, `google_slides_create`, `google_task_create` | `google_status` and every `*_read`, `*_search`, `*_list` tool |
 | Google Meet | `google_meet` start, now, create, schedule (each makes a Calendar event and a Meet space, and may email invites) | join, status |
-| Google Calendar (CalDAV) | `manage_calendar` create_event, update_event, delete_event, or a batch of events, on a CalDAV calendar whose account URL is Google's (`apidata.googleusercontent.com`, `google.com/calendar/dav`) | list_events, list_calendars; local calendars and other CalDAV servers (Fastmail, iCloud, Nextcloud...) |
+| Google Calendar | `manage_calendar` create_event, update_event, delete_event, or a batch of events, on a Google calendar linked through this connection (Organize > Calendar), or on a CalDAV calendar whose account URL is Google's (`apidata.googleusercontent.com`, `google.com/calendar/dav`) | list_events, list_calendars; local calendars and other CalDAV servers (Fastmail, iCloud, Nextcloud...); your own create/edit/delete on the Calendar page |
 | Gmail | `send_email`, `reply_to_email`, `archive_email`, `delete_email`, `mark_email_read`, `bulk_email` on a mailbox whose IMAP or SMTP server is Google's (`imap.gmail.com`, `smtp.gmail.com`, so Google Workspace mail counts) or whose address is `@gmail.com` | list, read and search email; drafts (`draft_email`, `draft_email_reply`, `ai_draft_email_reply` save a draft in Odysseus, not in Gmail); other mailboxes |
 | `app_api` | a POST, PUT, PATCH or DELETE to `/api/email`, `/api/calendar`, `/api/caldav`, `/api/meet` or `/api/google` is refused outright while this is on (it cannot ask); the named tools above are the way | GETs |
 
@@ -210,6 +261,12 @@ expired) is logged with the time, chat, tool, target and outcome in
 - **A card says Needs reconnect**: Google no longer holds that product's permission, usually
   because its box was unticked on a later consent screen. Press Reconnect and keep every box
   ticked.
+- **The Calendar page says "Reconnect Calendar to list your calendars"**: Calendar was
+  connected before it asked to list calendars. Press Reconnect Calendar (or Reconnect on the
+  Google Calendar card) and keep every box ticked. Your main calendar syncs meanwhile.
+- **The Calendar page says Google is not connected or no longer gives access**: open Settings >
+  Google and connect Google Calendar again. If it was disconnected at
+  myaccount.google.com/permissions, Odysseus forgot the saved connection on the next sync.
 - **Search finds nothing in Drive**: Drive is on narrow access. Turn on Read all my Drive files.
 - **"Google did not send a refresh token"**: remove Odysseus at
   myaccount.google.com/permissions, then connect again.
@@ -222,6 +279,13 @@ Code: `src/google_workspace/` (connection, products and scopes, one module per A
 routes in `routes/google_routes.py`, the card in `static/js/googleSettings.js`, tests in
 `tests/test_google_workspace.py`. The OAuth client and callback are shared in
 `src/google_oauth.py`.
+
+Google Calendar on the Calendar page: `src/google_calendar_sync.py` (calendar list, picking
+calendars, events.list with sync tokens, writes, the problem notice), wired into
+`routes/calendar_routes.py` (`/api/calendar/google`, `/sync`, event create/update/delete) and
+the background loop `src/caldav_background_sync.py`; the UI in `static/js/calendar.js`; tests in
+`tests/test_google_calendar_sync.py`. Each linked Google calendar is a `calendars` row with
+`source="google"` and the Google calendar id (`primary` for the main one) in `account_id`.
 
 Ask before writing: `src/google_write_gate.py` decides what is a Google write and describes it
 (`intercept` is called from `execute_tool_block` in `src/tool_execution.py`, so every caller

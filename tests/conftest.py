@@ -7,12 +7,33 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Live-data safety: every test session gets its own fresh, empty data dir,
+# whatever the shell exports. A developer shell commonly exports
+# ODYSSEUS_DATA_DIR pointing at the live server's data (plans, attachments,
+# PDFs, prefs), and test runs used to write straight into it. This runs before
+# any app module is imported, so src.constants.DATA_DIR and every path derived
+# from it (core.constants, routes, services) resolve inside the temp dir.
+# Deliberately unconditional: not setdefault.
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
+_TEST_DATA_DIR = tempfile.mkdtemp(prefix="odysseus-test-data-")
+os.environ["ODYSSEUS_DATA_DIR"] = _TEST_DATA_DIR
+atexit.register(shutil.rmtree, _TEST_DATA_DIR, ignore_errors=True)
+# A file-backed DATABASE_URL inherited from the shell would be the live DB
+# too; only an explicit test database (ODYSSEUS_TEST_DATABASE_URL) is honored.
+if os.environ.get("ODYSSEUS_TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"] = os.environ["ODYSSEUS_TEST_DATABASE_URL"]
+else:
+    os.environ.pop("DATABASE_URL", None)
+
 # Importing core.database below runs init_db() at import time, and its default
 # (sqlite:///./data/app.db) can't be opened in a clean worktree because SQLite
 # won't create the missing ./data parent dir - pytest then dies during
 # collection, before any test module loads. Default to an in-memory DB for the
 # test session so collection is deterministic and writes no repo-local
-# artifacts. An explicit DATABASE_URL (a real test/CI database) is preserved.
+# artifacts. ODYSSEUS_TEST_DATABASE_URL (a real test/CI database) is honored above.
 # This only unblocks collection/import-time init; it does not provide a shared
 # file-backed DB across processes - tests needing that must set DATABASE_URL.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")

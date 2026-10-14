@@ -184,6 +184,7 @@ async function _fetchCalendars() {
     const data = await res.json();
     _calendars = data.calendars || [];
     if (data.error) _calendarsError = data.error;
+    _googleNotice = data.google_notice || null;
     _calendars.forEach((c, i) => {
       if (!c.color || c.color.startsWith('<')) c.color = CAL_PALETTE[i % CAL_PALETTE.length];
     });
@@ -223,10 +224,23 @@ async function _syncCaldav(interactive) {
       method: 'POST', credentials: 'same-origin',
     });
     const data = await res.json().catch(() => ({}));
+    // A Google Calendar problem (not connected, revoked, a permission
+    // missing) shows above the grid with a link to Settings > Google, never
+    // as a silently empty calendar.
+    const g = data.google || {};
+    const hadNotice = !!_googleNotice;
+    if (g.linked && (g.errors || []).length) {
+      _googleNotice = { text: g.errors[0], action: g.reconnect ? 'settings' : '' };
+    } else if (g.linked) {
+      _googleNotice = null;
+    }
     if (interactive) return data;
     // Background path: if the pull actually changed anything, drop
     // local caches and re-render so new events appear.
-    const changed = (data.calendars || 0) > 0 && ((data.events || 0) > 0 || (data.deleted || 0) > 0);
+    const changed = ((data.calendars || 0) > 0 && ((data.events || 0) > 0 || (data.deleted || 0) > 0))
+      // The first sync links the primary Google calendar by itself.
+      || (g.linked && !_calendars.some(c => c.source === 'google'));
+    if (!changed && _open && (hadNotice || !!_googleNotice)) _render();
     if (changed) {
       _allEvents = {}; _fetchedRanges = [];
       try { localStorage.removeItem(LS_KEY); } catch (_) {}
@@ -262,6 +276,19 @@ function _optimisticEvent(data, uid) {
 // resolved the promise and the optimistic state got promoted to truth.
 // All three flows now inspect `r.ok` and roll back the optimistic
 // state + surface a toast on the failure path.
+// The server's reason for a failed write (FastAPI's {detail}); a Google
+// Calendar refusal says why, and a 409 means the Google connection needs
+// attention, so it also shows the Settings > Google notice.
+async function _httpErr(r) {
+  let d = null;
+  try { d = await r.json(); } catch (_) {}
+  const msg = (d && (d.detail || d.error)) || ('HTTP ' + r.status);
+  const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  err.status = r.status;
+  if (r.status === 409) _googleNotice = { text: err.message, action: 'settings' };
+  return err;
+}
+
 async function _createEvent(data) {
   const tempUid = 'temp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
   _allEvents[tempUid] = _optimisticEvent(data, tempUid);
@@ -269,9 +296,17 @@ async function _createEvent(data) {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   }).then(async r => {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) throw await _httpErr(r);
     return r.json();
   }).then(d => {
+    if (d.refetch) {
+      // A new Google series: Google's occurrences replace the draft.
+      delete _allEvents[tempUid];
+      _fetchedRanges = [];
+      try { localStorage.removeItem(LS_KEY); } catch (_) {}
+      if (_open) _render();
+      return;
+    }
     if (d.uid) {
       delete _allEvents[tempUid];
       _allEvents[d.uid] = _optimisticEvent(data, d.uid);
@@ -298,8 +333,8 @@ async function _updateEvent(uid, data) {
   fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
     method: 'PUT', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-  }).then(r => {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+  }).then(async r => {
+    if (!r.ok) throw await _httpErr(r);
     if (isRecurring) {
       _fetchedRanges = [];
       localStorage.removeItem(LS_KEY);
@@ -344,12 +379,12 @@ async function _deleteEvent(uid) {
   const isRecurring = uid.includes('::');
   fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
     method: 'DELETE', credentials: 'same-origin',
-  }).then(r => {
+  }).then(async r => {
     // 404 = the event was already deleted by another session/device. That's
     // exactly the state we want, so treat it as success — don't restore the
     // row, otherwise the user can never clear stale cached events that were
     // deleted from desktop while mobile was open (and vice versa).
-    if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
+    if (!r.ok && r.status !== 404) throw await _httpErr(r);
     if (isRecurring) {
       _fetchedRanges = [];
       localStorage.removeItem(LS_KEY);
@@ -767,7 +802,7 @@ function _renderEmpty() {
         <line x1="3" y1="10" x2="21" y2="10"/>
       </svg>
       <div class="cal-empty-title">${hasError ? 'Calendar unavailable' : 'No calendars yet'}</div>
-      <div class="cal-empty-msg">${hasError ? _e(_calendarsError) : 'Create a local calendar, import an .ics file, or sync via CalDAV.'}</div>
+      <div class="cal-empty-msg">${hasError ? _e(_calendarsError) : 'Create a local calendar, import an .ics file, link Google Calendar, or sync via CalDAV.'}</div>
       ${hasError ? `
         <button class="cal-btn cal-btn-primary" id="cal-goto-settings">Open Settings</button>
       ` : `
@@ -829,7 +864,7 @@ function _headerHTML() {
         ).join('')}
       </div>
       <button class="cal-nav" id="cal-settings" title="Calendar settings" style="position:relative;top:-3px;"><svg width="13" height="13" style="position:relative;top:2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.68 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-      <button class="cal-nav${window._calSyncing ? ' cal-syncing' : ''}${window._calSyncDone ? ' cal-sync-done' : ''}" id="cal-sync" title="Refresh from database" style="position:relative;top:-3px;">${window._calSyncDone ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>'}</button>
+      <button class="cal-nav${window._calSyncing ? ' cal-syncing' : ''}${window._calSyncDone ? ' cal-sync-done' : ''}" id="cal-sync" title="Sync and refresh" style="position:relative;top:-3px;">${window._calSyncDone ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>'}</button>
       ${_filtersToggleHTML()}
       <button class="cal-add-btn cal-add-btn-text" id="cal-add" title="New event"><span class="cal-add-plus">+</span><span class="cal-add-label">New</span></button>
     </div>
@@ -844,8 +879,40 @@ function _headerHTML() {
     />
     <span class="cal-quickadd-hint" id="cal-quickadd-hint" aria-hidden="true"><span class="qa-hint-accent">Quick add</span> — return home to Ithaca 1pm tmrw <svg class="qa-hint-enter" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
     <span class="cal-quickadd-status" id="cal-quickadd-status"></span>
+  </div>${_googleNoticeHTML()}`;
+}
+
+// ── Google Calendar through the connected Google account ──
+// (src/google_calendar_sync.py). The notice shows when a linked Google
+// calendar cannot sync: not connected, revoked, or a permission missing.
+let _googleNotice = null;
+function _googleNoticeHTML() {
+  if (!_googleNotice || !_googleNotice.text) return '';
+  return `<div class="cal-google-notice" role="alert">
+    <span class="cal-google-notice-text">${_e(_googleNotice.text)}</span>
+    <button class="cal-btn" type="button" data-cal-google-settings>Open Settings &gt; Google</button>
+    <button class="cal-google-notice-x" type="button" data-cal-google-dismiss title="Hide" aria-label="Hide">\u2716</button>
   </div>`;
 }
+
+function _openGoogleSettings() {
+  document.getElementById('cal-settings-panel')?.remove();
+  try { closeCalendar(); } catch (_) {}
+  import('./settings.js').then(m => {
+    m.default.open('google');
+    // The Google tab may already be the open one, which does not reload it
+    // by itself: show what the connection is now.
+    try { window.googleSettings?.load?.(); } catch (_) {}
+  }).catch(() => {});
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target && e.target.closest ? e.target.closest('[data-cal-google-settings],[data-cal-google-dismiss]') : null;
+  if (!t) return;
+  e.preventDefault();
+  if (t.hasAttribute('data-cal-google-dismiss')) { _googleNotice = null; if (_open) _render(); return; }
+  _openGoogleSettings();
+});
 
 function _filtersData() {
   // Build chip HTML once; reused by toolbar toggle + chip-row renderers.
@@ -2106,6 +2173,13 @@ function _wireAll(body) {
     const btn = document.getElementById('cal-sync');
     btn?.classList.add('cal-syncing');
     window._calSyncing = true;
+    // Pull from Google Calendar and CalDAV first, so Refresh shows what is
+    // in Google now, not only what was already saved here.
+    const _syncRes = await _syncCaldav(true) || {};
+    const _gErr = ((_syncRes.google || {}).errors || [])[0];
+    const _otherErr = (_syncRes.errors || []).find(x => !String(x).startsWith('Google Calendar:') && x !== 'CalDAV is not configured');
+    if ((_gErr || _otherErr) && uiModule?.showError) uiModule.showError('Sync: ' + (_gErr || _otherErr));
+    if ((_syncRes.google || {}).linked) await _fetchCalendars();
     _allEvents = {};
     _fetchedRanges = [];
     localStorage.removeItem(LS_KEY);
@@ -2427,7 +2501,11 @@ async function _showCalSettings() {
         <button class="close-btn" id="cal-settings-close">\u2716</button>
       </div>
       <div class="modal-body" style="padding:16px;display:flex;flex-direction:column;gap:16px;">
-        <div>
+        <div id="cal-google-section" class="cal-google-section">
+          <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Google Calendar</div>
+          <div class="cal-google-body" style="font-size:12px;opacity:0.7;">Checking your Google account\u2026</div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:12px;">
           <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Your calendars</div>
           <div id="cal-settings-list" style="display:flex;flex-direction:column;gap:4px;">
             ${cals.map(c => `
@@ -2476,7 +2554,7 @@ async function _showCalSettings() {
             </button>
             <span id="cal-settings-sync-status" style="font-size:11px;opacity:0.6;"></span>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-top:4px;">Pulls events from your CalDAV server. To connect or change CalDAV credentials, open <a href="#" id="cal-settings-open-caldav" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">Settings → Integrations</a>.</div>
+          <div style="font-size:10px;opacity:0.4;margin-top:4px;">Pulls events from your linked Google calendars (above) and CalDAV servers. To connect or change CalDAV credentials, open <a href="#" id="cal-settings-open-caldav" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">Settings → Integrations</a>.</div>
         </div>
         <div style="border-top:1px solid var(--border);padding-top:12px;">
           <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Save new events to</div>
@@ -2499,6 +2577,7 @@ async function _showCalSettings() {
 
   const cleanup = () => overlay.remove();
   overlay.querySelector('#cal-settings-close').addEventListener('click', cleanup);
+  _loadGoogleSection(overlay, () => { cleanup(); _showCalSettings(); });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
 
   // "Save new events to": which calendar new events default onto when none
@@ -2692,6 +2771,91 @@ async function _showCalSettings() {
     cleanup();
     closeCalendar();
     _openIntegrations();
+  });
+}
+
+// The Google Calendar section of Calendar Settings: which of the connected
+// Google account's calendars show here (GET/PUT /api/calendar/google).
+async function _loadGoogleSection(overlay, reopen) {
+  const box = overlay.querySelector('#cal-google-section .cal-google-body');
+  if (!box) return;
+  let s;
+  try {
+    const r = await fetch(`${API_BASE}/api/calendar/google`, { credentials: 'same-origin' });
+    if (!r.ok) throw await _httpErr(r);
+    s = await r.json();
+  } catch (e) {
+    box.innerHTML = `<div class="cal-google-msg warn">Could not check Google: ${_e(e.message || 'failed')}</div>`;
+    return;
+  }
+  box.removeAttribute('style');
+  // Checking linked the main Google calendar by itself: show it in the grid.
+  if ((s.selected || []).length && !_calendars.some(c => c.source === 'google')) {
+    _allEvents = {}; _fetchedRanges = [];
+    try { localStorage.removeItem(LS_KEY); } catch (_) {}
+    _fetchCalendars().then(() => _render());
+  }
+  const settingsBtn = (label) => `<button class="memory-toolbar-btn" type="button" data-cal-google-settings>${_e(label)}</button>`;
+  if (!s.enabled) {
+    const linked = (s.calendars || []).length;
+    box.innerHTML = `
+      <div class="cal-google-msg${linked ? ' warn' : ''}">${_e(s.message || 'Google Calendar is not connected.')}</div>
+      <div class="cal-google-actions">${settingsBtn(s.configured ? 'Open Settings > Google' : 'Set up Google in Settings')}</div>
+      <div class="cal-google-hint">Connect Google Calendar there (Google asks you to allow it), then come back: your calendar shows here and stays in sync.</div>`;
+    return;
+  }
+  const cals = s.calendars || [];
+  const picked = new Set(s.selected || []);
+  const rows = cals.map(c => `
+    <label class="cal-google-row">
+      <input type="checkbox" class="cal-google-pick" value="${_e(c.id)}" ${picked.has(c.id) ? 'checked' : ''} />
+      <span class="cal-google-dot" style="background:${_e(c.color || '#4285f4')}"></span>
+      <span class="cal-google-name">${_e(c.name)}${c.primary ? ' <span class="cal-google-tag">main</span>' : ''}${c.writable === false ? ' <span class="cal-google-tag">read only</span>' : ''}</span>
+    </label>`).join('');
+  box.innerHTML = `
+    <div class="cal-google-msg">Connected as ${_e(s.email || 'your Google account')}.${picked.size ? '' : ' No Google calendar is shown yet.'}</div>
+    ${picked.size ? '' : '<div class="cal-google-actions"><button class="memory-toolbar-btn cal-google-use" type="button">Use my connected Google account</button></div>'}
+    <div class="cal-google-list">${rows}</div>
+    ${s.can_list ? '' : `<div class="cal-google-msg warn">Reconnect Calendar to list your calendars (shared and family ones too). <a href="${_e(s.reconnect_url || '/api/google/connect?products=calendar')}" target="_blank" rel="noopener" class="cal-google-reconnect">Reconnect Calendar</a></div>`}
+    ${s.list_error ? `<div class="cal-google-msg warn">${_e(s.list_error)}</div>` : ''}
+    ${s.problem ? `<div class="cal-google-msg warn">${_e(s.problem)}</div>` : ''}
+    <div class="cal-google-actions">
+      ${picked.size ? '<button class="memory-toolbar-btn cal-google-off" type="button">Stop showing Google calendars</button>' : ''}
+      ${settingsBtn('Settings > Google')}
+      <span class="cal-google-status" role="status"></span>
+    </div>
+    <div class="cal-google-hint">Ticked calendars sync both ways: events you add, change or delete here go to Google.</div>`;
+  const status = box.querySelector('.cal-google-status');
+  const save = async (ids) => {
+    box.querySelectorAll('input,button').forEach(x => { x.disabled = true; });
+    if (status) status.textContent = 'Syncing…';
+    try {
+      const r = await fetch(`${API_BASE}/api/calendar/google/calendars`, {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+      });
+      if (!r.ok) throw await _httpErr(r);
+      const d = await r.json();
+      const err = ((d.sync || {}).errors || [])[0];
+      if (err && uiModule?.showError) uiModule.showError('Google Calendar: ' + err);
+      else if (uiModule?.showToast) uiModule.showToast(ids.length ? `Google Calendar synced: ${(d.sync || {}).events || 0} events` : 'Google calendars hidden');
+      _allEvents = {}; _fetchedRanges = [];
+      try { localStorage.removeItem(LS_KEY); } catch (_) {}
+      await _fetchCalendars();
+      _render();
+      reopen();
+    } catch (e) {
+      if (status) status.textContent = e.message || 'Failed';
+      box.querySelectorAll('input,button').forEach(x => { x.disabled = false; });
+    }
+  };
+  box.querySelectorAll('.cal-google-pick').forEach(cb => cb.addEventListener('change', () => {
+    save([...box.querySelectorAll('.cal-google-pick:checked')].map(x => x.value));
+  }));
+  box.querySelector('.cal-google-use')?.addEventListener('click', () => save(['primary']));
+  box.querySelector('.cal-google-off')?.addEventListener('click', async () => {
+    if (window.styledConfirm && !await window.styledConfirm('Stop showing your Google calendars here? They stay in Google.', { confirmText: 'Stop showing' })) return;
+    save([]);
   });
 }
 
@@ -3375,6 +3539,9 @@ function openCalendar() {
     body.querySelector('.cal-loading').appendChild(wp.element);
     body.addEventListener('wheel', _wheelNav, { passive: false });
   }
+  // Pull from Google/CalDAV on every open, not once per page load: a Google
+  // account connected in Settings since the last open shows up right away.
+  _caldavSyncedOnce = false;
   Promise.all([_loadWeekStartPref(), _fetchCalendars()]).then(() => _render());
 }
 

@@ -16,9 +16,13 @@ and Deny. What counts:
                      Calendar event and a Meet space); join and status are free
   Google Calendar    manage_calendar create_event / update_event /
                      delete_event (and a batch of events) when the calendar
-                     is a CalDAV calendar on Google (apidata.googleusercontent
-                     .com or google.com/calendar/dav); other CalDAV servers and
-                     local calendars are not asked about
+                     is linked through the connected Google account (source
+                     "google", src/google_calendar_sync.py) or is a CalDAV
+                     calendar on Google (apidata.googleusercontent.com or
+                     google.com/calendar/dav); other CalDAV servers and local
+                     calendars are not asked about. The Calendar page's own
+                     create/edit/delete buttons are the user acting directly
+                     and do not ask
   Gmail              send_email, reply_to_email, archive_email, delete_email,
                      mark_email_read and bulk_email on a mailbox whose IMAP or
                      SMTP server is Google's (imap.gmail.com, smtp.gmail.com,
@@ -279,7 +283,7 @@ def _describe_email(tool: str, a: Dict) -> Optional[Dict]:
             "account": acct, "target": {"name": acct}}
 
 
-# ── Google Calendar over CalDAV ──────────────────────────────────────────
+# ── Google Calendar (connected account or CalDAV) ────────────────────────
 
 def _url_is_google(url: str) -> bool:
     try:
@@ -294,9 +298,16 @@ def _url_is_google(url: str) -> bool:
 
 
 def calendar_is_google(owner: Optional[str], cal) -> bool:
-    """A CalDAV calendar whose account is Google's. Mirrors which account
-    caldav_writeback.writeback_event pushes to."""
-    if cal is None or getattr(cal, "source", "") != "caldav":
+    """A calendar whose writes land in the user's Google account: one linked
+    through the connected Google account (source "google",
+    src/google_calendar_sync.py), or a CalDAV calendar whose account is
+    Google's (mirrors which account caldav_writeback.writeback_event pushes
+    to)."""
+    if cal is None:
+        return False
+    if getattr(cal, "source", "") == "google":
+        return True
+    if getattr(cal, "source", "") != "caldav":
         return False
     try:
         from src.caldav_sync import _load_caldav_accounts

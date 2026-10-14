@@ -34873,6 +34873,33 @@ button.cal-event-more {
 }
 button.cal-event-more:hover { opacity:1 !important; }
 /* Empty state */
+/* Google Calendar (connected Google account): the problem notice above the
+   grid and the picker in Calendar Settings. */
+.cal-google-notice {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 9%, var(--bg));
+}
+.cal-google-notice-text { flex: 1 1 220px; min-width: 0; }
+.cal-google-notice .cal-btn { font-size: 12px; padding: 3px 10px; }
+.cal-google-notice-x { background: none; border: none; color: var(--fg); opacity: 0.5; cursor: pointer; font-size: 11px; padding: 2px 4px; }
+.cal-google-notice-x:hover { opacity: 0.9; }
+.cal-google-body { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.cal-google-msg { font-size: 12px; opacity: 0.8; }
+.cal-google-msg.warn { opacity: 1; color: var(--accent, var(--red)); }
+.cal-google-msg a { color: var(--accent, var(--red)); font-weight: 600; text-decoration: none; }
+.cal-google-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.cal-google-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer;
+  background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.cal-google-row input { margin: 0; flex: none; }
+.cal-google-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.cal-google-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-google-tag { font-size: 10px; opacity: 0.55; margin-left: 4px; }
+.cal-google-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cal-google-status { font-size: 11px; opacity: 0.6; }
+.cal-google-hint { font-size: 10px; opacity: 0.45; }
+
 .cal-empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; text-align:center; gap:10px; }
 .cal-empty-title { font-size:14px; font-weight:600; opacity:0.8; }
 .cal-empty-msg { font-size:12px; opacity:0.5; max-width:320px; line-height:1.5; margin-bottom:8px; }

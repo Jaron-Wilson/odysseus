@@ -316,8 +316,9 @@ meeting assistant, `/meet LINK talk` in talk mode, `/meet leave` leaves, and
 ## Making a meeting
 
 Odysseus can also make the meeting, from your own Google account
-(src/meet/google_calendar.py). The calendar it syncs is CalDAV, which cannot
-ask for a Meet link, so this uses the Google Calendar API: an event inserted
+(src/meet/google_calendar.py). Calendar events made on the Calendar page do
+not ask for a Meet link, so this uses the Google Calendar API with a
+conference request: an event inserted
 with `conferenceData.createRequest` (`hangoutsMeet`, `conferenceDataVersion=1`)
 comes back with its `hangoutLink`, and with attendees Google emails the
 invites from your account (`sendUpdates=all`).
