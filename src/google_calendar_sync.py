@@ -36,11 +36,11 @@ per user and shown on the Calendar page with a link to Settings > Google,
 never as a silently empty calendar.
 """
 
-import asyncio
 import hashlib
 import json
 import logging
 import os
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -255,7 +255,10 @@ async def list_google_calendars(owner: Optional[str]) -> List[Dict]:
                     "id": "primary" if it.get("primary") else str(it.get("id") or ""),
                     "google_id": str(it.get("id") or ""),
                     "name": str(it.get("summaryOverride") or it.get("summary") or it.get("id") or "Google Calendar"),
-                    "color": str(it.get("backgroundColor") or DEFAULT_COLOR),
+                    # Only a plain hex color: it ends up in a style attribute.
+                    "color": (str(it.get("backgroundColor") or "")
+                              if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(it.get("backgroundColor") or ""))
+                              else DEFAULT_COLOR),
                     "primary": bool(it.get("primary")),
                     "access_role": str(it.get("accessRole") or ""),
                     "writable": str(it.get("accessRole") or "") in ("owner", "writer"),
