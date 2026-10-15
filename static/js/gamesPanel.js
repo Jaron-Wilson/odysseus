@@ -186,8 +186,8 @@ function paintGrid(error) {
         <span class="games-cover-fallback" aria-hidden="true">${initials(a.name)}</span>
         <span class="games-badge">Running</span>
       </button>
+      <span class="games-name" title="${esc(a.name)}">${esc(a.name)}</span>
       <div class="games-card-foot">
-        <span class="games-name" title="${esc(a.name)}">${esc(a.name)}</span>
         <button type="button" class="games-play" data-play="${esc(a.name)}">Play</button>
         <button type="button" class="games-newtab" data-play-tab="${esc(a.name)}" title="Play in a new browser tab" aria-label="Play ${esc(a.name)} in a new browser tab">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>

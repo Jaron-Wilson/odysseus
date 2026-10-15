@@ -863,6 +863,7 @@ async def status(force: bool = False) -> Dict[str, Any]:
     out["sunshine"] = {"ok": False, "url": None, "error": None}
     out["running"] = None
     out["apps"] = 0
+    info: Dict[str, Any] = {}
     if not cred_src:
         out["sunshine"]["error"] = "Not set up: add the Sunshine username and password in Settings > Devices"
     elif not urls:
@@ -881,7 +882,9 @@ async def status(force: bool = False) -> Dict[str, Any]:
         except GamesError as e:
             out["sunshine"]["error"] = str(e)
     if out["pc"] is None and out["sunshine"]["ok"]:
-        out["pc"] = {"name": urlsplit(out["sunshine"]["url"]).hostname, "host": None, "online": True}
+        # Not a tailnet peer (a LAN address): Sunshine's own name for the PC.
+        out["pc"] = {"name": info.get("hostname") or urlsplit(out["sunshine"]["url"]).hostname,
+                     "host": None, "online": True}
     _status_cache.update(at=time.time(), data=out)
     return out
 
