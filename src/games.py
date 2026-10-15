@@ -192,7 +192,9 @@ def _http_url(url: str, what: str) -> str:
     return url
 
 
-_WIN_PATH_RE = re.compile(r"^[A-Za-z]:\\[^\"'`$;|&<>\r\n\x00]*$")
+# Windows paths go into PowerShell as single-quoted literals (_ps doubles any
+# quote), so an apostrophe is fine; the rest is refused anyway.
+_WIN_PATH_RE = re.compile(r"^[A-Za-z]:\\[^\"`$;|&<>\r\n\x00]*$")
 _HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 
 
