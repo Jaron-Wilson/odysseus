@@ -38,7 +38,8 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
-      if (tab === 'devices') { window.devicesSettings?.load(); window.gamesSettings?.load(); }
+      if (tab === 'devices') window.devicesSettings?.load();
+      if (tab === 'devices') window.gamesSettings?.load();
       if (tab === 'calls') window.devicesSettings?.loadCalls?.();
       if (tab === 'email') window.mailListenerSettings?.load();
     });

@@ -165,7 +165,8 @@ async def _launch(args) -> str:
     note = ""
     if run and run.get("name") and run["name"] != app["name"]:
         note = f"\n{run['name']} is running now; opening the link asks Moonlight to switch, or use game_stop first."
-    return (f"[Play {app['name']}]({link}) opens the Games page and starts the stream in Moonlight Web, "
+    label = app["name"].replace("[", "(").replace("]", ")")       # keep the Markdown link whole
+    return (f"[Play {label}]({link}) opens the Games page and starts the stream in Moonlight Web, "
             f"which launches {app['name']} on the PC. Nothing starts until the user opens it: Sunshine "
             f"only launches a game for a Moonlight client that is streaming.{note}\n"
             f"Moonlight Web itself: {st.get('moonlight_url') or '/play/'}")
