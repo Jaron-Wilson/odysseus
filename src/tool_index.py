@@ -169,6 +169,9 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
 # pulled in by src/agent_loop.py when a message mentions the Company.
 from src.agent_tools.company_chat_tools import TOOL_DESCRIPTIONS as _COMPANY_CHAT_DESCRIPTIONS  # noqa: E402
 BUILTIN_TOOL_DESCRIPTIONS.update(_COMPANY_CHAT_DESCRIPTIONS)
+# Game streaming from the PC (src/agent_tools/game_tools.py).
+from src.agent_tools.game_tools import TOOL_DESCRIPTIONS as _GAME_DESCRIPTIONS  # noqa: E402
+BUILTIN_TOOL_DESCRIPTIONS.update(_GAME_DESCRIPTIONS)
 
 
 class ToolIndex:
@@ -422,6 +425,10 @@ class ToolIndex:
                    "release notes", "merged pr", "merged prs", "pull request", "pull requests",
                    "pr #", "deployed yet", "is it live", "new features", "latest changes"}):
             {"whats_new"},
+        # Game streaming from the PC (src/agent_tools/game_tools.py).
+        frozenset({"game", "games", "my games", "steam", "sunshine", "moonlight", "gaming",
+                   "game streaming", "stream a game", "big picture", "gaming pc"}):
+            {"games_list", "game_status", "game_launch", "game_stop", "game_sync_steam"},
         # Shopping means looking things up on the web.
         frozenset({"amazon", "buy", "shop", "shopping", "product", "products",
                    "price", "prices", "order", "deal", "deals"}):
