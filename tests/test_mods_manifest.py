@@ -90,3 +90,30 @@ def test_template_manifest_is_valid():
     assert mf.load(tpl)["id"] == "my-mod"
     with open(os.path.join(tpl, "odysseus-mod.json")) as f:
         assert json.load(f)["runtime"]["command"][0] == "python"
+
+
+def test_scaffold_makes_a_working_mod(tmp_path):
+    import subprocess
+    import sys
+    from src.mods import scaffold
+    out = scaffold.create(str(tmp_path / "garage"), "garage-door", "Garage Door", "Opens the garage.")
+    folder = out["folder"]
+    m = mf.load(folder)
+    assert m["id"] == "garage-door" and m["name"] == "Garage Door"
+    assert m["runtime"]["command"] == ["python", "-m", "garage_door"]
+    assert os.path.isfile(os.path.join(folder, "garage_door", "app.py"))
+    assert os.path.isfile(os.path.join(folder, "tests", "test_garage_door.py"))
+    assert os.path.isfile(os.path.join(folder, ".claude", "skills", "new-mod", "SKILL.md"))
+    for root, _d, files in os.walk(folder):
+        for fn in files:
+            if fn.endswith((".py", ".json")) and "odysseus_mod" not in root:
+                with open(os.path.join(root, fn), encoding="utf-8") as f:
+                    text = f.read()
+                assert "my-mod" not in text and "my_mod" not in text, fn
+    with pytest.raises(ValueError):
+        scaffold.create(folder, "garage-door")
+    with pytest.raises(ValueError):
+        scaffold.create(str(tmp_path / "bad"), "Bad_Id")
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"],
+                       cwd=folder, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]

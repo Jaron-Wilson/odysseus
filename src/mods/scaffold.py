@@ -55,6 +55,8 @@ def create(folder: str, mod_id: str, name: str = "", description: str = "") -> D
             if new != text:
                 with open(p, "w", encoding="utf-8") as f:
                     f.write(new)
+            if "my_mod" in fn and py_name != "my_mod":
+                os.replace(p, os.path.join(root, fn.replace("my_mod", py_name)))
     # The package folder is named after the mod.
     pkg = os.path.join(folder, "my_mod")
     if os.path.isdir(pkg) and py_name != "my_mod":

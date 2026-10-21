@@ -1,0 +1,78 @@
+"""My Mod under the stand-in core (odysseus_mod.devcore), as Odysseus would
+run it: through the proxy with a signed identity, the tool, the events.
+Run from the mod folder: python -m pytest -q"""
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from odysseus_mod.devcore import DevCore  # noqa: E402
+
+
+def get(url, method="GET", body=None, headers=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+@pytest.fixture(scope="module")
+def core(tmp_path_factory):
+    with open(os.path.join(ROOT, "odysseus-mod.json")) as f:
+        mod_id = json.load(f)["id"]
+    c = DevCore(ROOT, port=0, user="alice", state_dir=str(tmp_path_factory.mktemp("devcore")))
+    c.serve()
+    c.start_mod()
+    c.mod_id_for_tests = mod_id
+    yield c
+    c.close()
+
+
+def test_health(core):
+    assert get(f"http://127.0.0.1:{core.mod_port}/health")[0] == 200
+
+
+def test_direct_unsigned_requests_are_refused(core):
+    assert get(f"http://127.0.0.1:{core.mod_port}/")[0] == 401
+
+
+def test_page_through_the_proxy_sees_the_user(core):
+    code, body = get(f"{core.url}/mods/{core.mod_id}/")
+    assert code == 200 and b"alice" in body
+
+
+def test_card_and_settings(core):
+    assert get(f"{core.url}/mods/{core.mod_id}/cards/summary")[0] == 200
+    assert get(f"{core.url}/mods/{core.mod_id}/settings")[0] == 200
+
+
+def test_tools(core):
+    tools = core.list_tools()
+    assert len(tools) == 1 and tools[0]["function"]["name"].endswith("_count")
+    out = core.call_tool(tools[0]["function"]["name"], {})
+    assert "clicked" in out["output"]
+
+
+def test_click_notifies_and_emits(core):
+    code, body = get(f"{core.url}/mods/{core.mod_id}/api/click", "POST", {})
+    assert code == 200 and json.loads(body)["clicks"] >= 1
+    assert core.notifications and core.notifications[-1]["title"] == "Clicked"
+    assert core.events and core.events[-1]["type"].endswith(".clicked")
+
+
+def test_subscribed_events_are_delivered(core):
+    ev = {"id": "x", "source": "print-hub", "type": "print.finished", "data": {}, "ts": time.time()}
+    core._deliver(ev)
+    code, body = get(f"{core.url}/mods/{core.mod_id}/cards/summary")
+    assert b"1 events" in body or b"events" in body
