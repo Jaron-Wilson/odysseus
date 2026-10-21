@@ -203,7 +203,9 @@ are scoped to its path (cookie names starting `odysseus` are dropped). Every res
 carry no Odysseus session. So pages load under a **frame URL**,
 `/mods/<id>/~<frame token>/<path>`, where the token (HMAC of mod, user and expiry, 12 hours) is
 what authenticates the page's requests. A signed-in browser that opens `/mods/<id>/...` directly
-is redirected to its frame URL. Mod pages must therefore use **relative URLs**.
+is redirected to its frame URL. Mod pages must therefore use **relative URLs**. Because the page's
+origin is opaque, its own `fetch()` calls are CORS requests with `Origin: null`; under a valid frame
+token the proxy answers their preflight and allows `Origin: null` (and only then).
 
 Only the user's own mods are reachable: a mod with access `admins` is for admins, `users` for every
 signed-in user. A disabled mod answers 404, and a lazy one is started on first use.
