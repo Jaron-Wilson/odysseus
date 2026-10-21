@@ -731,6 +731,10 @@ app.include_router(setup_adsb_routes())
 # PC game streaming: the Games page (Sunshine on the PC, Moonlight Web at /play/), admin only (routes/games_routes.py).
 from routes.games_routes import setup_games_routes
 app.include_router(setup_games_routes())
+# 3D print helper: upload an STL/3MF, a local model asks questions, deterministic fixes and a Bambu Studio
+# slice check on the PC, admin only (routes/print_routes.py, src/print_helper/).
+from routes.print_routes import setup_print_routes
+app.include_router(setup_print_routes())
 
 
 @app.get("/api/version")

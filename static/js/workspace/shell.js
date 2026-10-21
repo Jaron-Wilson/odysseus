@@ -44,6 +44,7 @@ const ICONS = {
   agents: svg('<rect x="4" y="7" width="16" height="12" rx="2"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/>'),
   company: svg('<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M5 17v-3h14v3"/>'),
   adsb: svg('<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>'),
+  print: svg('<path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/>'),
   games: svg('<rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="15.5" cy="11.5" r=".9"/><circle cx="17.5" cy="13.8" r=".9"/>'),
   sessions: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 8l3 2-3 2M13 12h3"/>'),
   devops: svg('<path d="M3 12h4l3-8 4 16 3-8h4"/>'),
@@ -91,6 +92,7 @@ const TOOLS = [
   { key: 'usage', label: 'Usage', icon: 'devops', sel: '.bg-panel-backdrop:has(> .us-panel)', win: '.bg-panel', open: '#tool-usage-btn' },
   { key: 'claude-sessions', label: 'Claude sessions', icon: 'sessions', sel: '.bg-panel-backdrop:has(> .cs-panel)', win: '.bg-panel', open: '#tool-claude-sessions-btn' },
   { key: 'adsb', label: 'ADS-B receiver', icon: 'adsb', sel: '.bg-panel-backdrop:has(> .adsb-panel)', win: '.bg-panel', open: '#tool-adsb-btn' },
+  { key: 'print', label: '3D print helper', icon: 'print', sel: '.bg-panel-backdrop:has(> .print-panel)', win: '.bg-panel', open: '#tool-print-btn' },
   { key: 'games', label: 'Games', icon: 'games', sel: '.bg-panel-backdrop:has(> .games-panel)', win: '.bg-panel', open: '#tool-games-btn' },
   { key: 'company', label: 'Company', icon: 'company', sel: '.bg-panel-backdrop:has(> .company-panel)', win: '.bg-panel', open: '#tool-company-btn' },
   { key: 'whats-new', label: "What's new", icon: 'news', sel: '.wn-backdrop', win: '.bg-panel', open: '#tool-whats-new-btn' },
@@ -98,7 +100,7 @@ const TOOLS = [
   { key: 'code', label: 'Code', icon: 'code', sel: '.ide-backdrop', win: '.bg-panel', open: '#tool-code-btn',
     title: (el) => { const n = el.querySelector('.ide-project-name')?.textContent.trim();
       return n && n !== 'Pick a project' ? 'Code: ' + n : 'Code'; } },
-  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel)):not(:has(> .games-panel)):not(:has(> .plans-panel)):not(:has(> .company-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
+  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel)):not(:has(> .games-panel)):not(:has(> .print-panel)):not(:has(> .plans-panel)):not(:has(> .company-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
 ];
 const TOOL_BY_KEY = Object.fromEntries(TOOLS.map(t => [t.key, t]));
 // An opened email is its own window (#email-reader-<n>) and its own tab.

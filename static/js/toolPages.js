@@ -60,6 +60,10 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "compare", "label": "Compare", "group": "create", "open": "#tool-compare-btn", "tab": null,
       "desc": "Ask several models the same thing side by side",
       "aliases": ["compare models", "side by side", "arena"] },
+    { "key": "print", "label": "3D print helper", "group": "create", "open": "#tool-print-btn", "tab": "print", "adminOnly": true,
+      "desc": "Upload an STL or 3MF and make it print without supports",
+      "aliases": ["3d print", "3d printing", "print helper", "stl", "3mf", "bambu", "slicer", "supports",
+                  "make it printable", "printer"] },
 
     { "key": "code", "label": "Code", "group": "build", "open": "#tool-code-btn", "tab": "code", "adminOnly": true,
       "desc": "VS Code in the browser",
