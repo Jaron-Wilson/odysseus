@@ -19,6 +19,12 @@ pypdf
 beautifulsoup4
 charset-normalizer
 numpy
+# 3D print helper (src/print_helper/): manifold3d does the solid geometry (plane
+# cuts, pin holes, fills, 45 degree roofs, slices), matplotlib draws the renders
+# with the overhangs in red. Both run on CPUs without AVX (checked on this
+# server's KVM guest). The page says what to install if they are missing.
+manifold3d
+matplotlib
 # Vector store + local embeddings for RAG, semantic memory, and tool
 # selection. Used on core agent paths, so installed by default — the app
 # still degrades to keyword fallback if they're ever missing.

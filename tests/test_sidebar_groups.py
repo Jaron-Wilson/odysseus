@@ -41,7 +41,7 @@ _TAXONOMY = json.loads(re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-p
 _TOOL_IDS = ["tool-memory-btn", "tool-calendar-btn", "tool-compare-btn", "tool-cookbook-btn", "tool-research-btn",
              "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-plans-btn", "tool-tasks-btn", "tool-bg-btn", "tool-company-btn",
              "tool-devops-btn", "tool-code-btn", "tool-browser-btn", "tool-devices-btn", "tool-terminal-btn",
-             "tool-claude-sessions-btn", "tool-adsb-btn", "tool-games-btn",
+             "tool-claude-sessions-btn", "tool-adsb-btn", "tool-games-btn", "tool-print-btn",
              "tool-odysseus-dev-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]
 
 
@@ -222,7 +222,7 @@ def test_the_groups_render_in_every_design(make_page, design):
     assert [g["label"] for g in gs] == ["Organize", "Create & research", "Build", "System"]
     assert [g["items"] for g in gs] == [
         ["tool-calendar-btn", "tool-tasks-btn", "tool-notes-btn", "tool-plans-btn", "tool-memory-btn"],
-        ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn"],
+        ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn", "tool-print-btn"],
         ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-company-btn", "tool-claude-sessions-btn", "tool-devops-btn",
          "tool-odysseus-dev-btn"],
         ["tool-devices-btn", "tool-adsb-btn", "tool-games-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]]
@@ -316,7 +316,7 @@ def test_the_new_tab_menu_lists_the_tools_in_the_same_groups(make_page):
     assert menu["top"] == ["New chat", "Inbox", "Settings"]
     assert menu["groups"] == [
         ["Organize", ["Calendar", "Tasks", "Notes", "Plans", "Brain"]],
-        ["Create & research", ["Library", "Gallery", "Deep Research", "Compare"]],
+        ["Create & research", ["Library", "Gallery", "Deep Research", "Compare", "3D print helper"]],
         ["Build", ["Code", "Terminal", "Browser", "Background", "Company", "Claude sessions", "DevOps", "Odysseus dev"]],
         ["System", ["Devices", "ADS-B receiver", "Games", "Cookbook", "Theme", "Usage", "What's new"]]]
     pg.click(".ws-menu-group button:has-text('Devices')")
@@ -328,7 +328,7 @@ def test_the_new_tab_menu_leaves_out_what_a_non_admin_cant_open(make_page):
     pg = make_page("workspace", admin=False)
     pg.click(".ws-new-btn")
     names = pg.evaluate("[...document.querySelectorAll('.ws-menu button')].map(b => b.textContent.trim())")
-    for gone in ("Code", "Terminal", "DevOps", "Odysseus dev", "Devices", "ADS-B receiver", "Games"):
+    for gone in ("Code", "Terminal", "DevOps", "Odysseus dev", "Devices", "ADS-B receiver", "Games", "3D print helper"):
         assert gone not in names
     assert "Browser" in names and "Calendar" in names
 
@@ -395,7 +395,7 @@ def test_ctrl_k_lists_pages_above_settings_and_enter_opens_it(make_page):
     ("claude sessions", "tool-claude-sessions-btn"), ("company", "tool-company-btn"), ("org chart", "tool-company-btn"),
     ("usage", "tool-usage-btn"), ("cost", "tool-usage-btn"),
     ("odysseus-dev", "tool-odysseus-dev-btn"), ("calendar", "tool-calendar-btn"), ("tasks", "tool-tasks-btn"),
-    ("compare", "tool-compare-btn"), ("research", "tool-research-btn"), ("theme", "tool-theme-btn"),
+    ("compare", "tool-compare-btn"), ("3d print", "tool-print-btn"), ("research", "tool-research-btn"), ("theme", "tool-theme-btn"),
     ("memories", "tool-memory-btn"), ("documents", "tool-library-btn"), ("email", "email-section-title"),
     ("sessions", "chats-library-btn"),
 ])
