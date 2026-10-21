@@ -23,8 +23,15 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
   - **Email** -- IMAP/SMTP inbox with AI triage built in: urgency reminders, auto-tag, auto-summary, auto-reply drafts, auto-spam.<br>　<sub>IMAP · SMTP · per-account routing · CalDAV-aware</sub>
   - **Notes & Tasks** -- Quick notes with reminders, a todo list, and scheduled tasks the agent can act on.<br>　<sub>note pings · checklist · cron-style tasks · ntfy / browser / email channels</sub>
   - **Calendar** -- Local-first calendar that syncs your Google calendars through your connected Google account, and CalDAV (Radicale / Nextcloud / Apple / Fastmail).<br>　<sub>Google Calendar sync · CalDAV pull · .ics import/export · per-calendar colors · agent-aware</sub>
+  - **Workspace** -- browser-style tabs for chats, tools and emails, split view, and a Home dashboard.<br>　<sub>Workspace · Studio · Classic interfaces · Ctrl+K searches everything · grouped sidebar</sub>
+  - **Coding agents** -- hand a coding task to a real agent with a filesystem, behind a plan you approve.<br>　<sub>OpenCode · Claude Code · Google Antigravity · native Markdown plans · live console · background runs</sub>
+  - **Company** -- an organization of AI agents (CEO, managers, reports) working an issue board, on any model.<br>　<sub>org chart · issues · approvals · budgets · @mentions in chat</sub>
+  - **Voice & phone** -- talk with the agent in a chat, over a phone line, by text message, or in a Google Meet.<br>　<sub>/call · local Whisper / Parakeet / Kokoro · ElevenLabs · Twilio · tailnet SIP · SMS gateway</sub>
+  - **Devices** -- link your computers and phone, and the agent can act on them.<br>　<sub>one-command enroll · desktop MCP · music bar + overlay · sound streaming · game streaming</sub>
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
-  - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · web search · presets · sessions · 2FA</sub>
+  - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · web search · presets · sessions · 2FA · terminal · VS Code · cloud browser</sub>
+
+See [Recently added](#recently-added) for what each of the newer features does and how to turn it on.
 
 ## Demo
 A full, hover-to-play tour lives on the landing page (`docs/index.html`).
@@ -137,7 +144,7 @@ ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
 **Docker GPU overlays.** CPU-only users can skip this section. Cookbook can
-only detect GPUs that Docker exposes to the container — if the host runtime or
+only detect GPUs that Docker exposes to the container - if the host runtime or
 device passthrough is not configured, Cookbook sees the iGPU, another card, or
 CPU instead of your intended GPU.
 
@@ -145,7 +152,7 @@ For NVIDIA, `scripts/check-docker-gpu.sh` diagnoses GPU passthrough and can
 optionally install the host runtime or update `.env`.
 
 ```bash
-# Read-only diagnostic (default — installs nothing, never edits .env):
+# Read-only diagnostic (default - installs nothing, never edits .env):
 scripts/check-docker-gpu.sh
 
 # Print OS-specific install commands without running them:
@@ -157,7 +164,7 @@ scripts/check-docker-gpu.sh --install-nvidia-toolkit
 # Write COMPOSE_FILE to .env (only when GPU passthrough is confirmed working):
 scripts/check-docker-gpu.sh --enable-nvidia-overlay
 
-# Full assisted setup — install toolkit, then enable overlay if passthrough works:
+# Full assisted setup - install toolkit, then enable overlay if passthrough works:
 scripts/check-docker-gpu.sh --install-nvidia-toolkit --enable-nvidia-overlay
 ```
 
@@ -198,9 +205,9 @@ or multiple `-f` overlays. CLI users should keep using the `COMPOSE_FILE`
 overlay workflow above. For stack UIs, point the stack at one of the standalone
 files instead, which bundle the base stack plus the GPU settings:
 
-- `docker-compose.gpu-nvidia.yml` — still requires the NVIDIA Container Toolkit
+- `docker-compose.gpu-nvidia.yml` - still requires the NVIDIA Container Toolkit
   on the host.
-- `docker-compose.gpu-amd.yml` — still requires host ROCm/kfd/DRI setup, the
+- `docker-compose.gpu-amd.yml` - still requires host ROCm/kfd/DRI setup, the
   `video`/`render` group membership, and `RENDER_GID` when needed.
 
 The base `docker-compose.yml` plus the `docker/gpu.*.yml` overlays remain the
@@ -217,7 +224,7 @@ docker compose exec odysseus sh -lc 'test -e /dev/kfd && test -d /dev/dri && ls 
 > container confirms Docker GPU access, but llama.cpp also needs `cudart` and
 > the CUDA Toolkit at runtime. If Cookbook logs show `Unable to find cudart
 > library`, `Could NOT find CUDAToolkit`, `CUDA Toolkit not found`, or
-> tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue —
+> tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue,
 > not a Docker passthrough failure. Re-install the serve engine via
 > **Cookbook → Dependencies** to get a CUDA-enabled build.
 >
@@ -292,7 +299,7 @@ email, calendar, deep research) runs fully native. For full **Cookbook** backgro
 model downloads and the agent shell tool, also install
 [Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`).
 Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Windows,
-[Ollama](https://ollama.com/download) is the easiest path — point Odysseus at
+[Ollama](https://ollama.com/download) is the easiest path - point Odysseus at
 `http://localhost:11434/v1` in Settings.
 
 Open `http://localhost:7000`, log in with the generated admin password,
@@ -329,9 +336,14 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 | Package | Feature unlocked |
 |---------|-----------------|
 | `faster-whisper` | Local speech-to-text (microphone -> text) via the "local" STT provider. |
+| `onnx-asr[cpu,hub]` | Local speech-to-text with NVIDIA Parakeet TDT 0.6B, the "Local: Parakeet" provider. |
+| `kokoro-onnx` | Local text-to-speech with Kokoro-82M, the "Local: Kokoro" provider (no torch). |
+| `miniaudio` | Phone calls: decodes MP3 from a text-to-speech engine that ignores the request for WAV, on machines without ffmpeg. |
 | `ddgs` | DuckDuckGo as a search provider option. |
 | `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
 | `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
+
+Install them all with `pip install -r requirements-optional.txt`, or only the lines you need. Speech models themselves download from **Settings > AI Defaults > Voice call** into the data directory.
 
 ### Gmail and Google account changes
 With a Gmail mailbox or a Google product connected, the assistant asks in the chat before it
@@ -344,6 +356,123 @@ Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
 and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox
 passwords will fail. See [docs/email-outlook.md](docs/email-outlook.md) for the
 current limitation and the planned integration direction.
+
+## Recently added
+
+Everything below is on `dev`. Most of it lives in the sidebar, which is split
+into four groups (**Organize**, **Create & research**, **Build**, **System**),
+and every page can also be reached with **Ctrl+K** or by asking the agent to
+"take me to" it. Admin-only pages are hidden from other users. **System > What's
+new** lists every merged PR, says whether the running server has loaded it yet,
+and lets you open a chat to ask about one.
+
+<details>
+<summary>Interface: Workspace, Studio and Classic</summary>
+
+- **Settings > Appearance > Interface** picks the layout, and the choice syncs across your devices:
+  - **Workspace** (the default): browser-style tabs across the top. Home, every chat, every tool and each opened email is a tab you can switch to, close, reorder and put side by side in **split view**. **Home** is a dashboard with a composer that starts a new chat, plus Today, Needs you (plan approvals, unanswered mail), Agents, Recent chats and Pinned notes.
+  - **Studio**: a cleaner, more professional restyle of the classic layout (Inter type, a spacing scale, one accent color, matching dark and light palettes).
+  - **Classic**: the original look.
+- **Ctrl+K** searches everything in one box: pages, settings, chats, library, notes, tasks, calendar, Brain, gallery, research, email and skills. **Settings > Go to...** jumps straight to a setting.
+- A small **PR #N** badge by the settings cog shows the latest merge the server is running. For admins it also offers a one-click **Deploy** when new merges are waiting on `dev` (it refuses unless the checkout is a clean `dev`, compiles changed files first, and restarts without losing running replies).
+
+</details>
+
+<details>
+<summary>Chat: threads, plans, queueing and voice</summary>
+
+- **Threads**: a Threads button in each chat's header. `/branch [title]` (or "Branch from here" in a message's menu) copies the conversation so far into its own thread. `/subagent <task>` (or "subagent this out") starts a subagent that runs in the background while you keep chatting, and posts its report back to the parent chat. Limits are set with `ODYSSEUS_SUBAGENT_MAX_CONCURRENT`, `ODYSSEUS_SUBAGENT_MAX_DEPTH` and `ODYSSEUS_THREAD_MAX_DEPTH`.
+- **Plans** (**Organize > Plans**, `#plans`): your own Markdown plans, stored as plain `.md` files per user, with a live preview, task checkboxes and autosave. No model is involved. `/plan <name>` puts a plan's text in the message box. When the agent needs a plan for a coding task, it writes it here too (`propose_plan`) and you **Approve**, **Deny** or **Edit** it in the chat. See [docs/plans.md](docs/plans.md).
+- Messages typed while a reply is running are **queued** instead of stopping it, and **Stop** always stops. A reply keeps running and saving if you leave or refresh the page, and an open chat on another device follows along.
+- **Needs to know** notes per chat, **Tidy** (notes first, then prune), and **Use as reference** for pulling another chat in.
+- **Voice call**: the phone button by the composer, or `/call`. Talk hands-free with the agent in the open chat, cut in while it speaks, minimize the call to a pill, or move it to another device. Engines are picked in **Settings > AI Defaults > Voice call**:
+  - speech to text: the browser, **Local: Whisper** (faster-whisper) or **Local: Parakeet** (onnx-asr);
+  - text to speech: the browser, **Local: Kokoro** (kokoro-onnx, no torch), any OpenAI-compatible endpoint, or **ElevenLabs** (API key stored encrypted, with a credit guard that falls back to a local or browser voice).
+  - Local models download from that page into the data directory. The packages are in `requirements-optional.txt` (see [Optional Dependencies](#optional-dependencies)).
+- **Music and video in the chat**: YouTube links, audio and video links get a player under the message.
+
+</details>
+
+<details>
+<summary>Coding agents and Claude Code</summary>
+
+- The agent's `claude_code` tool hands a coding task to an agent with a real filesystem. Engines: **OpenCode** (the default, works with local models on any Odysseus server), **Claude Code**, and **Google Antigravity** (the `agy` CLI). Each engine can be switched on or off per chat.
+- Writing code always goes through an approved plan. Runs are detached: they show a live console, can be sent to the background (**Build > Background**) or brought back into the chat, survive a server restart, and ping their chat when they finish. Run limits (turns, budget, or no limit) can be set per run.
+- Each chat's Claude Code session is kept as a real background agent, so it shows up in `claude agents` (turn off with `ODYSSEUS_CLAUDE_AGENTS=0`).
+- **Build > Claude sessions** (admin): read the Claude Code sessions on this host, live ones first, with a chat-style transcript and a copyable resume command.
+- **`/claude attach <id>`** links one of those sessions to a chat so the agent carries it on. **`/claude direct`** then sends every message in that chat straight to the attached session, so the chat becomes a remote control for it (`/claude direct off` or `/claude detach` to end).
+- **Building Odysseus from Odysseus**: feature requests are made in a separate copy of the repo, on a branch from `origin/dev`, and opened as a pull request. Nothing is merged or pushed to `dev` by the agent.
+- **Sign in with ChatGPT** (**Settings > Add Models**) uses OpenAI models on a ChatGPT plan with no API key. Each model endpoint in Settings also has a tool-calling override (Auto, On, Off) for local models whose support is guessed wrong.
+
+</details>
+
+<details>
+<summary>Company: an organization of AI agents</summary>
+
+- **Build > Company** (`#company`): companies with goals, projects, an org chart (one CEO, managers and reports), an issue board, an activity feed and approvals. Every agent runs on any model Odysseus can reach, set per agent.
+- Assigning an issue, an `@mention` or **Wake now** starts a run. Agents check out issues, comment, open sub-issues and ask for approval of plans, strategies and hires. Approving a plan lets you pick the model, the max steps and the max cost.
+- Monthly **budgets** per agent and per company warn, then pause the agent and ask for an override. Local and free models are never blocked.
+- In any chat, `@` mentions a company, an agent or an issue (`JAR-1` style), and the chat model gets a fresh snapshot of it. Chat tools can list, create and update issues, wake agents and decide approvals.
+- See [docs/company.md](docs/company.md).
+
+</details>
+
+<details>
+<summary>Usage and costs</summary>
+
+- **System > Usage**: this month's tokens and spend by model, provider and source (chat, tasks, subagents, Company, text to speech). Costs are priced on the server. Local endpoints count as free, subscription providers (ChatGPT plan, Copilot) count tokens at $0, and admins can override the price per endpoint.
+- **Build > DevOps**: what is running now, model speed (tok/s, first-token wait), coder reliability, and read-only transcripts of each coder run.
+
+</details>
+
+<details>
+<summary>Build tools: Terminal, VS Code and the cloud browser</summary>
+
+- **Build > Terminal** (admin): a real login shell on a PTY over an admin-only WebSocket, with several sessions per user that survive a reload. Copy and paste work like Windows Terminal: **Ctrl+C** copies the highlighted text (and still interrupts when nothing is selected), **Ctrl+V** / **Shift+Insert** paste as a bracketed paste, and right-click (or a long press) opens a Copy / Paste / Select all menu. Copy on select is an option in **Settings > System > Terminal**.
+- **Build > Code** (admin): VS Code in the browser at `/ide/`. Odysseus reverse-proxies a [code-server](https://github.com/coder/code-server) you already run on the host; set its address in Settings or with `ODYSSEUS_IDE_URL`.
+- **Build > Browser**: the agent's browser, which you can watch live and take over. It runs a real Chrome on a virtual display (Xvfb) when one is installed so site sign-ins work, and logins persist. `ODYSSEUS_BROWSER_EXECUTABLE` picks the browser, and `ODYSSEUS_CLOUD_BROWSER_HEADFUL=0` forces the old headless Chromium.
+
+</details>
+
+<details>
+<summary>Devices, music and games</summary>
+
+- **Settings > Devices** lists your computers and phones by machine, with Ping and push notifications (web push, no third-party app). **Add a device** makes a one-time code: one PowerShell or shell command (or a QR scan on a phone) installs the desktop MCP server and registers the machine. The scripts are in `tools/enroll/`.
+- Linked computers get **every Odysseus tool** (desktop MCP, music overlay, sound streaming). Settings > Devices says what each computer is missing and offers **Install** / **Update**.
+- The agent knows which device a message came from, works in the background by default, and only uses your screen when you ask. **Screen control** needs your approval, which is limited by time and by a number of actions, and Stop revokes it.
+- **Music bar**: control the music playing on one of your machines (art, controls, volume, lyrics) from the chat, listen in the browser, or pop it out as a frameless desktop overlay (`tools/music_overlay/`) that stays on top of games and shows the agent's messages with a reply box. A computer's sound can also be streamed to another over the tailnet.
+- **System > Games** (admin): play PC games in the browser through [Sunshine](https://github.com/LizardByte/Sunshine) on the PC and Moonlight Web served at `/play/`. Shows Sunshine's apps with covers, what is running, Stop and **Sync Steam games**, and the agent gets game tools. Set it up in **Settings > Devices > Game streaming**. See [docs/games.md](docs/games.md).
+- **System > ADS-B receiver** (admin): the status, aircraft list and live tar1090 map of an ADS-B feeder on your network. Set the receiver address on the page (or `ODYSSEUS_ADSB_URL`).
+
+</details>
+
+<details>
+<summary>Phone, SMS and Google Meet</summary>
+
+These cards live in **Settings > Calls & Meetings**.
+
+- **SMS gateway**: text Odysseus from your phone. An Android gateway phone (for example a Pixel) forwards incoming texts with SMS Forwarder to a secret URL, and replies go back through SMS Gateway for Android (or as a push notification). Only your own numbers are answered, and a Google Voice number works as a sender. Commands include `list`, `new [model]`, `chat <n>`, `models`, `model <n|name>`, `say <n> <text>`, `find`, `status` and `help`, and long answers are split into numbered texts. See [docs/sms-gateway.md](docs/sms-gateway.md).
+- **Phone calls**: a Twilio number streams the call to Odysseus and you talk to the agent like `/call`, or the agent calls you. See [docs/phone-calls.md](docs/phone-calls.md).
+- **Free SIP line**: call the agent from a softphone (Linphone, Zoiper) on any tailnet device, with no phone number. It is off by default, binds only to Tailscale addresses and uses SIP digest auth. See [docs/sip-line.md](docs/sip-line.md).
+- **Google Meet**: the voice agent joins a meeting as "Odysseus (AI)" by phone dial-in or through the cloud browser, then either talks with you or acts as a meeting assistant (transcribes, answers when named, posts notes at the end). It can also start or schedule a Meet from your Google account. See [docs/google-meet.md](docs/google-meet.md) for what Google currently allows.
+
+</details>
+
+<details>
+<summary>Google, calendar and email</summary>
+
+- **Settings > Google**: one Google connection (your own OAuth client) for Calendar, Drive, Docs, Sheets, Slides, Tasks and Contacts, switched on per product. The assistant asks in the chat before any write to your Google account or Gmail (see [Gmail and Google account changes](#gmail-and-google-account-changes) and [docs/google.md](docs/google.md)).
+- **Organize > Calendar** syncs Google Calendar both ways through that connection, including shared and family calendars (Calendar gear > Google Calendar).
+- **Inbound mail**: a Cloudflare Email Worker (`tools/mail-worker/`) keeps a copy of mail sent to your routed addresses and forwards it on, and Odysseus shows it in an **Inbound** inbox with **Ask AI about this**. Email windows can be sized to the chat column, and HTML emails show as designed.
+
+</details>
+
+<details>
+<summary>In review (not on dev yet)</summary>
+
+- **3D print helper** (PR #191): upload an STL or 3MF, see each part's overhangs and unsupported area, answer a few questions from a local model, and let deterministic code reorient, cut (with pin holes) and fill the model so it prints without supports. Each piece is then sliced with the Bambu Studio CLI on your Windows PC over SSH. Admin only. Once merged it needs `pip install -r requirements.txt` (new mesh packages) and the PC's address in the helper's settings.
+
+</details>
 
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
@@ -439,7 +568,8 @@ src/       llm_core, agent_loop, agent_tools, chat_processor, search/
 routes/    chat, session, document, memory, model … endpoints
 services/  docs, memory, search, hwfit (Cookbook) …
 static/    index.html + app.js + style.css + js/ (modular front-end)
-docs/      landing page (index.html) + preview clips
+docs/      landing page (index.html), preview clips, feature guides (*.md)
+tools/     enroll scripts, desktop MCP servers, music overlay, mail Worker
 ```
 
 ## Data
