@@ -33,12 +33,13 @@ const ICON = {
   rename: svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'),
   copy: svg('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>'),
   paste: svg('<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M9 11h6M9 15h4"/>'),
+  all: svg('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 10h8M8 14h5"/>'),
   clear: svg('<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>'),
   keys: svg('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),
 };
 
 // ── Prefs ────────────────────────────────────────────────────────────────
-let P = { fontSize: 14, keys: null, active: null };
+let P = { fontSize: 14, keys: null, active: null, copyOnSelect: false };
 try { P = Object.assign(P, JSON.parse(localStorage.getItem(LS_KEY)) || {}); } catch (_) { /* private mode */ }
 const savePrefs = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(P)); } catch (_) { /* private mode */ } };
 const keysShown = () => (P.keys == null ? (isTouch() || isPhone()) : !!P.keys);
@@ -343,6 +344,15 @@ function onKeyRow(e) {
 }
 
 // ── Copy / paste ─────────────────────────────────────────────────────────
+// Like Windows Terminal: Ctrl+C copies when something is selected (and
+// clears it, so the next Ctrl+C interrupts) and is ^C otherwise; Ctrl+V,
+// Ctrl+Shift+V, Shift+Insert and Cmd+V paste. Pasting from the keyboard goes
+// through the browser's own paste event, which xterm turns into a bracketed
+// paste when the shell asks for one, so a multi-line paste doesn't run line
+// by line. That needs no clipboard permission; only the Paste button and
+// menu item read the clipboard themselves.
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+
 function screenText(t) {
   const buf = t.term.buffer.active;
   const lines = [];
@@ -352,35 +362,169 @@ function screenText(t) {
   return lines.join('\n').replace(/\n+$/, '');
 }
 
-function flash(msg) {
+function flash(msg, ms = 1600) {
   const el = $('.term-status');
   if (!el) return;
   el.textContent = msg;
   clearTimeout(flash._t);
-  flash._t = setTimeout(paintStatus, 1600);
+  flash._t = setTimeout(paintStatus, ms);
 }
 
-async function copy() {
+// The old way, for when navigator.clipboard is missing or refuses: copy
+// from a hidden textarea. Works only while the key press or click still
+// counts as one.
+function execCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none';
+  const back = document.activeElement;
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  ta.remove();
+  back?.focus?.({ preventScroll: true });
+  return ok;
+}
+
+export async function copyText(text) {
+  if (!text) return false;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('no clipboard');
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_) {
+    return execCopy(text);
+  }
+}
+
+// Copy the selection, or the screen when nothing is selected.
+async function copy({ clear = false } = {}) {
   const t = _active;
   if (!t) return;
+  const sel = t.term.hasSelection();
   const text = t.term.getSelection() || screenText(t);
-  try {
-    await navigator.clipboard.writeText(text);
-    flash(t.term.hasSelection() ? 'Copied the selection' : 'Copied the screen');
-  } catch (_) {
-    // No clipboard access (http, or a phone that says no): show it to copy by hand.
-    showPaste(text, true);
-  }
+  if (clear) t.term.clearSelection();
+  if (await copyText(text)) flash(sel ? 'Copied the selection' : 'Copied the screen');
+  // No clipboard access at all (http, or a phone that says no): show it to copy by hand.
+  else showPaste(text, true);
 }
 
 async function paste() {
   const t = _active;
   if (!t) return;
   try {
+    if (!navigator.clipboard?.readText) throw new Error('no clipboard');
     const text = await navigator.clipboard.readText();
-    if (text) { t.term.paste(text); t.term.focus(); return; }
-  } catch (_) { /* fall back to the box */ }
+    if (text) t.term.paste(text);
+    else flash('The clipboard is empty');
+    t.term.focus();
+    return;
+  } catch (e) {
+    if (e && e.name === 'NotAllowedError') {
+      flash(`The browser blocked reading the clipboard. Use ${IS_MAC ? 'Cmd+V' : 'Ctrl+V'}, or paste below.`, 6000);
+    }
+  }
   showPaste('', false);
+}
+
+// Copy on select: off unless turned on in Settings, Terminal.
+function onSelect(t) {
+  if (!P.copyOnSelect || t !== _active) return;
+  clearTimeout(onSelect._t);
+  onSelect._t = setTimeout(() => {
+    const text = t.term.getSelection();
+    // Quietly: a selection that can't be copied isn't worth a box.
+    if (text) navigator.clipboard?.writeText(text).then(() => flash('Copied the selection'), () => {});
+  }, 150);
+}
+
+// Keyboard copy and paste. True when the key was one of them, so xterm
+// leaves it alone instead of sending it to the shell.
+export function clipboardKey(e, t) {
+  if (e.type !== 'keydown' || e.altKey) return false;
+  const k = e.code;
+  const ctrl = e.ctrlKey && !e.metaKey;
+  const cmd = e.metaKey && !e.ctrlKey;
+  // Ctrl+Shift+C, Ctrl+Insert, Cmd+C: copy (the screen, if nothing is selected).
+  if ((ctrl && e.shiftKey && k === 'KeyC') || (ctrl && !e.shiftKey && k === 'Insert')
+      || (cmd && !e.shiftKey && k === 'KeyC')) {
+    e.preventDefault();               // or Ctrl+Shift+C opens the browser's inspector
+    if (!(cmd && !t.term.hasSelection())) copy();
+    return true;
+  }
+  // Ctrl+C with a selection copies it; without one it is ^C, as ever. On a
+  // Mac, Ctrl+C always interrupts and Cmd+C copies.
+  if (ctrl && !e.shiftKey && k === 'KeyC' && !IS_MAC && t.term.hasSelection()) {
+    e.preventDefault();
+    copy({ clear: true });
+    return true;
+  }
+  // Ctrl+V, Ctrl+Shift+V, Shift+Insert, Cmd+V: let the browser paste into
+  // xterm's textarea (xterm would send Ctrl+V as ^V). On a Mac, Ctrl+V stays
+  // ^V for the shell.
+  if ((ctrl && k === 'KeyV' && (e.shiftKey || !IS_MAC)) || (cmd && !e.shiftKey && k === 'KeyV')
+      || (e.shiftKey && !e.ctrlKey && !e.metaKey && k === 'Insert')) {
+    return true;
+  }
+  return false;
+}
+
+// Right-click (or a long press on a phone): Copy, Paste, Select all.
+function closeMenu() {
+  document.querySelectorAll('.term-menu').forEach((m) => m.remove());
+  document.removeEventListener('pointerdown', menuAway, true);
+  document.removeEventListener('keydown', menuKey, true);
+  window.removeEventListener('blur', closeMenu);
+}
+function menuAway(e) { if (!e.target.closest('.term-menu')) closeMenu(); }
+function menuKey(e) {
+  if (e.key === 'Escape') {
+    e.stopPropagation(); e.preventDefault();
+    closeMenu();
+    _active?.term.focus();
+  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const bs = [...document.querySelectorAll('.term-menu button:not(:disabled)')];
+    const i = bs.indexOf(document.activeElement);
+    bs[(i + (e.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length]?.focus();
+    e.preventDefault();
+  }
+}
+
+function showMenu(t, x, y) {
+  closeMenu();
+  const items = [
+    { act: 'copy', icon: ICON.copy, label: 'Copy', keys: IS_MAC ? '⌘C' : 'Ctrl+C', off: !t.term.hasSelection() },
+    { act: 'paste', icon: ICON.paste, label: 'Paste', keys: IS_MAC ? '⌘V' : 'Ctrl+V' },
+    { act: 'all', icon: ICON.all, label: 'Select all' },
+  ];
+  const m = document.createElement('div');
+  m.className = 'term-menu' + (document.documentElement.classList.contains('ui-workspace') ? ' ws-menu' : '');
+  m.setAttribute('role', 'menu');
+  m.setAttribute('aria-label', 'Terminal');
+  m.innerHTML = items.map((it) => `<button type="button" role="menuitem" data-act="${it.act}"${it.off ? ' disabled' : ''}>`
+    + `${it.icon}<span>${it.label}</span>${it.keys ? `<kbd>${it.keys}</kbd>` : ''}</button>`).join('');
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = `${Math.max(6, Math.min(x, innerWidth - r.width - 6))}px`;
+  m.style.top = `${Math.max(6, Math.min(y, innerHeight - r.height - 6))}px`;
+  // Tapping it must not take the selection or the focus from the terminal.
+  m.addEventListener('pointerdown', (e) => e.preventDefault());
+  m.addEventListener('mousedown', (e) => e.preventDefault());
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-act]');
+    if (!b || b.disabled) return;
+    closeMenu();
+    if (!isTouch()) t.term.focus();
+    if (b.dataset.act === 'copy') copy();
+    else if (b.dataset.act === 'paste') paste();
+    else t.term.selectAll();
+  });
+  document.addEventListener('pointerdown', menuAway, true);
+  document.addEventListener('keydown', menuKey, true);
+  window.addEventListener('blur', closeMenu);
+  if (!isTouch()) m.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
 }
 
 function showPaste(text, forCopy) {
@@ -443,14 +587,15 @@ async function makeTab(info) {
   });
   term.onBinary((d) => send(t, Uint8Array.from(d, (c) => c.charCodeAt(0) & 255)));
   term.onResize(({ rows, cols }) => control(t, { type: 'resize', rows, cols }));
-  term.attachCustomKeyEventHandler((e) => {
-    if (e.type !== 'keydown' || !e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return true;
-    if (e.code === 'KeyC') { e.preventDefault(); copy(); return false; }
-    // Ctrl+Shift+V: leave it to the browser, whose paste event xterm takes.
-    if (e.code === 'KeyV') return false;
-    return true;
-  });
+  // Returning false leaves the key to the browser (copy and paste, above).
+  term.attachCustomKeyEventHandler((e) => !clipboardKey(e, t));
+  term.onSelectionChange(() => onSelect(t));
   el.addEventListener('click', () => term.focus());
+  el.addEventListener('contextmenu', (e) => {
+    if (e.shiftKey) return;            // Shift+right-click: the browser's own menu
+    e.preventDefault();
+    showMenu(t, e.clientX, e.clientY);
+  });
   el.hidden = true;
   _tabs.push(t);
   return t;
@@ -610,6 +755,7 @@ function toggleKeys() {
 export function close() {
   // Only the window: the shells keep running on the server and are
   // reattached next time (or ended after the idle grace period).
+  closeMenu();
   for (const t of _tabs) {
     t.disposed = true;
     clearTimeout(t.timer);
@@ -643,8 +789,8 @@ function build() {
       </div>
       <div class="term-bar" role="toolbar" aria-label="Terminal tools">
         <button type="button" data-act="rename" title="Rename this terminal">${ICON.rename}<span>Rename</span></button>
-        <button type="button" data-act="copy" title="Copy the selection, or the screen (Ctrl+Shift+C)">${ICON.copy}<span>Copy</span></button>
-        <button type="button" data-act="paste" title="Paste (Ctrl+Shift+V)">${ICON.paste}<span>Paste</span></button>
+        <button type="button" data-act="copy" title="${IS_MAC ? 'Copy the selection, or the screen (Cmd+C)' : 'Copy the selection, or the screen (Ctrl+C with a selection, or Ctrl+Shift+C)'}">${ICON.copy}<span>Copy</span></button>
+        <button type="button" data-act="paste" title="${IS_MAC ? 'Paste (Cmd+V)' : 'Paste (Ctrl+V or Ctrl+Shift+V)'}">${ICON.paste}<span>Paste</span></button>
         <button type="button" data-act="smaller" title="Smaller text" aria-label="Smaller text">A−</button>
         <button type="button" data-act="bigger" title="Bigger text" aria-label="Bigger text">A+</button>
         <button type="button" data-act="clear" title="Clear the screen and scrollback">${ICON.clear}<span>Clear</span></button>
@@ -791,6 +937,12 @@ function init() {
       })
       .then(fillSettings)
       .catch(() => {});
+  }
+  const cos = document.getElementById('terminal-copy-on-select');
+  if (cos && !cos.dataset.wired) {
+    cos.dataset.wired = '1';
+    cos.checked = !!P.copyOnSelect;
+    cos.addEventListener('change', () => { P.copyOnSelect = cos.checked; savePrefs(); });
   }
   if (location.hash === '#terminal') open();
   window.addEventListener('hashchange', () => { if (location.hash === '#terminal') open(); });

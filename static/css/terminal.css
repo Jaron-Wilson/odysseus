@@ -100,6 +100,28 @@
 }
 .term-paste-row button[hidden] { display: none; }
 
+/* Right-click menu: Copy, Paste, Select all. In the Workspace interface it
+   is also a .ws-menu, so it looks like the tab menus there. */
+.term-menu {
+  position: fixed; z-index: 1300; min-width: 190px; padding: 5px; box-sizing: border-box;
+  border-radius: 9px; background: var(--bg); color: var(--fg); font-size: 13px;
+  border: 1px solid color-mix(in srgb, var(--border, var(--fg)) 80%, transparent);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .35);
+}
+.term-menu button {
+  display: flex; align-items: center; gap: 9px; width: 100%; min-height: 32px; padding: 6px 10px;
+  box-sizing: border-box; border: 0; border-radius: 6px; background: none; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.term-menu button span { flex: 1; }
+.term-menu button svg { flex: none; opacity: .7; }
+.term-menu button:hover:not(:disabled),
+.term-menu button:focus-visible { background: color-mix(in srgb, var(--fg) 8%, transparent); outline: none; }
+.term-menu button:disabled,
+html.ui-workspace .term-menu.ws-menu button:disabled { opacity: .45; cursor: default; background: transparent; }
+.term-menu kbd { font: 11.5px ui-monospace, Menlo, Consolas, monospace; opacity: .55; }
+@media (pointer: coarse) { .term-menu button { min-height: 40px; } .term-menu kbd { display: none; } }
+
 /* The keys phone keyboards lack */
 .term-keys {
   display: flex; gap: 4px; padding: 5px 6px; flex: none; overflow-x: auto; scrollbar-width: none;

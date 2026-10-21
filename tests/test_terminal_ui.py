@@ -100,8 +100,10 @@ def browser():
         b.close()
 
 
-def _page(browser, width, height, touch=False):
+def _page(browser, width, height, touch=False, clipboard=None):
     ctx = browser.new_context(viewport={"width": width, "height": height}, has_touch=touch, is_mobile=touch)
+    if clipboard:
+        ctx.grant_permissions(clipboard, origin="https://example.test")
 
     calls = []
 
@@ -309,4 +311,190 @@ def test_session_tabs_new_rename_and_close(browser):
     assert ("DELETE", "/api/terminal/sessions/sess-2", None) in pg.api_calls
     assert pg.evaluate("document.querySelectorAll('.term-view:not([hidden])').length") == 1
     assert pg.inner_text(".term-tab.active .term-tab-label") == "Shell 1"
+    pg.context.close()
+
+
+# ── Copy and paste ──────────────────────────────────────────────────────────
+# Asked for 2026-10-20: "on odysseus i want to be able to copy and paste what
+# i have highlighted, on the odysseus web browser terminal".
+
+_RW = ["clipboard-read", "clipboard-write"]
+
+
+def _select_prompt(pg):
+    """Drag across the start of the first row, like a user highlighting it."""
+    box = pg.locator(".term-view:not([hidden]) .xterm-screen").bounding_box()
+    y = box["y"] + 8
+    pg.mouse.move(box["x"] + 2, y)
+    pg.mouse.down()
+    pg.mouse.move(box["x"] + 60, y, steps=4)
+    pg.mouse.move(box["x"] + 400, y, steps=4)
+    pg.mouse.up()
+    pg.wait_for_timeout(100)
+
+
+def _clipboard(pg):
+    return pg.evaluate("navigator.clipboard.readText()")
+
+
+def _set_clipboard(pg, text):
+    pg.evaluate("(t) => navigator.clipboard.writeText(t)", text)
+
+
+def _status(pg):
+    return pg.inner_text(".term-status")
+
+
+def test_ctrl_c_copies_the_selection_and_interrupts_without_one(browser):
+    pg = _page(browser, 1440, 900, clipboard=_RW)
+    _open_terminal(pg)
+    _set_clipboard(pg, "old")
+    _select_prompt(pg)
+    before = len(pg.evaluate("typed()"))
+    pg.keyboard.press("Control+c")
+    pg.wait_for_timeout(150)
+    assert _clipboard(pg).startswith("jaron@box:~$")
+    assert pg.evaluate("typed()")[before:] == []           # not sent to the shell
+    assert "Copied the selection" in _status(pg)
+    # The selection is cleared, so the next Ctrl+C is ^C again.
+    pg.keyboard.press("Control+c")
+    pg.wait_for_timeout(100)
+    assert pg.evaluate("typed()")[before:] == ["\x03"]
+    pg.context.close()
+
+
+def test_ctrl_shift_c_and_ctrl_insert_copy(browser):
+    pg = _page(browser, 1440, 900, clipboard=_RW)
+    _open_terminal(pg)
+    _select_prompt(pg)
+    pg.keyboard.press("Control+Shift+C")
+    pg.wait_for_timeout(150)
+    assert _clipboard(pg).startswith("jaron@box:~$")
+    _set_clipboard(pg, "x")
+    pg.keyboard.press("Control+Insert")
+    pg.wait_for_timeout(150)
+    assert _clipboard(pg).startswith("jaron@box:~$")
+    assert pg.evaluate("typed()") == []
+    pg.context.close()
+
+
+def test_ctrl_v_and_ctrl_shift_v_paste_with_bracketed_paste(browser):
+    pg = _page(browser, 1440, 900, clipboard=_RW)
+    _open_terminal(pg)
+    pg.click(".term-view:not([hidden]) .xterm")
+    _set_clipboard(pg, "echo hi")
+    pg.keyboard.press("Control+v")
+    pg.wait_for_timeout(150)
+    assert "".join(pg.evaluate("typed()")) == "echo hi"     # not ^V
+    # The shell turns on bracketed paste (bash does): a multi-line paste is
+    # wrapped, so it doesn't run line by line.
+    pg.evaluate("sockets[0].recvText('\\x1b[?2004h')")
+    _set_clipboard(pg, "ls\nrm -rf x")
+    n = len(pg.evaluate("typed()"))
+    pg.keyboard.press("Control+Shift+V")
+    pg.wait_for_timeout(150)
+    assert "".join(pg.evaluate("typed()")[n:]) == "\x1b[200~ls\rrm -rf x\x1b[201~"
+    n = len(pg.evaluate("typed()"))
+    pg.keyboard.press("Shift+Insert")
+    pg.wait_for_timeout(150)
+    assert "".join(pg.evaluate("typed()")[n:]) == "\x1b[200~ls\rrm -rf x\x1b[201~"
+    pg.context.close()
+
+
+def test_other_keys_still_go_to_the_shell(browser):
+    pg = _page(browser, 1440, 900, clipboard=_RW)
+    _open_terminal(pg)
+    pg.click(".term-view:not([hidden]) .xterm")
+    for k in ("Control+l", "ArrowUp", "ArrowLeft", "Control+d", "Control+a"):
+        pg.keyboard.press(k)
+    pg.wait_for_timeout(100)
+    assert pg.evaluate("typed()") == ["\x0c", "\x1b[A", "\x1b[D", "\x04", "\x01"]
+    pg.context.close()
+
+
+def test_the_right_click_menu_copies_pastes_and_selects_all(browser):
+    pg = _page(browser, 1440, 900, clipboard=_RW)
+    _open_terminal(pg)
+    view = ".term-view:not([hidden]) .xterm-screen"
+    # Nothing selected: Copy is greyed out.
+    pg.click(view, button="right")
+    assert pg.is_visible(".term-menu")
+    assert pg.evaluate("[...document.querySelectorAll('.term-menu button')].map(b => b.textContent.trim())") == [
+        "CopyCtrl+C", "PasteCtrl+V", "Select all"]
+    assert pg.is_disabled(".term-menu [data-act=copy]")
+    pg.click(".term-menu [data-act=all]")
+    assert not pg.is_visible(".term-menu")
+    pg.click(view, button="right")
+    assert not pg.is_disabled(".term-menu [data-act=copy]")
+    pg.click(".term-menu [data-act=copy]")
+    pg.wait_for_timeout(150)
+    assert _clipboard(pg).startswith("jaron@box:~$")
+    # Paste reads the clipboard itself.
+    _set_clipboard(pg, "whoami")
+    pg.click(view, button="right")
+    pg.click(".term-menu [data-act=paste]")
+    pg.wait_for_timeout(150)
+    assert "".join(pg.evaluate("typed()")) == "whoami"
+    # Escape, or a click elsewhere, closes it.
+    pg.click(view, button="right")
+    pg.keyboard.press("Escape")
+    assert not pg.is_visible(".term-menu")
+    pg.click(view, button="right")
+    pg.mouse.click(5, 5)
+    assert not pg.is_visible(".term-menu")
+    pg.context.close()
+
+
+def test_a_blocked_clipboard_read_says_so_and_offers_the_box(browser):
+    pg = _page(browser, 1440, 900, clipboard=["clipboard-write"])
+    _open_terminal(pg)
+    pg.click(".term-bar [data-act=paste]")
+    pg.wait_for_function("() => !document.querySelector('.term-paste').hidden")
+    assert "blocked" in _status(pg)
+    pg.fill(".term-paste textarea", "uptime")
+    pg.click(".term-paste-go")
+    pg.wait_for_timeout(100)
+    assert "".join(pg.evaluate("typed()")) == "uptime"
+    # Ctrl+V still works: the browser's own paste needs no permission.
+    pg.evaluate("""() => { const ta = document.querySelector('.term-view:not([hidden]) textarea');
+        const dt = new DataTransfer(); dt.setData('text/plain', 'date');
+        ta.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); }""")
+    pg.wait_for_timeout(100)
+    assert "".join(pg.evaluate("typed()")) == "uptimedate"
+    pg.context.close()
+
+
+def test_copy_falls_back_when_the_clipboard_api_is_missing(browser):
+    pg = _page(browser, 1440, 900, clipboard=_RW)
+    _open_terminal(pg)
+    pg.evaluate("""() => { window.execCopied = null; const orig = document.execCommand.bind(document);
+        Object.defineProperty(navigator, 'clipboard', {value: undefined, configurable: true});
+        document.execCommand = (c) => { if (c === 'copy') { window.execCopied = document.activeElement.value; return true; }
+                                        return orig(c); }; }""")
+    _select_prompt(pg)
+    pg.keyboard.press("Control+c")
+    pg.wait_for_timeout(150)
+    assert pg.evaluate("window.execCopied").startswith("jaron@box:~$")
+    # And the terminal has its focus back.
+    assert pg.evaluate("document.activeElement === document.querySelector('.term-view:not([hidden]) textarea')")
+    pg.context.close()
+
+
+def test_copy_on_select_is_off_unless_turned_on(browser):
+    pg = _page(browser, 1440, 900, clipboard=_RW)
+    _open_terminal(pg)
+    _set_clipboard(pg, "old")
+    _select_prompt(pg)
+    pg.wait_for_timeout(300)
+    assert _clipboard(pg) == "old"
+    pg.evaluate("""() => { localStorage.setItem('odysseus.terminal.v1',
+        JSON.stringify({...JSON.parse(localStorage.getItem('odysseus.terminal.v1') || '{}'), copyOnSelect: true})); }""")
+    pg.reload()
+    pg.evaluate("import('/static/js/workspace/shell.js').then(() => import('/static/js/terminal.js'))")
+    pg.wait_for_function("() => document.getElementById('ws-tabbar')")
+    pg.wait_for_timeout(300)
+    _open_terminal(pg)
+    _select_prompt(pg)
+    pg.wait_for_timeout(400)
+    assert _clipboard(pg).startswith("jaron@box:~$")
     pg.context.close()
