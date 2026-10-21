@@ -1,0 +1,25 @@
+{
+  "manifest_version": 1,
+  "id": "hello-mod",
+  "name": "Hello Mod",
+  "version": "0.1.0",
+  "description": "The example mod: a page, a home card, one tool, a notification and an event.",
+  "author": "Jaron Wilson",
+  "license": "AGPL-3.0",
+  "min_core": "0.1",
+  "runtime": {
+    "type": "process",
+    "command": ["python", "-m", "hello_mod"],
+    "health": "/health",
+    "start": "lazy",
+    "idle_stop_minutes": 30
+  },
+  "permissions": ["notify", "events.emit", "events.subscribe", "storage"],
+  "ui": {
+    "tabs": [{ "id": "main", "title": "Hello", "icon": "hand", "path": "/" }],
+    "home_cards": [{ "id": "status", "title": "Hello Mod", "path": "/cards/status", "height": 150 }],
+    "settings_path": "/settings"
+  },
+  "tools": { "endpoint": "/mod/tools", "keywords": ["hello mod", "greet", "greeting", "wave"] },
+  "events": { "emits": ["hello.waved"], "subscribes": ["*/hello.*", "*/*.finished"] }
+}

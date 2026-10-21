@@ -894,6 +894,15 @@ def _strip_think_blocks(text: str) -> str:
 
 
 _LOW_SIGNAL_RE = re.compile(r"^[\W_]*$", re.UNICODE)
+# Social one-liners with nothing for tool retrieval to work on.
+_TRIVIAL_RE = re.compile(
+    r"^\s*(?:hi|hey|hello|yo|thanks|thank you|thx|ty|cool|nice|great|lol|ok thanks|okay thanks|"
+    r"good (?:morning|night|evening)|bye|goodbye|see you)(?:\s+\w+)?\s*[.!?]*\s*$", re.IGNORECASE)
+
+
+def _is_trivial_message(text: str) -> bool:
+    text = str(text or "")
+    return bool(_LOW_SIGNAL_RE.match(text)) or bool(_TRIVIAL_RE.match(text[:80]))
 _EXPLICIT_CONTINUATION_RE = re.compile(
     r"^\s*(?:"
     r"yes|y|yeah|yep|ok|okay|sure|do it|go ahead|continue|carry on|"
@@ -1682,9 +1691,15 @@ def _build_base_prompt(
         if integ_prompt:
             agent_prompt += "\n\n" + integ_prompt
 
-    # Inject MCP tool descriptions
+    # Inject MCP tool descriptions: with a selection, only the MCP tools that
+    # were picked (and a line naming the other servers), so the prompt never
+    # advertises a tool whose schema is not sent.
     if mcp_mgr:
-        mcp_desc = mcp_mgr.get_tool_descriptions_for_prompt(mcp_disabled_map or {})
+        try:
+            mcp_desc = mcp_mgr.get_tool_descriptions_for_prompt(
+                mcp_disabled_map or {}, only=set(relevant_tools) if relevant_tools is not None else None)
+        except TypeError:   # an MCP manager without the `only` parameter
+            mcp_desc = mcp_mgr.get_tool_descriptions_for_prompt(mcp_disabled_map or {})
         if mcp_desc:
             agent_prompt += mcp_desc
 
@@ -2426,17 +2441,28 @@ async def stream_agent_loop(
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
-    # Set when retrieval was skipped rather than run. The MCP schemas must
-    # still go out in that case: the prompt lists every connected MCP tool by
-    # name whatever retrieval decides, so dropping the schemas leaves the
-    # model able to name a tool and unable to call it.
-    _skipped_retrieval = False
-    if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
+    # A message with no domain words ("hows my 3d print doing?") used to skip
+    # retrieval and send every MCP tool: 280 schemas, about 134k tokens, for
+    # that one line on 2026-10-21. It goes through retrieval like any other
+    # message now, and the prompt lists only the MCP tools that were picked
+    # (_build_base_prompt). Only a message with nothing to retrieve on (empty,
+    # punctuation, "thanks") gets the always-available tools alone.
+    if not guide_only and not _relevant_tools and _is_trivial_message(_last_user) \
+            and not _intent.get("continuation"):
         from src.tool_index import ALWAYS_AVAILABLE
         _relevant_tools = set(ALWAYS_AVAILABLE)
-        _skipped_retrieval = True
-        logger.info("[tool-rag] Low-signal agent message; skipping retrieval, "
-                    "keeping always-available tools plus all MCP tools")
+        logger.info("[tool-rag] Trivial agent message; always-available tools only")
+    elif not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
+        logger.info("[tool-rag] Low-signal agent message; using tool retrieval")
+    # Short status questions never start a Deep Research job (src/research_gate.py).
+    if not guide_only:
+        try:
+            from src import research_gate
+            _ctx = (_retrieval_query + "\n" + _previous_reply_text(messages, 600)) if _intent.get("continuation") else ""
+            if not research_gate.allowed(_last_user, _ctx):
+                disabled_tools.add("trigger_research")
+        except Exception as _e:
+            logger.debug("research gate skipped: %s", _e)
     if not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
@@ -2453,6 +2479,14 @@ async def stream_agent_loop(
                             "[tool-rag] MCP tool indexing exceeded %.1fs; continuing without reindex",
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
+                # Installed mods' tools (src/mods/tools.py) are retrievable too.
+                try:
+                    from src.mods import tools as _mod_tools_ix
+                    await asyncio.wait_for(asyncio.to_thread(
+                        tool_idx.index_extra_tools, "mod", _mod_tools_ix.index_docs(), _mod_tools_ix.generation()),
+                        timeout=_TOOL_SELECTION_TIMEOUT_SECONDS)
+                except Exception as _e:
+                    logger.debug("[tool-rag] mod tool indexing skipped: %s", _e)
                 if _retrieval_query:
                     try:
                         _relevant_tools = await asyncio.wait_for(
@@ -2540,6 +2574,21 @@ async def stream_agent_loop(
     # or what keywords were in the latest user message.
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
+
+    # Tools of installed mods (src/mods/tools.py): only the ones this message
+    # is about (the mod's keywords, a tool's own, or retrieval), never all.
+    _mod_tool_schemas: List[Dict] = []
+    if _relevant_tools is not None and not guide_only and not _company_run:
+        try:
+            from src.mods import tools as _mod_tools
+            _mod_names = [n for n in _mod_tools.select(_retrieval_query, owner, set(_relevant_tools))
+                          if n not in disabled_tools]
+            _relevant_tools = set(_relevant_tools) | set(_mod_names)
+            _mod_tool_schemas = _mod_tools.schemas(_mod_names, owner)
+            if _mod_names:
+                logger.info("[tool-rag] mod tools for this message: %s", _mod_names)
+        except Exception as _e:
+            logger.debug("mod tool selection skipped: %s", _e)
 
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
@@ -2641,6 +2690,10 @@ async def stream_agent_loop(
     # Derived once per turn: the connected servers cannot change mid-turn, and
     # the local-model gate below is re-evaluated every round.
     _mcp_dynamic_keywords = _mcp_keywords_from_schemas(mcp_schemas)
+    if _mod_tool_schemas and messages and messages[0].get("role") == "system":
+        from src.mods import tools as _mod_tools
+        messages[0]["content"] = (messages[0].get("content") or "") + _mod_tools.prompt_lines(
+            [s["function"]["name"] for s in _mod_tool_schemas], owner)
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
         # every write path except shell; this directive is what keeps the
@@ -2911,14 +2964,11 @@ async def stream_agent_loop(
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
-                # Retrieval never got the chance to pick MCP tools on the
-                # skip path, so filtering by its result would drop all of
-                # them while the prompt still advertises every one.
-                _mcp_filtered = mcp_schemas if _skipped_retrieval else [
+                _mcp_filtered = [
                     s for s in mcp_schemas
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
-                all_tool_schemas = base_schemas + _mcp_filtered
+                all_tool_schemas = base_schemas + _mcp_filtered + _mod_tool_schemas
             else:
                 base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
                     s for s in FUNCTION_TOOL_SCHEMAS
@@ -2937,7 +2987,7 @@ async def stream_agent_loop(
             _wants_mcp = any(kw in _last_content
                              for kw in (_MCP_KEYWORDS | _mcp_dynamic_keywords))
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
-            if all_tool_schemas and _relevant_tools and not _skipped_retrieval:
+            if all_tool_schemas and _relevant_tools:
                 # Same rule as the native path: when tools were selected, only
                 # the selected MCP tools go out. Sending every connected MCP
                 # tool here (252 of them on one server) hid the run's real
@@ -2947,6 +2997,9 @@ async def stream_agent_loop(
                     s for s in all_tool_schemas
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
+            # Mod tools picked for this message go out as schemas too: they
+            # have no fenced-block form.
+            all_tool_schemas = all_tool_schemas + _mod_tool_schemas
             if disabled_tools and all_tool_schemas:
                 all_tool_schemas = [
                     t for t in all_tool_schemas

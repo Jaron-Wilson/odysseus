@@ -1096,6 +1096,11 @@ async def execute_tool_block(
     elif tool == "vault_unlock":
         desc = "vault_unlock"
         result = await do_vault_unlock(content, owner=owner)
+    elif tool.startswith("mod__"):
+        # A tool served by an installed mod (src/mods/tools.py). Device
+        # control waits for the user's approval there, like Google writes.
+        from src.mods import tools as _mod_tools
+        desc, result = await _mod_tools.execute(tool, content, owner, session_id)
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()

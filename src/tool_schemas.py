@@ -1514,8 +1514,9 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
 
     tool_type = _TOOL_NAME_MAP.get(name, name)
 
-    # Allow MCP tools through (namespaced as mcp__serverid__toolname)
-    if tool_type.startswith("mcp__"):
+    # Allow MCP tools through (namespaced as mcp__serverid__toolname), and
+    # mod tools (mod__modid__toolname, src/mods/tools.py).
+    if tool_type.startswith(("mcp__", "mod__")):
         content = json.dumps(args) if args else "{}"
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email

@@ -824,8 +824,15 @@ class McpManager:
     _cached_prompt_desc = None
     _cached_prompt_desc_key = None
 
-    def get_tool_descriptions_for_prompt(self, disabled_map: Optional[Dict[str, set]] = None) -> str:
-        """Generate text describing MCP tools for the agent system prompt. Cached."""
+    def get_tool_descriptions_for_prompt(self, disabled_map: Optional[Dict[str, set]] = None,
+                                         only: Optional[Set[str]] = None) -> str:
+        """Generate text describing MCP tools for the agent system prompt. Cached.
+
+        `only`: the qualified names picked for this turn. Then only those are
+        described, plus one line naming each connected server and how many
+        tools it has, so the model knows what it could ask for."""
+        if only is not None:
+            return self._selected_tool_descriptions(disabled_map, only)
         cache_key = (
             frozenset((k, frozenset(v)) for k, v in (disabled_map or {}).items()),
             len(self._tools),
@@ -873,3 +880,32 @@ class McpManager:
         self._cached_prompt_desc = result
         self._cached_prompt_desc_key = cache_key
         return result
+
+    def _selected_tool_descriptions(self, disabled_map: Optional[Dict[str, set]], only: Set[str]) -> str:
+        by_server: Dict[str, List[Dict]] = {}
+        counts: Dict[str, int] = {}
+        for t in self.get_all_tools(disabled_map):
+            if (self.is_builtin(t["server_id"]) and t["server_id"] != "builtin_browser") or t.get("is_disabled"):
+                continue
+            sid = t["server_id"]
+            identity = self._connections.get(sid, {}).get("identity", "")
+            label = f"{t['server_name']} ({identity})" if identity else t["server_name"]
+            counts[label] = counts.get(label, 0) + 1
+            if t["qualified_name"] in only:
+                by_server.setdefault(label, []).append(t)
+        if not counts:
+            return ""
+        lines = []
+        if by_server:
+            lines.append("\n\nYou also have access to external MCP tool servers. These tools are called via "
+                         "native function calling:")
+            for label, server_tools in by_server.items():
+                lines.append(f"\n**{label}:**")
+                for t in server_tools:
+                    desc = t['description'][:120] + '...' if len(t['description']) > 120 else t['description']
+                    lines.append(f"  - {t['qualified_name']}: {desc}{_format_mcp_params(t.get('input_schema'))}")
+        others = [f"{label} ({n} tools)" for label, n in counts.items() if label not in by_server]
+        if others:
+            lines.append("\n\nOther connected MCP servers, not offered for this message: " + ", ".join(others)
+                         + ". Their tools are offered when a message is about them (name the app or machine).")
+        return "\n".join(lines)

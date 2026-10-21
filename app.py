@@ -142,6 +142,8 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
     "/ide/",                # the code editor proxy: long polls and big downloads stream
+    "/mods/",               # mods (src/mods/proxy.py): camera streams, SSE, uploads
+    "/api/mods/",           # installing a mod clones and runs its setup
 )
 
 
@@ -210,7 +212,10 @@ if AUTH_ENABLED:
     # It has to be fetchable before anyone is logged in: redirecting it to
     # /login makes registration fail, which silently costs both offline caching
     # and push notifications. It is the same public asset as /static/sw.js.
-    AUTH_EXEMPT_PREFIXES = ["/static", "/sw.js"]
+    # /api/mods/v1/ is the mod API: mods have no session, and every route
+    # there checks the mod's own bearer token and permissions
+    # (src/mods/routes.py).
+    AUTH_EXEMPT_PREFIXES = ["/static", "/sw.js", "/api/mods/v1/"]
     # Dynamic paths whose own handler proves identity via a path-embedded
     # secret instead of the session/bearer auth. The route handler at
     # routes/task_routes.py validates the per-task `webhook_token` itself
@@ -239,6 +244,10 @@ if AUTH_ENABLED:
         # code. The one-time token in the path is the credential;
         # routes/sip_routes.py 404s anything else.
         _re.compile(r"^/api/telephony/sip/provision/[A-Za-z0-9_-]{32,64}\.xml$"),
+        # A mod's page and its requests, loaded in a sandboxed frame that
+        # sends no cookie. The signed frame token after "~" is the
+        # credential; src/mods/proxy.py checks it and refuses anything else.
+        _re.compile(r"^/mods/[a-z][a-z0-9-]{1,31}/~[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(/.*)?$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -735,6 +744,10 @@ app.include_router(setup_games_routes())
 # slice check on the PC, admin only (routes/print_routes.py, src/print_helper/).
 from routes.print_routes import setup_print_routes
 app.include_router(setup_print_routes())
+
+# Mods: /mods/<id>/ (the proxy), /api/mods (manage), /api/mods/v1 (the mod API).
+from src.mods.routes import setup_mods_routes
+app.include_router(setup_mods_routes(auth_manager))
 
 
 @app.get("/api/version")
@@ -1395,6 +1408,12 @@ async def _startup_event():
         _startup_tasks.append(asyncio.create_task(whats_new.refresh_forever()))
     except Exception as _e:
         logger.warning("Could not start the What's new refresh: %s", _e)
+    # Mods (src/mods): start the ones set to start at boot, and the monitor.
+    try:
+        from src.mods import runtime as _mods_runtime
+        _startup_tasks.append(asyncio.create_task(_mods_runtime.startup()))
+    except Exception as _e:
+        logger.warning("Could not start mods: %s", _e)
 
     logger.info("Application startup complete")
 
@@ -1445,6 +1464,12 @@ async def _shutdown_event():
         _terminal.manager.close_all()
     except Exception as e:
         logger.warning(f"Terminal shutdown error: {e}")
+    # Stop running mods (src/mods).
+    try:
+        from src.mods import runtime as _mods_runtime
+        await asyncio.wait_for(_mods_runtime.shutdown(), 20)
+    except Exception as e:
+        logger.warning(f"Mods shutdown error: {e}")
     # Disconnect all MCP servers
     try:
         await mcp_manager.disconnect_all()
