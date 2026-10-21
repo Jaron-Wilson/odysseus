@@ -19,6 +19,7 @@
 import { clearRightDock } from '../modalSnap.js';
 import * as Home from './home.js';
 import ToolPages from '../toolPages.js';
+import ModPanel from '../modPanel.js';
 
 const LS_KEY = 'odysseus-ws-tabs-v1';
 const TABBAR_H = 40;
@@ -56,6 +57,7 @@ const ICONS = {
   split: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
   compare: svg('<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/>'),
+  mod: svg('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/>'),
   branch: svg('<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-5 3-10 5.5"/>'),
 };
 // Icons for pages that aren't tab tools.
@@ -66,7 +68,8 @@ const ICON_FOR = { compare: 'compare', 'odysseus-dev': 'branch', chats: 'chat' }
 // fills the page); `open` is the button that opens it, used to reopen a tab
 // restored after a reload; `close` closes it when it has no close button.
 // `title(el)`, when given, names the tab from the open window (the Code tab
-// shows its project). Order matters for `sel` (first match wins).
+// shows its project). `run()`, when given, opens a tool that has no button
+// (a mod's tab, added by _syncModTools). Order matters for `sel` (first match wins).
 const TOOLS = [
   { key: 'email', label: 'Email', icon: 'mail', id: 'email-lib-modal', open: '#email-section .section-header-flex' },
   { key: 'calendar', label: 'Calendar', icon: 'calendar', id: 'calendar-modal', open: '#tool-calendar-btn' },
@@ -100,7 +103,7 @@ const TOOLS = [
   { key: 'code', label: 'Code', icon: 'code', sel: '.ide-backdrop', win: '.bg-panel', open: '#tool-code-btn',
     title: (el) => { const n = el.querySelector('.ide-project-name')?.textContent.trim();
       return n && n !== 'Pick a project' ? 'Code: ' + n : 'Code'; } },
-  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel)):not(:has(> .games-panel)):not(:has(> .print-panel)):not(:has(> .plans-panel)):not(:has(> .company-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
+  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not([data-mod-tab]):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel)):not(:has(> .games-panel)):not(:has(> .print-panel)):not(:has(> .plans-panel)):not(:has(> .company-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
 ];
 const TOOL_BY_KEY = Object.fromEntries(TOOLS.map(t => [t.key, t]));
 // An opened email is its own window (#email-reader-<n>) and its own tab.
@@ -141,7 +144,7 @@ function _load() {
   try {
     const v = JSON.parse(localStorage.getItem(LS_KEY));
     if (!v || !Array.isArray(v.tabs)) return;
-    const tabs = v.tabs.filter(t => t && t.id && (t.kind === 'chat' || (t.kind === 'tool' && TOOL_BY_KEY[t.key])));
+    const tabs = v.tabs.filter(t => t && t.id && (t.kind === 'chat' || (t.kind === 'tool' && (TOOL_BY_KEY[t.key] || String(t.key).startsWith('mod:')))));
     S.tabs = [{ id: 'home', kind: 'home' }, ...tabs];
     const ok = (id) => S.tabs.some(t => t.id === id);
     S.left = ok(v.left) ? v.left : 'home';
@@ -658,10 +661,32 @@ export function openTool(key) {
   const id = 'tool:' + key;
   if (_els.has(id)) { if (!tab(id)) addTab({ id, kind: 'tool', key }); else show(id); return; }
   const btn = tool.open && document.querySelector(tool.open);
-  if (!btn) return;
+  if (!btn && !tool.run) return;
   _openingTool = id;
   _asked.set(id, Date.now());
-  btn.click();
+  if (btn) btn.click(); else tool.run();
+}
+
+// A mod's Workspace tabs (static/js/modPanel.js) are tab tools too, placed
+// before Agents (whose selector would otherwise match their windows).
+function _syncModTools(mods) {
+  for (let i = TOOLS.length - 1; i >= 0; i--) {
+    if (TOOLS[i].mod) { delete TOOL_BY_KEY[TOOLS[i].key]; TOOLS.splice(i, 1); }
+  }
+  const at = TOOLS.findIndex(t => t.key === 'agents');
+  const add = [];
+  for (const m of mods || []) {
+    for (const t of m.tabs || []) {
+      const key = ModPanel.tabKey(m.id, t.id);
+      const k = `${m.id}:${t.id}`;
+      add.push({ key, mod: m.id, label: t.title || m.name || m.id, icon: ICONS[t.icon] ? t.icon : 'mod',
+        sel: `.bg-panel-backdrop[data-mod-tab="${CSS.escape(k)}"]`, win: '.bg-panel', run: () => ModPanel.open(m.id, t.id),
+        close: async () => ModPanel.close(m.id, t.id) });
+    }
+  }
+  TOOLS.splice(at < 0 ? TOOLS.length : at, 0, ...add);
+  add.forEach(t => { TOOL_BY_KEY[t.key] = t; });
+  if (_mounted) renderTabs();
 }
 
 export function newChat() {
@@ -692,6 +717,8 @@ function _launcher(anchor) {
     const ps = ToolPages.pagesIn(g.id).filter(offer);
     if (ps.length) items.push({ group: g.label, items: ps.map(item) });
   }
+  const mods = TOOLS.filter(t => t.mod);
+  if (mods.length) items.push({ group: 'Mods', items: mods.map(t => ({ label: t.label, icon: ICONS[t.icon] || ICONS.mod, run: () => openTool(t.key) })) });
   const settings = ToolPages.page('settings');
   if (document.querySelector(settings.open)) items.push('-', item(settings));
   _menu(r.left, r.bottom + 4, items, 'ws-launcher');
@@ -840,6 +867,12 @@ export function activate(id) {
     const tool = TOOL_BY_KEY[t.key];
     const btn = tool && tool.open && document.querySelector(tool.open);
     if (btn) { show(id); _openingTool = id; btn.click(); return; }
+    if (tool && tool.run) { show(id); _openingTool = id; tool.run(); return; }
+    if (String(t.key).startsWith('mod:')) {
+      // The mod list may not have arrived yet.
+      ModPanel.list().then((mods) => { _syncModTools(mods); TOOL_BY_KEY[t.key] ? activate(id) : closeTab(id); });
+      return;
+    }
     closeTab(id);
     return;
   }
@@ -982,7 +1015,10 @@ function mount() {
   scanTools();
   apply();
   _pollSession();
+  ModPanel.list().then(_syncModTools);
 }
+
+ModPanel.onChange(_syncModTools);
 
 function unmount() {
   if (!_mounted) return;

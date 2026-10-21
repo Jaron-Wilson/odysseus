@@ -3,13 +3,16 @@
 // A composer on top (sending starts a new chat tab), then cards built from
 // the APIs the tools already use: today's calendar, what needs you (agent
 // plans waiting for approval, unanswered mail), running agent jobs, recent
-// chats and pinned notes. Every card links into the matching tab.
+// chats and pinned notes. Every card links into the matching tab. Under
+// them, the home cards of installed mods (modPanel.js), each a small
+// sandboxed frame.
 //
 // "Take me to the voice settings" typed here opens Settings at that setting
 // instead of starting a chat (settingsNav.js), when there is one to open.
 
 import { openEntityHash } from '../chatRenderer.js';
 import settingsNav from '../settingsNav.js';
+import ModPanel from '../modPanel.js';
 
 let _el = null;
 let _api = null;
@@ -17,6 +20,7 @@ let _lastLoad = 0;
 let _timer = null;
 let _loading = null;
 let _firstLoad = null;
+let _modSig = '';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -98,6 +102,7 @@ function _build() {
         </div>
       </div>
       <div class="ws-grid">${_skeleton()}</div>
+      <div class="ws-mod-grid" aria-label="Mods"></div>
     </div>`;
   document.body.appendChild(_el);
 
@@ -148,6 +153,8 @@ function _startChat(text) {
 }
 
 async function _onClick(e) {
+  const m = e.target.closest('[data-mod-open]');
+  if (m) { _api.openTool(ModPanel.tabKey(m.dataset.modOpen, m.dataset.tab)); return; }
   const t = e.target.closest('[data-open], [data-chat], [data-hash], [data-approve], [data-deny], [data-new-chat]');
   if (!t) return;
   if (t.dataset.open) { _api.openTool(t.dataset.open); return; }
@@ -265,8 +272,22 @@ function _renderNotes(notes) {
   return _card('notes', 'Pinned notes', body, { action: _more('Notes', 'data-open="notes"') });
 }
 
+// Mod cards are frames: they are only rebuilt when the cards change, so a
+// refresh of the other cards does not reload them.
+function _renderMods(mods) {
+  const box = _el?.querySelector('.ws-mod-grid');
+  if (!box) return;
+  const cards = [];
+  for (const m of mods || []) for (const c of m.home_cards || []) cards.push([m, c]);
+  const sig = JSON.stringify(cards.map(([m, c]) => [m.id, c.id, c.url]));
+  if (sig === _modSig) return;
+  _modSig = sig;
+  box.replaceChildren(...cards.map(([m, c]) => ModPanel.cardElement(m, c)));
+}
+
 export async function load(force = false) {
   if (!_el) return;
+  ModPanel.list().then(_renderMods);
   if (_loading) return _loading;
   if (!force && Date.now() - _lastLoad < 30000) return;
   _lastLoad = Date.now();
@@ -313,4 +334,7 @@ export function unmount() {
   clearTimeout(_firstLoad);
   _el?.remove();
   _el = null;
+  _modSig = '';
 }
+
+ModPanel.onChange(_renderMods);
