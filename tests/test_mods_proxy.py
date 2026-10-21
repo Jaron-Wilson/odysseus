@@ -201,6 +201,29 @@ def test_redirects_stay_under_the_prefix(stack):
     assert r.status_code == 302 and r.headers["location"] == base + "/echo?from=redirect"
 
 
+def test_frame_pages_may_fetch_their_own_urls(stack):
+    """A mod page has an opaque origin (Origin: null), so its fetch() calls
+    are CORS requests: allowed under a frame token, never with a cookie."""
+    srv, up, _ = stack
+    pre = httpx.options(srv.url + _tokpath() + "/anything", headers={
+        "Origin": "null", "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type, x-bad header"})
+    assert pre.status_code == 204
+    assert pre.headers["access-control-allow-origin"] == "null"
+    assert "POST" in pre.headers["access-control-allow-methods"]
+    assert pre.headers["access-control-allow-headers"] == "content-type"
+    r = httpx.post(srv.url + _tokpath() + "/anything", content=b"hi", headers={"Origin": "null"})
+    assert r.json()["user"] == "alice" and r.headers["access-control-allow-origin"] == "null"
+    # A bad token gets no preflight; other origins and cookie requests get no CORS at all.
+    assert httpx.options(srv.url + "/mods/test-mod/~bogus.token/x", headers={
+        "Origin": "null", "Access-Control-Request-Method": "POST"}).status_code == 401
+    r = httpx.get(srv.url + _tokpath() + "/echo", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in r.headers
+    r = httpx.get(srv.url + "/mods/test-mod/echo", headers={"Origin": "null"},
+                  cookies={"odysseus_session": "alice-session"})
+    assert "access-control-allow-origin" not in r.headers
+
+
 def test_post_bodies_pass_through(stack):
     srv, up, _ = stack
     r = httpx.post(srv.url + _tokpath() + "/anything", content=b"hello body")

@@ -170,7 +170,40 @@ def cookie_user(request) -> Optional[str]:
     return None
 
 
+def _cors_headers(request: Request, preflight: bool) -> List[Tuple[str, str]]:
+    out = [("Access-Control-Allow-Origin", "null"), ("Vary", "Origin")]
+    if preflight:
+        asked = request.headers.get("access-control-request-headers") or ""
+        allowed = ", ".join(h.strip() for h in asked.split(",") if h.strip() and all(
+            c.isalnum() or c in "-_" for c in h.strip()))
+        out += [("Access-Control-Allow-Methods", ", ".join(m for m in _CORS_METHODS)),
+                ("Access-Control-Max-Age", "600")]
+        if allowed:
+            out.append(("Access-Control-Allow-Headers", allowed))
+    return out
+
+
+_CORS_METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
+
+
 async def handle_http(request: Request, mod_id: str, rest: str) -> Response:
+    """A mod page has an opaque origin, so its own fetch() calls are
+    cross-origin (Origin: null). Under a frame token they may read the
+    answer: the token in the URL is the credential, no cookie is involved."""
+    tok, _ = signing.split_frame_path(rest)
+    cors = tok is not None and request.headers.get("origin") == "null"
+    if cors and request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
+        if signing.check_frame_token(tok, mod_id) is None:
+            return Response(status_code=401)
+        return Response(status_code=204, headers=dict(_cors_headers(request, True)))
+    resp = await _handle_http(request, mod_id, rest)
+    if cors:
+        resp.raw_headers = [(k, v) for k, v in resp.raw_headers if not k.startswith(b"access-control-")] + [(k.lower().encode("latin-1"), v.encode("latin-1"))
+                                                 for k, v in _cors_headers(request, False)]
+    return resp
+
+
+async def _handle_http(request: Request, mod_id: str, rest: str) -> Response:
     res = _resolve(mod_id, rest, cookie_user(request))
     if isinstance(res, Response):
         return res
