@@ -23,7 +23,7 @@ from typing import Any, Deque, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from src.mods import access, events, manifest as mf, notify, proxy, registry, runtime, tools
+from src.mods import access, events, manifest as mf, notify, placement, proxy, registry, runtime, tools
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +305,7 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         _require_admin(request)
         return {"mods": [_view(m) for m in sorted(registry.list_mods(), key=lambda m: m["id"])],
                 "core_api": mf.CORE_API_VERSION, "permissions": mf.PERMISSIONS,
-                "notify": notify.channel_settings()}
+                "notify": notify.channel_settings(), "nav_groups": placement.groups()}
 
     @router.post("/api/mods/install/prepare")
     async def install_prepare(request: Request):
@@ -382,22 +382,25 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         user = proxy.cookie_user(request)
         if user is None:
             raise HTTPException(401, "Not signed in")
-        out = []
+        out, shown = [], []
         for entry in sorted(registry.list_mods(), key=lambda m: m["id"]):
             if not entry.get("enabled") or not access.may_use(entry, user):
                 continue
             ui = (entry.get("manifest") or {}).get("ui") or {}
             if not (ui.get("tabs") or ui.get("home_cards") or ui.get("settings_path")):
                 continue
+            shown.append(entry)
             base = proxy.frame_base(entry["id"], user)
+            override = entry.get("placement") or {}
             out.append({
                 "id": entry["id"], "name": entry.get("name"),
                 "status": runtime.state(entry["id"]).status,
-                "tabs": [dict(t, url=base + t["path"]) for t in ui.get("tabs") or []],
+                "tabs": [dict(t, url=base + t["path"], **placement.resolve(t, override)) for t in ui.get("tabs") or []],
                 "home_cards": [dict(c, url=base + c["path"]) for c in ui.get("home_cards") or []],
                 "settings_url": base + ui["settings_path"] if ui.get("settings_path") else None,
             })
-        return {"mods": out}
+        # `nav`: the tabs in sidebar order, in their groups, hidden ones left out.
+        return {"mods": out, "nav": placement.nav(shown), "groups": placement.groups()}
 
     @router.get("/api/mods/{mod_id}")
     async def get_mod(request: Request, mod_id: str):
@@ -445,6 +448,9 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
             elif action == "access":
                 body = await _json(request)
                 registry.set_access(mod_id, str(body.get("access") or ""))
+            elif action == "placement":
+                body = await _json(request)
+                registry.set_placement(mod_id, body.get("section"), body.get("hidden"))
             elif action == "mute":
                 body = await _json(request)
                 registry._update(mod_id, notify_muted=bool(body.get("muted")))

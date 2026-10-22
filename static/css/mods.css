@@ -23,3 +23,12 @@
   .bg-panel-backdrop:has(> .mod-panel) { padding: 0; }
   .mod-panel { height: 100%; max-height: none; border-radius: 0; border: 0; }
 }
+
+/* A mod's tab in the sidebar (static/js/modNav.js) and the Workspace "+" menu:
+   the mod's icon, its title and a small "mod" badge. */
+.mod-nav-badge, .ws-menu-badge {
+  flex: none; margin-left: auto; padding: 0 5px; border-radius: 6px;
+  font-size: 9.5px; line-height: 15px; font-weight: 600; letter-spacing: .03em; text-transform: lowercase;
+  color: inherit; opacity: .65; border: 1px solid currentColor;
+}
+.sidebar .list-item.mod-nav-item .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -43,6 +43,8 @@ def main(argv=None) -> int:
             for err in e.errors:
                 print(f"error: {err}", file=sys.stderr)
             return 1
+        for w in m.get("warnings") or []:
+            print(f"warning: {w}", file=sys.stderr)
         print(json.dumps(m, indent=2))
         return 0
     if a.cmd == "list":

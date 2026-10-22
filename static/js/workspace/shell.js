@@ -60,6 +60,7 @@ const ICONS = {
   mod: svg('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/>'),
   branch: svg('<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-5 3-10 5.5"/>'),
 };
+export { ICONS };   // modNav.js uses them for mod tabs in the sidebar
 // Icons for pages that aren't tab tools.
 const ICON_FOR = { compare: 'compare', 'odysseus-dev': 'branch', chats: 'chat' };
 
@@ -602,13 +603,16 @@ function toggleSplit() {
 
 // `items`: {label, icon, run}, '-' for a line, or {group, items} for a
 // labeled block (the launcher's tool groups, laid out side by side).
+const _esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 function _menu(x, y, items, cls = '') {
   _closeMenu();
   const m = document.createElement('div');
   m.className = 'ws-menu' + (cls ? ' ' + cls : '');
   m.setAttribute('role', 'menu');
   const flat = [];
-  const btn = (it) => `<button type="button" role="menuitem" data-i="${flat.push(it) - 1}">${it.icon || ''}<span>${it.label}</span></button>`;
+  const btn = (it) => `<button type="button" role="menuitem" data-i="${flat.push(it) - 1}"${it.title ? ` title="${_esc(it.title)}"` : ''}>${it.icon || ''}<span>${it.label}</span>${it.badge ? `<span class="ws-menu-badge">${_esc(it.badge)}</span>` : ''}</button>`;
   let html = '', groups = '';
   const flush = () => { if (groups) { html += `<div class="ws-menu-groups">${groups}</div>`; groups = ''; } };
   for (const it of items) {
@@ -713,12 +717,27 @@ function _launcher(anchor) {
   const items = [{ label: 'New chat', icon: ICONS.chat, run: newChat }];
   const email = ToolPages.page('email');
   if (offer(email)) items.push({ ...item(email), label: 'Inbox' });
-  for (const g of ToolPages.GROUPS) {
-    const ps = ToolPages.pagesIn(g.id).filter(offer);
-    if (ps.length) items.push({ group: g.label, items: ps.map(item) });
+  // Mod tabs go in the group their manifest (or Settings > Mods) gives them,
+  // after the page they name or at the end of it; ModPanel.nav() is in order.
+  const modNav = ModPanel.nav().filter(n => TOOL_BY_KEY[ModPanel.tabKey(n.mod, n.tab)]);
+  const modItem = (n) => {
+    const t = TOOL_BY_KEY[ModPanel.tabKey(n.mod, n.tab)];
+    return { label: _esc(t.label), icon: ICONS[t.icon] || ICONS.mod, badge: 'mod', title: `${t.label} (a mod)`,
+      run: () => openTool(t.key) };
+  };
+  const groups = [...ToolPages.GROUPS, { id: 'mods', label: 'Mods' }];
+  const groupOf = (n) => (groups.some(x => x.id === n.section) ? n.section : 'mods');
+  for (const g of groups) {
+    const inGroup = modNav.filter(n => groupOf(n) === g.id);
+    const pages = ToolPages.pagesIn(g.id);
+    const out = [];
+    for (const p of pages) {
+      if (offer(p)) out.push(item(p));
+      out.push(...inGroup.filter(n => n.after === p.key).map(modItem));
+    }
+    out.push(...inGroup.filter(n => !pages.some(p => p.key === n.after)).map(modItem));
+    if (out.length) items.push({ group: g.label, items: out });
   }
-  const mods = TOOLS.filter(t => t.mod);
-  if (mods.length) items.push({ group: 'Mods', items: mods.map(t => ({ label: t.label, icon: ICONS[t.icon] || ICONS.mod, run: () => openTool(t.key) })) });
   const settings = ToolPages.page('settings');
   if (document.querySelector(settings.open)) items.push('-', item(settings));
   _menu(r.left, r.bottom + 4, items, 'ws-launcher');

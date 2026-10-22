@@ -38,6 +38,8 @@ import './js/workspace/shell.js';
 // "Go to..." for Settings: the header box, composer chip and setting links.
 import './js/settingsNav.js';
 import './js/toolGroups.js';
+// Mod tabs in the sidebar groups their manifests name (docs/mods.md).
+import './js/modNav.js';
 // IMPORTANT: import cookbook.js with NO ?v= query — the same plain specifier
 // every other importer (cookbook-hwfit.js / cookbook-diagnosis.js) uses. A query
 // mismatch makes the browser load cookbook.js twice as separate modules (two

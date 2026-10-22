@@ -40,6 +40,9 @@ In `odysseus-mod.json`:
 
 - `permissions`: exactly what step 1 needs, nothing more.
 - `ui.tabs`, `ui.home_cards` (pick a `height` that fits the content), `ui.settings_path`.
+- Each tab's `section`: the sidebar group it belongs with (`organize`, `create`, `build`,
+  `system`, or `mods`, the default), and `after`, the built-in page it should follow (a printer
+  mod: `"section": "create", "after": "print"`). See CLAUDE.md.
 - `tools.keywords`: the words people will actually type (`garage`, `door`), not the mod id only.
 - `events.emits` (`<id>.<thing>`) and `events.subscribes` (`<other-mod>/<type glob>`).
 - `runtime.start`: `lazy` unless the mod must watch something all the time (then `boot`).

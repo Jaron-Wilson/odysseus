@@ -102,8 +102,12 @@ def _path(v: Any, where: str, errors: List[str], default: Optional[str] = None) 
 def validate(raw: Any) -> Dict[str, Any]:
     """Check a parsed manifest and return it normalized (defaults filled in).
 
-    Raises ManifestError listing every problem found."""
+    Raises ManifestError listing every problem found. Problems that do not
+    stop the mod working (a nav group this core does not have) are listed in
+    the result's `warnings` instead."""
+    from src.mods import placement
     errors: List[str] = []
+    warnings: List[str] = []
     if not isinstance(raw, dict):
         raise ManifestError(["the manifest must be a JSON object"])
 
@@ -216,9 +220,11 @@ def validate(raw: Any) -> Dict[str, Any]:
             errors.append(f"`ui.tabs[{i}]` needs an `id` (lowercase letters, digits, - and _)")
             continue
         title = t.get("title") if isinstance(t.get("title"), str) else ""
-        tabs.append({"id": t["id"], "title": (title.strip() or out["name"])[:40],
-                     "icon": str(t.get("icon") or "")[:32],
-                     "path": _path(t.get("path"), f"`ui.tabs[{i}].path`", errors, "/")})
+        tab = {"id": t["id"], "title": (title.strip() or out["name"])[:40],
+               "icon": str(t.get("icon") or "")[:32],
+               "path": _path(t.get("path"), f"`ui.tabs[{i}].path`", errors, "/")}
+        tab.update(placement.check_tab(t, f"ui.tabs[{i}]", errors, warnings))
+        tabs.append(tab)
     cards = []
     for i, c in enumerate(ui.get("home_cards") or []):
         if not isinstance(c, dict) or not SUB_ID_RE.match(str(c.get("id", ""))):
@@ -273,6 +279,7 @@ def validate(raw: Any) -> Dict[str, Any]:
 
     if errors:
         raise ManifestError(errors)
+    out["warnings"] = warnings
     return out
 
 
