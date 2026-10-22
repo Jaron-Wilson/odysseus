@@ -302,3 +302,19 @@ def test_websocket_pass_through(mods_dir):
                         await ws.recv()
     asyncio.run(go())
     assert seen["user"] == "alice" and seen["path"] == "/live?x=1"
+
+
+def test_mod_iframes_allow_modals_and_nothing_more():
+    """confirm()/alert() in a mod page need allow-modals on the iframe too;
+    the CSP the proxy sends already allows it. Nothing else is loosened."""
+    import os
+    import re
+    from src.mods import proxy
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    js = open(os.path.join(root, "static", "js", "modPanel.js"), encoding="utf-8").read()
+    frame = set(re.search(r"const SANDBOX = '([^']*)'", js).group(1).split())
+    assert frame == {"allow-scripts", "allow-forms", "allow-popups", "allow-downloads", "allow-modals"}
+    csp = set(proxy.SANDBOX_CSP.split()[1:])
+    assert frame <= csp
+    assert "allow-same-origin" not in csp | frame and not any("top-navigation" in t for t in csp | frame)
+    assert js.count('sandbox="${SANDBOX}"') == 2

@@ -80,7 +80,8 @@ only. Nothing else from the core's environment is passed on.
 Every request through the core carries `X-Odysseus-User`, `X-Odysseus-Mod`, `X-Odysseus-Ts` and
 `X-Odysseus-Sig` = hex HMAC-SHA256 of `"v1\n<mod id>\n<user>\n<ts>"` keyed with the token. Reject a
 bad signature or a timestamp more than 300 seconds off (`odysseus_mod.verify_identity`). Tool calls
-and event deliveries come as user `odysseus-core`.
+come as the user the agent works for (`local` with sign-in off); reading the tool list and event
+deliveries come as `odysseus-core` (`CORE_USER`), as does a tool call with no user.
 
 ## The mod API (bearer ODYSSEUS_MOD_TOKEN), via `app.core`
 

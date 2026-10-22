@@ -2,7 +2,8 @@
 
 A process mod runs its manifest `command` in its src folder, with its own
 virtualenv's python when it has one. A docker mod runs `docker compose up -d`
-on its compose file (project odysseus-mod-<id>). Either way the core gives it
+on its compose file (project odysseus-mod-<id>-<instance>, see
+compose_project), with --build after an install or update. Either way the core gives it
 a free port on 127.0.0.1 and these variables:
 
     ODYSSEUS_URL         the core, for the mod API (/api/mods/v1)
@@ -26,13 +27,16 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import json
 import logging
 import os
+import re
+import secrets
 import signal
 import socket
 import sys
 import time
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -223,16 +227,92 @@ async def _wait_healthy(mod_id: str, timeout: float) -> bool:
 
 # ── Start / stop ─────────────────────────────────────────────────────────
 
-async def _compose(mod_id: str, args: List[str], env: Dict[str, str]) -> int:
-    man = _manifest(mod_id)["manifest"]
-    compose = os.path.join(paths.src_dir(mod_id), man["runtime"]["compose"])
-    argv = ["docker", "compose", "-p", f"odysseus-mod-{mod_id}", "-f", compose, *args]
+LEGACY_PROJECT_PREFIX = "odysseus-mod-"
+
+
+def instance_id() -> str:
+    """A short random id of this Odysseus instance, kept in its mods folder.
+    Two instances on one Docker host (the live one and a test one) have
+    different mods folders, so different ids."""
+    p = os.path.join(paths.mods_root(), "instance-id")
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            val = f.read().strip()
+        if re.fullmatch(r"[0-9a-f]{8}", val):
+            return val
+    except FileNotFoundError:
+        pass
+    os.makedirs(paths.mods_root(), exist_ok=True)
+    val = secrets.token_hex(4)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(val + "\n")
+    return val
+
+
+def new_compose_project(mod_id: str) -> str:
+    """The compose project for a mod installed now."""
+    return f"{LEGACY_PROJECT_PREFIX}{mod_id}-{instance_id()}"
+
+
+def compose_project(mod_id: str) -> str:
+    """The docker compose project of a mod. It is set at install
+    (odysseus-mod-<id>-<instance>), so one instance never stops or recreates
+    another's containers. A mod installed before that has no name in its
+    registry entry and ran as odysseus-mod-<id>: it keeps that name, and with
+    it its containers, networks and volumes, and the name is then saved."""
+    entry = _manifest(mod_id)
+    name = entry.get("compose_project")
+    if name:
+        return name
+    name = LEGACY_PROJECT_PREFIX + mod_id
+    registry._update(mod_id, compose_project=name)
+    return name
+
+
+def _docker_env(mod_id: str, port: int = 0) -> Dict[str, str]:
+    env = base_env(mod_id, port)
+    env.update({k: v for k, v in os.environ.items() if k.startswith("DOCKER_")})
+    return env
+
+
+async def _run(mod_id: str, argv: List[str], env: Dict[str, str], log: bool = True) -> Tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(*argv, cwd=paths.src_dir(mod_id), env=env,
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    out, _ = await proc.communicate()
-    for line in (out or b"").decode("utf-8", "replace").splitlines()[-40:]:
-        log_line(mod_id, "[docker] " + line)
-    return proc.returncode or 0
+    raw, _ = await proc.communicate()
+    out = (raw or b"").decode("utf-8", "replace")
+    if log:
+        for line in out.splitlines()[-40:]:
+            log_line(mod_id, "[docker] " + line)
+    return proc.returncode or 0, out
+
+
+def _compose_argv(mod_id: str, args: List[str]) -> List[str]:
+    man = _manifest(mod_id)["manifest"]
+    compose = os.path.join(paths.src_dir(mod_id), man["runtime"]["compose"])
+    return ["docker", "compose", "-p", compose_project(mod_id), "-f", compose, *args]
+
+
+async def _compose(mod_id: str, args: List[str], env: Dict[str, str]) -> int:
+    return (await _run(mod_id, _compose_argv(mod_id, args), env))[0]
+
+
+async def _built_images(mod_id: str, env: Dict[str, str]) -> List[str]:
+    """The images compose builds for this mod: those of services with a
+    `build:` section (named by their `image:`, else <project>-<service>).
+    Images it only pulls are not in the list."""
+    code, out = await _run(mod_id, _compose_argv(mod_id, ["config", "--format", "json"]), env, log=False)
+    if code != 0:
+        return []
+    try:
+        cfg = json.loads(out[out.index("{"):])
+    except ValueError:
+        return []
+    project = cfg.get("name") or compose_project(mod_id)
+    names = []
+    for svc_name, svc in (cfg.get("services") or {}).items():
+        if isinstance(svc, dict) and svc.get("build"):
+            names.append(svc.get("image") or f"{project}-{svc_name}")
+    return names
 
 
 async def _spawn(mod_id: str) -> None:
@@ -245,11 +325,15 @@ async def _spawn(mod_id: str) -> None:
     rt = man["runtime"]
     log_line(mod_id, f"[odysseus] starting {mod_id} {entry.get('version')} on port {st.port}")
     if rt["type"] == "docker":
-        env_full = dict(env)
-        env_full.update({k: v for k, v in os.environ.items() if k.startswith("DOCKER_")})
-        code = await _compose(mod_id, ["up", "-d", "--remove-orphans"], env_full)
+        # After an install or update the images are rebuilt from the new code;
+        # plain `up` would keep running the image built for the old one.
+        build = bool(entry.get("build_pending"))
+        args = ["up", "-d", "--remove-orphans", *(["--build"] if build else [])]
+        code = await _compose(mod_id, args, _docker_env(mod_id, st.port))
         if code != 0:
             raise RuntimeError(f"docker compose up failed (exit {code})")
+        if build:
+            registry._update(mod_id, build_pending=False)
         st.proc = None
     else:
         argv = resolve_command(mod_id, list(rt["command"]))
@@ -265,7 +349,7 @@ async def _kill(mod_id: str) -> None:
     man = (registry.get(mod_id) or {}).get("manifest") or {}
     if (man.get("runtime") or {}).get("type") == "docker":
         try:
-            await _compose(mod_id, ["down"], base_env(mod_id, st.port or 0))
+            await _compose(mod_id, ["down"], _docker_env(mod_id, st.port or 0))
         except Exception as e:
             log_line(mod_id, f"[odysseus] docker compose down failed: {e}")
     proc = st.proc
@@ -289,6 +373,33 @@ async def _kill(mod_id: str) -> None:
         st.reader.cancel()
         st.reader = None
     st.proc = None
+
+
+async def remove_docker(mod_id: str, images: bool, volumes: bool) -> int:
+    """Before a docker mod is removed: `compose down`, also when the core
+    thinks it is stopped (its containers outlive a core restart), with
+    --rmi local and/or -v (its named volumes) when asked. --rmi local leaves
+    an image that has its own `image:` tag, so the images of services the mod
+    builds are then removed by name; pulled images are never touched. An
+    image another container still uses is left alone (docker refuses without
+    -f)."""
+    man = (registry.get(mod_id) or {}).get("manifest") or {}
+    if (man.get("runtime") or {}).get("type") != "docker":
+        return 0
+    env = _docker_env(mod_id)
+    args = ["down", "--remove-orphans", *(["--rmi", "local"] if images else []), *(["-v"] if volumes else [])]
+    log_line(mod_id, f"[odysseus] removing: docker compose {' '.join(args)}")
+    try:
+        built = await _built_images(mod_id, env) if images else []
+        code = await _compose(mod_id, args, env)
+        for image in built:
+            rc, out = await _run(mod_id, ["docker", "image", "inspect", "--format", "{{.Id}}", image], env, log=False)
+            if rc == 0:
+                await _run(mod_id, ["docker", "image", "rm", image], env)
+        return code
+    except Exception as e:
+        log_line(mod_id, f"[odysseus] docker compose down failed: {e}")
+        return 1
 
 
 async def start(mod_id: str) -> Dict[str, Any]:

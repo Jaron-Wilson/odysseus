@@ -232,3 +232,19 @@ def test_trivial_message_gets_no_mcp_tools(two_mods, monkeypatch):
 def test_research_request_still_offers_trigger_research(two_mods, monkeypatch):
     seen = _run_turn(monkeypatch, "research the history of fused filament 3d printing")
     assert "trigger_research" in seen["tools"]
+
+
+@pytest.mark.parametrize("owner,auth_enabled,want", [
+    ("alice", "true", "alice"),            # the user the agent works for
+    (None, "true", "odysseus-core"),       # no user: the core on its own
+    (None, "false", "local"),              # sign-in turned off
+])
+def test_tool_calls_are_signed_as_the_user(two_mods, monkeypatch, owner, auth_enabled, want):
+    monkeypatch.setenv("AUTH_ENABLED", auth_enabled)
+    srv = _ModServer()
+    mark_running("print-hub", srv.port)
+    try:
+        asyncio.run(tools.execute("mod__print-hub__print_status", "{}", owner, None))
+        assert srv.calls[-1][2] == want
+    finally:
+        srv.srv.shutdown()

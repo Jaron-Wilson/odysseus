@@ -102,7 +102,7 @@ async def _deliver(mod_id: str, path: str, event: Dict[str, Any]) -> None:
     if not port:
         runtime.log_line(mod_id, f"[odysseus] event {event['type']} not delivered: the mod is not running")
         return
-    headers = signing.sign_identity(registry.token_of(mod_id), mod_id, "odysseus-core")
+    headers = signing.sign_identity(registry.token_of(mod_id), mod_id, signing.CORE_USER)
     headers["Content-Type"] = "application/json"
     headers["X-Odysseus-Event"] = event["type"]
     try:

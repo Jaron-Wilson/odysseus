@@ -27,13 +27,10 @@ if os.name == "nt":
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
-from dotenv import load_dotenv
-# encoding="utf-8-sig" tolerates a UTF-8 BOM in .env — a common Windows gotcha
-# when the file is saved from Notepad. Without this, the first key parses as
-# "﻿AUTH_ENABLED" instead of "AUTH_ENABLED", so AUTH_ENABLED=false (etc.)
-# is silently ignored and the user is unexpectedly forced to log in (issue #142).
-# utf-8-sig reads plain UTF-8 (no BOM) identically, so this is safe everywhere.
-load_dotenv(encoding="utf-8-sig")
+# Only <app root>/.env (or ODYSSEUS_ENV_FILE), never a .env in a parent
+# folder: see src/env_file.py.
+from src.env_file import load_env_file
+load_env_file()
 
 import asyncio
 import logging
@@ -45,7 +42,6 @@ from typing import Dict
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
@@ -56,7 +52,7 @@ from core.constants import (
     REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
-from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
+from core.middleware import ModAwareCORSMiddleware, SecurityHeadersMiddleware, is_cors_preflight
 from core.auth import AuthManager, normalize_known_username
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
@@ -88,8 +84,10 @@ app = FastAPI(
 
 # ========= CORS =========
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
+# Starlette's CORSMiddleware, except for a sandboxed mod page's requests to its
+# own /mods/<id>/~<token>/ URLs, whose CORS the mod proxy answers itself.
 app.add_middleware(
-    CORSMiddleware,
+    ModAwareCORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],

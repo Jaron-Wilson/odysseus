@@ -50,7 +50,7 @@ __all__ = ["ModApp", "CoreClient", "Request", "Response", "html", "json_response
 __version__ = "0.1.0"
 
 SKEW_S = 300
-CORE_USER = "odysseus-core"      # the identity on tool calls' and events' own requests
+CORE_USER = "odysseus-core"      # the identity of the core's own requests (tool list, events)
 
 
 # ── Signed identity ──────────────────────────────────────────────────────
