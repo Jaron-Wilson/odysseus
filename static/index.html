@@ -259,6 +259,7 @@
   <link rel="stylesheet" href="/static/css/adsbPanel.css">
   <link rel="stylesheet" href="/static/css/gamesPanel.css">
   <link rel="stylesheet" href="/static/css/printPanel.css">
+  <link rel="stylesheet" href="/static/css/mods.css">
   <link rel="stylesheet" href="/static/css/plans.css">
   <link rel="stylesheet" href="/static/css/nativePlans.css">
   <link rel="stylesheet" href="/static/css/actionApprovals.css">
@@ -1764,6 +1765,10 @@
           <button class="settings-nav-item admin-only" data-settings-tab="tools">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
             <span>Agent Tools</span>
+          </button>
+          <button class="settings-nav-item admin-only" data-goto-keywords="mods mod plugins add-ons extensions install" data-settings-tab="mods">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+            <span>Mods</span>
           </button>
           <button class="settings-nav-item admin-only" data-settings-tab="users">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -3439,6 +3444,80 @@
         </div>
 
         <!-- ═══ TOOLS TAB ═══ -->
+        <!-- Mods: src/mods, filled in by modsSettings.js (docs/mods.md). -->
+        <div data-settings-panel="mods" class="hidden" id="mods-settings">
+          <div class="admin-card">
+            <h2>Mods<span style="flex:1"></span><button class="settings-btn" style="padding:2px 10px;font-size:12px;float:right" id="mods-refresh" type="button">Refresh</button></h2>
+            <div class="admin-toggle-sub">Add-ons that run beside Odysseus: each brings its own pages (Workspace tabs and Home cards), tools for the agent and notifications. A mod only gets the permissions you approve when you install it. Mods are code from someone else: install only what you trust. Writing one: docs/mods.md.</div>
+            <div id="mods-msg" class="admin-toggle-sub" style="margin-top:6px"></div>
+          </div>
+          <div class="admin-card" id="mods-approve" style="display:none;border-left:3px solid var(--accent, var(--red))"></div>
+          <div id="mods-list"><div class="admin-card"><div class="admin-toggle-sub">Loading…</div></div></div>
+          <div class="admin-card">
+            <h2>Install a mod</h2>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" for="mods-install-source">Git URL or folder</label>
+                <input id="mods-install-source" class="settings-select" type="text" spellcheck="false" placeholder="https://github.com/you/your-mod.git, or /home/you/your-mod" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="mods-install-ref">Branch or tag</label>
+                <input id="mods-install-ref" class="settings-select" type="text" spellcheck="false" placeholder="blank: the default branch" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="mods-install-subdir">Subfolder</label>
+                <input id="mods-install-subdir" class="settings-select" type="text" spellcheck="false" placeholder="blank: the mod is at the top of the repository" />
+              </div>
+              <div class="settings-row"><span style="flex:1"></span><button class="settings-btn" id="mods-install-go" type="button">Fetch and review</button></div>
+            </div>
+          </div>
+          <div class="admin-card">
+            <h2>Where mod notifications go</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:6px">The channels a mod's notifications may use. Each mod can also be muted on its own.</div>
+            <div class="settings-col">
+              <label class="admin-toggle-sub"><input type="checkbox" id="mods-notify-push"> Push to your browsers and phone</label>
+              <label class="admin-toggle-sub"><input type="checkbox" id="mods-notify-app"> The notification list in Odysseus</label>
+              <label class="admin-toggle-sub"><input type="checkbox" id="mods-notify-discord"> Discord (the webhook in Integrations)</label>
+              <div class="settings-row">
+                <label class="admin-toggle-sub"><input type="checkbox" id="mods-notify-ntfy"> ntfy, topic</label>
+                <input id="mods-notify-ntfy-topic" class="settings-select" type="text" spellcheck="false" style="width:180px" />
+              </div>
+              <div class="settings-row">
+                <label class="admin-toggle-sub"><input type="checkbox" id="mods-notify-sms"> Text message, for</label>
+                <select id="mods-notify-sms-level" class="settings-select" style="width:auto">
+                  <option value="warning">warnings and worse</option>
+                  <option value="error">errors and worse</option>
+                  <option value="critical">critical only</option>
+                </select>
+              </div>
+              <div class="settings-row"><span style="flex:1"></span><button class="settings-btn" id="mods-notify-save" type="button">Save</button></div>
+            </div>
+          </div>
+          <div class="admin-card">
+            <h2>New mod</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:6px">Copies the mod template into a folder with your mod's id and name: a small server, a tab, a card, a tool, tests and a CLAUDE.md for working on it with an AI.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" for="mods-new-id">Id</label>
+                <input id="mods-new-id" class="settings-select" type="text" spellcheck="false" placeholder="garage-door" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="mods-new-name">Name</label>
+                <input id="mods-new-name" class="settings-select" type="text" placeholder="Garage Door" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="mods-new-desc">Description</label>
+                <input id="mods-new-desc" class="settings-select" type="text" placeholder="Opens and closes the garage." />
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="mods-new-folder">Folder</label>
+                <input id="mods-new-folder" class="settings-select" type="text" spellcheck="false" placeholder="blank: workspaces/mods/<id> in the data folder" />
+              </div>
+              <div class="settings-row"><span id="mods-new-out" class="admin-toggle-sub" style="flex:1"></span><button class="settings-btn" id="mods-new-go" type="button">Create</button></div>
+            </div>
+          </div>
+        </div>
+
         <div data-settings-panel="tools" class="hidden">
           <div class="admin-card" style="margin-bottom:12px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Agent</h2>
@@ -3616,6 +3695,7 @@
 <script type="module" src="/static/js/adsbPanel.js"></script>
 <script type="module" src="/static/js/gamesPanel.js"></script>
 <script type="module" src="/static/js/gamesSettings.js"></script>
+<script type="module" src="/static/js/modsSettings.js"></script>
 <script type="module" src="/static/js/printPanel.js"></script>
 <script type="module" src="/static/js/plans.js"></script>
 <script type="module" src="/static/js/company.js"></script>

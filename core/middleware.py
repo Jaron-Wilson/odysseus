@@ -116,6 +116,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # is the app page in an iframe of the app page: framed by this origin
         # only, and only at the path that serves it.
         is_thread_pane = path == "/thread-pane"
+        # Mod pages (src/mods/proxy.py) carry their own CSP: a sandbox that
+        # gives them an opaque origin, framed by this origin only.
+        is_mod = path.startswith("/mods/")
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -142,6 +145,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["X-Frame-Options"] = "SAMEORIGIN"
             if "content-security-policy" not in response.headers:
                 response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+        elif is_mod:
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            if "content-security-policy" not in response.headers:
+                response.headers["Content-Security-Policy"] = "sandbox allow-scripts allow-forms; frame-ancestors 'self'"
         elif is_tool_render:
             # Tool iframe content: skip all framing headers — the iframe's
             # sandbox="allow-scripts" attribute provides isolation.

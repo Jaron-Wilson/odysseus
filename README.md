@@ -28,6 +28,7 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
   - **Company** -- an organization of AI agents (CEO, managers, reports) working an issue board, on any model.<br>　<sub>org chart · issues · approvals · budgets · @mentions in chat</sub>
   - **Voice & phone** -- talk with the agent in a chat, over a phone line, by text message, or in a Google Meet.<br>　<sub>/call · local Whisper / Parakeet / Kokoro · ElevenLabs · Twilio · tailnet SIP · SMS gateway</sub>
   - **Devices** -- link your computers and phone, and the agent can act on them.<br>　<sub>one-command enroll · desktop MCP · music bar + overlay · sound streaming · game streaming</sub>
+  - **Mods** -- install add-ons from a git URL: their own pages, home cards, agent tools and notifications, with permissions you approve.<br>　<sub>Settings > Mods · sandboxed pages · signed identity · process or Docker · template + SDK · [docs/mods.md](docs/mods.md)</sub>
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
   - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · web search · presets · sessions · 2FA · terminal · VS Code · cloud browser</sub>
 
@@ -473,6 +474,15 @@ These cards live in **Settings > Calls & Meetings**.
 - **3D print helper** (PR #191): upload an STL or 3MF, see each part's overhangs and unsupported area, answer a few questions from a local model, and let deterministic code reorient, cut (with pin holes) and fill the model so it prints without supports. Each piece is then sliced with the Bambu Studio CLI on your Windows PC over SSH. Admin only. Once merged it needs `pip install -r requirements.txt` (new mesh packages) and the PC's address in the helper's settings.
 
 </details>
+
+## Mods
+Mods are add-ons that run beside Odysseus as their own small web servers: a print hub, a game buddy, a display for a PC. Each brings Workspace tabs, Home cards, tools the agent is offered only when a message is about them, and notifications through your channels.
+
+- **Install**: Settings > Mods > Install, paste a git URL (or a folder), review the permissions it asks for, approve. Update, disable, restart, read its logs or remove it from the same page.
+- **Write one**: Settings > Mods > New mod, or `python -m src.mods new ~/my-mod --id my-mod`. The template (`templates/mod-template`) has a small SDK, a mock core (`python -m odysseus_mod.devcore`), tests and a `CLAUDE.md`, so an AI assistant can build a mod from a description. `examples/hello-mod` is a complete example.
+- **Security**: mods are untrusted code. Their pages are sandboxed, the core signs who is asking, each mod has its own revocable token and only the permissions you approved, and device actions need your approval in the chat. A process mod still runs as the same OS user as Odysseus; Docker mods isolate better.
+
+The format, the mod API and the security model: [docs/mods.md](docs/mods.md).
 
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.

@@ -1,0 +1,82 @@
+---
+name: new-mod
+description: Turn this template into a new Odysseus mod, or add a feature (page, home card, tool, notification, event, device control) to an existing mod, from a plain description. Use when asked to make, start, rename or extend a mod in this repository.
+---
+
+# Make or extend an Odysseus mod
+
+Read `CLAUDE.md` first: it holds the contract (manifest, environment, signed identity, mod API,
+sandboxed pages, tools). Follow these steps in order and keep the tests green after each one.
+
+## 1. Pin down what the mod does
+
+From the request, write down in one or two lines:
+
+- the mod id (2 to 32 chars, lowercase, digits, single hyphens, for example `garage-door`) and name
+- each page (Workspace tab), home card and the settings it needs
+- each agent tool: what a user would say to trigger it, and whether it controls a device
+- notifications (when, which level) and events (emitted types, subscribed patterns)
+- the smallest permission set that covers all of that
+
+If something is unclear and a reasonable default exists, pick it and say so in your summary.
+
+## 2. Rename the template (new mod only)
+
+Skip this when the id is already set. Otherwise, from the repository root:
+
+1. `git mv my_mod <python_name>` (the id with `-` replaced by `_`).
+2. Replace every `my-mod`, `my_mod` and `My Mod` in `odysseus-mod.json`, `<python_name>/`,
+   `tests/`, `README.md` and this repository's `CLAUDE.md` with the new id, python name and name.
+   Do not touch `odysseus_mod/` (the SDK).
+3. Update `runtime.command` to `["python", "-m", "<python_name>"]`, set `description`, `author`
+   and `version` `0.1.0`.
+4. `grep -rn "my-mod\|my_mod\|My Mod" --exclude-dir=odysseus_mod .` must print nothing.
+
+(Odysseus can do this for you: `python -m src.mods new <folder> --id <id> --name "<Name>"`.)
+
+## 3. Edit the manifest
+
+In `odysseus-mod.json`:
+
+- `permissions`: exactly what step 1 needs, nothing more.
+- `ui.tabs`, `ui.home_cards` (pick a `height` that fits the content), `ui.settings_path`.
+- `tools.keywords`: the words people will actually type (`garage`, `door`), not the mod id only.
+- `events.emits` (`<id>.<thing>`) and `events.subscribes` (`<other-mod>/<type glob>`).
+- `runtime.start`: `lazy` unless the mod must watch something all the time (then `boot`).
+
+## 4. Write the code
+
+In `<python_name>/app.py`, one handler per feature, using `ModApp`:
+
+- Pages: `@app.get(path)` returning `html(...)`. Relative URLs only in the HTML and scripts.
+- Tools: `@app.tool(name, description, properties, required, keywords=..., read_only=...)`.
+  Device actions: `controls_devices=True` (the core asks the user to approve each call).
+- Notifications: `app.core.notify(title, body, level=..., url="/mods/<id>/")`.
+- Events: `app.core.emit("<id>.<thing>", data)` and `@app.on_event(pattern)`.
+- Settings: `app.core.settings()` / `app.core.save_settings(...)`; small state:
+  `app.core.kv_get/kv_put` (needs `storage`); files only under `MOD_DATA_DIR`.
+- Slow or periodic work goes in a background thread started from `main()`, never in `/health`.
+
+It must work both under the core and standalone (see `CLAUDE.md`); `CoreClient` and `ModApp` handle
+the difference, so do not branch on it yourself unless a feature truly needs the core.
+
+## 5. Test
+
+Extend `tests/test_<python_name>.py` (renamed from `test_my_mod.py`) with one test per feature,
+through `DevCore`: the page or card through the proxy, each tool via `core.call_tool`, the
+notification in `core.notifications`, the event in `core.events`, delivered events via
+`core._deliver`, and that an unsigned direct request gets 401. Then:
+
+```
+python -m pytest -q
+python -m odysseus_mod.devcore     # look at it: http://127.0.0.1:7900/
+```
+
+## 6. Finish
+
+- Update `README.md`: what the mod does, its permissions and why, its settings.
+- No em dashes anywhere, American English.
+- Commit with a Conventional Commits message (`feat: ...`). For a release, bump `version` and tag
+  `vX.Y.Z`.
+- Summarize for the user: what the mod does, the permissions it asks for, how to install it
+  (Settings > Mods > Install with the git URL), and any default you picked in step 1.

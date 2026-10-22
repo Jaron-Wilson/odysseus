@@ -1,0 +1,25 @@
+{
+  "manifest_version": 1,
+  "id": "my-mod",
+  "name": "My Mod",
+  "version": "0.1.0",
+  "description": "A starter mod for Odysseus.",
+  "author": "",
+  "license": "MIT",
+  "min_core": "0.1",
+  "runtime": {
+    "type": "process",
+    "command": ["python", "-m", "my_mod"],
+    "health": "/health",
+    "start": "lazy",
+    "idle_stop_minutes": 60
+  },
+  "permissions": ["notify", "events.emit", "events.subscribe"],
+  "ui": {
+    "tabs": [{ "id": "main", "title": "My Mod", "icon": "box", "path": "/" }],
+    "home_cards": [{ "id": "summary", "title": "My Mod", "path": "/cards/summary", "height": 120 }],
+    "settings_path": "/settings"
+  },
+  "tools": { "endpoint": "/mod/tools", "keywords": ["my mod"] },
+  "events": { "emits": ["my-mod.clicked"], "subscribes": ["*/*.finished"] }
+}

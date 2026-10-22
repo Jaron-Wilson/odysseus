@@ -327,6 +327,32 @@ class ToolIndex:
         self._mcp_generation = gen
         logger.info(f"Indexed {len(docs)} MCP tools")
 
+    def index_extra_tools(self, kind: str, docs: Dict[str, str], generation: int) -> None:
+        """Index tools from another source (kind "mod": src/mods/tools.py),
+        {qualified name: text}. Re-indexed only when `generation` changes."""
+        gens = self.__dict__.setdefault("_extra_generations", {})
+        if gens.get(kind) == generation:
+            return
+        for lane in self._lanes:
+            try:
+                existing = lane.collection.get(where={"tool_type": kind})
+                if existing and existing["ids"]:
+                    lane.collection.delete(ids=existing["ids"])
+            except Exception:
+                pass
+        if docs:
+            names = sorted(docs)
+            texts = [docs[n] for n in names]
+            for lane in self._lanes:
+                try:
+                    lane.collection.upsert(ids=[f"{kind}_{n}" for n in names], documents=texts,
+                                           embeddings=lane.encode(texts),
+                                           metadatas=[{"tool_name": n, "tool_type": kind} for n in names])
+                except Exception as e:
+                    logger.warning("%s tool indexing failed in %s lane: %s", kind, lane.name, e)
+        gens[kind] = generation
+        logger.info("Indexed %d %s tools", len(docs), kind)
+
     def retrieve(self, query: str, k: int = 8) -> List[str]:
         """Retrieve the top-K most relevant tool names for a query."""
         rows = []
