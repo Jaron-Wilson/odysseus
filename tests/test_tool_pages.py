@@ -66,7 +66,9 @@ def test_unknown_names_are_not_guessed():
 def test_the_prompt_lists_every_page_in_its_group():
     names = tool_pages.names_for_prompt()
     assert names.startswith("Organize: calendar, tasks, notes, plans, brain;")
-    assert "Build: code, terminal, browser, background, company, claude-sessions, devops, odysseus-dev" in names
+    # Terminal and Claude sessions moved to the Programming mod: still pages
+    # the agent can open, listed after the built-in ones.
+    assert "Build: code, browser, background, company, devops, odysseus-dev, terminal, claude-sessions" in names
     assert "command line/shell/console->terminal" in tool_pages.aliases_for_prompt()
 
 
@@ -117,10 +119,13 @@ def test_an_unknown_page_lists_the_real_ones():
 def test_admin_only_pages_are_refused_for_a_non_admin(monkeypatch):
     import src.tool_security as sec
     monkeypatch.setattr(sec, "owner_is_admin_or_single_user", lambda owner: owner == "boss")
-    assert "only for admins" in _ui("open_panel terminal", owner="guest")["error"]
+    assert "only for admins" in _ui("open_panel code", owner="guest")["error"]
     assert "only for admins" in _ui("open_panel devices", owner="guest")["error"]
     assert _ui("open_panel calendar", owner="guest")["panel"] == "calendar"
-    assert _ui("open_panel terminal", owner="boss")["panel"] == "terminal"
+    assert _ui("open_panel code", owner="boss")["panel"] == "code"
+    # A page that moved to a mod opens the mod's tab or the "now a mod" card;
+    # the mod decides who may use it (the Programming mod: admins only).
+    assert _ui("open_panel terminal", owner="guest")["panel"] == "terminal"
 
 
 def test_a_native_tool_call_passes_the_page_through():

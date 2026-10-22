@@ -325,11 +325,11 @@ def test_a_memory_opens_brain_at_that_memory(make_page):
 def test_pages_and_settings_still_come_first(make_page):
     pg = make_page()
     pg.evaluate("window.__search.openSearch()")
-    pg.fill("#search-input", "terminal")
+    pg.fill("#search-input", "calendar")
     pg.wait_for_timeout(200)
-    assert _groups(pg)[0] == ["Pages", ["Terminal page"]]
+    assert _groups(pg)[0] == ["Pages", ["Calendar page"]]
     pg.press("#search-input", "Enter")
-    pg.wait_for_function("() => calls.includes('tool-terminal-btn')")
+    pg.wait_for_function("() => calls.includes('tool-calendar-btn')")
 
 
 # ── Nothing typed ───────────────────────────────────────────────────────

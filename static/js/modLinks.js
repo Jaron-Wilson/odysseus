@@ -22,7 +22,7 @@
 
 import ModPanel from './modPanel.js';
 import { page, openPage } from './toolPages.js';
-import { LEGACY_PAGES, parseHash, resolveLegacy } from './modLinksCore.js';
+import { LEGACY_PAGES, parseHash, resolveLegacy, safeSubPath } from './modLinksCore.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -56,11 +56,16 @@ export async function openMod(modId, tabId, opts = {}) {
   return true;
 }
 
-/** Open what an old built-in page key means now. */
-export async function openLegacy(key) {
+/** Open what an old built-in page key means now. `opts.query` (from
+ *  "#claude-sessions?id=...") goes to the replacing tab's page. */
+export async function openLegacy(key, opts = {}) {
   await ModPanel.list();
   const r = resolveLegacy(key, ModPanel.replacements(), builtinAvailable(key));
-  if (r.to === 'mod') return openMod(r.mod, r.tab);
+  if (r.to === 'mod') {
+    const hit = opts.query ? ModPanel.find(r.mod, r.tab) : null;
+    const path = hit && hit.t.path ? safeSubPath(`${String(hit.t.path).split('?')[0]}?${opts.query}`) : null;
+    return openMod(r.mod, r.tab, path ? { path } : {});
+  }
   if (r.to === 'builtin') return openPage(key);
   if (wsOn()) {
     try { (await shell()).openTool('moved:' + key); return true; } catch (_) { /* a window below */ }
@@ -78,7 +83,7 @@ export function route(link) {
     else ModPanel.list().then(() => { const h = ModPanel.find(target.mod); if (h) openMod(target.mod, h.t.id, { path: target.path }); else openFallback(null, target.mod); });
     return true;
   }
-  openLegacy(target.key);
+  openLegacy(target.key, { query: target.query });
   return true;
 }
 
