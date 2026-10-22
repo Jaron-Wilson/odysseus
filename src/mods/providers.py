@@ -20,8 +20,9 @@ The capability names and the actions the core calls:
 
 This is the core-as-caller half of mod capabilities. Mods calling each
 other's capabilities through the core (`/api/mods/v1/cap/...`) is a separate
-piece; both read the same `provides` list. Until the manifest validator
-knows `provides`, it is read from the installed mod's own manifest file.
+piece (src/mods/capabilities.py); both read the same `provides` list. For a
+mod installed before the validator kept `provides`, it is read from the mod's
+own manifest file.
 """
 from __future__ import annotations
 
@@ -63,7 +64,10 @@ def _clean(caps: Any) -> List[str]:
 def provides(entry: Dict[str, Any]) -> List[str]:
     """The capabilities an installed mod provides."""
     man = entry.get("manifest") or {}
-    if "provides" in man:
+    # The validated manifest is the answer when it lists any; an empty or
+    # missing list may be a mod installed before the validator kept
+    # `provides`, so then its own manifest file is read.
+    if man.get("provides"):
         return _clean(man.get("provides"))
     mod_id = entry.get("id") or ""
     path = os.path.join(paths.src_dir(mod_id), "odysseus-mod.json")

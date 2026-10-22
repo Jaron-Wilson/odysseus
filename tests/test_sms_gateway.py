@@ -561,3 +561,17 @@ def test_only_the_inbound_path_is_exempt_from_login():
     for path in ("/api/sms/config", "/api/sms/secret", "/api/sms/test", "/api/sms/inbound/",
                  "/api/sms/inbound/short", f"/api/sms/inbound/{'a' * 43}/extra"):
         assert not pat.match(path)
+
+
+def test_accepted_texts_are_offered_to_mods_and_rejected_ones_are_not(env, monkeypatch):
+    """Each accepted inbound text goes to src/mods/capabilities.py, which
+    publishes messaging.sms.received to mods that declared messaging.sms."""
+    from src.mods import capabilities
+    got = []
+    monkeypatch.setattr(capabilities, "sms_received", lambda owner, sender, text: got.append((owner, sender, text)))
+    secret = env["setup"]("alice", ALICE_NUM)
+    env["text"](secret, "+15559999999", "stranger")
+    env["text"]("x" * 43, ALICE_NUM, "wrong secret")
+    assert got == []
+    env["text"](secret, ALICE_NUM, "help")
+    assert got == [("alice", ALICE_NUM, "help")]

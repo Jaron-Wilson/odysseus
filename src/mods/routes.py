@@ -5,6 +5,7 @@
   /api/mods/ui                   any user: the tabs and home cards to show
   /api/mods/<id>/tutorial...     any user who may use the mod: its tutorial (src/mods/tutorial.py)
   /api/mods/v1/...               mods: the mod API, bearer ODYSSEUS_MOD_TOKEN
+  /api/mods/v1/cap/<cap>/<act>   mods: a capability call, brokered by the core (src/mods/capabilities.py)
 
 The mod API is exempt from AuthMiddleware (app.py) because mods do not hold a
 user session; every route here checks the mod's token itself and then the
@@ -24,8 +25,8 @@ from typing import Any, Deque, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from src.mods import (access, catalog, events, manifest as mf, notify, placement, proxy, registry, runtime, tools,
-                      tutorial)
+from src.mods import (access, capabilities, catalog, events, manifest as mf, notify, placement, proxy, registry,
+                      runtime, tools, tutorial)
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +66,13 @@ async def _json(request: Request) -> Dict[str, Any]:
     return data
 
 
-def _view(entry: Dict[str, Any]) -> Dict[str, Any]:
+def _view(entry: Dict[str, Any], user: Optional[str] = None) -> Dict[str, Any]:
     out = registry.public(entry)
+    # What it provides, needs and may use, with who provides each now; the
+    # mods that would lose a capability if it went; and what this admin granted it.
+    out["capabilities"] = capabilities.availability(entry.get("manifest") or {})
+    out["dependents"] = capabilities.dependents(entry["id"])
+    out["grants"] = capabilities.grants(entry, user) if user is not None else {}
     out["state"] = runtime.state(entry["id"]).view()
     out["tool_names"] = [t["name"] for t in tools.cached(entry["id"])]
     out["notify_muted"] = bool(entry.get("notify_muted"))
@@ -93,6 +99,24 @@ def _check_blocked(staged: Dict[str, Any], allow_blocked: bool) -> Optional[JSON
         pass
     return JSONResponse({"detail": f"Blocked: {why}. Install it anyway only if you know why it was blocked.",
                          "blocked": True, "errors": []}, status_code=409)
+
+
+def _dependents_refusal(mod_id: str, doing: str, force: bool) -> Optional[JSONResponse]:
+    """A 409 listing the mods that would lose a capability only `mod_id`
+    provides, unless the admin already confirmed (`force`)."""
+    deps = [] if force else capabilities.dependents(mod_id)
+    if not deps:
+        return None
+    hard = sorted({d["name"] for d in deps if d["kind"] == "requires"})
+    soft = sorted({d["name"] for d in deps if d["kind"] == "optional"} - set(hard))
+    parts = []
+    if hard:
+        parts.append(f"{', '.join(hard)} {'stops' if len(hard) == 1 else 'stop'} working")
+    if soft:
+        parts.append(f"{', '.join(soft)} {'loses' if len(soft) == 1 else 'lose'} features")
+    caps = ", ".join(sorted({d["capability"] for d in deps}))
+    return JSONResponse({"detail": f"{doing} it means {' and '.join(parts)}: nothing else provides {caps}.",
+                         "dependents": deps, "errors": []}, status_code=409)
 
 
 async def _after_enable(mod_id: str) -> None:
@@ -153,7 +177,11 @@ def _setup_v1(router: APIRouter) -> None:
         e = _mod(request)
         return {"id": e["id"], "name": e.get("name"), "version": e.get("version"),
                 "permissions": e.get("granted_permissions") or [], "core_api": mf.CORE_API_VERSION,
-                "base_path": f"/mods/{e['id']}"}
+                "base_path": f"/mods/{e['id']}",
+                # Who can use it, so a mod that must stay admin only can check
+                # that this core enforces it (src/mods/access.py).
+                "admin_only": access.admin_only(e),
+                "access": "admins" if access.admin_only(e) else e.get("access", "admins")}
 
     @router.post("/api/mods/v1/notify")
     async def v1_notify(request: Request):
@@ -350,6 +378,29 @@ def _setup_v1(router: APIRouter) -> None:
         task.add_done_callback(_background.discard)
         return {"ok": True, "queued": True}
 
+    # ── Capabilities (src/mods/capabilities.py) ──
+    @router.get("/api/mods/v1/cap")
+    async def v1_caps(request: Request):
+        """The capabilities this mod declared, and whether each is available now."""
+        e = _mod(request)
+        return capabilities.availability(e.get("manifest") or {})
+
+    @router.post("/api/mods/v1/cap/{capability}/{action}")
+    async def v1_cap_call(request: Request, capability: str, action: str, provider: str = ""):
+        """`?provider=<mod id>` calls that mod by name (it must provide the
+        capability); otherwise the first provider answers."""
+        e = _mod(request)
+        raw = await request.body()
+        if len(raw) > capabilities.MAX_BODY_BYTES:
+            raise HTTPException(413, "the arguments are larger than 64 KB")
+        body = await _json(request) if raw.strip() else {}
+        user = _owner_for(e, body)
+        args = {k: v for k, v in body.items() if k != "user"}
+        try:
+            return await capabilities.call(e, user or None, capability, action, args, provider[:32] or None)
+        except capabilities.CapError as ex:
+            return JSONResponse({"detail": ex.message, **ex.extra}, status_code=ex.status)
+
 
 # ── Admin and UI ─────────────────────────────────────────────────────────
 
@@ -360,10 +411,11 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
 
     @router.get("/api/mods")
     async def list_mods(request: Request):
-        _require_admin(request)
-        return {"mods": [_view(m) for m in sorted(registry.list_mods(), key=lambda m: m["id"])],
+        user = _require_admin(request)
+        return {"mods": [_view(m, user or "") for m in sorted(registry.list_mods(), key=lambda m: m["id"])],
                 "core_api": mf.CORE_API_VERSION, "permissions": mf.PERMISSIONS,
-                "notify": notify.channel_settings(), "nav_groups": placement.groups()}
+                "notify": notify.channel_settings(), "nav_groups": placement.groups(),
+                "capabilities": capabilities.known_view()}
 
     @router.post("/api/mods/install/prepare")
     async def install_prepare(request: Request):
@@ -386,6 +438,12 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
             approved = registry.approved_list(body.get("permissions"))
             meta = registry._staged(iid)
             update_of = meta.get("update_of")
+            # A hard requirement nobody provides: say so, and install only when told to.
+            missing = capabilities.availability(meta.get("manifest") or {})["missing"]
+            if missing and body.get("allow_missing") is not True:
+                return JSONResponse({"detail": f"Nothing installed provides {', '.join(missing)}, which this mod "
+                                               "needs. Install a provider first, or install it anyway.",
+                                     "missing_requires": missing, "errors": []}, status_code=409)
             if update_of:
                 await runtime.stop(update_of, "stopped for an update")
             entry = await asyncio.to_thread(registry.confirm, iid, approved)
@@ -522,11 +580,11 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
 
     @router.get("/api/mods/catalog")
     async def catalog_list(request: Request, q: str = "", tag: str = "", verified: str = "",
-                           compatible: str = "", refresh: bool = False):
+                           compatible: str = "", refresh: bool = False, capability: str = ""):
         _require_admin(request)
         try:
             return await asyncio.to_thread(catalog.query, q[:200], tag[:40], verified or None, compatible or None,
-                                           refresh)
+                                           refresh, capability[:capabilities.MAX_CAP_LEN])
         except catalog.CatalogError as e:
             return _cat_err(e)
 
@@ -564,17 +622,35 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         except catalog.CatalogError as e:
             return _cat_err(e)
 
+    # ── Capabilities (src/mods/capabilities.py). Before /api/mods/{mod_id}. ──
+    @router.get("/api/mods/capabilities")
+    async def capabilities_list(request: Request):
+        _require_admin(request)
+        return {"capabilities": capabilities.known_view()}
+
+    @router.get("/api/mods/capabilities/log")
+    async def capabilities_log(request: Request, mod: str = "", limit: int = 200):
+        _require_admin(request)
+        return {"log": await asyncio.to_thread(capabilities.read_log, max(1, min(limit, 1000)), mod or None)}
+
     @router.get("/api/mods/{mod_id}")
     async def get_mod(request: Request, mod_id: str):
-        _require_admin(request)
+        user = _require_admin(request)
         e = registry.get(mod_id)
         if not e:
             raise HTTPException(404, "No such mod")
-        return {"mod": _view(e)}
+        return {"mod": _view(e, user or "")}
+
+    @router.get("/api/mods/{mod_id}/dependents")
+    async def get_dependents(request: Request, mod_id: str):
+        _require_admin(request)
+        if not registry.get(mod_id):
+            raise HTTPException(404, "No such mod")
+        return {"dependents": capabilities.dependents(mod_id)}
 
     @router.post("/api/mods/{mod_id}/{action}")
-    async def mod_action(request: Request, mod_id: str, action: str):
-        _require_admin(request)
+    async def mod_action(request: Request, mod_id: str, action: str, force: bool = False):
+        user = _require_admin(request)
         e = registry.get(mod_id)
         if not e:
             raise HTTPException(404, "No such mod")
@@ -583,6 +659,9 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
                 registry.set_enabled(mod_id, True)
                 await _after_enable(mod_id)
             elif action == "disable":
+                refused = _dependents_refusal(mod_id, "Disabling", force)
+                if refused:
+                    return refused
                 registry.set_enabled(mod_id, False)
                 await runtime.stop(mod_id, "disabled")
             elif action == "start":
@@ -617,20 +696,36 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
             elif action == "mute":
                 body = await _json(request)
                 registry._update(mod_id, notify_muted=bool(body.get("muted")))
+            elif action == "grants":
+                # This admin's grant to the mod for one capability, like extra
+                # numbers it may text: {"capability": "messaging.sms", "numbers": [...]}.
+                body = await _json(request)
+                cap = str(body.get("capability") or "")
+                if cap not in capabilities.declared(e.get("manifest") or {}):
+                    raise HTTPException(400, f"This mod does not use {cap or 'that capability'}")
+                try:
+                    capabilities.set_grant(mod_id, user or "", cap, body)
+                except capabilities.CapError as ex:
+                    raise HTTPException(ex.status, ex.message)
             else:
                 raise HTTPException(404, "Unknown action")
         except registry.RegistryError as ex:
             return _err(ex)
-        return {"mod": _view(registry.get(mod_id))}
+        return {"mod": _view(registry.get(mod_id), user or "")}
 
     @router.delete("/api/mods/{mod_id}")
-    async def delete_mod(request: Request, mod_id: str, keep_data: bool = True, remove_images: bool = False):
+    async def delete_mod(request: Request, mod_id: str, keep_data: bool = True, remove_images: bool = False,
+                         force: bool = False):
         """Remove a mod. keep_data (the default) keeps its data folder and, for
         a docker mod, its volumes; remove_images also deletes the images built
-        for a docker mod (`compose down --rmi local`)."""
+        for a docker mod (`compose down --rmi local`). Other mods that need a
+        capability only it provides make this a 409 unless `force`."""
         _require_admin(request)
         if not registry.get(mod_id):
             raise HTTPException(404, "No such mod")
+        refused = _dependents_refusal(mod_id, "Removing", force)
+        if refused:
+            return refused
         await runtime.stop(mod_id, "removed")
         await runtime.remove_docker(mod_id, images=remove_images, volumes=not keep_data)
         try:

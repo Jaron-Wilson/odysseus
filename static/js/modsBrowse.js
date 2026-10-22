@@ -14,6 +14,7 @@ const CAT = '/api/mods/catalog';
 let ctx = null;          // {api, esc, say, prefillInstall, startUpdate}
 let _data = null;        // the last /api/mods/catalog answer
 let _tag = '';
+let _capability = '';    // only mods that provide this (the install review's "Find a provider")
 let _detail = null;      // the open details answer
 let _timer = null;
 let _seq = 0;
@@ -73,8 +74,31 @@ function renderTags() {
   const box = $('mods-browse-tags');
   if (!box || !_data) return;
   const tags = (_data.tags || []).filter((t) => t.suggested || t.count);
-  box.innerHTML = tagChip('', 'All', !_tag, 0, '')
+  box.innerHTML = (_capability ? `<button type="button" class="settings-btn" id="mods-browse-cap-clear" data-mods-cap="${ctx.esc(_capability)}" title="Show all mods again" style="padding:1px 9px;font-size:12px;border-radius:12px;border-color:var(--accent, #58a6ff);color:var(--accent, #58a6ff)">Provides ${ctx.esc(_capability)} &#215;</button>` : '')
+    + tagChip('', 'All', !_tag, 0, '')
     + tags.map((t) => tagChip(t.tag, t.tag, _tag === t.tag, t.count, t.description)).join('');
+}
+
+// What a mod provides, needs and may use, in one line for a result card.
+function capsText(r) {
+  const esc = ctx.esc;
+  const out = [];
+  if ((r.provides || []).length) out.push(`provides ${r.provides.map((c) => `<code>${esc(c)}</code>`).join(', ')}`);
+  if ((r.requires || []).length) out.push(`needs ${r.requires.map((c) => `<code>${esc(c)}</code>`).join(', ')}`);
+  if ((r.optional || []).length) out.push(`works better with ${r.optional.map((c) => `<code>${esc(c)}</code>`).join(', ')}`);
+  return out.join(' · ');
+}
+
+// The details panel's Capabilities column, with whether this Odysseus has a provider now.
+function capsDetail(caps) {
+  if (!caps) return '';
+  const esc = ctx.esc;
+  const name = (c) => `<code title="${esc(c.description || '')}">${esc(c.id)}</code>${c.known && c.title ? ` (${esc(c.title)})` : ''}`;
+  const li = [];
+  for (const c of caps.provides || []) li.push(`<li>Provides ${name(c)}</li>`);
+  for (const c of caps.requires || []) li.push(`<li${c.available ? '' : ' style="color:var(--red, #e5534b)"'}>Needs ${name(c)}${c.available ? `: ${esc(c.provider.name)} provides it here` : ': nothing here provides it yet'}</li>`);
+  for (const c of caps.optional || []) li.push(`<li>Works better with ${name(c)}${c.available ? `: ${esc(c.provider.name)} provides it here` : ''}</li>`);
+  return li.length ? `<div><div class="admin-toggle-sub"><strong>Capabilities</strong></div><ul class="admin-toggle-sub" style="margin:2px 0 0 18px;padding:0">${li.join('')}</ul></div>` : '';
 }
 
 function renderResults() {
@@ -83,6 +107,7 @@ function renderResults() {
   const rs = _data.results || [];
   if (!rs.length) {
     box.innerHTML = `<div class="admin-card"><div class="admin-toggle-sub">${
+      _capability ? `No mod found provides <code>${ctx.esc(_capability)}</code>.` : ''} ${
       _data.fetched_at ? 'No mods match.' : 'Nothing found yet.'} Mods show up here when their repository has the GitHub topic <code>odysseus-mod</code>, or when an index you added lists them.</div></div>`;
     return;
   }
@@ -103,6 +128,7 @@ function renderResults() {
         <h2 style="margin:0">${ctx.esc(r.name || r.repo)}${badges(r)}</h2>
         <div class="admin-toggle-sub">${ctx.esc(r.summary || '')}</div>
         <div class="admin-toggle-sub">${meta.join(' · ')}${what.length ? ` · ${what.join(' · ')}` : ''}</div>
+        ${capsText(r) ? `<div class="admin-toggle-sub" data-mods-caps>${capsText(r)}</div>` : ''}
         ${(r.tags || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${r.tags.map((t) => `<span class="admin-toggle-sub" style="font-size:11px;padding:0 6px;border-radius:8px;background:var(--bg-tertiary, rgba(0,0,0,.25))">${ctx.esc(t)}</span>`).join('')}</div>` : ''}
       </div>
       <button class="settings-btn" type="button" data-mods-details="${ctx.esc(r.full_name)}">Details</button>
@@ -139,7 +165,8 @@ async function load(refresh) {
   const q = ($('mods-browse-q') || {}).value || '';
   if (q.trim()) p.set('q', q.trim());
   if (_tag) p.set('tag', _tag);
-  const v = ($('mods-browse-verified') || {}).value || '';
+  if (_capability) p.set('capability', _capability);
+  const v =($('mods-browse-verified') || {}).value || '';
   if (v) p.set('verified', v);
   if (($('mods-browse-compatible') || {}).checked) p.set('compatible', '1');
   if (refresh) p.set('refresh', 'true');
@@ -248,6 +275,7 @@ function renderDetails() {
         <div class="admin-toggle-sub">A ${esc(rt.type || 'process')} mod${(rt.command || []).length ? `: <code>${esc(rt.command.join(' '))}</code>` : ''}, starts ${esc(rt.start || 'lazy')}.</div>
         ${setup ? `<div class="admin-toggle-sub">Setup after approval:<br>${setup}</div>` : ''}
         <div class="admin-toggle-sub">${m.tools ? `Agent tools, offered for: ${kw.length ? kw.map(esc).join(', ') : 'its own keywords'}` : 'No agent tools'}.</div></div>
+      ${capsDetail(d.capabilities)}
     </div>
     ${shots ? `<div style="display:flex;gap:8px;overflow-x:auto;margin-top:10px">${shots}</div>` : ''}
     <div class="admin-toggle-sub" style="margin-top:12px"><strong>README</strong></div>
@@ -269,6 +297,7 @@ function onClick(ev) {
   const t = ev.target;
   const chip = t.closest('[data-mods-tag]');
   if (chip) { _tag = chip.dataset.modsTag; load(); return; }
+  if (t.closest('#mods-browse-cap-clear')) { _capability = ''; load(); return; }
   const det = t.closest('[data-mods-details]');
   if (det) { openDetails(det.dataset.modsDetails); return; }
   if (t.closest('#mods-browse-back')) { _detail = null; showDetails(false); return; }
@@ -327,5 +356,13 @@ export function initBrowse(c) {
 }
 
 export function loadBrowse(refresh) { return load(refresh); }
+
+// Show only mods that provide `cap` (or all again for ''); the next load applies it.
+export function setBrowseCapability(cap) {
+  _capability = String(cap || '');
+  _detail = null;
+  showDetails(false);
+  renderTags();
+}
 
 export function browseState() { return { data: _data, detail: _detail }; }

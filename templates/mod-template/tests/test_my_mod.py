@@ -105,3 +105,20 @@ def test_subscribed_events_are_delivered(core):
     core._deliver(ev)
     code, body = get(f"{core.url}/mods/{core.mod_id}/cards/summary")
     assert b"1 events" in body or b"events" in body
+
+
+def test_capabilities_under_devcore(core):
+    """devcore brokers capability calls like the core: only declared ones,
+    and messaging.sms only to the user's own number."""
+    auth = {"Authorization": f"Bearer {core.token}"}
+    url = f"{core.url}/api/mods/v1/cap/messaging.sms/send"
+    assert get(url, "POST", {"text": "hi"}, auth)[0] == 403          # not in requires/optional
+    core.manifest["optional"] = ["messaging.sms"]
+    try:
+        code, body = get(url, "POST", {"text": "hi"}, auth)
+        assert code == 200 and json.loads(body)["to"] == core.SMS_NUMBER and core.texts[-1]["text"] == "hi"
+        assert get(url, "POST", {"text": "hi", "to": "+15550109999"}, auth)[0] == 403
+        caps = json.loads(get(f"{core.url}/api/mods/v1/cap", headers=auth)[1])
+        assert caps["optional"][0]["available"] and caps["missing"] == []
+    finally:
+        core.manifest.pop("optional", None)
