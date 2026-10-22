@@ -96,9 +96,6 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "devices", "label": "Devices", "group": "system", "open": "#tool-devices-btn", "tab": "devices", "adminOnly": true,
       "desc": "Your computers, phones and MCP servers",
       "aliases": ["device", "computers", "computer", "phones", "phone", "machines", "machine", "mcp", "mcp servers", "laptop", "desktop"] },
-    { "key": "adsb", "label": "ADS-B receiver", "group": "system", "open": "#tool-adsb-btn", "tab": "adsb", "adminOnly": true,
-      "desc": "What your ADS-B receiver hears, and its live map",
-      "aliases": ["ads-b", "adsb", "receiver", "pi", "raspberry pi", "planes", "aircraft", "flights", "tar1090", "feeder"] },
     { "key": "games", "label": "Games", "group": "system", "open": "#tool-games-btn", "tab": "games", "adminOnly": true,
       "desc": "Stream your PC games in the browser",
       "aliases": ["game", "play", "play games", "steam", "sunshine", "moonlight", "game streaming", "gaming",
@@ -135,7 +132,11 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "print", "label": "3D print", "group": "create",
       "desc": "3D printing: the Print Hub mod (live view, new print, the print helper)",
       "aliases": ["3d print", "3d printing", "3d print helper", "print helper", "print hub", "printhub", "stl", "3mf",
-                  "bambu", "slicer", "supports", "make it printable", "printer", "3d printer"] }
+                  "bambu", "slicer", "supports", "make it printable", "printer", "3d printer"] },
+    { "key": "adsb", "label": "ADS-B receiver", "group": "system",
+      "desc": "Your ADS-B receiver: the ADS-B Receiver mod (what it hears, its live map)",
+      "aliases": ["ads-b", "adsb", "ads-b receiver", "receiver", "pi", "raspberry pi", "planes", "aircraft", "flights",
+                  "tar1090", "feeder", "adsb.im"] }
   ]
 } /* tool-pages:end */;
 

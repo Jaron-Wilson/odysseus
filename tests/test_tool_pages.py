@@ -104,6 +104,27 @@ def test_a_page_that_moved_to_a_mod_still_opens():
     assert "if (p.moved)" in _JS and "openLegacy(p.key)" in _JS
 
 
+def test_the_adsb_receiver_moved_to_a_mod_and_still_opens():
+    """The ADS-B receiver page is now the ADS-B Receiver mod (odysseus-adsb):
+    no route, panel or sidebar button in the core, and "take me to ADS-B"
+    goes through modLinks.openLegacy like the print helper."""
+    import os
+    from src.mods import placement
+    assert "adsb" not in [p["key"] for p in tool_pages.PAGES]
+    assert "adsb" not in placement.page_keys("system")
+    assert "adsb" in placement.LEGACY_PAGES
+    for name in ("adsb", "ADS-B", "ads-b receiver", "tar1090", "aircraft", "the adsb page"):
+        assert tool_pages.page(name)["key"] == "adsb", name
+    out = _ui("open_panel ads-b receiver")
+    assert out["ui_event"] == "open_panel" and out["panel"] == "adsb", out
+    assert "System: devices, games, cookbook, theme, usage, whats-new, adsb" in tool_pages.names_for_prompt()
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for gone in ("routes/adsb_routes.py", "src/adsb.py", "static/js/adsbPanel.js", "static/css/adsbPanel.css"):
+        assert not os.path.exists(os.path.join(root, gone)), gone
+    html = open(os.path.join(root, "static", "index.html"), encoding="utf-8").read()
+    assert "tool-adsb-btn" not in html and "adsbPanel" not in html
+
+
 def test_open_panel_settings_still_carries_the_setting():
     out = _ui("open_panel settings speech to text engine")
     assert out["panel"] == "settings" and out["settings_target"] == "speech to text engine"

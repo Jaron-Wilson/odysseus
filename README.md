@@ -443,7 +443,7 @@ and lets you open a chat to ask about one.
 - The agent knows which device a message came from, works in the background by default, and only uses your screen when you ask. **Screen control** needs your approval, which is limited by time and by a number of actions, and Stop revokes it.
 - **Music bar**: control the music playing on one of your machines (art, controls, volume, lyrics) from the chat, listen in the browser, or pop it out as a frameless desktop overlay (`tools/music_overlay/`) that stays on top of games and shows the agent's messages with a reply box. A computer's sound can also be streamed to another over the tailnet.
 - **System > Games** (admin): play PC games in the browser through [Sunshine](https://github.com/LizardByte/Sunshine) on the PC and Moonlight Web served at `/play/`. Shows Sunshine's apps with covers, what is running, Stop and **Sync Steam games**, and the agent gets game tools. Set it up in **Settings > Devices > Game streaming**. See [docs/games.md](docs/games.md).
-- **System > ADS-B receiver** (admin): the status, aircraft list and live tar1090 map of an ADS-B feeder on your network. Set the receiver address on the page (or `ODYSSEUS_ADSB_URL`).
+- **ADS-B receiver**: now the [ADS-B Receiver mod](https://github.com/Jaron-Wilson/odysseus-adsb) (`odysseus-adsb`): the status, aircraft list and live tar1090 map of an ADS-B feeder on your network, links to the feeder, the aggregators and Flys Down, and agent tools. Install it from Settings > Mods > Browse; its tab replaces the old `#adsb` page, and without it `#adsb` shows the "This feature is now a mod" card. Its settings page imports the old `adsb.json`.
 
 </details>
 

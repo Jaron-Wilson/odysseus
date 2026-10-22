@@ -515,7 +515,7 @@ list, in this order), and the built-in pages in each, which are what `after` may
 | `organize` | Organize | `calendar`, `tasks`, `notes`, `plans`, `brain` |
 | `create` | Create & research | `library`, `gallery`, `research`, `compare` |
 | `build` | Build | `code`, `terminal`, `browser`, `background`, `company`, `claude-sessions`, `devops`, `odysseus-dev` |
-| `system` | System | `devices`, `adsb`, `games`, `cookbook`, `theme`, `usage`, `whats-new` |
+| `system` | System | `devices`, `games`, `cookbook`, `theme`, `usage`, `whats-new` |
 | `mods` | Mods | None. The default; the group only appears when a tab is in it. |
 
 For example, Print Hub's Printer tab, which also takes over the old 3D print helper page
@@ -532,7 +532,7 @@ For example, Print Hub's Printer tab, which also takes over the old 3D print hel
 ```
 
 That gives Create & research: Library, Gallery, Deep Research, Compare, Printer, Print queue. A page
-that moved to a mod (like `print`) is not a built-in page any more, so `after` can't name it (a
+that moved to a mod (like `print` or `adsb`) is not a built-in page any more, so `after` can't name it (a
 warning). A built-in page that is hidden (admin only, or turned off in Customize UI) keeps its
 place, so the tab stays where it would be.
 
@@ -612,7 +612,7 @@ else reads it.
 #### Pages that moved to mods
 
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
-receiver), `games`, `print` (3D print helper, now part of Print Hub), `devops`, `company`, and later `code`, `terminal`,
+receiver, now the ADS-B Receiver mod, `Jaron-Wilson/odysseus-adsb`), `games`, `print` (3D print helper, now part of Print Hub), `devops`, `company`, and later `code`, `terminal`,
 `browser`, `claude-sessions`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
 `src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,
 `/#games?play=...`) and saved Workspace tabs keep working:

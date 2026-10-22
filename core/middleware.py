@@ -61,19 +61,6 @@ class ModAwareCORSMiddleware:
         await self.cors(scope, receive, send)
 
 
-def _adsb_frame_src() -> str:
-    """" <origin>" for the configured ADS-B receiver, or "" (src/adsb.py)."""
-    try:
-        from src.adsb import frame_origin
-        origin = frame_origin()
-    except Exception:
-        return ""
-    # An origin is scheme://host[:port]; anything else must not reach the header.
-    if not origin or any(c in origin for c in " ;,'\"\r\n"):
-        return ""
-    return f" {origin}"
-
-
 def _games_frame_src() -> str:
     """" <origin>" for Moonlight Web when it is on another origin (src/games.py)."""
     try:
@@ -81,6 +68,7 @@ def _games_frame_src() -> str:
         origin = moonlight_frame_origin()
     except Exception:
         return ""
+    # An origin is scheme://host[:port]; anything else must not reach the header.
     if not origin or any(c in origin for c in " ;,'\"\r\n"):
         return ""
     return f" {origin}"
@@ -213,11 +201,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "img-src 'self' data: blob: https://i.ytimg.com; "
                 "media-src 'self' blob: https:; "
                 "connect-src 'self'; "
-                # YouTube's privacy-enhanced player, loaded on click, and the
-                # ADS-B receiver's own map (src/adsb.py): only the origin set
-                # on that page, never a wildcard. And Moonlight Web, the game
-                # stream, when it is set to another origin than /play/ here.
-                f"frame-src 'self' https://www.youtube-nocookie.com{_adsb_frame_src()}{_games_frame_src()}; "
+                # YouTube's privacy-enhanced player, loaded on click, and
+                # Moonlight Web, the game stream, when it is set to another
+                # origin than /play/ here: only that origin, never a wildcard.
+                # (The ADS-B receiver's map is now framed inside its mod's
+                # page, whose own CSP is the mod sandbox.)
+                f"frame-src 'self' https://www.youtube-nocookie.com{_games_frame_src()}; "
                 + ("frame-ancestors 'self'" if is_thread_pane else "frame-ancestors 'none'")
             )
         return response
