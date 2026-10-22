@@ -438,7 +438,7 @@ and lets you open a chat to ask about one.
 <details>
 <summary>Devices, music and games</summary>
 
-- **Settings > Devices** lists your computers and phones by machine, with Ping and push notifications (web push, no third-party app). **Add a device** makes a one-time code: one PowerShell or shell command (or a QR scan on a phone) installs the desktop MCP server and registers the machine. The scripts are in `tools/enroll/`.
+- **Settings > Devices** lists your computers and phones by machine, with Ping and push notifications (web push, no third-party app). The machines on your tailnet come from the [Tailscale add-on](https://github.com/Jaron-Wilson/odysseus-tailscale) (Settings > Mods > Browse); without it, MCP servers and devices you add by hand still work. **Add a device** makes a one-time code: one PowerShell or shell command (or a QR scan on a phone) installs the desktop MCP server and registers the machine. The scripts are in `tools/enroll/`.
 - Linked computers get **every Odysseus tool** (desktop MCP, music overlay, sound streaming). Settings > Devices says what each computer is missing and offers **Install** / **Update**.
 - The agent knows which device a message came from, works in the background by default, and only uses your screen when you ask. **Screen control** needs your approval, which is limited by time and by a number of actions, and Stop revokes it.
 - **Music bar**: control the music playing on one of your machines (art, controls, volume, lyrics) from the chat, listen in the browser, or pop it out as a frameless desktop overlay (`tools/music_overlay/`) that stays on top of games and shows the agent's messages with a reply box. A computer's sound can also be streamed to another over the tailnet.

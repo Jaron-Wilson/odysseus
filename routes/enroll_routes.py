@@ -617,6 +617,8 @@ async def device_checks(name: str, mgr) -> list:
     if peer is not None:
         checks.append({"ok": bool(peer["online"]),
                        "text": f"Tailscale sees {peer['name']} as {'online' if peer['online'] else 'offline'}."})
+    elif not machines.network_status()["provider"]:
+        checks.append({"ok": False, "text": "Install the Tailscale add-on to check the tailnet."})
     else:
         checks.append({"ok": False, "text": f"{name} is not on the tailnet by that name. Is Tailscale on?"})
     if d is not None:
