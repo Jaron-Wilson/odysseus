@@ -38,6 +38,12 @@ def _load() -> Dict:
 TAXONOMY = _load()
 GROUPS: List[Dict] = TAXONOMY.get("groups", [])
 PAGES: List[Dict] = TAXONOMY.get("pages", [])
+# Pages that moved out of the core into a mod (`moved` in toolPages.js). Not
+# built-in pages (a mod tab's `after` can't name them; src/mods/placement.py
+# reads PAGES only), but open_panel still opens them: the browser routes the
+# key through modLinks.openLegacy (the mod tab that replaces it, or the
+# "This feature is now a mod" card).
+MOVED: List[Dict] = [{**p, "moved": True, "open": None, "tab": None} for p in TAXONOMY.get("moved", [])]
 _BY_KEY = {p["key"]: p for p in PAGES}
 _GROUP_LABEL = {g["id"]: g["label"] for g in GROUPS}
 
@@ -59,10 +65,11 @@ def page(name: str) -> Optional[Dict]:
         return None
     if n in LEGACY:
         return _BY_KEY.get(LEGACY[n])
-    for p in PAGES:
+    every = PAGES + MOVED
+    for p in every:
         if n in (_norm(p["key"]), _norm(p["label"])):
             return p
-    for p in PAGES:
+    for p in every:
         if any(n == _norm(a) for a in p.get("aliases", [])):
             return p
     # "devices" for "device", "calendars" for "calendar"
@@ -83,7 +90,7 @@ def split(rest: str):
 
 
 def keys() -> List[str]:
-    return [p["key"] for p in PAGES]
+    return [p["key"] for p in PAGES + MOVED]
 
 
 def group_label(p: Dict) -> str:
@@ -94,7 +101,7 @@ def names_for_prompt() -> str:
     """Every page key, grouped: "Organize: calendar, tasks, ...; ...; also email, ..."."""
     parts = []
     for g in GROUPS:
-        ks = [p["key"] for p in PAGES if p.get("group") == g["id"]]
+        ks = [p["key"] for p in PAGES + MOVED if p.get("group") == g["id"]]
         if ks:
             parts.append(f"{g['label']}: {', '.join(ks)}")
     other = [p["key"] for p in PAGES if not p.get("group")]
@@ -106,7 +113,7 @@ def names_for_prompt() -> str:
 def aliases_for_prompt(limit: int = 3) -> str:
     """A few words people use for each page: 'command line/shell/console->terminal, ...'."""
     out = []
-    for p in PAGES:
+    for p in PAGES + MOVED:
         al, seen = [], {_norm(p["key"]).rstrip("s")}
         for a in p.get("aliases", []):
             base = _norm(a).rstrip("s")            # "computer" says nothing "computers" didn't

@@ -397,7 +397,7 @@ def test_details_shows_readme_permissions_tabs_and_versions(gh):
     a = repo("alice/print-hub")
     gh.search = [a]
     gh.add(a, manifest("print-hub", permissions=["notify", "devices.read"], ui={"tabs": [
-        {"id": "printer", "title": "Printer", "path": "/", "section": "create", "after": "print"},
+        {"id": "printer", "title": "Printer", "path": "/", "section": "create", "after": "compare"},
         {"id": "odd", "title": "Odd", "path": "/odd", "section": "nowhere"}]},
         runtime={"type": "process", "command": ["python", "-m", "printhub"], "setup": [["pip", "install", "-r", "r.txt"]]}),
         readme="# Print Hub\n\n<script>x()</script>Hello")
@@ -409,7 +409,7 @@ def test_details_shows_readme_permissions_tabs_and_versions(gh):
     assert [p["id"] for p in d["permissions"]] == ["devices.read", "notify"]
     assert all(p["description"] for p in d["permissions"])
     t = {x["id"]: x for x in d["tabs"]}
-    assert t["printer"]["section"] == "create" and t["printer"]["after"] == "print" and t["printer"]["section_label"]
+    assert t["printer"]["section"] == "create" and t["printer"]["after"] == "compare" and t["printer"]["section_label"]
     assert t["odd"]["section"] == "mods"
     assert d["runtime"]["setup"] == [["pip", "install", "-r", "r.txt"]]
     assert [v["ref"] for v in d["versions"]] == ["v0.2.0", "v0.1.0"] and d["versions"][0]["kind"] == "release"

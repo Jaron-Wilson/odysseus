@@ -24,13 +24,14 @@ def _man(tabs):
 def test_group_ids_are_the_sidebar_groups_plus_mods():
     assert placement.group_ids() == [g["id"] for g in tool_pages.GROUPS] + ["mods"]
     assert placement.group_ids() == ["organize", "create", "build", "system", "mods"]
-    assert "print" in placement.page_keys("create")
+    assert placement.page_keys("create") == ["library", "gallery", "research", "compare"]
+    assert "print" not in placement.page_keys("create")   # moved to the Print Hub mod
 
 
 def test_section_after_and_order_are_kept():
-    m = _man([{"id": "printer", "title": "Printer", "path": "/", "section": "create", "after": "print", "order": 2}])
+    m = _man([{"id": "printer", "title": "Printer", "path": "/", "section": "create", "after": "compare", "order": 2}])
     t = m["ui"]["tabs"][0]
-    assert (t["section"], t["after"], t["order"]) == ("create", "print", 2)
+    assert (t["section"], t["after"], t["order"]) == ("create", "compare", 2)
     assert m["warnings"] == []
 
 
@@ -46,6 +47,8 @@ def test_old_manifests_still_validate_and_go_in_mods():
     ({"section": "kitchen"}, "not a nav group"),
     ({"section": "create", "after": "terminal"}, "not a page in"),
     ({"after": "print"}, "not a page in"),
+    # The 3D print helper moved to the Print Hub mod: no longer a page to sit after.
+    ({"section": "create", "after": "print"}, "not a page in"),
     ({"section": "create", "after": "nope"}, "not a page in"),
 ])
 def test_unknown_places_are_warnings_not_errors(tab, words):
@@ -72,9 +75,9 @@ def test_wrong_types_are_errors(tab, words):
     assert any(words in err for err in e.value.errors), e.value.errors
 
 
-def test_hello_mod_declares_create_after_print():
+def test_hello_mod_declares_create_after_compare():
     t = mf.load(HELLO)["ui"]["tabs"][0]
-    assert (t["section"], t["after"]) == ("create", "print")
+    assert (t["section"], t["after"]) == ("create", "compare")
 
 
 def test_template_declares_a_section():
@@ -94,9 +97,9 @@ def _entry(mod_id, tabs, name=None, placement_=None):
 
 def test_nav_order_anchor_then_order_then_title():
     entries = [
-        _entry("zeta", [{"id": "a", "title": "Zeta", "path": "/", "section": "create", "after": "print"}]),
-        _entry("alpha", [{"id": "a", "title": "Alpha", "path": "/", "section": "create", "after": "print"}]),
-        _entry("early", [{"id": "a", "title": "Early", "path": "/", "section": "create", "after": "print", "order": -1}]),
+        _entry("zeta", [{"id": "a", "title": "Zeta", "path": "/", "section": "create", "after": "compare"}]),
+        _entry("alpha", [{"id": "a", "title": "Alpha", "path": "/", "section": "create", "after": "compare"}]),
+        _entry("early", [{"id": "a", "title": "Early", "path": "/", "section": "create", "after": "compare", "order": -1}]),
         _entry("lib", [{"id": "a", "title": "After library", "path": "/", "section": "create", "after": "library"}]),
         _entry("end", [{"id": "a", "title": "At the end", "path": "/", "section": "create"}]),
         _entry("org", [{"id": "a", "title": "Org", "path": "/", "section": "organize"}]),
@@ -106,9 +109,9 @@ def test_nav_order_anchor_then_order_then_title():
     assert order == [
         ("org", "organize", None),
         ("lib", "create", "library"),
-        ("early", "create", "print"),
-        ("alpha", "create", "print"),
-        ("zeta", "create", "print"),
+        ("early", "create", "compare"),
+        ("alpha", "create", "compare"),
+        ("zeta", "create", "compare"),
         ("end", "create", None),
         ("plain", "mods", None),
     ]
@@ -123,10 +126,10 @@ def test_ties_sort_by_title_not_by_mod_id():
 # ── The user's override ─────────────────────────────────────────────────
 
 def test_override_section_wins_and_drops_after():
-    tab = _man([{"id": "p", "path": "/", "section": "create", "after": "print", "order": 3}])["ui"]["tabs"][0]
+    tab = _man([{"id": "p", "path": "/", "section": "create", "after": "compare", "order": 3}])["ui"]["tabs"][0]
     assert placement.resolve(tab, {"section": "build"}) == {"section": "build", "after": None, "order": 3, "hidden": False}
     # Choosing the manifest's own group keeps its spot.
-    assert placement.resolve(tab, {"section": "create"})["after"] == "print"
+    assert placement.resolve(tab, {"section": "create"})["after"] == "compare"
     # No choice (or a group that has gone away) means the manifest's.
     assert placement.resolve(tab, {"section": None})["section"] == "create"
     assert placement.resolve(tab, {"section": "gone"})["section"] == "create"
@@ -146,7 +149,7 @@ def test_clean_override():
 
 
 def test_registry_keeps_the_override(mods_dir):
-    add_mod({"ui": {"tabs": [{"id": "main", "path": "/", "section": "create", "after": "print"}]}})
+    add_mod({"ui": {"tabs": [{"id": "main", "path": "/", "section": "create", "after": "compare"}]}})
     assert registry.public(registry.get("test-mod"))["placement"] == {"section": None, "hidden": False}
     registry.set_placement("test-mod", "system", False)
     assert registry.get("test-mod")["placement"] == {"section": "system", "hidden": False}
@@ -157,7 +160,7 @@ def test_registry_keeps_the_override(mods_dir):
 # ── Through the routes ──────────────────────────────────────────────────
 
 def test_ui_route_places_tabs_and_honors_the_override(client):
-    add_mod({"ui": {"tabs": [{"id": "main", "title": "Printer", "path": "/", "section": "create", "after": "print"}]}},
+    add_mod({"ui": {"tabs": [{"id": "main", "title": "Printer", "path": "/", "section": "create", "after": "compare"}]}},
             access="users")
     add_mod({"ui": {"tabs": [{"id": "main", "path": "/"}]}}, mod_id="admin-only")
     add_mod({"ui": {"tabs": [{"id": "main", "path": "/", "section": "create"}]}}, mod_id="off-mod", enabled=False,
@@ -165,10 +168,10 @@ def test_ui_route_places_tabs_and_honors_the_override(client):
     alice, bob = {"x-test-user": "alice"}, {"x-test-user": "bob"}
     d = client.get("/api/mods/ui", headers=alice).json()
     assert [(n["mod"], n["section"], n["after"]) for n in d["nav"]] == [
-        ("test-mod", "create", "print"), ("admin-only", "mods", None)]
+        ("test-mod", "create", "compare"), ("admin-only", "mods", None)]
     assert d["groups"][-1] == {"id": "mods", "label": "Mods"}
     tab = next(m for m in d["mods"] if m["id"] == "test-mod")["tabs"][0]
-    assert (tab["section"], tab["after"], tab["hidden"]) == ("create", "print", False)
+    assert (tab["section"], tab["after"], tab["hidden"]) == ("create", "compare", False)
     # Who can use it still applies.
     assert [n["mod"] for n in client.get("/api/mods/ui", headers=bob).json()["nav"]] == ["test-mod"]
 

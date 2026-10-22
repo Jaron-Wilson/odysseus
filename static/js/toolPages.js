@@ -21,6 +21,12 @@
 // becomes a tab (`tab` is the shell's tool key). `then` is clicked after
 // opening (Skills is a tab inside Brain). `adminOnly` pages are hidden from
 // everyone else, as the server refuses them anyway.
+//
+// `moved` lists pages that left the core for a mod (docs/mods.md, "Pages that
+// moved to mods"). They are not built-in pages (a mod tab's `after` can't
+// name them), but "take me to 3D print" and the agent's open_panel still
+// know them: they open through modLinks.openLegacy, which shows the mod tab
+// that `replaces` the key, or the "This feature is now a mod" card.
 
 // Keep the block between the markers strict JSON (double quotes, no
 // comments, no trailing commas): src/tool_pages.py parses it.
@@ -60,10 +66,6 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "compare", "label": "Compare", "group": "create", "open": "#tool-compare-btn", "tab": null,
       "desc": "Ask several models the same thing side by side",
       "aliases": ["compare models", "side by side", "arena"] },
-    { "key": "print", "label": "3D print helper", "group": "create", "open": "#tool-print-btn", "tab": "print", "adminOnly": true,
-      "desc": "Upload an STL or 3MF and make it print without supports",
-      "aliases": ["3d print", "3d printing", "print helper", "stl", "3mf", "bambu", "slicer", "supports",
-                  "make it printable", "printer"] },
 
     { "key": "code", "label": "Code", "group": "build", "open": "#tool-code-btn", "tab": "code", "adminOnly": true,
       "desc": "VS Code in the browser",
@@ -128,12 +130,20 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "settings", "label": "Settings", "group": null, "open": "#user-bar-settings", "tab": "settings",
       "desc": "All settings",
       "aliases": ["preferences", "options", "config"] }
+  ],
+  "moved": [
+    { "key": "print", "label": "3D print", "group": "create",
+      "desc": "3D printing: the Print Hub mod (live view, new print, the print helper)",
+      "aliases": ["3d print", "3d printing", "3d print helper", "print helper", "print hub", "printhub", "stl", "3mf",
+                  "bambu", "slicer", "supports", "make it printable", "printer", "3d printer"] }
   ]
 } /* tool-pages:end */;
 
 export const GROUPS = TAXONOMY.groups;
 export const PAGES = TAXONOMY.pages;
+export const MOVED = (TAXONOMY.moved || []).map(p => ({ ...p, moved: true, open: null, tab: null }));
 const BY_KEY = new Map(PAGES.map(p => [p.key, p]));
+const MOVED_BY_KEY = new Map(MOVED.map(p => [p.key, p]));
 
 const _norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
@@ -145,13 +155,15 @@ export function page(name) {
   if (!name) return null;
   if (typeof name === 'object') return name.key ? name : null;
   if (BY_KEY.has(name)) return BY_KEY.get(name);
+  if (MOVED_BY_KEY.has(name)) return MOVED_BY_KEY.get(name);
   const n = _norm(name);
   if (!n) return null;
   if (LEGACY[n]) return BY_KEY.get(LEGACY[n]);
-  for (const p of PAGES) {
+  const all = PAGES.concat(MOVED);
+  for (const p of all) {
     if (_norm(p.key) === n || _norm(p.label) === n) return p;
   }
-  for (const p of PAGES) {
+  for (const p of all) {
     if (p.aliases.some(a => _norm(a) === n)) return p;
   }
   return null;
@@ -172,6 +184,7 @@ export function isAdmin() {
 export function isAvailable(p) {
   p = page(p);
   if (!p) return false;
+  if (p.moved) return true;     // the mod's tab, or the "now a mod" card
   if (p.adminOnly && isAdmin() === false) return false;
   return !!document.querySelector(p.open);
 }
@@ -192,6 +205,12 @@ export async function openPage(name) {
   if (p.key === 'settings') {
     const nav = await import('./settingsNav.js');
     return nav.openSettings();
+  }
+  if (p.moved) {
+    // A page that moved to a mod: the mod tab that replaces it, else the
+    // "This feature is now a mod" card (modLinks.js).
+    const links = await import('./modLinks.js');
+    return links.openLegacy(p.key);
   }
   if (!isAvailable(p)) {
     _toast(p.adminOnly && isAdmin() === false ? `${p.label} is only for admins.` : `${p.label} isn't available here.`);
@@ -223,6 +242,6 @@ export function pathOf(p) {
   return g ? `${g.label} > ${p.label}` : p.label;
 }
 
-const toolPages = { TAXONOMY, GROUPS, PAGES, page, groupOf, pagesIn, isAdmin, isAvailable, openPage, pathOf };
+const toolPages = { TAXONOMY, GROUPS, PAGES, MOVED, page, groupOf, pagesIn, isAdmin, isAvailable, openPage, pathOf };
 window.toolPages = toolPages;
 export default toolPages;

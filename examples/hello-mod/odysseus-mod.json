@@ -17,7 +17,7 @@
   },
   "permissions": ["notify", "events.emit", "events.subscribe", "storage"],
   "ui": {
-    "tabs": [{ "id": "main", "title": "Hello", "icon": "hand", "path": "/", "section": "create", "after": "print" }],
+    "tabs": [{ "id": "main", "title": "Hello", "icon": "hand", "path": "/", "section": "create", "after": "compare" }],
     "home_cards": [{ "id": "status", "title": "Hello Mod", "path": "/cards/status", "height": 150 }],
     "settings_path": "/settings"
   },

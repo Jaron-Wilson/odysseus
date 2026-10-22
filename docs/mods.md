@@ -281,7 +281,7 @@ filters (`SUGGESTED_TAGS` in `src/mods/manifest.py`):
   "permissions": ["notify", "events.emit", "devices.read", "network.lan", "storage", "llm.call"],
   "ui": {
     "tabs": [{ "id": "printer", "title": "Printer", "icon": "print", "path": "/",
-               "section": "create", "after": "print" }],
+               "section": "create", "after": "compare", "replaces": "print" }],
     "home_cards": [{ "id": "status", "title": "Printer", "path": "/cards/status", "height": 180 }],
     "settings_path": "/settings"
   },
@@ -513,24 +513,27 @@ list, in this order), and the built-in pages in each, which are what `after` may
 | `section` | Shown as | Built-in pages (`after`), in order |
 |---|---|---|
 | `organize` | Organize | `calendar`, `tasks`, `notes`, `plans`, `brain` |
-| `create` | Create & research | `library`, `gallery`, `research`, `compare`, `print` (3D print helper) |
+| `create` | Create & research | `library`, `gallery`, `research`, `compare` |
 | `build` | Build | `code`, `terminal`, `browser`, `background`, `company`, `claude-sessions`, `devops`, `odysseus-dev` |
 | `system` | System | `devices`, `adsb`, `games`, `cookbook`, `theme`, `usage`, `whats-new` |
 | `mods` | Mods | None. The default; the group only appears when a tab is in it. |
 
-For example, Print Hub's Printer tab, next to the built-in 3D print helper:
+For example, Print Hub's Printer tab, which also takes over the old 3D print helper page
+(`replaces`, see [Pages that moved to mods](#pages-that-moved-to-mods)):
 
 ```json
 "ui": {
   "tabs": [
-    { "id": "printer", "title": "Printer", "icon": "print", "path": "/", "section": "create", "after": "print" },
-    { "id": "queue", "title": "Print queue", "icon": "tasks", "path": "/queue", "section": "create", "after": "print", "order": 1 }
+    { "id": "printer", "title": "Printer", "icon": "print", "path": "/", "section": "create", "after": "compare",
+      "replaces": "print" },
+    { "id": "queue", "title": "Print queue", "icon": "tasks", "path": "/queue", "section": "create", "after": "compare", "order": 1 }
   ]
 }
 ```
 
-That gives Create & research: Library, Gallery, Deep Research, Compare, 3D print helper, Printer,
-Print queue. A built-in page that is hidden (admin only, or turned off in Customize UI) keeps its
+That gives Create & research: Library, Gallery, Deep Research, Compare, Printer, Print queue. A page
+that moved to a mod (like `print`) is not a built-in page any more, so `after` can't name it (a
+warning). A built-in page that is hidden (admin only, or turned off in Customize UI) keeps its
 place, so the tab stays where it would be.
 
 How it is decided, per tab:
@@ -609,7 +612,7 @@ else reads it.
 #### Pages that moved to mods
 
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
-receiver), `games`, `print` (3D print helper), `devops`, `company`, and later `code`, `terminal`,
+receiver), `games`, `print` (3D print helper, now part of Print Hub), `devops`, `company`, and later `code`, `terminal`,
 `browser`, `claude-sessions`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
 `src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,
 `/#games?play=...`) and saved Workspace tabs keep working:

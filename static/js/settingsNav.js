@@ -126,13 +126,15 @@ export function buildIndex(root = _modal()) {
   return out;
 }
 
-/** The pages this user can open (toolPages.js), as index entries. */
+/** The pages this user can open (toolPages.js), as index entries. Pages that
+ *  moved to a mod are there too: they open the mod's tab or the "now a mod"
+ *  card. */
 export function pageEntries() {
-  return toolPages.PAGES.filter(p => toolPages.isAvailable(p)).map(p => {
+  return toolPages.PAGES.concat(toolPages.MOVED || []).filter(p => toolPages.isAvailable(p)).map(p => {
     const g = toolPages.groupOf(p);
     return { id: 'page:' + p.key, kind: 'page', key: p.key, tab: null, tabLabel: g ? g.label : '',
       label: p.label, path: p.label, keywords: p.aliases.join(' '), desc: p.desc || '',
-      el: document.querySelector(p.open), parent: null };
+      el: p.open ? document.querySelector(p.open) : null, parent: null };
   });
 }
 

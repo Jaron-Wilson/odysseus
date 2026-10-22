@@ -471,7 +471,7 @@ These cards live in **Settings > Calls & Meetings**.
 <details>
 <summary>In review (not on dev yet)</summary>
 
-- **3D print helper** (PR #191): upload an STL or 3MF, see each part's overhangs and unsupported area, answer a few questions from a local model, and let deterministic code reorient, cut (with pin holes) and fill the model so it prints without supports. Each piece is then sliced with the Bambu Studio CLI on your Windows PC over SSH. Admin only. Once merged it needs `pip install -r requirements.txt` (new mesh packages) and the PC's address in the helper's settings.
+- **3D print helper** (PR #191): moved into the Print Hub mod, so 3D printing has one place: upload an STL or 3MF, see each part's overhangs, answer a few questions from a local model, let deterministic code reorient, cut (with pin holes) and fill the model so it prints without supports, then slice, preview and print it from Print Hub's New print page. Install Print Hub from Settings > Mods > Browse; its tab replaces the old `#print` page, and without it `#print` shows the "This feature is now a mod" card.
 
 </details>
 
