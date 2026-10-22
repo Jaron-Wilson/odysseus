@@ -319,7 +319,18 @@ def prepare(source: str, ref: Optional[str] = None, subdir: Optional[str] = None
         "admin_only": bool(manifest.get("admin_only")),
         "tutorial": _tutorial_summary(manifest.get("tutorial")),
         "warnings": manifest.get("warnings") or [],
+        # What it provides, needs (`missing`: nobody provides it yet) and may
+        # use (src/mods/capabilities.py); for an update, what it newly uses.
+        "capabilities": _capabilities_review(manifest, existing),
     }
+
+
+def _capabilities_review(manifest: Dict[str, Any], existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    from src.mods import capabilities
+    out = capabilities.availability(manifest)
+    before = set(capabilities.declared((existing or {}).get("manifest") or {})) if existing else set()
+    out["new"] = [c for c in capabilities.declared(manifest) if c not in before] if existing else []
+    return out
 
 
 def _staged(install_id: str) -> Dict[str, Any]:

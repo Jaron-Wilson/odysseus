@@ -343,6 +343,9 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `events.emits` | Event types it may publish (`print.finished`). Needs `events.emit`. |
 | `events.subscribes` | Patterns it wants (`print-hub/print.*`, `*.failed`, `*/*.finished`). Needs `events.subscribe`. |
 | `events.webhook` | Where events are delivered. Default `/mod/events`. |
+| `provides` | Optional, up to 16 capability ids it serves for other mods (and for the core), like `messaging.sms`, or its own API, `<its id>.<name>`. See [Capabilities](#capabilities). |
+| `requires` | Optional capability ids it does not work without. Installing it while nothing provides one asks first and offers to find a provider. |
+| `optional` | Optional capability ids it works better with. Nothing is asked; its card says "Works better with ...". An id cannot be in both `requires` and `optional`. |
 | `tutorial` | Expected of every mod; missing is a warning, and such a mod is never Verified. `{"version", "steps"}` (recommended) or `{"version", "path"}`; see [Tutorials](#tutorials). |
 | `tutorial.version` | A whole number from 1, default 1. Raise it to show the tutorial again to everyone who saw it. |
 | `tutorial.steps[]` | 1 to 8 steps: `title` (up to 80 characters), `body` (short Markdown, up to 1200), optionally `image` (a PNG, JPEG, GIF or WebP file in the mod, a relative path, under 2 MB; a file that is not there is a warning) and `action` (`{"label", "path"}` to open a page of the mod, or `{"label", "settings": true}`, which needs `ui.settings_path`). |
@@ -442,6 +445,8 @@ signed-in user. A mod whose manifest says `admin_only` is for admins whatever it
 | `GET settings` / `PUT settings` | | Its settings object (up to 64 KB), shown on its settings page |
 | `GET kv`, `GET/PUT/DELETE kv/<key>` | `storage` | Up to 256 keys of 64 KB each |
 | `POST llm/chat` | `llm.call` | `{messages, max_tokens, temperature, model_role}` (`model_role` `utility` or `default`). Answers `{content, model}` |
+| `GET cap` | | The capabilities it declared and who provides each now: `{provides, requires, optional, missing, missing_optional}` |
+| `POST cap/<capability>/<action>?provider=` | it is in `requires` or `optional` | A capability call, brokered by the core (see [Capabilities](#capabilities)). The body is the arguments, plus `user`. Answers the provider's JSON object with `ok`, `capability`, `action` and `provider` set |
 | `POST tools/refresh` | | The mod's tools changed: the core reads `GET <tools.endpoint>` again. Answers `{ok, queued}` at once and refreshes in the background; `{"wait": true}` waits and answers `{ok, tools: [names]}` (only from a server that serves requests in parallel). 400 for a mod without `tools` |
 
 Calls are rate limited per mod: notify 30 a minute, llm 20, events 240, device commands 30, tool
@@ -460,6 +465,94 @@ identity of `odysseus-core`, `X-Odysseus-Event: <type>` and the body:
 Patterns are `type` globs (`*.finished`, matching any source) or `source/type` globs
 (`print-hub/print.*`). A mod is never sent its own events. Each event is also fired on the core's
 event bus as `mod:<id>:<type>`, so automations can react to it.
+
+### Capabilities
+
+A capability is a namespaced id, `<namespace>.<name>[.<more>]` (lowercase letters, digits and
+hyphens; up to 64 characters), for something one mod can do for others: `messaging.sms`,
+`home.lights`, `print-hub.jobs`. A mod says what it serves and what it needs:
+
+```json
+"provides": ["home.lights"],
+"requires": ["messaging.sms"],
+"optional": ["storage.s3"]
+```
+
+**Mods never talk to each other directly.** A mod that listed a capability in `requires` or
+`optional` calls `POST /api/mods/v1/cap/<capability>/<action>` with its token, and the core:
+
+1. checks that the calling mod declared it (that is what the user approved when installing it), that
+   the user the call is for (`user` in the body, as for `notify`) may use the calling mod, and that
+   they may use the provider;
+2. applies the capability's own rules (below), and a rate limit per calling mod;
+3. routes it to the provider: the first enabled mod (by id) that lists it in `provides`, else the
+   core's own built-in provider; `?provider=<mod id>` (or `core`) picks one by name;
+4. logs it in `mods/capability-log.jsonl` (0600, rotated at 1 MB; the arguments' sizes, never a
+   message's words) and in the caller's log. Admins read it at `GET /api/mods/capabilities/log`.
+
+The provider gets `POST /mod/cap/<capability>/<action>` on its own server, with the arguments as
+JSON, the signed identity of that user and `X-Odysseus-Caller: <calling mod>`. The core also calls
+providers itself for its own features (a voice, a model provider), the same way without
+`X-Odysseus-Caller`. The proxy never forwards a browser to `/mod/cap/...` (404), so only the core
+reaches it. Unknown capabilities are allowed: their actions are whatever the provider answers.
+
+**A mod's own API.** A capability whose namespace is an installed mod's id (`print-hub.jobs`) is
+served only by that mod, so no other mod can answer in its name. That is how a mod offers an API to
+other mods: list `"provides": ["print-hub.jobs"]`, serve `/mod/cap/print-hub.jobs/<action>`, and
+callers list it in `requires` or `optional`. The core's own capabilities (below) belong to no mod.
+
+**Events.** Inbound things are events on the [events API](#events). A capability's events (like
+`messaging.sms.received`) can only be listed in `events.emits` by a mod that provides it, and are
+delivered only to mods that declare the capability (and hold `events.subscribe`) and that the user
+it is for may use. The Mods page's event history keeps a text's size, not its words.
+
+**Install, disable and remove.** The install review lists what the mod provides, needs and may use,
+and who provides each now. A `requires` nobody provides is shown in red with **Find a provider**
+(Browse, filtered to mods that provide it), and **Approve** asks before installing anyway
+(`allow_missing` on `install/confirm`, else 409 with `missing_requires`). An update marks newly used
+capabilities. Disabling or removing a mod that is the only provider of something an enabled mod
+uses answers 409 with `dependents` and is done only with `?force=true` (the UI asks first). Each
+installed mod's card lists its capabilities and the mods that use it.
+
+**Browse** shows "provides, needs, works better with" on each result and in the details (with
+whether this Odysseus has a provider), searches `provides` with the words typed, and
+`GET /api/mods/catalog?capability=<id>` keeps only mods that provide it. An index entry may list
+`provides`, `requires` and `optional` too (added to the manifest's).
+
+#### messaging.sms
+
+The core's built-in provider is the [SMS gateway](sms-gateway.md) (SMS Forwarder inbound, the SMS
+Gate reply URL). When a "Phone & Messages" mod lists `messaging.sms` in `provides`, calls go to it
+instead, with the same rules, so callers do not change.
+
+| Action | Body | Answers |
+|---|---|---|
+| `send` | `{text, to}`: `to` is optional (the user's own number); up to 1600 characters, sent as numbered parts | `{ok, to (masked), parts, via}`; 403 for a number that is not allowed, 409 when the gateway has no number or reply URL |
+| `status` | `{}` | `{available, can_send, can_receive, targets (masked)}`; `available` is whether a text sent now would go out |
+
+| Event | Data |
+|---|---|
+| `messaging.sms.received` | `{from, text, user, provider}`, for every text the gateway accepts (its commands still run as before). Its source is `core` |
+
+Rules, whoever provides it:
+
+- **Only the user's own allowed numbers** (Settings > Calls & Meetings > Phone SMS), unless the
+  user granted the mod more: Settings > Mods, the mod's card, **Text messages** (per user and per
+  mod; `POST /api/mods/<id>/grants` with `{"capability": "messaging.sms", "numbers": [...]}`).
+- **Rate limit**: 10 sends a minute and 100 a day per calling mod (`status`: 60 a minute).
+- **Every send is logged** (who, for whom, to which number, how long, through which provider).
+
+In the template SDK: `app.core.send_text("Print done")`, `app.core.cap("print-hub.jobs", "list")`,
+`app.core.capabilities()`, and `@app.provide("my-mod.jobs", "list")` to serve one. devcore brokers
+them too, with a fake `messaging.sms` (texts to `+15550100000` are printed) and **Text in** to try
+`messaging.sms.received`.
+
+| Admin call | Answers |
+|---|---|
+| `GET /api/mods/capabilities` | The capabilities the core knows, with their providers now |
+| `GET /api/mods/capabilities/log?mod=&limit=` | The newest log lines |
+| `GET /api/mods/<id>/dependents` | The enabled mods that would lose a capability without it |
+| `POST /api/mods/<id>/grants` | This admin's grant to the mod (above) |
 
 ### Tools
 
@@ -687,6 +780,10 @@ Mods are **untrusted code**. What protects you:
   formats are applied, and their images are served only from the mod's own folder.
 - **Device actions need the user.** Mod tools that control devices go through the chat's approval
   flow, each call.
+- **Mods reach each other only through the core.** A capability call is checked (declared at
+  install, the user may use both mods), held to the capability's rules (a text only to the user's
+  own numbers unless they granted more), rate limited and logged; a provider's `/mod/cap/...` is
+  never reachable from a browser.
 - **Mods are reachable only through the core** (they listen on loopback), and only by the users
   allowed to use them. A mod that gives admin powers declares `admin_only`, and then nobody can
   open it to other users by mistake: the core checks the role on every page, socket and tool call. Managing mods needs a signed-in admin (not an API token).
@@ -738,6 +835,7 @@ the same id, and that every `verified` entry's manifest has a `tutorial`).
 | `min_core` | Raises the mod's `min_core`: older cores show it as not compatible |
 | `subdir` | The mod's folder inside the repository |
 | `tags` | Extra tags, added to the manifest's |
+| `provides`, `requires`, `optional` | Capability ids (see [Capabilities](#capabilities)), added to the manifest's; Browse's capability search reads `provides` |
 
 When several indexes list the same repository, the first one in the settings wins, and the
 blocked versions of all of them add up. A broken entry is skipped with a warning in Browse; the
@@ -760,6 +858,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/manifest.py` | Validates `odysseus-mod.json` |
 | `src/mods/tutorial.py` | The `tutorial` field, its Markdown, who has seen it, its images |
 | `src/mods/placement.py` | Where tabs go: `section`, `after`, `order` and the admin's override; `replaces` and the pages that moved to mods |
+| `src/mods/capabilities.py` | `provides`, `requires`, `optional`; the capability broker, its rules and log; the built-in `messaging.sms` |
 | `src/mods/catalog.py` | Finding mods: GitHub topic search, indexes, the cache, details, update checks |
 | `src/mods/registry.py` | Install (prepare, confirm), update, enable, remove, tokens |
 | `src/mods/runtime.py` | Start, stop, health checks, restart with backoff, logs, idle stop |
