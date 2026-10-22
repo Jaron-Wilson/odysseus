@@ -468,6 +468,16 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         return {"mods": out, "nav": placement.nav(shown), "groups": placement.groups(),
                 "replaces": placement.replacements(shown), "legacy_pages": placement.LEGACY_PAGES}
 
+    # ── Capability providers (src/mods/providers.py): which add-on, if any,
+    # supplies a core feature, so a page can offer it or say "Install the add-on".
+    @router.get("/api/mods/providers")
+    async def providers_list(request: Request, cap: str = ""):
+        from src.mods import providers as prov
+        if proxy.cookie_user(request) is None:
+            raise HTTPException(401, "Not signed in")
+        caps = [c for c in cap.split(",") if prov.CAP_RE.match(c)][:8]
+        return {"capabilities": {c: prov.describe(c) for c in caps}}
+
     # ── Tutorials (src/mods/tutorial.py): any user who may use the mod ──
     def _usable(request: Request, mod_id: str):
         user = proxy.cookie_user(request)

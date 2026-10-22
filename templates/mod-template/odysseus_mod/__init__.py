@@ -334,13 +334,14 @@ class ModApp:
 
     def tool(self, name: str, description: str, properties: Optional[Dict[str, Any]] = None,
              required: Optional[List[str]] = None, keywords: Optional[List[str]] = None,
-             controls_devices: bool = False, read_only: bool = False):
+             controls_devices: bool = False, read_only: bool = False, asks_first: bool = False):
         """Register an agent tool. The handler gets (req, args) and returns
         text for the model, or {"output": text, "data": {...}}."""
         schema = {"type": "function", "function": {
             "name": name, "description": description,
             "parameters": {"type": "object", "properties": properties or {}, "required": required or []}},
-            "x-odysseus": {"keywords": keywords or [], "controls_devices": controls_devices, "read_only": read_only}}
+            "x-odysseus": {"keywords": keywords or [], "controls_devices": controls_devices, "read_only": read_only,
+                            "asks_first": asks_first}}
 
         def deco(fn):
             self._tools[name] = (schema, fn)

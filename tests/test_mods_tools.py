@@ -93,6 +93,23 @@ def test_device_control_tool_waits_for_approval(two_mods):
     assert "Your turn ends here" in result["output"]
 
 
+def test_asks_first_tool_waits_for_approval_without_devices_control(two_mods):
+    """A tool the mod marks `asks_first` (a write to the user's account) is held
+    for Approve like a device tool, and needs no extra permission."""
+    from src import action_approvals as AA
+    add_mod({"tools": {"keywords": ["drive"]}}, mod_id="google")
+    write_tools_cache("google", [
+        {"name": "drive_upload", "description": "Upload a file", "parameters": {"type": "object"},
+         "keywords": [], "controls_devices": False, "read_only": False, "asks_first": True}])
+    desc, result = asyncio.run(tools.execute("mod__google__drive_upload", '{"name": "a.txt"}', "alice", "chat-9"))
+    assert "waiting for approval" in desc and result["action_approval"]["status"] == "pending"
+    assert "changes something for the user" in result["output"]
+    assert AA.get(result["action_approval"]["id"])["kind"] == "mod_action"
+    parsed = tools.parse_tool_list({"tools": [{"type": "function", "function": {"name": "w"},
+                                               "x-odysseus": {"asks_first": True}}]})
+    assert parsed[0]["asks_first"] is True
+
+
 class _ModServer:
     def __init__(self):
         outer = self
