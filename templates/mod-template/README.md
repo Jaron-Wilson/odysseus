@@ -24,8 +24,21 @@ Odysseus mod template: a tiny standard-library web server, the `odysseus-mod.jso
 
 ## Install in Odysseus
 
-Settings > Mods > Install, paste this repository's git URL (optionally a tag), review the
-permissions and approve. Update from the mod's Update button.
+Settings > Mods > Browse: search for it (or filter by one of its tags), open **Details** and
+**Review and install**. Or Settings > Mods > Install: paste this repository's git URL (optionally a
+tag). Either way you review the permissions and approve. Update from the mod's Update button.
+
+## Publish it
+
+So Odysseus's Browse view finds it, give the repository the GitHub topic `odysseus-mod`:
+
+```
+gh repo edit OWNER/REPO --add-topic odysseus-mod
+```
+
+Set `tags` in `odysseus-mod.json` (like `home`, `hardware`, `notifications`; the suggested list
+is in Odysseus's docs/mods.md, "Tags"), tag releases `vX.Y.Z` matching `version`, and open a pull
+request to a mods index (like `Jaron-Wilson/odysseus-mods-index`) to get it marked Verified.
 
 ## Develop
 

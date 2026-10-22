@@ -23,7 +23,7 @@ from typing import Any, Deque, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from src.mods import access, events, manifest as mf, notify, placement, proxy, registry, runtime, tools
+from src.mods import access, catalog, events, manifest as mf, notify, placement, proxy, registry, runtime, tools
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,28 @@ def _view(entry: Dict[str, Any]) -> Dict[str, Any]:
     out["tool_names"] = [t["name"] for t in tools.cached(entry["id"])]
     out["notify_muted"] = bool(entry.get("notify_muted"))
     out["subscriptions"] = events.subscriptions(entry["id"])
+    # From the cached catalog only (src/mods/catalog.py); never fetches.
+    out["update"] = catalog.updates().get(entry["id"])
     return out
+
+
+def _check_blocked(staged: Dict[str, Any], allow_blocked: bool) -> Optional[JSONResponse]:
+    """Refuse a version a curated index blocks, unless the admin explicitly
+    overrode it. A refused install is thrown away."""
+    src = staged.get("source") or {}
+    why = catalog.blocked(src.get("url") or "", staged.get("version") or "")
+    if not why:
+        return None
+    if allow_blocked:
+        staged.setdefault("warnings", []).insert(0, f"Installing anyway: {why}")
+        staged["blocked"] = why
+        return None
+    try:
+        registry.discard(staged["install_id"])
+    except registry.RegistryError:
+        pass
+    return JSONResponse({"detail": f"Blocked: {why}. Install it anyway only if you know why it was blocked.",
+                         "blocked": True, "errors": []}, status_code=409)
 
 
 async def _after_enable(mod_id: str) -> None:
@@ -312,10 +333,12 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         _require_admin(request)
         body = await _json(request)
         try:
-            return await asyncio.to_thread(registry.prepare, str(body.get("source") or ""), body.get("ref"),
-                                           body.get("subdir"))
+            staged = await asyncio.to_thread(registry.prepare, str(body.get("source") or ""), body.get("ref"),
+                                             body.get("subdir"))
         except registry.RegistryError as e:
             return _err(e)
+        refused = await asyncio.to_thread(_check_blocked, staged, body.get("allow_blocked") is True)
+        return refused or staged
 
     @router.post("/api/mods/install/confirm")
     async def install_confirm(request: Request):
@@ -402,6 +425,54 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         # `nav`: the tabs in sidebar order, in their groups, hidden ones left out.
         return {"mods": out, "nav": placement.nav(shown), "groups": placement.groups()}
 
+    # ── Finding mods (src/mods/catalog.py). Before /api/mods/{mod_id}. ──
+    def _cat_err(e: catalog.CatalogError):
+        return JSONResponse({"detail": e.message, "errors": []}, status_code=e.status)
+
+    @router.get("/api/mods/catalog")
+    async def catalog_list(request: Request, q: str = "", tag: str = "", verified: str = "",
+                           compatible: str = "", refresh: bool = False):
+        _require_admin(request)
+        try:
+            return await asyncio.to_thread(catalog.query, q[:200], tag[:40], verified or None, compatible or None,
+                                           refresh)
+        except catalog.CatalogError as e:
+            return _cat_err(e)
+
+    @router.get("/api/mods/catalog/settings")
+    async def catalog_get_settings(request: Request):
+        _require_admin(request)
+        return {"settings": catalog.settings()}
+
+    @router.put("/api/mods/catalog/settings")
+    async def catalog_put_settings(request: Request):
+        _require_admin(request)
+        body = await _json(request)
+        try:
+            return {"settings": await asyncio.to_thread(catalog.save_settings, body)}
+        except catalog.CatalogError as e:
+            return _cat_err(e)
+
+    @router.get("/api/mods/catalog/image")
+    async def catalog_image(request: Request, u: str = ""):
+        _require_admin(request)
+        from fastapi.responses import Response
+        try:
+            body, ctype = await asyncio.to_thread(catalog.fetch_image, u)
+        except catalog.CatalogError as e:
+            return Response(status_code=e.status if e.status < 500 else 502)
+        return Response(body, media_type=ctype, headers={
+            "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox"})
+
+    @router.get("/api/mods/catalog/{owner}/{repo}")
+    async def catalog_details(request: Request, owner: str, repo: str, ref: str = ""):
+        _require_admin(request)
+        try:
+            return await asyncio.to_thread(catalog.details, owner, repo, ref or None)
+        except catalog.CatalogError as e:
+            return _cat_err(e)
+
     @router.get("/api/mods/{mod_id}")
     async def get_mod(request: Request, mod_id: str):
         _require_admin(request)
@@ -444,7 +515,8 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
                 source = src.get("url") or src.get("path") or ""
                 ref = body.get("ref") if body.get("ref") is not None else src.get("ref")
                 staged = await asyncio.to_thread(registry.prepare, source, ref, src.get("subdir"), mod_id)
-                return staged
+                refused = await asyncio.to_thread(_check_blocked, staged, body.get("allow_blocked") is True)
+                return refused or staged
             elif action == "access":
                 body = await _json(request)
                 registry.set_access(mod_id, str(body.get("access") or ""))

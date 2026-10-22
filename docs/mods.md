@@ -8,14 +8,18 @@ storage and the user's models. Mods are how things like the print hub, Rook, the
 input sharing plug in without living in the core.
 
 - [Install and manage mods](#install-and-manage-mods)
+- [Finding mods](#finding-mods)
 - [Write a mod](#write-a-mod)
+- [Publishing a mod](#publishing-a-mod)
 - [The format (spec v1)](#the-format-spec-v1)
 - [Security model](#security-model)
+- [Running an index](#running-an-index)
 - [How it is built](#how-it-is-built)
 
 ## Install and manage mods
 
-Settings > Mods (admins only):
+Settings > Mods (admins only) has two views: **Installed** (below) and **Browse** (see
+[Finding mods](#finding-mods)).
 
 1. **Install a mod**: paste a git URL (`https://...`, `ssh://...`, `git@host:...` or `file://...`)
    or a folder on the server, optionally a branch or tag and a subfolder (for a mod inside a bigger
@@ -28,7 +32,8 @@ Settings > Mods (admins only):
    count and last error, with **Enable/Disable**, **Start/Stop/Restart**, **Logs**, **Update**
    (fetch a newer version from the same place, or another branch or tag; new permissions are shown
    and must be approved again), **New token**, **Remove** (optionally keeping its data), who may use
-   it (admins or all users) and **Mute notifications**. A mod with tabs also has **Show in** (the
+   it (admins or all users) and **Mute notifications**. A mod with a newer version out has an
+   **Update available** badge, and its Update button offers that version's tag. A mod with tabs also has **Show in** (the
    sidebar group its tabs go in; the default is the group its manifest names) and **Hide from
    sidebar** (see [Where tabs go](#where-tabs-go)).
 4. **Where mod notifications go**: push to browsers and the phone, the notification list in
@@ -55,6 +60,91 @@ mods/<id>/logs/mod.log     its output (rotated at 1 MB), shown under Logs
 mods/<id>/tools.json       its tool list, read when it starts
 ```
 
+## Finding mods
+
+Settings > Mods > **Browse** lists mods from two places:
+
+- **GitHub**: every repository with the topic `odysseus-mod` (the search API). With a GitHub token,
+  also your own repositories with the topic, private ones included (from `/user/repos`: yours,
+  your collaborations and your organizations').
+- **Indexes** you add: curated lists of reviewed mods (see [Running an index](#running-an-index)).
+
+Each result shows its badges, version, stars, last update, tags and what it asks for:
+
+| Badge | Means |
+|---|---|
+| **Verified** | Listed by an index you added (with `verified` true). Its notes are on the details. |
+| **Community, not reviewed** | Found only by its topic, or listed by an index with `verified` false. Nobody has checked it. |
+| **Yours** | A repository the token's account owns. |
+| **Private** | A private repository. It installs over SSH (`git@github.com:...`), so the server needs a GitHub SSH key that can read it; the token is never put in a clone URL. |
+| **Installed**, **Update available** | Already installed; a newer version is out (see below). |
+| **Not compatible** | Its `min_core` (or the index's) is newer than this Odysseus's mod API. |
+| **Manifest problems** | Its `odysseus-mod.json` is missing or invalid. |
+| **Version blocked** | An index blocks the version on the default branch. |
+
+Filter by typing (name, id, description, author, tags), by a tag chip (the suggested tags plus any
+the results use), by Verified or Community, and by **Works with this Odysseus**. **Details** shows
+the README (rendered and sanitized), the permissions explained, the tabs and where they will
+appear in the sidebar (the same rules as [Where tabs go](#where-tabs-go)), the home cards, the
+command and setup commands it runs, its agent tools' keywords and a **version picker** (the
+default branch, releases and tags; picking one reloads the details from that version's manifest).
+**Review and install** fills in the install form with the repository, the version and the
+subfolder and fetches it into the usual review step; nothing is installed until you approve it
+there. Unverified mods carry a "mods run code on your server" notice in the details and in the
+review step.
+
+**Blocked versions.** A version an index blocks shows a warning, and installing it (or updating to
+it) is refused unless you tick "install it anyway", which sends `allow_blocked`. The check is made
+on the server for every install or update from a GitHub URL, not only from Browse.
+
+**Update available.** For an installed mod that came from GitHub: installed from the default
+branch (or a branch), the version in the default branch's manifest is compared with the installed
+one; installed from a tag, the newest version-like tag (`v1.2.3` or `1.2.3`) is. Installed mods
+from GitHub are checked even when they lack the topic (they are not listed in Browse then). The
+badge comes from the cached list, so open Browse (or press Refresh) to check again.
+
+**Discovery settings** (at the bottom of Browse):
+
+- **Indexes**, one per line (at most 8): a GitHub `owner/repo` (reads `index.json` from the
+  default branch; `owner/repo/path/index.json@ref` for another file or ref), a
+  `https://github.com/.../blob/...` or `https://raw.githubusercontent.com/...` URL (both are
+  read through the GitHub API, so private index repositories work with the token), any other https
+  URL to a JSON file (fetched without the token), or a JSON file on the server (an absolute path or
+  `file://`). Empty by default; `ODYSSEUS_MODS_INDEX_URLS` (comma separated) is used while the
+  setting has never been saved.
+- **GitHub token**: stored encrypted in the mods registry, never shown again, and only ever sent to
+  `https://api.github.com` (redirects are followed by hand, and the token is dropped for any other
+  host). Without one, `GITHUB_TOKEN` or `GH_TOKEN` from the server's environment is used. A
+  fine-grained token with read-only Metadata and Contents is enough.
+- **Also list my own repositories** (on by default; needs a token).
+
+**Without a token** only public repositories show, manifests and READMEs come from
+`raw.githubusercontent.com`, and GitHub allows 10 searches a minute and 60 other API calls an
+hour. When the limit is hit, Browse keeps showing the last list, says when the limit resets, and
+does not ask GitHub again until then.
+
+**Caching.** The list is kept in `<mods dir>/.catalog/catalog.json` for an hour (Refresh asks
+again at once); a repository that has not been pushed since is not fetched again. Details are
+cached for an hour per repository and version in `.catalog/details/`. Changing the discovery
+settings clears the cache.
+
+**Nothing runs while browsing.** Manifests are only parsed and checked with the install rules;
+READMEs are rendered from Markdown and then sanitized with an allowlist (no scripts, styles,
+iframes, forms, SVG, event handlers or `javascript:` links; links open in a new tab without a
+referrer; relative links point at GitHub). Images (README images, `icon_url`, `screenshots`, owner
+avatars) are only shown from GitHub's own hosts, as PNG, JPEG, GIF or WebP, and are fetched by the
+core (`/api/mods/catalog/image`) so the browser never contacts another host.
+
+The API (admins only):
+
+| Call | Answers |
+|---|---|
+| `GET /api/mods/catalog?q=&tag=&verified=&compatible=&refresh=` | `{results, tags, updates, warnings, stale, fetched_at, token_source, viewer, index_count, settings}`. `verified` and `compatible` are `1` or `0`; each result has its install state (`installed`, `installed_version`, `update_available`, `latest_version`, `latest_ref`) |
+| `GET /api/mods/catalog/<owner>/<repo>?ref=` | `{repo, manifest, permissions, tabs, runtime, versions, readme_html, install, version_blocked}` |
+| `GET` / `PUT /api/mods/catalog/settings` | `{index_urls, include_private, token_set, token_source}`; `PUT` takes those plus `github_token` or `clear_token` |
+| `GET /api/mods/catalog/image?u=` | An allowed image, proxied |
+| `POST /api/mods/install/prepare` | As before, plus `allow_blocked` |
+
 ## Write a mod
 
 Start from the template, either the **New mod** button, `python -m src.mods new`, or the
@@ -80,6 +170,51 @@ A mod must work **standalone and under the core**, and decides by whether `ODYSS
 Standalone, it has its own login and its own notification channels; under the core it never has a
 login and trusts only verified identity headers.
 
+## Publishing a mod
+
+1. Push the mod to its own GitHub repository, with `odysseus-mod.json` at the top.
+2. Give the manifest `tags` (see [Tags](#tags)) and, optionally, `icon_url` and `screenshots`
+   (https images in the repository, like
+   `https://raw.githubusercontent.com/you/garage-door/main/docs/icon.png`; other hosts are not
+   shown).
+3. Add the topic, so Browse finds it:
+
+   ```
+   gh repo edit OWNER/REPO --add-topic odysseus-mod
+   ```
+
+   (or on GitHub: the repository's About, the gear, Topics). A private repository with the topic
+   shows up only for its owner and collaborators, with a token.
+4. Tag releases `vX.Y.Z` matching `version`. Browse's version picker lists releases and tags, and a
+   mod installed from a tag gets "Update available" when a newer tag is out.
+5. **Getting verified**: open a pull request adding your mod to an index (like
+   `Jaron-Wilson/odysseus-mods-index`), following its README. Its maintainers read the code and
+   the permissions before merging; after that, Odysseus installs that use the index list the mod
+   as Verified.
+
+### Tags
+
+`tags` is a list of up to 10 lowercase slugs (letters, digits and single hyphens, up to 32
+characters each). Any tag is allowed; these are suggested, and Browse always offers them as
+filters (`SUGGESTED_TAGS` in `src/mods/manifest.py`):
+
+| Tag | For |
+|---|---|
+| `3d-printing` | 3D printers, slicing, print monitoring |
+| `hardware` | Devices, sensors, microcontrollers |
+| `home` | Home automation: lights, doors, climate |
+| `notifications` | Alerts and messaging |
+| `media` | Music, video, photos, streaming |
+| `games` | Games and game servers |
+| `dev-tools` | Code, builds, deploys, servers |
+| `ai` | Models, agents, local AI |
+| `productivity` | Tasks, notes, calendars, email |
+| `monitoring` | Status pages, logs, uptime |
+| `network` | Network tools, DNS, VPN |
+| `radio` | SDR, ADS-B, AIS, ham radio |
+| `car` | Vehicles, OBD2, dashboards |
+| `finance` | Money, budgets, markets |
+
 ## The format (spec v1)
 
 ### The manifest: `odysseus-mod.json` at the mod's root
@@ -95,6 +230,8 @@ login and trusts only verified identity headers.
   "license": "AGPL-3.0",
   "homepage": "https://github.com/Jaron-Wilson/print-hub",
   "min_core": "0.1",
+  "tags": ["3d-printing", "hardware", "notifications"],
+  "icon_url": "https://raw.githubusercontent.com/Jaron-Wilson/print-hub/main/docs/icon.png",
   "runtime": {
     "type": "process",
     "command": ["python", "-m", "printhub"],
@@ -127,11 +264,14 @@ when you review it, on its card in Settings > Mods and by `python -m src.mods va
 | Field | Rules |
 |---|---|
 | `manifest_version` | `1` (the default). A newer one is refused. |
-| `id` | 2 to 32 characters: a lowercase letter, then lowercase letters, digits and single hyphens. Not `v1`, `v2`, `install`, `settings`, `events`, `scaffold`, `ui`, `core`, `odysseus`. It is the URL (`/mods/<id>/`), the folder and the tool prefix, so it never changes. |
+| `id` | 2 to 32 characters: a lowercase letter, then lowercase letters, digits and single hyphens. Not `v1`, `v2`, `install`, `settings`, `events`, `scaffold`, `ui`, `core`, `odysseus`, `catalog`. It is the URL (`/mods/<id>/`), the folder and the tool prefix, so it never changes. |
 | `name` | Required, up to 60 characters. |
 | `version` | Required, like `1`, `1.2` or `1.2.3`, with an optional `-suffix`. |
 | `description`, `author`, `license`, `homepage` | Optional text. |
 | `min_core` | The oldest mod API it works with. The core is `0.1`; a mod asking for more is refused. |
+| `tags` | Optional, up to 10 lowercase slugs like `3d-printing` (see [Tags](#tags)). Unknown tags are allowed. |
+| `icon_url` | Optional https URL of a square image, shown in Browse (only from GitHub's hosts). |
+| `screenshots` | Optional list of up to 8 https image URLs, shown on the details (only from GitHub's hosts). |
 | `runtime.type` | `process` (needs `command`) or `docker` (needs `compose`, and optionally `service`). |
 | `runtime.command` | A list, run in the mod's folder. A first word of `python` or `python3` uses the mod's `.venv` (or `venv`) if it has one, else the core's Python. |
 | `runtime.compose` | A compose file in the mod's folder. |
@@ -387,6 +527,54 @@ What it does **not** protect against:
   read, and check the compose file for privileged settings, host mounts and `network_mode: host`.
 - `network.lan` and other permissions describe intent to the user; for a process mod only the mod
   API permissions are enforced.
+- **Browsing is read-only, and Verified is not a sandbox.** Finding mods fetches JSON, Markdown and
+  images over https and never clones or runs anything (see [Finding mods](#finding-mods) for how
+  fetched content is sanitized). "Verified" means an index you chose vouches for the mod; it is
+  still code running on your server.
+
+## Running an index
+
+An index is a JSON file listing reviewed mods, usually `index.json` in its own repository.
+`templates/mods-index/` is a ready-to-use one: `index.json`, `index.schema.json` (the format as
+JSON Schema), a README on submitting a mod by pull request, `scripts/validate_index.py` (standard
+library only) and `.github/workflows/validate.yml`, which runs the validator on every pull
+request (the format, duplicate repos and ids, and that each repository's `odysseus-mod.json` has
+the same id).
+
+```json
+{
+  "schema_version": 1,
+  "name": "Odysseus mods index",
+  "mods": [
+    { "repo": "https://github.com/Jaron-Wilson/print-hub", "id": "print-hub", "verified": true,
+      "notes": "Reviewed 2026-10.", "blocked_versions": ["0.1.0"], "min_core": "0.1",
+      "tags": ["3d-printing"] }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `repo` | The GitHub repository (required) |
+| `id` | The mod's id (required by the validator) |
+| `verified` | Default `true`: shown as Verified. `false` lists it as Community |
+| `notes` | Shown on the details, up to 500 characters |
+| `blocked_versions` | Exact versions (`1.2.0` or `v1.2.0`) refused without an explicit override |
+| `min_core` | Raises the mod's `min_core`: older cores show it as not compatible |
+| `subdir` | The mod's folder inside the repository |
+| `tags` | Extra tags, added to the manifest's |
+
+When several indexes list the same repository, the first one in the settings wins, and the
+blocked versions of all of them add up. A broken entry is skipped with a warning in Browse; the
+rest of the index still counts.
+
+To start one:
+
+1. Create the repository from `templates/mods-index/` (private is fine: Odysseus reads it through
+   the API with the token; the validator's remote check needs an `INDEX_READ_TOKEN` secret for
+   private mods).
+2. Protect `main`: require pull requests, a review, and the "Validate index" check.
+3. In Odysseus: Settings > Mods > Browse > Discovery settings, add `OWNER/REPO`.
 
 ## How it is built
 
@@ -396,6 +584,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 |---|---|
 | `src/mods/manifest.py` | Validates `odysseus-mod.json` |
 | `src/mods/placement.py` | Where tabs go: `section`, `after`, `order` and the admin's override |
+| `src/mods/catalog.py` | Finding mods: GitHub topic search, indexes, the cache, details, update checks |
 | `src/mods/registry.py` | Install (prepare, confirm), update, enable, remove, tokens |
 | `src/mods/runtime.py` | Start, stop, health checks, restart with backoff, logs, idle stop |
 | `src/mods/proxy.py` | `/mods/<id>/` HTTP and WebSocket proxy |
@@ -405,6 +594,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/tools.py` | Tool lists, selection per message and calls |
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |
 | `static/js/modsSettings.js` | Settings > Mods |
+| `static/js/modsBrowse.js` | Settings > Mods > Browse |
 | `static/js/modPanel.js` | Mod tabs and home cards (used by `workspace/shell.js` and `home.js`) |
 | `static/js/modNav.js` | Mod tabs in the sidebar groups |
 

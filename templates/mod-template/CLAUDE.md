@@ -58,6 +58,11 @@ The core runs `python` in `runtime.command` with the mod's `.venv` when one exis
   `system`; `order` (a whole number, default 0) sorts tabs in the same spot, then the title does.
   An unknown group is only a warning: the tab goes in Mods. The admin can move or hide it in
   Settings > Mods. The full list of groups and pages is in docs/mods.md, "Where tabs go".
+- `tags`: up to 10 lowercase slugs that say what the mod is for, so people find it in Odysseus's
+  Browse view. Suggested: `3d-printing`, `hardware`, `home`, `notifications`, `media`, `games`,
+  `dev-tools`, `ai`, `productivity`, `monitoring`, `network`, `radio`, `car`, `finance`. Others
+  are allowed. Optional `icon_url` and `screenshots`: https images in the repository
+  (`https://raw.githubusercontent.com/...`; images on other hosts are not shown).
 - `tools`: `endpoint` (default `/mod/tools`) and `keywords`. The agent only gets the mod's tools
   when a message matches a keyword (or tool retrieval picks one), so choose words people will say.
 - `events`: `emits` (types like `my-mod.clicked`), `subscribes` (patterns like `print-hub/print.*`
@@ -144,3 +149,13 @@ an unsigned request.
 
 Push the repository, then in Odysseus: Settings > Mods > Install, paste the git URL (and a tag),
 review the permissions, Approve. Updates: the mod's Update button (a branch or tag).
+
+## Publishing
+
+- Give the repository the GitHub topic `odysseus-mod`, so Settings > Mods > Browse finds it:
+  `gh repo edit OWNER/REPO --add-topic odysseus-mod`. A private repository with the topic only
+  shows for its owner (with a GitHub token set in Odysseus).
+- Fill in `tags`, and tag releases `vX.Y.Z` matching `version`: Browse lists the tags as versions
+  and shows "Update available" when a newer one is out.
+- To be marked Verified, open a pull request adding the mod to a mods index (for example
+  `Jaron-Wilson/odysseus-mods-index`); see its README.

@@ -21,7 +21,7 @@ MANIFEST_VERSION = 1
 
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
 # Ids that would collide with the core's own routes under /api/mods.
-RESERVED_IDS = {"v1", "v2", "install", "settings", "events", "scaffold", "ui", "core", "odysseus"}
+RESERVED_IDS = {"v1", "v2", "install", "settings", "events", "scaffold", "ui", "core", "odysseus", "catalog"}
 # Paths the core requests on the mod's server: absolute, no "..", no scheme.
 PATH_RE = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 SUB_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -29,6 +29,29 @@ EVENT_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 # A subscription pattern: "<mod id or *>/<event type glob>" or a bare type glob.
 EVENT_PATTERN_RE = re.compile(r"^(?:[a-z0-9*][a-z0-9*-]{0,31}/)?[a-z0-9*][a-z0-9_.*-]{0,63}$")
 VERSION_RE = re.compile(r"^\d+(?:\.\d+){0,2}(?:[-+][0-9A-Za-z.-]+)?$")
+TAG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,31}$")
+MAX_TAGS = 10
+MAX_SCREENSHOTS = 8
+HTTPS_URL_RE = re.compile(r"^https://[^\s\"'<>]{1,290}$")
+
+# Suggested tags for `tags` (docs/mods.md, "Tags"). Other tags are allowed;
+# these are the ones the Browse view always offers as filters.
+SUGGESTED_TAGS: Dict[str, str] = {
+    "3d-printing": "3D printers, slicing, print monitoring",
+    "hardware": "Devices, sensors, microcontrollers",
+    "home": "Home automation: lights, doors, climate",
+    "notifications": "Alerts and messaging",
+    "media": "Music, video, photos, streaming",
+    "games": "Games and game servers",
+    "dev-tools": "Code, builds, deploys, servers",
+    "ai": "Models, agents, local AI",
+    "productivity": "Tasks, notes, calendars, email",
+    "monitoring": "Status pages, logs, uptime",
+    "network": "Network tools, DNS, VPN",
+    "radio": "SDR, ADS-B, AIS, ham radio",
+    "car": "Vehicles, OBD2, dashboards",
+    "finance": "Money, budgets, markets",
+}
 
 # Every permission a mod can ask for, with the words shown at install time.
 PERMISSIONS: Dict[str, str] = {
@@ -99,6 +122,37 @@ def _path(v: Any, where: str, errors: List[str], default: Optional[str] = None) 
     return v
 
 
+def _discovery(raw: Dict[str, Any], errors: List[str]) -> Dict[str, Any]:
+    """`tags`, `icon_url` and `screenshots`: optional, shown by the Browse view."""
+    tags = raw.get("tags")
+    out_tags: List[str] = []
+    if tags is not None:
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+            errors.append("`tags` must be a list of strings like 3d-printing")
+        else:
+            bad = [t for t in tags if not TAG_RE.match(t)]
+            if bad:
+                errors.append("`tags` must be lowercase slugs (letters, digits and single hyphens, up to 32), "
+                              f"not {', '.join(repr(t) for t in bad[:3])}")
+            out_tags = list(dict.fromkeys(t for t in tags if TAG_RE.match(t)))
+            if len(out_tags) > MAX_TAGS:
+                errors.append(f"`tags` can have at most {MAX_TAGS} entries")
+                out_tags = out_tags[:MAX_TAGS]
+    icon = raw.get("icon_url")
+    if icon is not None and (not isinstance(icon, str) or not HTTPS_URL_RE.match(icon)):
+        errors.append("`icon_url` must be an https URL")
+        icon = None
+    shots = raw.get("screenshots")
+    out_shots: List[str] = []
+    if shots is not None:
+        if (not isinstance(shots, list) or len(shots) > MAX_SCREENSHOTS
+                or not all(isinstance(u, str) and HTTPS_URL_RE.match(u) for u in shots)):
+            errors.append(f"`screenshots` must be a list of at most {MAX_SCREENSHOTS} https URLs")
+        else:
+            out_shots = list(shots)
+    return {"tags": out_tags, "icon_url": icon or "", "screenshots": out_shots}
+
+
 def validate(raw: Any) -> Dict[str, Any]:
     """Check a parsed manifest and return it normalized (defaults filled in).
 
@@ -132,6 +186,7 @@ def validate(raw: Any) -> Dict[str, Any]:
         "homepage": _str(raw, "homepage", errors, max_len=300),
         "min_core": _str(raw, "min_core", errors, max_len=20, default="0.1") or "0.1",
     }
+    out.update(_discovery(raw, errors))
     if out["version"] and not VERSION_RE.match(out["version"]):
         errors.append("`version` must look like 1.2.3")
     if out["homepage"] and not re.match(r"^https?://", out["homepage"]):

@@ -1,0 +1,27 @@
+name: Validate index
+
+on:
+  pull_request:
+    paths: ["index.json", "index.schema.json", "scripts/**", ".github/workflows/**"]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the format
+        run: python scripts/validate_index.py index.json
+      - name: Check each mod's manifest on GitHub
+        # The default token reads public repositories. To list private mods,
+        # add a read-only fine-grained token as the INDEX_READ_TOKEN secret.
+        env:
+          GITHUB_TOKEN: ${{ secrets.INDEX_READ_TOKEN || github.token }}
+        run: python scripts/validate_index.py index.json --check-remote

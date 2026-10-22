@@ -81,5 +81,7 @@ python -m odysseus_mod.devcore     # look at it: http://127.0.0.1:7900/
 - No em dashes anywhere, American English.
 - Commit with a Conventional Commits message (`feat: ...`). For a release, bump `version` and tag
   `vX.Y.Z`.
+- Set `tags` in the manifest (see CLAUDE.md, "The manifest") so it can be found in Browse.
 - Summarize for the user: what the mod does, the permissions it asks for, how to install it
-  (Settings > Mods > Install with the git URL), and any default you picked in step 1.
+  (Settings > Mods > Install with the git URL), how to publish it (the GitHub topic:
+  `gh repo edit OWNER/REPO --add-topic odysseus-mod`), and any default you picked in step 1.
