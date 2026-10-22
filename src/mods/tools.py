@@ -143,10 +143,8 @@ def generation() -> int:
 
 
 def _user_allowed(entry: Dict[str, Any], owner: Optional[str]) -> bool:
-    if entry.get("access") == "users":
-        return True
     from src.mods import access
-    return access.is_admin_name(owner)
+    return access.may_use(entry, owner)
 
 
 def enabled_tools(owner: Optional[str] = None) -> Iterable[Tuple[Dict[str, Any], Dict[str, Any]]]:

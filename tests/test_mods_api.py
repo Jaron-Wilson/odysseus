@@ -177,3 +177,28 @@ def test_ui_list_gives_frame_urls_only_for_mods_the_user_may_use(client):
     assert {m["id"] for m in bob} == {"shared-mod"}
     tab = next(m for m in alice if m["id"] == "test-mod")["tabs"][0]
     assert tab["url"].startswith("/mods/test-mod/~") and tab["url"].endswith("/")
+
+
+def test_an_admin_only_mod_is_never_for_other_users(client):
+    """`admin_only` in the manifest (a mod that gives a shell, say): even with
+    its access set to "users" by hand, only admins get its pages and tools,
+    and the access setting can't be changed to "users"."""
+    from src.mods import access, tools
+    entry, tok = add_mod({"admin_only": True, "ui": {"tabs": [{"id": "main", "path": "/"}]}},
+                         mod_id="shell-mod", access="users")
+    assert access.may_use(entry, "alice") and not access.may_use(entry, "bob")
+    assert not tools._user_allowed(entry, "bob") and tools._user_allowed(entry, "alice")
+    bob = client.get("/api/mods/ui", headers={"x-test-user": "bob"}).json()["mods"]
+    assert "shell-mod" not in {m["id"] for m in bob}
+    alice = client.get("/api/mods/ui", headers={"x-test-user": "alice"}).json()["mods"]
+    assert "shell-mod" in {m["id"] for m in alice}
+    r = client.post("/api/mods/shell-mod/access", headers={"x-test-user": "alice"}, json={"access": "users"})
+    assert r.status_code == 400 and "only for admins" in r.text
+    listed = next(m for m in client.get("/api/mods", headers={"x-test-user": "alice"}).json()["mods"]
+                  if m["id"] == "shell-mod")
+    assert listed["admin_only"] is True and listed["access"] == "admins"
+    me = client.get("/api/mods/v1/me", headers=bearer(tok)).json()
+    assert me["admin_only"] is True and me["access"] == "admins"
+    # Without the flag the same setting opens it to everyone.
+    plain, _ = add_mod(mod_id="plain-mod", access="users")
+    assert access.may_use(plain, "bob")

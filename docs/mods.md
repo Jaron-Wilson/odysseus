@@ -318,6 +318,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `description`, `author`, `license`, `homepage` | Optional text. |
 | `min_core` | The oldest mod API it works with. The core is `0.1`; a mod asking for more is refused. |
 | `tags` | Optional, up to 10 lowercase slugs like `3d-printing` (see [Tags](#tags)). Unknown tags are allowed. |
+| `admin_only` | Optional, default `false`. `true` for a mod that gives admin powers (a shell on the server, its files, other users' sessions): only admins can ever use it. Its **Who can use it** setting is fixed to Admins (setting it to All users is refused), and the install review says so. |
 | `icon_url` | Optional https URL of a square image, shown in Browse (only from GitHub's hosts). |
 | `screenshots` | Optional list of up to 8 https image URLs, shown on the details (only from GitHub's hosts). |
 | `runtime.type` | `process` (needs `command`) or `docker` (needs `compose`, and optionally `service`). |
@@ -424,13 +425,13 @@ CORS rules, which reject `Origin: null`. So a mod page can send JSON `POST`, `PU
 requests and custom headers to its own routes.
 
 Only the user's own mods are reachable: a mod with access `admins` is for admins, `users` for every
-signed-in user. A disabled mod answers 404, and a lazy one is started on first use.
+signed-in user. A mod whose manifest says `admin_only` is for admins whatever its access says. A disabled mod answers 404, and a lazy one is started on first use.
 
 ### The mod API: `/api/mods/v1/` with `Authorization: Bearer <ODYSSEUS_MOD_TOKEN>`
 
 | Call | Permission | Body / answer |
 |---|---|---|
-| `GET me` | | `{id, name, version, permissions, core_api, base_path}` |
+| `GET me` | | `{id, name, version, permissions, core_api, base_path, admin_only, access}` (`access` is who can use it: `admins` or `users`) |
 | `POST notify` | `notify` | `{title, body, level, url, tag, image_url, user}`. `level` is `info` (default), `success`, `warning`, `error` or `critical`. `url` must be a relative path in Odysseus; a tab link (`/#mod/<id>/<tab>?path=/jobs/42`, see [Links into a mod](#links-into-a-mod)) opens the mod's tab inside Odysseus. `user` picks who gets it (default: the admins). Answers `{ok, channels}` |
 | `POST events` | `events.emit` | `{type, data}`; `type` must be in `events.emits`; `data` up to 64 KB. Answers `{ok, id, delivered_to}` |
 | `GET events/subscriptions` | `events.subscribe` | The mod's subscriptions |
@@ -687,7 +688,8 @@ Mods are **untrusted code**. What protects you:
 - **Device actions need the user.** Mod tools that control devices go through the chat's approval
   flow, each call.
 - **Mods are reachable only through the core** (they listen on loopback), and only by the users
-  allowed to use them. Managing mods needs a signed-in admin (not an API token).
+  allowed to use them. A mod that gives admin powers declares `admin_only`, and then nobody can
+  open it to other users by mistake: the core checks the role on every page, socket and tool call. Managing mods needs a signed-in admin (not an API token).
 
 What it does **not** protect against:
 
