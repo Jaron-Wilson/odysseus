@@ -15,8 +15,10 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import posixpath
+import re
 from typing import List, Optional, Tuple
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 from fastapi import Request, WebSocket
@@ -155,7 +157,19 @@ def _resolve(mod_id: str, rest: str, cookie_user: Optional[str]):
         user = cookie_user
     if not access.may_use(entry, user):
         return page(403, "Not allowed", "This mod is only available to admins.")
+    if core_only(upath):
+        # A provider's capability endpoint takes calls the core brokered and
+        # checked (src/mods/capabilities.py), never from a browser.
+        return page(404, "Not found", "That path of the mod is only for Odysseus itself.")
     return entry, user, tok, upath
+
+
+def core_only(upath: str) -> bool:
+    """Whether a path under the mod is its capability endpoint (/mod/cap/...),
+    however it is spelled (doubled slashes, percent-encoding)."""
+    from src.mods.capabilities import PROVIDER_PATH
+    p = posixpath.normpath(re.sub(r"/+", "/", "/" + unquote(unquote(upath or "")).replace("\\", "/")))
+    return p == PROVIDER_PATH or p.startswith(PROVIDER_PATH + "/")
 
 
 def cookie_user(request) -> Optional[str]:

@@ -833,6 +833,10 @@ def setup_sms_routes(session_manager) -> APIRouter:
         text = (text or "")[:MAX_TEXT]
         logger.info("[sms] inbound from %s for %s: accepted (%d chars)", sender or "?", owner or "-", len(text))
         logger.debug("[sms] inbound text: %r", text[:200])
+        # Mods that declared messaging.sms get it as messaging.sms.received
+        # (src/mods/capabilities.py); the commands below still run as before.
+        from src.mods import capabilities
+        capabilities.sms_received(owner, sender, text)
         try:
             return await _handle(owner, cfg, sender, text, _is_admin(request, owner), _link_base(request))
         except Exception as e:

@@ -15,6 +15,7 @@
     @app.on_event("*/print.finished")
     def finished(req, event):
         app.core.notify("Print done", event["data"].get("name", ""))
+        app.core.send_text("Print done")       # messaging.sms, if the manifest lists it
 
     app.run()
 
@@ -244,6 +245,40 @@ class CoreClient:
             return {"ok": True, "standalone": True}
         return self.call("POST", "tools/refresh", {"wait": bool(wait)})
 
+    def capabilities(self) -> Dict[str, Any]:
+        """The capabilities this mod declared (`requires`, `optional`) and
+        whether each is available now: {"requires": [{id, available, provider}],
+        "optional": [...], "missing": [...], "missing_optional": [...]}."""
+        if self.standalone:
+            return {"provides": [], "requires": [], "optional": [], "missing": [], "missing_optional": [],
+                    "standalone": True}
+        return self.call("GET", "cap")
+
+    def cap(self, capability: str, action: str, args: Optional[Dict[str, Any]] = None,
+            user: str = "", provider: str = "") -> Dict[str, Any]:
+        """Use a capability another mod (or the core) provides, like
+        cap("messaging.sms", "send", {"text": "Done"}), or another mod's own
+        API by name, like cap("print-hub.jobs", "list"). It must be in the
+        manifest's `requires` or `optional`. The core checks it, applies its
+        rules and routes it (to `provider`, a mod id, when given). The answer
+        is the provider's JSON object plus {ok, capability, action, provider}.
+        A CoreError 424 means nothing provides it (fine for an `optional` one)."""
+        if self.standalone:
+            raise CoreError(503, f"no {capability} without Odysseus")
+        body = dict(args or {})
+        if user:
+            body["user"] = user
+        q = f"?provider={urllib.request.quote(provider)}" if provider else ""
+        return self.call("POST", f"cap/{capability}/{action}{q}", body)
+
+    def send_text(self, text: str, to: str = "", user: str = "") -> Dict[str, Any]:
+        """messaging.sms send: a text to the user's own phone (or `to`, a
+        number the user granted this mod). Standalone it is printed."""
+        if self.standalone:
+            print(f"[text{' to ' + to if to else ''}] {text}", flush=True)
+            return {"ok": True, "standalone": True}
+        return self.cap("messaging.sms", "send", {"text": text, **({"to": to} if to else {})}, user)
+
     @staticmethod
     def link(mod_id: str, tab: str, path: str = "") -> str:
         """A link that opens one of a mod's tabs inside Odysseus, optionally at
@@ -296,6 +331,8 @@ class Request:
         self.user = user
         self.params = params
         self.session_id = handler.headers.get("X-Odysseus-Session") or ""
+        # For a capability call (ModApp.provide): the mod that asked, through the core.
+        self.caller = handler.headers.get("X-Odysseus-Caller") or ""
         self.base_path = handler.headers.get("X-Forwarded-Prefix") or ""
         if "chunked" in (handler.headers.get("Transfer-Encoding") or "").lower():
             # The core streams bodies over 16 MB through its proxy, chunked.
@@ -362,6 +399,7 @@ class ModApp:
         self._routes: List[Tuple[str, re.Pattern, Callable]] = []
         self._tools: Dict[str, Tuple[Dict[str, Any], Callable]] = {}
         self._events: List[Tuple[str, Callable]] = []
+        self._caps: Dict[Tuple[str, str], Callable] = {}
         self._sessions: set = set()
         self.password = None if not self.core.standalone else (os.environ.get("MOD_PASSWORD") or "")
         self.server: Optional[ThreadingHTTPServer] = None
@@ -383,13 +421,14 @@ class ModApp:
 
     def tool(self, name: str, description: str, properties: Optional[Dict[str, Any]] = None,
              required: Optional[List[str]] = None, keywords: Optional[List[str]] = None,
-             controls_devices: bool = False, read_only: bool = False):
+             controls_devices: bool = False, read_only: bool = False, asks_first: bool = False):
         """Register an agent tool. The handler gets (req, args) and returns
         text for the model, or {"output": text, "data": {...}}."""
         schema = {"type": "function", "function": {
             "name": name, "description": description,
             "parameters": {"type": "object", "properties": properties or {}, "required": required or []}},
-            "x-odysseus": {"keywords": keywords or [], "controls_devices": controls_devices, "read_only": read_only}}
+            "x-odysseus": {"keywords": keywords or [], "controls_devices": controls_devices, "read_only": read_only,
+                            "asks_first": asks_first}}
 
         def deco(fn):
             self._tools[name] = (schema, fn)
@@ -401,6 +440,19 @@ class ModApp:
         also be in the manifest's events.subscribes, or subscribed at run time)."""
         def deco(fn):
             self._events.append((pattern, fn))
+            return fn
+        return deco
+
+    def provide(self, capability: str, action: str):
+        """Serve one action of a capability listed in the manifest's
+        `provides` (a shared one like messaging.sms, or this mod's own API,
+        `<mod id>.<name>`). The handler gets (req, args): `req.user` is the
+        user the call is for and `req.caller` the mod that asked ("" when the
+        core itself asks). The core already checked the caller and applied the
+        capability's rules; return a dict (the caller gets it), or
+        {"error": "..."}."""
+        def deco(fn):
+            self._caps[(capability, action)] = fn
             return fn
         return deco
 
@@ -447,6 +499,22 @@ class ModApp:
             args = req.json()
             out = self._tools[name][1](req, args if isinstance(args, dict) else {})
             return json_response(out if isinstance(out, dict) else {"output": "" if out is None else str(out)})
+        if path.startswith("/mod/cap/") and handler.command in ("GET", "POST"):
+            # Only the core calls this: for another mod (X-Odysseus-Caller says
+            # which) or for itself (no caller). Its proxy never forwards a
+            # browser here, and a proxied request carries X-Forwarded-Prefix.
+            if handler.headers.get("X-Forwarded-Prefix") or self.core.standalone:
+                return json_response({"error": "capability calls come only from Odysseus"}, 403)
+            cap, _, action = path[len("/mod/cap/"):].partition("/")
+            fn = self._caps.get((cap, action))
+            if not fn:
+                return json_response({"error": f"this mod does not provide {cap} {action}"}, 404)
+            req = Request(handler, user, {"capability": cap, "action": action})
+            args = req.json() if handler.command == "POST" else dict(req.query)
+            out = fn(req, args if isinstance(args, dict) else {})
+            if isinstance(out, dict) and out.get("error"):
+                return json_response({"error": str(out["error"])}, 400)
+            return json_response(out if isinstance(out, dict) else {"result": out})
         if path == "/mod/events" and handler.command == "POST":
             req = Request(handler, user, {})
             ev = req.json()
