@@ -177,7 +177,11 @@ def _setup_v1(router: APIRouter) -> None:
         e = _mod(request)
         return {"id": e["id"], "name": e.get("name"), "version": e.get("version"),
                 "permissions": e.get("granted_permissions") or [], "core_api": mf.CORE_API_VERSION,
-                "base_path": f"/mods/{e['id']}"}
+                "base_path": f"/mods/{e['id']}",
+                # Who can use it, so a mod that must stay admin only can check
+                # that this core enforces it (src/mods/access.py).
+                "admin_only": access.admin_only(e),
+                "access": "admins" if access.admin_only(e) else e.get("access", "admins")}
 
     @router.post("/api/mods/v1/notify")
     async def v1_notify(request: Request):
