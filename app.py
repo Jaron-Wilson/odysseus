@@ -794,9 +794,8 @@ app.include_router(setup_copilot_routes())
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
 app.include_router(setup_chatgpt_subscription_routes())
 
-# Sign in with ChatGPT (official ChatGPT plan usage, Responses API)
-from routes.chatgpt_plan_routes import setup_chatgpt_plan_routes
-app.include_router(setup_chatgpt_plan_routes())
+# Sign in with ChatGPT is the ChatGPT add-on now (Jaron-Wilson/odysseus-chatgpt):
+# its models are an endpoint mod://chatgpt/v1 (src/mods/llm_endpoints.py).
 
 # TTS
 from routes.tts_routes import setup_tts_routes

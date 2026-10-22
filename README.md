@@ -403,7 +403,7 @@ and lets you open a chat to ask about one.
 - **Build > Claude sessions** (admin): read the Claude Code sessions on this host, live ones first, with a chat-style transcript and a copyable resume command.
 - **`/claude attach <id>`** links one of those sessions to a chat so the agent carries it on. **`/claude direct`** then sends every message in that chat straight to the attached session, so the chat becomes a remote control for it (`/claude direct off` or `/claude detach` to end).
 - **Building Odysseus from Odysseus**: feature requests are made in a separate copy of the repo, on a branch from `origin/dev`, and opened as a pull request. Nothing is merged or pushed to `dev` by the agent.
-- **Sign in with ChatGPT** (**Settings > Add Models**) uses OpenAI models on a ChatGPT plan with no API key. Each model endpoint in Settings also has a tool-calling override (Auto, On, Off) for local models whose support is guessed wrong.
+- **Sign in with ChatGPT** is the [ChatGPT add-on](https://github.com/Jaron-Wilson/odysseus-chatgpt) (Settings > Mods > Browse): it uses OpenAI models on a ChatGPT plan with no API key, each user signing in on its tab. Each model endpoint in Settings also has a tool-calling override (Auto, On, Off) for local models whose support is guessed wrong.
 
 </details>
 
