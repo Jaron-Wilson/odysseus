@@ -49,7 +49,8 @@ The core runs `python` in `runtime.command` with the mod's `.venv` when one exis
   install or update, only after the user approved the permissions.
 - `permissions`: only what the mod needs. The user sees and approves every one at install.
   `notify`, `events.emit`, `events.subscribe`, `devices.read`, `devices.control`, `network.lan`,
-  `storage`, `llm.call`. Settings (`GET/PUT settings`) need none.
+  `storage`, `llm.call`, `stats.read` (server-wide activity; only for a mod only admins may use),
+  `machines.read` (the tailnet's machines). Settings (`GET/PUT settings`) need none.
 - `ui.tabs[]` (`id`, `title`, `icon`, `path`, and where it goes in the sidebar: `section`, `after`,
   `order`), `ui.home_cards[]` (`id`, `title`, `path`, `height` 60 to 600), `ui.settings_path`.
 - `section` is a sidebar group: `organize` (Organize), `create` (Create & research), `build`
@@ -137,6 +138,9 @@ deliveries come as `odysseus-core` (`CORE_USER`), as does a tool call with no us
 | `GET/PUT settings` | none | `settings()`, `save_settings(...)` |
 | `GET/PUT/DELETE kv/<key>` | storage | `kv_get/kv_put/kv_delete` |
 | `POST llm/chat {messages, max_tokens, temperature, model_role}` | llm.call | `llm_chat(...)` |
+| `GET machines` | machines.read | `machines(refresh=False)` |
+| `GET stats?scope=devops&hours=24` | stats.read | `stats(scope, hours)` |
+| `GET stats/transcripts/<run>` | stats.read | `stats_transcript(run_id)` |
 | `POST tools/refresh {wait}` | none | `refresh_tools(wait=False)` |
 | `GET cap` | none | `capabilities()` |
 | `POST cap/<capability>/<action>` | in `requires` or `optional` | `cap(capability, action, args, user, provider)`, `send_text(text, to)` |

@@ -37,7 +37,9 @@ MAX_KV_VALUE_BYTES = 64 * 1024
 _KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 # Per-mod, per-permission rate limits: (calls, seconds).
 RATE_LIMITS = {"notify": (30, 60), "llm.call": (20, 60), "events.emit": (240, 60), "devices.control": (30, 60),
-               "tools.refresh": (6, 60)}
+               "tools.refresh": (6, 60), "stats.read": (120, 60)}
+# What GET /api/mods/v1/stats can read (stats.read).
+STATS_SCOPES = ("devops",)
 _calls: Dict[tuple, Deque[float]] = defaultdict(deque)
 _background: set = set()   # running background tasks (kept so they are not garbage collected)
 
@@ -250,6 +252,49 @@ def _setup_v1(router: APIRouter) -> None:
         params = body.get("params") if isinstance(body.get("params"), dict) else {}
         runtime.log_line(e["id"], f"[odysseus] device command {command} -> {dev.get('name')}")
         return await devices.send_command(dev, command, params)
+
+    def _stats_mod(request: Request) -> Dict[str, Any]:
+        """stats.read is server-wide (every chat and run), so only a mod that
+        only admins may use gets it, whatever it was granted."""
+        e = _mod(request, "stats.read")
+        if e.get("access") == "users":
+            raise HTTPException(403, "stats.read is only for a mod that only admins may use "
+                                     "(Settings > Mods > Who can use it)")
+        return e
+
+    @router.get("/api/mods/v1/stats")
+    async def v1_stats(request: Request, scope: str = "", hours: float = 24):
+        """Read-only core stats. scope=devops: what src/devops_stats.py's
+        snapshot() returns (what is running, model speed, coder runs)."""
+        _stats_mod(request)
+        if scope not in STATS_SCOPES:
+            raise HTTPException(400, f"scope must be one of: {', '.join(STATS_SCOPES)}")
+        from src import devops_stats
+        return {"scope": scope, **await asyncio.to_thread(devops_stats.snapshot, hours)}
+
+    @router.get("/api/mods/v1/stats/transcripts/{run_id}")
+    async def v1_stats_transcript(request: Request, run_id: str):
+        """One coder run's parsed transcript (the same as /api/transcript/runs/<id>
+        for its owner), for the stats a mod shows."""
+        _stats_mod(request)
+        from routes.transcript_routes import detail_for
+        out = await asyncio.to_thread(detail_for, run_id)
+        if out is None:
+            raise HTTPException(404, "No transcript to show for this run")
+        return out
+
+    @router.get("/api/mods/v1/machines")
+    async def v1_machines(request: Request, refresh: bool = False):
+        """The tailnet's machines (src/machines.py peers), with the SSH user
+        set for each in Settings > Devices. Read-only: no keys, no commands."""
+        _mod(request, "machines.read")
+        from src import machines
+        peers = await asyncio.to_thread(machines.peers, bool(refresh))
+        prefs = machines.load_prefs()
+        keep = ("host", "name", "dns", "ips", "os", "online", "last_seen", "is_self", "shared")
+        return {"machines": [{**{k: p.get(k) for k in keep},
+                              "ssh_user": str((prefs.get(p.get("host") or "") or {}).get("ssh_user") or "")}
+                             for p in peers]}
 
     def _json_file(path: str) -> Dict[str, Any]:
         try:

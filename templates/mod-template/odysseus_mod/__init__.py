@@ -174,6 +174,27 @@ class CoreClient:
         return self.call("POST", f"devices/{urllib.request.quote(name)}/command",
                          {"command": command, "params": params or {}})
 
+    def machines(self, refresh: bool = False) -> List[Dict[str, Any]]:
+        """The tailnet's machines (machines.read): host, name, dns, ips, os,
+        online, last_seen, is_self, shared and the ssh_user set in Odysseus."""
+        if self.standalone:
+            return []
+        return self.call("GET", "machines" + ("?refresh=1" if refresh else "")).get("machines", [])
+
+    def stats(self, scope: str = "devops", hours: float = 24) -> Dict[str, Any]:
+        """Read-only server stats (stats.read, admin-only mods). scope
+        "devops": what is running, model speed, coder runs."""
+        if self.standalone:
+            raise CoreError(503, "no server stats without Odysseus")
+        from urllib.parse import urlencode
+        return self.call("GET", "stats?" + urlencode({"scope": scope, "hours": hours}))
+
+    def stats_transcript(self, run_id: str) -> Dict[str, Any]:
+        """One coder run's parsed transcript (stats.read)."""
+        if self.standalone:
+            raise CoreError(503, "no transcripts without Odysseus")
+        return self.call("GET", f"stats/transcripts/{urllib.request.quote(run_id, safe='')}")
+
     def settings(self) -> Dict[str, Any]:
         if self.standalone:
             return self._local("settings.json")
@@ -278,6 +299,28 @@ class CoreClient:
 
 # ── Requests and responses ───────────────────────────────────────────────
 
+MAX_BODY_BYTES = int(os.environ.get("MOD_MAX_BODY_BYTES") or 512 * 1024 * 1024)
+
+
+def _read_chunked(rfile, limit: int) -> bytes:
+    """A Transfer-Encoding: chunked body (how the core forwards big uploads)."""
+    out = bytearray()
+    while True:
+        line = rfile.readline(1024)
+        if not line:
+            break
+        size = int(line.split(b";", 1)[0].strip() or b"0", 16)
+        if size == 0:
+            while rfile.readline(1024) not in (b"\r\n", b"\n", b""):
+                pass                       # trailers
+            break
+        if len(out) + size > limit:
+            raise ValueError("request body too large")
+        out += rfile.read(size)
+        rfile.readline(1024)               # the CRLF after each chunk
+    return bytes(out)
+
+
 class Request:
     def __init__(self, handler: BaseHTTPRequestHandler, user: Optional[str], params: Dict[str, str]):
         parts = urlsplit(handler.path)
@@ -291,8 +334,14 @@ class Request:
         # For a capability call (ModApp.provide): the mod that asked, through the core.
         self.caller = handler.headers.get("X-Odysseus-Caller") or ""
         self.base_path = handler.headers.get("X-Forwarded-Prefix") or ""
-        n = int(handler.headers.get("Content-Length") or 0)
-        self.body = handler.rfile.read(n) if n else b""
+        if "chunked" in (handler.headers.get("Transfer-Encoding") or "").lower():
+            # The core streams bodies over 16 MB through its proxy, chunked.
+            self.body = _read_chunked(handler.rfile, MAX_BODY_BYTES)
+        else:
+            n = int(handler.headers.get("Content-Length") or 0)
+            if n > MAX_BODY_BYTES:
+                raise ValueError("request body too large")
+            self.body = handler.rfile.read(n) if n else b""
 
     def json(self) -> Any:
         try:

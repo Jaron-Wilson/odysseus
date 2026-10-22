@@ -117,6 +117,30 @@ def test_standalone_app_asks_for_a_password(monkeypatch):
         srv.shutdown()
 
 
+def test_chunked_request_bodies_are_read(monkeypatch):
+    # The core's proxy forwards bodies over 16 MB chunked (no Content-Length).
+    import http.client
+    core = CoreClient(url="http://127.0.0.1:9", token="odm_t", mod_id="my-mod")
+    app = ModApp(core=core)
+
+    @app.post("/upload")
+    def upload(req):
+        return {"n": len(req.body), "head": req.body[:5].decode()}
+
+    srv, base = _serve(app)
+    try:
+        host, port = srv.server_address[:2]
+        conn = http.client.HTTPConnection(host, port, timeout=5)
+        payload = b"hello" + b"x" * 70000
+        conn.request("POST", "/upload", body=iter([payload[:30000], payload[30000:]]),
+                     headers={**sign_identity("odm_t", "my-mod", "alice"), "Transfer-Encoding": "chunked"},
+                     encode_chunked=True)
+        r = conn.getresponse()
+        assert r.status == 200 and json.loads(r.read()) == {"n": len(payload), "head": "hello"}
+    finally:
+        srv.shutdown()
+
+
 def test_providing_a_capability():
     """ModApp.provide serves /mod/cap/<capability>/<action> to the core only."""
     app = ModApp(core=CoreClient(url="http://127.0.0.1:9", token="odm_t", mod_id="my-mod"))
@@ -141,6 +165,30 @@ def test_providing_a_capability():
         assert _req(base + "/mod/cap/my-mod.jobs/delete", "POST", {}, h)[0] == 404
     finally:
         srv.shutdown()
+
+
+def test_devcore_serves_machines_and_stats_with_their_permissions(tmp_path):
+    from odysseus_mod import CoreError
+    from odysseus_mod.devcore import DevCore
+    (tmp_path / "odysseus-mod.json").write_text(json.dumps({
+        "id": "probe", "name": "Probe", "version": "0.1.0", "permissions": ["machines.read"],
+        "runtime": {"type": "process", "command": ["python", "-m", "nothing"]}}))
+    core = DevCore(str(tmp_path), state_dir=str(tmp_path / ".devcore"))
+    threading.Thread(target=core.server.serve_forever, daemon=True).start()
+    try:
+        c = CoreClient(url=core.url, token=core.token, mod_id="probe")
+        assert c.machines()[0]["os"] == "windows"
+        with pytest.raises(CoreError) as e:
+            c.stats("devops")
+        assert e.value.status == 403 and "stats.read" in e.value.detail
+        core.perms.add("stats.read")
+        core.transcripts["0123abcd"] = {"id": "0123abcd", "blocks": []}
+        assert c.stats("devops", 24)["scope"] == "devops"
+        assert c.stats_transcript("0123abcd")["id"] == "0123abcd"
+        with pytest.raises(CoreError):
+            c.stats_transcript("ffffffff")
+    finally:
+        core.server.shutdown()
 
 
 def test_using_a_capability_standalone(capsys):

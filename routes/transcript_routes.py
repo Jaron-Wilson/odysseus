@@ -186,6 +186,39 @@ def _run_ids_in_listing() -> List[str]:
     return ids
 
 
+def detail_for(job_id: str, record: Optional[Dict] = None) -> Optional[Dict]:
+    """One run, fully parsed (the detail route's answer), or None when the id
+    is not a run or it has no transcript file yet. No owner check: callers
+    check it (the route) or are server-wide by design (the mod stats API,
+    src/mods/routes.py, for admin-only mods with stats.read)."""
+    if not _JOB_ID_RE.fullmatch(job_id or ""):
+        return None
+    record = record if record is not None else _record_for(job_id)
+    if record is None:
+        return None
+    detail = summaries.get_summary(_run_dir(job_id))
+    if detail is None:
+        return None
+    return {
+        "id": record["id"],
+        "engine": record.get("engine") or detail["engine"],
+        "model": record.get("model") or detail.get("model") or "",
+        "action": record.get("action") or "",
+        "cwd": record.get("cwd") or "",
+        "status": record.get("status") or detail.get("status") or "",
+        "started": record.get("started") or detail.get("first"),
+        "finished": record.get("finished") or detail.get("last"),
+        "chat_session_id": record.get("chat_session_id") or "",
+        "chat_name": record.get("chat_name") or "",
+        "final_text": detail.get("final_text") or "",
+        "counts": detail.get("counts") or {},
+        "preview": detail.get("preview") or "",
+        "truncated": bool(detail.get("truncated")),
+        "blocks": detail.get("blocks") or [],
+        "resume_command": detail.get("resume_command") or "",
+    }
+
+
 def setup_transcript_routes() -> APIRouter:
     router = APIRouter(tags=["transcript"])
 
@@ -219,26 +252,9 @@ def setup_transcript_routes() -> APIRouter:
         record = _record_for(job_id)
         if not _owns(record, user):
             raise HTTPException(404, "No such transcript")
-        detail = summaries.get_summary(_run_dir(job_id))
-        if detail is None:
+        out = detail_for(job_id, record)
+        if out is None:
             raise HTTPException(404, "No transcript to show for this run yet")
-        return {
-            "id": record["id"],
-            "engine": record.get("engine") or detail["engine"],
-            "model": record.get("model") or detail.get("model") or "",
-            "action": record.get("action") or "",
-            "cwd": record.get("cwd") or "",
-            "status": record.get("status") or detail.get("status") or "",
-            "started": record.get("started") or detail.get("first"),
-            "finished": record.get("finished") or detail.get("last"),
-            "chat_session_id": record.get("chat_session_id") or "",
-            "chat_name": record.get("chat_name") or "",
-            "final_text": detail.get("final_text") or "",
-            "counts": detail.get("counts") or {},
-            "preview": detail.get("preview") or "",
-            "truncated": bool(detail.get("truncated")),
-            "blocks": detail.get("blocks") or [],
-            "resume_command": detail.get("resume_command") or "",
-        }
+        return out
 
     return router

@@ -63,6 +63,9 @@ PERMISSIONS: Dict[str, str] = {
     "network.lan": "Talk to machines on your local network (informational for process mods)",
     "storage": "Keep data in a key-value store the core holds for it",
     "llm.call": "Ask your configured AI models questions (uses your model routing and your usage)",
+    "stats.read": "Read server-wide activity: model speed, coder runs and their transcripts, what is running "
+                  "(only for a mod that only admins may use)",
+    "machines.read": "See the machines on your tailnet: names, addresses, operating system, online or not",
 }
 
 RUNTIME_TYPES = ("process", "docker")
