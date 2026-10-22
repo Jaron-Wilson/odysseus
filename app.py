@@ -732,9 +732,6 @@ app.include_router(setup_terminal_routes())
 # Claude Code sessions on this host, read-only, admin only (routes/claude_sessions_routes.py).
 from routes.claude_sessions_routes import setup_claude_sessions_routes
 app.include_router(setup_claude_sessions_routes())
-# The ADS-B receiver (a Pi on the tailnet): status and its live map, admin only (routes/adsb_routes.py).
-from routes.adsb_routes import setup_adsb_routes
-app.include_router(setup_adsb_routes())
 # PC game streaming: the Games page (Sunshine on the PC, Moonlight Web at /play/), admin only (routes/games_routes.py).
 from routes.games_routes import setup_games_routes
 app.include_router(setup_games_routes())
