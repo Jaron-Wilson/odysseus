@@ -343,7 +343,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `events.emits` | Event types it may publish (`print.finished`). Needs `events.emit`. |
 | `events.subscribes` | Patterns it wants (`print-hub/print.*`, `*.failed`, `*/*.finished`). Needs `events.subscribe`. |
 | `events.webhook` | Where events are delivered. Default `/mod/events`. |
-| `provides` | Optional, up to 16 capability ids it serves for other mods (and for the core), like `messaging.sms`, or its own API, `<its id>.<name>`. See [Capabilities](#capabilities). |
+| `provides` | Optional, up to 16 capability ids it serves for other mods and for the core, like `messaging.sms`, `tts.voice`, or its own API, `<its id>.<name>`. See [Capabilities](#capabilities) and [Capability providers](#capability-providers). |
 | `requires` | Optional capability ids it does not work without. Installing it while nothing provides one asks first and offers to find a provider. |
 | `optional` | Optional capability ids it works better with. Nothing is asked; its card says "Works better with ...". An id cannot be in both `requires` and `optional`. |
 | `tutorial` | Expected of every mod; missing is a warning, and such a mod is never Verified. `{"version", "steps"}` (recommended) or `{"version", "path"}`; see [Tutorials](#tutorials). |
@@ -586,7 +586,25 @@ gets every mod's tools.
 **Approval.** A tool marked `controls_devices`, and every tool of a mod with `devices.control`
 unless it is marked `read_only`, goes through the chat's approval flow: the user sees the mod,
 the tool and the arguments, with Approve and Deny, before it runs. `devices.control` is required
-for a `controls_devices` tool to run at all.
+for a `controls_devices` tool to run at all. A tool marked `asks_first` (a write to the user's
+account, like a Google Drive upload) goes through the same flow; it needs no permission, since it
+only adds a check.
+
+### Capability providers
+
+Some add-ons plug into a feature of the core rather than adding a page: a text to speech voice, a
+model provider, the machines on a tailnet. Such a mod lists the capability in `provides`, and the
+core calls it at `POST /mod/cap/<capability>/<action>` (`GET` for reads), with the signed identity
+of the user the call is for (`odysseus-core` for none), only while the mod is enabled
+(`src/mods/providers.py`). The core works without any provider: it falls back to its built-in
+behavior and points to the add-on (`GET /api/mods/providers?cap=tts.voice` tells a page whether
+one is installed).
+
+| Capability | Actions the core calls | Used by |
+|---|---|---|
+| `tts.voice` | `status`, `voices`, `synthesize` | Text to speech: the add-on is a voice next to the built-in Kokoro |
+| `llm.provider` | An OpenAI-compatible API under `v1/` (`v1/models`, `v1/chat/completions`) | Model endpoints: an endpoint whose URL is `mod://<id>/v1` |
+| `network.peers` | `peers`, `resolve` | Machines, model discovery and host names on a private network |
 
 ### UI
 
@@ -867,6 +885,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/routes.py` | The mod API, the admin API and the proxy routes |
 | `src/mods/events.py`, `notify.py` | The event bus and notification fan-out |
 | `src/mods/tools.py` | Tool lists, selection per message and calls |
+| `src/mods/providers.py` | Capability providers: mods the core calls for a feature (`provides`) |
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |
 | `static/js/modsSettings.js` | Settings > Mods |
 | `static/js/modsBrowse.js` | Settings > Mods > Browse |
