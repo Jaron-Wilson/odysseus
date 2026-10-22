@@ -94,7 +94,6 @@ const TOOLS = [
   { key: 'devices', label: 'Devices', icon: 'devices', sel: '.dp-backdrop', win: '.bg-panel', open: '#tool-devices-btn' },
   { key: 'browser', label: 'Browser', icon: 'browser', sel: '.cb-backdrop', win: '.bg-panel', open: '#tool-browser-btn' },
   { key: 'terminal', label: 'Terminal', icon: 'terminal', sel: '.term-backdrop', win: '.bg-panel', open: '#tool-terminal-btn' },
-  { key: 'devops', label: 'DevOps', icon: 'devops', sel: '.bg-panel-backdrop:has(> .dv-panel:not(.us-panel))', win: '.bg-panel', open: '#tool-devops-btn' },
   { key: 'usage', label: 'Usage', icon: 'devops', sel: '.bg-panel-backdrop:has(> .us-panel)', win: '.bg-panel', open: '#tool-usage-btn' },
   { key: 'claude-sessions', label: 'Claude sessions', icon: 'sessions', sel: '.bg-panel-backdrop:has(> .cs-panel)', win: '.bg-panel', open: '#tool-claude-sessions-btn' },
   { key: 'adsb', label: 'ADS-B receiver', icon: 'adsb', sel: '.bg-panel-backdrop:has(> .adsb-panel)', win: '.bg-panel', open: '#tool-adsb-btn' },

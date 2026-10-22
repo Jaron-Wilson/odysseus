@@ -519,7 +519,7 @@ list, in this order), and the built-in pages in each, which are what `after` may
 |---|---|---|
 | `organize` | Organize | `calendar`, `tasks`, `notes`, `plans`, `brain` |
 | `create` | Create & research | `library`, `gallery`, `research`, `compare` |
-| `build` | Build | `code`, `terminal`, `browser`, `background`, `company`, `claude-sessions`, `devops`, `odysseus-dev` |
+| `build` | Build | `code`, `terminal`, `browser`, `background`, `company`, `claude-sessions`, `odysseus-dev` |
 | `system` | System | `devices`, `adsb`, `games`, `cookbook`, `theme`, `usage`, `whats-new` |
 | `mods` | Mods | None. The default; the group only appears when a tab is in it. |
 
@@ -617,7 +617,7 @@ else reads it.
 #### Pages that moved to mods
 
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
-receiver), `games`, `print` (3D print helper, now part of Print Hub), `devops`, `company`, and later `code`, `terminal`,
+receiver), `games`, `print` (3D print helper, now part of Print Hub), `devops` (now the DevOps mod), `company`, and later `code`, `terminal`,
 `browser`, `claude-sessions`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
 `src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,
 `/#games?play=...`) and saved Workspace tabs keep working:

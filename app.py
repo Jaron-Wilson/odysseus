@@ -715,8 +715,8 @@ app.include_router(setup_settings_locate_routes())
 
 from routes.deploy_routes import setup_deploy_routes
 app.include_router(setup_deploy_routes())
-from routes.devops_routes import setup_devops_routes
-app.include_router(setup_devops_routes())
+# DevOps is the DevOps mod now (github.com/Jaron-Wilson/odysseus-devops); its numbers stay here,
+# for mods with stats.read: GET /api/mods/v1/stats?scope=devops (src/mods/routes.py, src/devops_stats.py).
 # Usage and cost: the price table, per-user spend, budgets (routes/usage_routes.py).
 from routes.usage_routes import setup_usage_routes
 app.include_router(setup_usage_routes())

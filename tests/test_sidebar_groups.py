@@ -40,7 +40,7 @@ _TAXONOMY = json.loads(re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-p
 
 _TOOL_IDS = ["tool-memory-btn", "tool-calendar-btn", "tool-compare-btn", "tool-cookbook-btn", "tool-research-btn",
              "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-plans-btn", "tool-tasks-btn", "tool-bg-btn", "tool-company-btn",
-             "tool-devops-btn", "tool-code-btn", "tool-browser-btn", "tool-devices-btn", "tool-terminal-btn",
+             "tool-code-btn", "tool-browser-btn", "tool-devices-btn", "tool-terminal-btn",
              "tool-claude-sessions-btn", "tool-adsb-btn", "tool-games-btn",
              "tool-odysseus-dev-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]
 
@@ -223,7 +223,7 @@ def test_the_groups_render_in_every_design(make_page, design):
     assert [g["items"] for g in gs] == [
         ["tool-calendar-btn", "tool-tasks-btn", "tool-notes-btn", "tool-plans-btn", "tool-memory-btn"],
         ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn"],
-        ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-company-btn", "tool-claude-sessions-btn", "tool-devops-btn",
+        ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-company-btn", "tool-claude-sessions-btn",
          "tool-odysseus-dev-btn"],
         ["tool-devices-btn", "tool-adsb-btn", "tool-games-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]]
     assert all(not g["folded"] and g["expanded"] == "true" and g["shown"] == g["items"] for g in gs)
@@ -317,7 +317,7 @@ def test_the_new_tab_menu_lists_the_tools_in_the_same_groups(make_page):
     assert menu["groups"] == [
         ["Organize", ["Calendar", "Tasks", "Notes", "Plans", "Brain"]],
         ["Create & research", ["Library", "Gallery", "Deep Research", "Compare"]],
-        ["Build", ["Code", "Terminal", "Browser", "Background", "Company", "Claude sessions", "DevOps", "Odysseus dev"]],
+        ["Build", ["Code", "Terminal", "Browser", "Background", "Company", "Claude sessions", "Odysseus dev"]],
         ["System", ["Devices", "ADS-B receiver", "Games", "Cookbook", "Theme", "Usage", "What's new"]]]
     pg.click(".ws-menu-group button:has-text('Devices')")
     pg.wait_for_function("() => [...document.querySelectorAll('.ws-tab')].some(t => t.dataset.tab === 'tool:devices')")
@@ -391,7 +391,7 @@ def test_ctrl_k_lists_pages_above_settings_and_enter_opens_it(make_page):
 
 @pytest.mark.parametrize("panel,clicked", [
     ("devices", "tool-devices-btn"), ("terminal", "tool-terminal-btn"), ("code", "tool-code-btn"),
-    ("browser", "tool-browser-btn"), ("background", "tool-bg-btn"), ("devops", "tool-devops-btn"),
+    ("browser", "tool-browser-btn"), ("background", "tool-bg-btn"),
     ("claude sessions", "tool-claude-sessions-btn"), ("company", "tool-company-btn"), ("org chart", "tool-company-btn"),
     ("usage", "tool-usage-btn"), ("cost", "tool-usage-btn"),
     ("odysseus-dev", "tool-odysseus-dev-btn"), ("calendar", "tool-calendar-btn"), ("tasks", "tool-tasks-btn"),
@@ -406,15 +406,16 @@ def test_the_agents_open_panel_opens_any_page(make_page, panel, clicked):
     pg.wait_for_function(f"() => calls.includes({json.dumps(clicked)})")
 
 
-@pytest.mark.parametrize("panel", ["print", "3d print", "print helper"])
-def test_open_panel_for_a_page_that_moved_to_a_mod_shows_the_moved_card(make_page, panel):
-    # The 3D print helper is now the Print Hub mod. With no mod that
-    # `replaces: "print"`, "take me to 3D print" opens the "now a mod" card
+@pytest.mark.parametrize("panel, key", [("print", "print"), ("3d print", "print"), ("print helper", "print"),
+                                        ("devops", "devops"), ("tokens per second", "devops")])
+def test_open_panel_for_a_page_that_moved_to_a_mod_shows_the_moved_card(make_page, panel, key):
+    # The 3D print helper is now the Print Hub mod, DevOps the DevOps mod. With no
+    # mod that `replaces` the key, "take me to 3D print" opens the "now a mod" card
     # (modLinks.openLegacy), never nothing.
     pg = make_page("classic")
     pg.evaluate(f"""() => import('/static/js/chatStream.js').then(m =>
         m.handleUIControl({{ ui_event: 'open_panel', panel: {json.dumps(panel)} }}))""")
-    pg.wait_for_function("() => document.querySelector('.mod-moved-backdrop[data-moved-key=\"print\"]')")
+    pg.wait_for_function(f"() => document.querySelector('.mod-moved-backdrop[data-moved-key=\"{key}\"]')")
     assert "This feature is now a mod" in pg.inner_text(".mod-moved-backdrop")
 
 

@@ -86,9 +86,6 @@ export const TAXONOMY = /* tool-pages:begin */ {
       "desc": "Read your Claude Code sessions on this host",
       "aliases": ["claude code sessions", "claude sessions", "cc sessions", "claude transcripts", "transcripts",
                   "claude code transcripts", "claude history"] },
-    { "key": "devops", "label": "DevOps", "group": "build", "open": "#tool-devops-btn", "tab": "devops", "adminOnly": true,
-      "desc": "What is running, model speed and coder stats",
-      "aliases": ["dev ops", "stats", "statistics", "metrics", "monitoring", "what is running", "tokens per second"] },
     { "key": "odysseus-dev", "label": "Odysseus dev", "group": "build", "open": "#tool-odysseus-dev-btn", "tab": null, "adminOnly": true,
       "desc": "A chat for changing Odysseus itself",
       "aliases": ["odysseus development", "odysseus dev chat", "dev chat", "odysseusdev"] },
@@ -135,7 +132,11 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "print", "label": "3D print", "group": "create",
       "desc": "3D printing: the Print Hub mod (live view, new print, the print helper)",
       "aliases": ["3d print", "3d printing", "3d print helper", "print helper", "print hub", "printhub", "stl", "3mf",
-                  "bambu", "slicer", "supports", "make it printable", "printer", "3d printer"] }
+                  "bambu", "slicer", "supports", "make it printable", "printer", "3d printer"] },
+    { "key": "devops", "label": "DevOps", "group": "build",
+      "desc": "The DevOps mod: what is running, tokens per second and per hour, which coder does best",
+      "aliases": ["dev ops", "stats", "statistics", "metrics", "monitoring", "what is running",
+                  "tokens per second", "model speed", "coder stats"] }
   ]
 } /* tool-pages:end */;
 

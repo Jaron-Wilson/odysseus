@@ -93,11 +93,19 @@ def test_busy_models_are_named(runs, monkeypatch):
     assert "ollama-desktop/qwen3:8b" not in use                      # free
 
 
-def test_page_and_email_fill_are_wired():
+def test_the_page_is_the_devops_mod_and_the_stats_stay_here():
+    # The page moved to the DevOps mod (github.com/Jaron-Wilson/odysseus-devops); the numbers
+    # stay in the core, read by mods with stats.read (GET /api/mods/v1/stats?scope=devops).
     html = open(os.path.join(ROOT, "static", "index.html"), encoding="utf-8").read()
-    assert 'id="tool-devops-btn"' in html and "/static/js/devopsPage.js" in html
+    assert 'id="tool-devops-btn"' not in html and "devopsPage.js" not in html
     app = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
-    assert "setup_devops_routes()" in app
+    assert "setup_devops_routes()" not in app
+    assert not os.path.exists(os.path.join(ROOT, "routes", "devops_routes.py"))
+    from src.mods import routes as mod_routes
+    assert "devops" in mod_routes.STATS_SCOPES and callable(dv.snapshot)
+
+
+def test_email_fill_is_wired():
     lib = open(os.path.join(ROOT, "static", "js", "emailLibrary.js"), encoding="utf-8").read()
     assert lib.count("addFillChatAreaButton(content") == 3            # inbox, email tab, email window
     inbound = open(os.path.join(ROOT, "static", "js", "inboundMail.js"), encoding="utf-8").read()

@@ -56,7 +56,7 @@ def test_legacy_keys_are_built_in_page_keys_today():
     from src import tool_pages
     keys = {p["key"] for p in tool_pages.PAGES}
     moved = {p["key"] for p in tool_pages.MOVED}
-    assert moved == {"print"}
+    assert moved == {"print", "devops"}
     assert not keys & moved
     shell = _read("static", "js", "workspace", "shell.js")
     for key in placement.LEGACY_PAGES:
@@ -235,7 +235,7 @@ def test_notifications_may_link_into_a_mod_tab():
 def test_mod_links_load_before_the_built_in_pages():
     html = _read("static", "index.html")
     order = [m.group(1) for m in re.finditer(r'<script type="module" src="/static/js/([^"?]+)', html)]
-    first_page = min(order.index(p) for p in ("adsbPanel.js", "gamesPanel.js", "devopsPage.js",
+    first_page = min(order.index(p) for p in ("adsbPanel.js", "gamesPanel.js",
                                               "company.js", "sessions.js"))
     assert order.index("modLinks.js") < first_page
 

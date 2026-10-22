@@ -66,7 +66,8 @@ def test_unknown_names_are_not_guessed():
 def test_the_prompt_lists_every_page_in_its_group():
     names = tool_pages.names_for_prompt()
     assert names.startswith("Organize: calendar, tasks, notes, plans, brain;")
-    assert "Build: code, terminal, browser, background, company, claude-sessions, devops, odysseus-dev" in names
+    # DevOps moved to a mod: it is listed after the built-in pages of its group.
+    assert "Build: code, terminal, browser, background, company, claude-sessions, odysseus-dev, devops" in names
     assert "command line/shell/console->terminal" in tool_pages.aliases_for_prompt()
 
 

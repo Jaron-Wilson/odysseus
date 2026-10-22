@@ -422,7 +422,7 @@ and lets you open a chat to ask about one.
 <summary>Usage and costs</summary>
 
 - **System > Usage**: this month's tokens and spend by model, provider and source (chat, tasks, subagents, Company, text to speech). Costs are priced on the server. Local endpoints count as free, subscription providers (ChatGPT plan, Copilot) count tokens at $0, and admins can override the price per endpoint.
-- **Build > DevOps**: what is running now, model speed (tok/s, first-token wait), coder reliability, and read-only transcripts of each coder run.
+- **DevOps** (the DevOps mod, `Jaron-Wilson/odysseus-devops`): what is running now, model speed (tok/s, first-token wait), coder reliability, and read-only transcripts of each coder run. Install it from Settings > Mods > Browse; its tab replaces the old `#devops` page, and without it `#devops` shows the "This feature is now a mod" card. The numbers stay in the core, for mods with the `stats.read` permission.
 
 </details>
 
