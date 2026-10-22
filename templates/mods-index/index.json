@@ -1,0 +1,15 @@
+{
+  "$schema": "./index.schema.json",
+  "schema_version": 1,
+  "name": "Odysseus mods index",
+  "mods": [
+    {
+      "repo": "https://github.com/Jaron-Wilson/print-hub",
+      "id": "print-hub",
+      "verified": true,
+      "notes": "3D printer live view and alerts. Reviewed by Jaron.",
+      "blocked_versions": [],
+      "tags": ["3d-printing", "hardware", "notifications"]
+    }
+  ]
+}

@@ -8,7 +8,14 @@
 // and "Hide from sidebar" choose where its tabs go in the navigation
 // (src/mods/placement.py); the choice wins over the manifest's `section`.
 //
+// "Browse" (modsBrowse.js) finds mods on GitHub and in curated indexes; its
+// Install fills in the install form below and goes through the same review
+// and approve step. Installed mods with a newer version out get an "Update
+// available" badge (src/mods/catalog.py).
+//
 // settings.js calls load() whenever the Mods tab is opened.
+
+import { initBrowse, loadBrowse } from './modsBrowse.js';
 
 const $ = (id) => document.getElementById(id);
 const API = '/api/mods';
@@ -46,6 +53,8 @@ let _mods = [];
 let _groups = [];      // nav groups a mod tab can go in: [{id, label}]
 let _staged = null;     // the install or update waiting for approval
 let _openLogs = new Set();
+let _view = 'installed';  // or 'browse'
+let _origin = null;     // where the staged install came from in Browse: {verified, origin}
 
 function sourceText(src) {
   if (!src) return '';
@@ -90,7 +99,7 @@ function renderMod(m) {
   const btn = (action, label, title) => `<button class="settings-btn" type="button" data-mod-action="${action}" data-mod="${esc(m.id)}"${title ? ` title="${esc(title)}"` : ''}>${label}</button>`;
   return `
   <div class="admin-card" data-mod-card="${esc(m.id)}">
-    <h2>${dot(status)}${esc(m.name || m.id)} <span class="admin-toggle-sub" style="margin-left:6px">${esc(m.version || '')} · ${esc(status)}${st.port && status === 'running' ? ` on port ${st.port}` : ''}${st.restarts ? ` · ${st.restarts} restarts` : ''}</span></h2>
+    <h2>${dot(status)}${esc(m.name || m.id)}${m.update ? ` <span class="mods-badge" data-badge="update" title="${esc(`Version ${m.update.latest_version || ''} is out`)}" style="display:inline-block;font-size:11px;font-weight:500;line-height:16px;padding:0 6px;border-radius:9px;border:1px solid #d29922;color:#d29922;margin-left:6px;vertical-align:middle">Update available${m.update.latest_version ? `: ${esc(m.update.latest_version)}` : ''}</span>` : ''} <span class="admin-toggle-sub" style="margin-left:6px">${esc(m.version || '')} · ${esc(status)}${st.port && status === 'running' ? ` on port ${st.port}` : ''}${st.restarts ? ` · ${st.restarts} restarts` : ''}</span></h2>
     <div class="admin-toggle-sub">${esc(m.description || '')}</div>
     <div class="admin-toggle-sub">From ${esc(sourceText(m.source))}${m.commit ? ` (${esc(String(m.commit).slice(0, 10))})` : ''} · ${esc((m.runtime || {}).type || 'process')}, starts ${esc((m.runtime || {}).start || 'lazy')}${bits.length ? ` · ${bits.join(' · ')}` : ''}</div>
     ${err ? `<div class="admin-toggle-sub" style="color:var(--red, #d33)">${esc(err)}</div>` : ''}
@@ -148,6 +157,8 @@ function renderStaged() {
   box.innerHTML = `
     <h2>${s.previous_version ? `Update ${esc(s.name)} ${esc(s.previous_version)} to ${esc(s.version)}` : `Install ${esc(s.name)} ${esc(s.version)}`}</h2>
     <div class="admin-toggle-sub">${esc(s.description || '')}${s.author ? ` · by ${esc(s.author)}` : ''}</div>
+    ${_origin && !_origin.verified ? `<div class="admin-toggle-sub mods-unverified" style="margin:4px 0;padding:6px 8px;border-left:3px solid var(--yellow, #d29922)"><strong>Community, not reviewed.</strong> Mods run code on your server. Nobody has checked ${esc(_origin.origin || 'this one')}: read its code before you approve.</div>` : ''}
+    ${s.blocked ? `<div class="admin-toggle-sub" style="margin:4px 0;padding:6px 8px;border-left:3px solid var(--red, #e5534b)"><strong>Blocked version.</strong> ${esc(s.blocked)}</div>` : ''}
     <div class="admin-toggle-sub">From ${esc(sourceText(s.source))}${s.commit ? ` (${esc(String(s.commit).slice(0, 10))})` : ''}. Runs as a ${esc(s.runtime)}${(s.command || []).length ? `: <code>${esc(s.command.join(' '))}</code>` : ''}.</div>
     ${setup ? `<div class="admin-toggle-sub">After approval it runs these setup commands:<br>${setup}</div>` : ''}
     <div class="admin-toggle-sub" style="margin-top:6px"><strong>It asks for:</strong></div>
@@ -190,23 +201,67 @@ function replaceMod(m) {
   window.dispatchEvent(new CustomEvent('odysseus:mods-changed'));
 }
 
-async function prepareInstall() {
+async function prepareInstall(opts) {
+  const o = opts || {};
   const source = $('mods-install-source').value.trim();
   if (!source) { say('Enter a git URL or a folder on this server.', true); return; }
+  if (!o.origin) _origin = null;
   say('Fetching…');
   try {
     _staged = await api('POST', `${API}/install/prepare`, {
       source, ref: $('mods-install-ref').value.trim() || null, subdir: $('mods-install-subdir').value.trim() || null,
+      allow_blocked: !!o.allow_blocked,
     });
     say('');
     renderStaged();
+    $('mods-approve')?.scrollIntoView({ block: 'nearest' });
   } catch (e) { say(e.message, true); }
+}
+
+// Browse's Install: fill in the install form and fetch it for review.
+async function prefillInstall(o) {
+  $('mods-install-source').value = o.source || '';
+  $('mods-install-ref').value = o.ref || '';
+  $('mods-install-subdir').value = o.subdir || '';
+  _origin = { verified: !!o.verified, origin: o.origin || '' };
+  await prepareInstall({ allow_blocked: o.allow_blocked, origin: o.origin });
+}
+
+async function startUpdate(id, ref, allowBlocked) {
+  const m = _mods.find((x) => x.id === id) || { id };
+  _origin = null;
+  say('Fetching…');
+  try {
+    _staged = await api('POST', `${API}/${encodeURIComponent(id)}/update`, {
+      ref: ref || (m.source || {}).ref || null, allow_blocked: !!allowBlocked,
+    });
+    say('');
+    renderStaged();
+    $('mods-approve')?.scrollIntoView({ block: 'nearest' });
+  } catch (e) { say(e.message, true); }
+}
+
+function setView(v) {
+  _view = v === 'browse' ? 'browse' : 'installed';
+  const inst = $('mods-installed-view');
+  const br = $('mods-browse-view');
+  if (inst) inst.style.display = _view === 'installed' ? '' : 'none';
+  if (br) br.style.display = _view === 'browse' ? '' : 'none';
+  for (const [id, name] of [['mods-view-installed', 'installed'], ['mods-view-browse', 'browse']]) {
+    const b = $(id);
+    if (!b) continue;
+    b.setAttribute('aria-pressed', String(_view === name));
+    b.style.borderColor = _view === name ? 'var(--accent, #58a6ff)' : '';
+    b.style.color = _view === name ? 'var(--accent, #58a6ff)' : '';
+  }
+  if (_view === 'browse') loadBrowse();
 }
 
 async function confirmStaged(yes) {
   const s = _staged;
   if (!s) return;
   _staged = null;
+  _origin = null;
   renderStaged();
   if (!yes) {
     api('POST', `${API}/install/cancel`, { install_id: s.install_id }).catch(() => {});
@@ -247,7 +302,8 @@ async function onAction(btn) {
   }
   if (action === 'rotate-token' && !confirm(`Give ${m.name || id} a new token? It restarts if it is running.`)) return;
   if (action === 'update') {
-    const ref = prompt(`Update ${m.name || id} from ${sourceText(m.source)}.\n\nBranch or tag (blank: the same as now):`, (m.source || {}).ref || '');
+    const ref = prompt(`Update ${m.name || id} from ${sourceText(m.source)}.\n\nBranch or tag (blank: the same as now):`,
+      (m.update || {}).latest_ref || (m.source || {}).ref || '');
     if (ref === null) return;
     say('Fetching…');
     try {
@@ -298,10 +354,12 @@ async function onClick(ev) {
   const t = ev.target;
   const actionBtn = t.closest('[data-mod-action]');
   if (actionBtn) { onAction(actionBtn); return; }
-  if (t.closest('#mods-install-go')) prepareInstall();
+  if (t.closest('#mods-view-installed')) setView('installed');
+  else if (t.closest('#mods-view-browse')) setView('browse');
+  else if (t.closest('#mods-install-go')) prepareInstall();
   else if (t.closest('#mods-approve-yes')) confirmStaged(true);
   else if (t.closest('#mods-approve-no')) confirmStaged(false);
-  else if (t.closest('#mods-refresh')) load();
+  else if (t.closest('#mods-refresh')) { load(); if (_view === 'browse') loadBrowse(true); }
   else if (t.closest('#mods-notify-save')) saveNotify();
   else if (t.closest('#mods-new-go')) scaffold();
 }
@@ -332,10 +390,21 @@ function init() {
     panel.addEventListener('click', onClick);
     panel.addEventListener('change', onChange);
     panel.dataset.ready = '1';
+    initBrowse({ api, esc, say, prefillInstall, startUpdate });
+    // Browse found newer versions: badge the installed mods.
+    window.addEventListener('odysseus:mods-updates', (ev) => {
+      const ups = ev.detail || {};
+      let changed = false;
+      for (const m of _mods) {
+        const u = ups[m.id] || null;
+        if (JSON.stringify(u) !== JSON.stringify(m.update || null)) { m.update = u; changed = true; }
+      }
+      if (changed) renderList();
+    });
   }
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();
 
-window.modsSettings = { load };
+window.modsSettings = { load, setView };

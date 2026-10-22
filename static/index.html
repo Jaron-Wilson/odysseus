@@ -3449,9 +3449,54 @@
           <div class="admin-card">
             <h2>Mods<span style="flex:1"></span><button class="settings-btn" style="padding:2px 10px;font-size:12px;float:right" id="mods-refresh" type="button">Refresh</button></h2>
             <div class="admin-toggle-sub">Add-ons that run beside Odysseus: each brings its own pages (Workspace tabs and Home cards), tools for the agent and notifications. A mod only gets the permissions you approve when you install it. Mods are code from someone else: install only what you trust. Writing one: docs/mods.md.</div>
+            <div class="settings-row" role="group" aria-label="Mods view" style="gap:6px;margin-top:8px">
+              <button class="settings-btn" type="button" id="mods-view-installed" aria-pressed="true" style="border-color:var(--accent, #58a6ff);color:var(--accent, #58a6ff)">Installed</button>
+              <button class="settings-btn" type="button" id="mods-view-browse" aria-pressed="false">Browse</button>
+            </div>
             <div id="mods-msg" class="admin-toggle-sub" style="margin-top:6px"></div>
           </div>
           <div class="admin-card" id="mods-approve" style="display:none;border-left:3px solid var(--accent, var(--red))"></div>
+          <!-- Browse: modsBrowse.js, src/mods/catalog.py (docs/mods.md, "Finding mods"). -->
+          <div id="mods-browse-view" style="display:none">
+            <div class="admin-card" id="mods-browse-search">
+              <h2>Browse mods</h2>
+              <div class="admin-toggle-sub">Mods on GitHub with the topic <code>odysseus-mod</code>, and the ones listed in indexes you added. <strong>Verified</strong> ones are in an index; <strong>Community</strong> ones were not reviewed by anyone. Every mod runs code on your server: browsing only reads, nothing is installed or run until you approve it.</div>
+              <div class="settings-row" style="gap:6px;flex-wrap:wrap;margin-top:8px">
+                <input id="mods-browse-q" class="settings-select" type="search" spellcheck="false" placeholder="Search mods by name, description or tag" aria-label="Search mods" style="flex:1;min-width:200px" />
+                <select id="mods-browse-verified" class="settings-select" style="width:auto" aria-label="Verified or community">
+                  <option value="">Verified and community</option>
+                  <option value="1">Verified only</option>
+                  <option value="0">Community only</option>
+                </select>
+                <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="mods-browse-compatible"> Works with this Odysseus</label>
+                <button class="settings-btn" type="button" id="mods-browse-refresh" title="Ask GitHub again now (the list is otherwise kept for an hour)">Refresh</button>
+              </div>
+              <div id="mods-browse-tags" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+              <div id="mods-browse-status" class="admin-toggle-sub" style="margin-top:6px"></div>
+            </div>
+            <div id="mods-browse-results"></div>
+            <div class="admin-card" id="mods-browse-details" style="display:none"></div>
+            <div class="admin-card">
+              <details>
+                <summary style="cursor:pointer"><h2 style="display:inline">Discovery settings</h2></summary>
+                <div class="settings-col" style="margin-top:6px">
+                  <div class="admin-toggle-sub">Indexes: one per line. A GitHub <code>owner/repo</code> (reads <code>index.json</code>, also from a private repository with the token), a GitHub file URL, any https URL to a JSON file, or a file on this server. How to run one: docs/mods.md, "Running an index".</div>
+                  <textarea id="mods-browse-index-urls" class="settings-select" rows="3" spellcheck="false" placeholder="Jaron-Wilson/odysseus-mods-index" style="width:100%;font-family:inherit"></textarea>
+                  <div class="settings-row">
+                    <label class="settings-label" for="mods-browse-token">GitHub token</label>
+                    <input id="mods-browse-token" class="settings-select" type="password" autocomplete="off" spellcheck="false" placeholder="blank: keep the current one" />
+                  </div>
+                  <div id="mods-browse-token-state" class="admin-toggle-sub"></div>
+                  <div class="admin-toggle-sub">A fine-grained token with read access to metadata and contents is enough. It raises GitHub's rate limits and finds your private mods. GITHUB_TOKEN or GH_TOKEN in the server's environment works too.</div>
+                  <label class="admin-toggle-sub"><input type="checkbox" id="mods-browse-private" checked> Also list my own repositories with the topic, private ones included (needs a token)</label>
+                  <div class="settings-row" style="gap:6px"><span style="flex:1"></span>
+                    <button class="settings-btn" type="button" id="mods-browse-token-clear">Remove token</button>
+                    <button class="settings-btn" type="button" id="mods-browse-settings-save">Save</button></div>
+                </div>
+              </details>
+            </div>
+          </div>
+          <div id="mods-installed-view">
           <div id="mods-list"><div class="admin-card"><div class="admin-toggle-sub">Loading…</div></div></div>
           <div class="admin-card">
             <h2>Install a mod</h2>
@@ -3515,6 +3560,7 @@
               </div>
               <div class="settings-row"><span id="mods-new-out" class="admin-toggle-sub" style="flex:1"></span><button class="settings-btn" id="mods-new-go" type="button">Create</button></div>
             </div>
+          </div>
           </div>
         </div>
 

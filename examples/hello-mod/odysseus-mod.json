@@ -7,6 +7,7 @@
   "author": "Jaron Wilson",
   "license": "AGPL-3.0",
   "min_core": "0.1",
+  "tags": ["dev-tools", "notifications"],
   "runtime": {
     "type": "process",
     "command": ["python", "-m", "hello_mod"],

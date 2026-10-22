@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Jaron-Wilson/odysseus-mods-index/index.schema.json",
+  "title": "Odysseus mods index",
+  "description": "A curated list of Odysseus mods. Odysseus marks every entry with verified true as Verified in Settings > Mods > Browse. Format: docs/mods.md, Running an index.",
+  "type": "object",
+  "required": ["schema_version", "mods"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": 1 },
+    "name": { "type": "string", "maxLength": 80, "description": "Shown as where a Verified badge comes from." },
+    "mods": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "required": ["repo", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^https://github\\.com/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$",
+          "description": "The mod's GitHub repository, like https://github.com/owner/repo (no .git, no trailing slash)."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,31}$",
+          "description": "The mod's id, as in its odysseus-mod.json."
+        },
+        "verified": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reviewed: shown as Verified. false lists it as Community."
+        },
+        "notes": { "type": "string", "maxLength": 500, "description": "Shown on the mod's details: what was reviewed, caveats." },
+        "blocked_versions": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^v?\\d+(?:\\.\\d+){0,2}(?:[-+][0-9A-Za-z.-]+)?$" },
+          "uniqueItems": true,
+          "description": "Exact versions (with or without a leading v) that must not be installed without an explicit override."
+        },
+        "min_core": {
+          "type": "string",
+          "pattern": "^\\d+(?:\\.\\d+){0,2}$",
+          "description": "Raises the mod's min_core: Odysseus cores with an older mod API show it as not compatible."
+        },
+        "subdir": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$",
+          "description": "The folder inside the repository the mod is in, when it is not at the top."
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,31}$" },
+          "description": "Extra tags, added to the ones in the mod's manifest."
+        }
+      }
+    }
+  }
+}

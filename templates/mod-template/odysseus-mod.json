@@ -7,6 +7,7 @@
   "author": "",
   "license": "MIT",
   "min_core": "0.1",
+  "tags": ["productivity"],
   "runtime": {
     "type": "process",
     "command": ["python", "-m", "my_mod"],
