@@ -196,6 +196,14 @@ def validate(raw: Any) -> Dict[str, Any]:
     elif not core_satisfies(out["min_core"]):
         errors.append(f"this mod needs mod API {out['min_core']}; this Odysseus has {CORE_API_VERSION}")
 
+    # Only admins may ever use it (a shell on the server, say): the "Who can
+    # use it" setting is fixed to admins (src/mods/access.py).
+    admin_only = raw.get("admin_only", False)
+    if not isinstance(admin_only, bool):
+        errors.append("`admin_only` must be true or false")
+        admin_only = False
+    out["admin_only"] = admin_only
+
     # ── runtime ──
     rt = raw.get("runtime")
     if not isinstance(rt, dict):
