@@ -264,6 +264,28 @@ class CoreClient:
 
 # ── Requests and responses ───────────────────────────────────────────────
 
+MAX_BODY_BYTES = int(os.environ.get("MOD_MAX_BODY_BYTES") or 512 * 1024 * 1024)
+
+
+def _read_chunked(rfile, limit: int) -> bytes:
+    """A Transfer-Encoding: chunked body (how the core forwards big uploads)."""
+    out = bytearray()
+    while True:
+        line = rfile.readline(1024)
+        if not line:
+            break
+        size = int(line.split(b";", 1)[0].strip() or b"0", 16)
+        if size == 0:
+            while rfile.readline(1024) not in (b"\r\n", b"\n", b""):
+                pass                       # trailers
+            break
+        if len(out) + size > limit:
+            raise ValueError("request body too large")
+        out += rfile.read(size)
+        rfile.readline(1024)               # the CRLF after each chunk
+    return bytes(out)
+
+
 class Request:
     def __init__(self, handler: BaseHTTPRequestHandler, user: Optional[str], params: Dict[str, str]):
         parts = urlsplit(handler.path)
@@ -275,8 +297,14 @@ class Request:
         self.params = params
         self.session_id = handler.headers.get("X-Odysseus-Session") or ""
         self.base_path = handler.headers.get("X-Forwarded-Prefix") or ""
-        n = int(handler.headers.get("Content-Length") or 0)
-        self.body = handler.rfile.read(n) if n else b""
+        if "chunked" in (handler.headers.get("Transfer-Encoding") or "").lower():
+            # The core streams bodies over 16 MB through its proxy, chunked.
+            self.body = _read_chunked(handler.rfile, MAX_BODY_BYTES)
+        else:
+            n = int(handler.headers.get("Content-Length") or 0)
+            if n > MAX_BODY_BYTES:
+                raise ValueError("request body too large")
+            self.body = handler.rfile.read(n) if n else b""
 
     def json(self) -> Any:
         try:

@@ -117,6 +117,30 @@ def test_standalone_app_asks_for_a_password(monkeypatch):
         srv.shutdown()
 
 
+def test_chunked_request_bodies_are_read(monkeypatch):
+    # The core's proxy forwards bodies over 16 MB chunked (no Content-Length).
+    import http.client
+    core = CoreClient(url="http://127.0.0.1:9", token="odm_t", mod_id="my-mod")
+    app = ModApp(core=core)
+
+    @app.post("/upload")
+    def upload(req):
+        return {"n": len(req.body), "head": req.body[:5].decode()}
+
+    srv, base = _serve(app)
+    try:
+        host, port = srv.server_address[:2]
+        conn = http.client.HTTPConnection(host, port, timeout=5)
+        payload = b"hello" + b"x" * 70000
+        conn.request("POST", "/upload", body=iter([payload[:30000], payload[30000:]]),
+                     headers={**sign_identity("odm_t", "my-mod", "alice"), "Transfer-Encoding": "chunked"},
+                     encode_chunked=True)
+        r = conn.getresponse()
+        assert r.status == 200 and json.loads(r.read()) == {"n": len(payload), "head": "hello"}
+    finally:
+        srv.shutdown()
+
+
 def test_devcore_serves_machines_and_stats_with_their_permissions(tmp_path):
     from odysseus_mod import CoreError
     from odysseus_mod.devcore import DevCore
