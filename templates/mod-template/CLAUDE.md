@@ -67,6 +67,45 @@ The core runs `python` in `runtime.command` with the mod's `.venv` when one exis
   when a message matches a keyword (or tool retrieval picks one), so choose words people will say.
 - `events`: `emits` (types like `my-mod.clicked`), `subscribes` (patterns like `print-hub/print.*`
   or `*.failed`), `webhook` (default `/mod/events`).
+- `tutorial`: **required** (see below).
+- `ui.tabs[].replaces`: only for a mod that takes over a page Odysseus used to have built in
+  (`adsb`, `games`, `print`, `devops`, `company`, ...): that page's old links and saved tabs then
+  open this tab. Leave it out otherwise.
+
+## The tutorial (every mod has one)
+
+Odysseus shows a mod's tutorial the first time a user opens any of its tabs, offers "Tutorial" in
+the tab's header and "Replay tutorial" in Settings > Mods, and shows it again when
+`tutorial.version` goes up. A mod without one installs with a warning and is never listed as
+Verified. So every mod ships one, and it describes **this** mod's real features, not the
+template's:
+
+```json
+"tutorial": {
+  "version": 1,
+  "steps": [
+    { "title": "Open the door", "body": "Press **Open** to open the garage door. It closes by itself after `auto_close` minutes.",
+      "image": "docs/tutorial-open.png" },
+    { "title": "Pick your door", "body": "Set the relay's address in the settings.",
+      "action": { "label": "Open settings", "settings": true } },
+    { "title": "Ask the agent", "body": "In a chat, say *is the garage open?* The agent asks you before it moves the door." }
+  ]
+}
+```
+
+- 2 to 5 steps (at most 8): one per feature a user should know about, in the order they meet them:
+  the main page, the settings they must fill in, the agent tools (with a sentence a user would
+  really type), the home card, the notifications.
+- `title` up to 80 characters; `body` short Markdown up to 1200 characters (paragraphs, `-` lists,
+  `code`, **bold**, *italic*, https links and `#mod/<id>/<tab>` links; nothing else renders).
+- `image` (optional): a PNG, JPEG, GIF or WebP in this repository (under 2 MB), like a screenshot
+  of the page. The core serves it, so it shows even while the mod is stopped.
+- `action` (optional): a button, `{"label", "path"}` to open a page of the mod, or
+  `{"label", "settings": true}` for its settings page.
+- Bump `version` when the features change enough that users should see it again.
+- A mod with a rich tutorial page can add `"path": "/tutorial"` (a page of the mod); with `steps`
+  it is offered as "Full tutorial" after the last step, without `steps` it is the whole tutorial.
+  Prefer `steps`.
 
 Check it with `python -m src.mods validate <folder>` from an Odysseus checkout, or just run the
 tests: devcore reads the same file.
@@ -96,9 +135,26 @@ deliveries come as `odysseus-core` (`CORE_USER`), as does a tool call with no us
 | `GET/PUT settings` | none | `settings()`, `save_settings(...)` |
 | `GET/PUT/DELETE kv/<key>` | storage | `kv_get/kv_put/kv_delete` |
 | `POST llm/chat {messages, max_tokens, temperature, model_role}` | llm.call | `llm_chat(...)` |
+| `POST tools/refresh {wait}` | none | `refresh_tools(wait=False)` |
 
 `level` is `info`, `success`, `warning`, `error` or `critical`; the user decides which channels a
-level reaches. `url` must be a path in Odysseus (`/mods/my-mod/...`). Calls are rate limited.
+level reaches. `url` must be a path in Odysseus; use a tab link, `CoreClient.link("my-mod",
+"main", "/jobs/42")` = `/#mod/my-mod/main?path=/jobs/42`, so it opens the mod's tab inside
+Odysseus. Calls are rate limited.
+
+The core reads the tool list when the mod starts. When the mod's tools change while it runs
+(it was just configured, a device appeared), call `app.core.refresh_tools()` and the core reads
+`GET /mod/tools` again (at most 6 times a minute).
+
+## Links into the mod
+
+`/#mod/<id>/<tab>` opens a tab of the mod in Odysseus, `?path=/a/page` a page under it. Use them in
+notifications, tool output (the agent shows them as links) and other mods. A page or home card is
+a sandboxed frame and cannot navigate Odysseus itself; it asks:
+
+```js
+parent.postMessage({ type: 'odysseus:open', link: '#mod/my-mod/main?path=/jobs/42' }, '*');
+```
 
 ## Pages and cards
 
@@ -135,7 +191,8 @@ python -m my_mod                    # standalone, with its own login
 the manifest's permissions enforced, proxies `/mods/<id>/` with signed headers, delivers events,
 and has a page to try tools. Every feature gets a test through devcore (see `tests/test_my_mod.py`):
 the page through the proxy, the tool call, the notification or event it sends, and the refusal of
-an unsigned request.
+an unsigned request. `test_manifest_has_a_tutorial_written_for_this_mod` checks the tutorial; devcore
+also prints a warning at start when it is missing.
 
 ## Conventions
 
@@ -159,4 +216,5 @@ review the permissions, Approve. Updates: the mod's Update button (a branch or t
 - Fill in `tags`, and tag releases `vX.Y.Z` matching `version`: Browse lists the tags as versions
   and shows "Update available" when a newer one is out.
 - To be marked Verified, open a pull request adding the mod to a mods index (for example
-  `Jaron-Wilson/odysseus-mods-index`); see its README.
+  `Jaron-Wilson/odysseus-mods-index`); see its README. A mod without a `tutorial` is never shown
+  as Verified.

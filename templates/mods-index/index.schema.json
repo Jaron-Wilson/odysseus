@@ -35,7 +35,7 @@
         "verified": {
           "type": "boolean",
           "default": true,
-          "description": "Reviewed: shown as Verified. false lists it as Community."
+          "description": "Reviewed: shown as Verified (only when the mod's manifest has a tutorial). false lists it as Community."
         },
         "notes": { "type": "string", "maxLength": 500, "description": "Shown on the mod's details: what was reviewed, caveats." },
         "blocked_versions": {

@@ -34,6 +34,8 @@ def main(argv=None) -> int:
         print(f"Created {out['name']} ({out['id']}) in {out['folder']}")
         print("Try it without Odysseus:")
         print(f"  {out['next']}")
+        print("Its tutorial (`tutorial` in odysseus-mod.json) describes the template: rewrite it for the mod's "
+              "real features (the new-mod skill does).")
         return 0
     if a.cmd == "validate":
         from src.mods import manifest

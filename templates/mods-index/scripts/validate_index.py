@@ -132,7 +132,37 @@ def check_remote(data: Dict[str, Any], token: str) -> List[str]:
         if not isinstance(man, dict) or man.get("id") != e.get("id"):
             problems.append(f"mods[{i}]: the manifest's id is {man.get('id') if isinstance(man, dict) else None!r}, "
                             f"the index says {e.get('id')!r}")
+            continue
+        if e.get("verified", True) is True:
+            problems.extend(f"mods[{i}]: {p}" for p in tutorial_problems(man.get("tutorial")))
     return problems
+
+
+def tutorial_problems(tut: Any) -> List[str]:
+    """A verified mod must have a tutorial (Odysseus shows it the first time
+    someone opens the mod, and never lists a mod without one as Verified).
+    The shape is checked roughly here; Odysseus checks it fully."""
+    if tut is None:
+        return ["the manifest has no `tutorial`; a verified mod needs one (add it, or list the mod with "
+                "\"verified\": false)"]
+    if not isinstance(tut, dict):
+        return ["`tutorial` must be an object with `steps` (or a `path`)"]
+    out: List[str] = []
+    steps = tut.get("steps")
+    if steps is None and not isinstance(tut.get("path"), str):
+        out.append("`tutorial` needs `steps` or a `path`")
+    if steps is not None:
+        if not isinstance(steps, list) or not 1 <= len(steps) <= 8:
+            out.append("`tutorial.steps` must be a list of 1 to 8 steps")
+        else:
+            for j, s in enumerate(steps):
+                if not isinstance(s, dict) or not isinstance(s.get("title"), str) or not s["title"].strip() \
+                        or not isinstance(s.get("body"), str) or not s["body"].strip():
+                    out.append(f"`tutorial.steps[{j}]` needs a `title` and a `body`")
+    v = tut.get("version", 1)
+    if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+        out.append("`tutorial.version` must be a whole number of at least 1")
+    return out
 
 
 def main(argv: Optional[List[str]] = None) -> int:

@@ -71,6 +71,35 @@ def test_click_notifies_and_emits(core):
     assert core.events and core.events[-1]["type"].endswith(".clicked")
 
 
+def test_manifest_has_a_tutorial_written_for_this_mod(core):
+    """Every mod ships a tutorial (shown the first time someone opens it). Its
+    steps describe this mod's real features, and its actions point at pages
+    the mod has."""
+    from odysseus_mod.devcore import tutorial_problems
+    assert tutorial_problems(core.manifest, ROOT) == []
+    tut = core.manifest["tutorial"]
+    assert 1 <= len(tut["steps"]) <= 8 and isinstance(tut.get("version", 1), int)
+    paths = {t["path"] for t in core.manifest["ui"]["tabs"]}
+    for s in tut["steps"]:
+        assert s["title"].strip() and s["body"].strip()
+        a = s.get("action") or {}
+        if a.get("settings"):
+            assert core.manifest["ui"].get("settings_path")
+        if a.get("path"):
+            assert get(f"{core.url}/mods/{core.mod_id}{a['path']}")[0] == 200 or a["path"] in paths
+
+
+def test_tool_list_refresh(core):
+    code, body = get(f"{core.url}/api/mods/v1/tools/refresh", "POST", {"wait": True},
+                     {"Authorization": f"Bearer {core.token}"})
+    assert code == 200 and json.loads(body)["tools"] and core.tool_refreshes >= 1
+
+
+def test_notification_links_into_the_tab(core):
+    get(f"{core.url}/mods/{core.mod_id}/api/click", "POST", {})
+    assert core.notifications[-1]["url"].startswith(f"/#mod/{core.mod_id}/")
+
+
 def test_subscribed_events_are_delivered(core):
     ev = {"id": "x", "source": "print-hub", "type": "print.finished", "data": {}, "ts": time.time()}
     core._deliver(ev)

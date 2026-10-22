@@ -290,7 +290,8 @@ def make_handler(core: Optional[Core], state: State, password: Optional[str]):
                     ev = core.call("POST", "events", {"type": "hello.waved", "data": {"waves": n, "by": user}})
                     note = core.call("POST", "notify", {"level": "info", "title": "Someone waved",
                                                         "body": f"{user} waved. That is wave number {n}.",
-                                                        "url": f"/mods/{core.mod_id}/", "tag": "wave",
+                                                        # Opens the Hello tab inside Odysseus.
+                                                        "url": f"/#mod/{core.mod_id}/main", "tag": "wave",
                                                         "user": user})
                     if ev.get("error") or note.get("error"):
                         return self._json(502, {"error": ev.get("error") or note.get("error")})

@@ -110,6 +110,7 @@ function renderMod(m) {
       ${m.enabled ? btn('disable', 'Disable') : btn('enable', 'Enable')}
       ${m.enabled ? (status === 'running' ? btn('restart', 'Restart') + btn('stop', 'Stop') : btn('start', 'Start')) : ''}
       ${btn('logs', _openLogs.has(m.id) ? 'Hide logs' : 'Logs')}
+      ${m.tutorial && m.enabled ? btn('tutorial', 'Replay tutorial', 'Show this mod\'s tutorial again') : ''}
       ${btn('update', 'Update', 'Fetch the newest code from where it was installed (or another branch or tag)')}
       ${btn('rotate-token', 'New token', 'Give the mod a new API token; the old one stops working')}
       ${btn('remove', 'Remove')}
@@ -165,6 +166,7 @@ function renderStaged() {
     <ul class="admin-toggle-sub" style="margin:2px 0 0 18px;padding:0">${perms}</ul>
     ${(s.warnings || []).map((w) => `<div class="admin-toggle-sub" style="color:var(--yellow, #d29922)">Note: ${esc(w)}</div>`).join('')}
     <div class="admin-toggle-sub" style="margin-top:6px">Adds ${(ui.tabs || []).length} tab(s), ${(ui.home_cards || []).length} home card(s)${s.tools ? ' and agent tools' : ''}.
+      ${s.tutorial ? `It has a tutorial${s.tutorial.steps ? ` (${s.tutorial.steps} step${s.tutorial.steps > 1 ? 's' : ''})` : ''}, shown the first time someone opens it.` : '<strong>It has no tutorial.</strong>'}
       ${s.runtime === 'docker' ? '' : 'A process mod runs as the same user as Odysseus and can read what that user can; only approve code you trust.'}</div>
     <div class="settings-row" style="gap:6px;margin-top:8px">
       <button class="settings-btn" type="button" id="mods-approve-yes">Approve and ${s.previous_version ? 'update' : 'install'}</button>
@@ -286,6 +288,11 @@ async function onAction(btn) {
   if (action === 'logs') {
     if (_openLogs.has(id)) _openLogs.delete(id); else _openLogs.add(id);
     renderList();
+    return;
+  }
+  if (action === 'tutorial') {
+    const ok = window.modPanel && await window.modPanel.showTutorial(id);
+    if (!ok) say('Could not load its tutorial.', true);
     return;
   }
   if (action === 'remove') {
@@ -411,4 +418,15 @@ function init() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();
 
-window.modsSettings = { load, setView };
+// Browse with a search filled in (the "This feature is now a mod" card, modLinks.js).
+function browse(query) {
+  init();
+  if (!$('mods-browse-view')) return false;
+  const q = $('mods-browse-q');
+  if (q) q.value = String(query || '');
+  setView('browse');
+  load();
+  return true;
+}
+
+window.modsSettings = { load, setView, browse };

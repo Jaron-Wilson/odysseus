@@ -28,6 +28,7 @@ const BADGE = {
   incompatible: ['Not compatible', '#e5534b', ''],
   invalid: ['Manifest problems', '#e5534b', ''],
   blocked: ['Version blocked', '#e5534b', ''],
+  'no-tutorial': ['No tutorial', '#d29922', 'Its manifest has no tutorial, so it cannot be Verified'],
   archived: ['Archived', '#8b949e', 'The repository is archived'],
 };
 
@@ -38,7 +39,8 @@ function badge(kind, extraTitle) {
 }
 
 function badges(r) {
-  const out = [badge(r.verified ? 'verified' : 'community')];
+  const out = [badge(r.verified ? 'verified' : 'community', !r.verified && r.verified_dropped ? r.verified_dropped : '')];
+  if (r.valid && !r.has_tutorial) out.push(badge('no-tutorial', r.verified_dropped || ''));
   if (r.yours) out.push(badge('yours'));
   if (r.private) out.push(badge('private'));
   if (r.installed) out.push(badge('installed', r.same_source ? `Installed as ${r.installed_id} ${r.installed_version || ''}` : `A mod with id ${r.installed_id} is installed from somewhere else`));

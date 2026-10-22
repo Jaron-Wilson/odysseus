@@ -81,15 +81,15 @@ def test_update_reports_new_permissions(mods_dir, tmp_path):
     shutil.copytree(HELLO, copy)
     _install(str(copy))
     man = json.loads((copy / "odysseus-mod.json").read_text())
-    man["version"] = "0.2.0"
+    man["version"] = "0.3.0"
     man["permissions"].append("llm.call")
     (copy / "odysseus-mod.json").write_text(json.dumps(man))
     staged = registry.prepare(str(copy), update_of="hello-mod")
-    assert staged["previous_version"] == "0.1.0" and staged["version"] == "0.2.0"
+    assert staged["previous_version"] == "0.2.0" and staged["version"] == "0.3.0"
     assert staged["new_permissions"] == ["llm.call"]
     tok_before = registry.token_of("hello-mod")
     entry = registry.confirm(staged["install_id"], [p["id"] for p in staged["permissions"]])
-    assert entry["version"] == "0.2.0" and "llm.call" in entry["granted_permissions"]
+    assert entry["version"] == "0.3.0" and "llm.call" in entry["granted_permissions"]
     assert registry.token_of("hello-mod") == tok_before   # an update keeps the token
 
 

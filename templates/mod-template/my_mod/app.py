@@ -12,7 +12,7 @@ from __future__ import annotations
 import html as _html
 import threading
 
-from odysseus_mod import ModApp, html, json_response, redirect
+from odysseus_mod import CoreClient, ModApp, html, json_response, redirect
 
 app = ModApp(mod_id="my-mod")
 _lock = threading.Lock()
@@ -67,7 +67,9 @@ def click(req):
         _state["clicks"] += 1
         n = _state["clicks"]
     app.core.emit("my-mod.clicked", {"clicks": n})
-    app.core.notify("Clicked", f"{req.user} clicked {n} times", url="/mods/my-mod/", user=req.user or "")
+    # The link opens this mod's tab inside Odysseus (a Workspace tab), not the bare page.
+    app.core.notify("Clicked", f"{req.user} clicked {n} times", url=CoreClient.link("my-mod", "main"),
+                    user=req.user or "")
     return json_response({"clicks": n})
 
 

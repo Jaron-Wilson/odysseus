@@ -21,6 +21,27 @@ MODS_GROUP = "mods"
 MODS_LABEL = "Mods"
 ORDER_MIN, ORDER_MAX = -1000, 1000
 
+# Built-in pages that are moving (or may move) out of the core into mods. A
+# mod tab with `replaces: "<key>"` takes over the page's old links (`#adsb`,
+# a saved Workspace tab with that key); with no such mod installed, and the
+# built-in page gone, those links show a "This feature is now a mod" card.
+# static/js/modLinksCore.js has the same list (tests/test_mods_links.py).
+LEGACY_PAGES: Dict[str, str] = {
+    "adsb": "ADS-B receiver",
+    "games": "Games",
+    "print": "3D print helper",
+    "devops": "DevOps",
+    "company": "Company",
+    "code": "Code",
+    "terminal": "Terminal",
+    "browser": "Browser",
+    "claude-sessions": "Claude sessions",
+    "devices": "Devices",
+    "usage": "Usage",
+    "plans": "Plans",
+    "whats-new": "What's new",
+}
+
 
 def _taxonomy():
     from src import tool_pages
@@ -47,7 +68,7 @@ def check_tab(t: Dict[str, Any], where: str, errors: List[str], warnings: List[s
     """Validate a manifest tab's `section`, `after` and `order`. A wrong type
     is an error; a section or page this core does not have is a warning, and
     the tab goes in the Mods group (or at the end of its group)."""
-    out: Dict[str, Any] = {"section": None, "after": None, "order": 0}
+    out: Dict[str, Any] = {"section": None, "after": None, "order": 0, "replaces": None}
     sec = t.get("section")
     if sec is not None:
         if not isinstance(sec, str) or not sec.strip():
@@ -72,12 +93,34 @@ def check_tab(t: Dict[str, Any], where: str, errors: List[str], warnings: List[s
                 in_group = out["section"] or MODS_LABEL
                 warnings.append(f"`{where}.after` {after!r} is not a page in {in_group}; "
                                 "it goes at the end of the group")
+    rep = t.get("replaces")
+    if rep is not None:
+        if not isinstance(rep, str) or not rep.strip():
+            errors.append(f"`{where}.replaces` must be the key of a built-in page, like adsb")
+        elif rep.strip() not in LEGACY_PAGES:
+            warnings.append(f"`{where}.replaces` {rep!r} is not a page that can move to a mod "
+                            f"({', '.join(LEGACY_PAGES)}); it is ignored")
+        else:
+            out["replaces"] = rep.strip()
     order = t.get("order")
     if order is not None:
         if isinstance(order, bool) or not isinstance(order, int) or not ORDER_MIN <= order <= ORDER_MAX:
             errors.append(f"`{where}.order` must be a whole number from {ORDER_MIN} to {ORDER_MAX}")
         else:
             out["order"] = order
+    return out
+
+
+def replacements(entries: List[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
+    """Which mod tab takes over each legacy page key: {key: {mod, tab, title}}.
+    The caller passes the mods this user may use, enabled ones only; when
+    two claim the same key, the first by mod id wins."""
+    out: Dict[str, Dict[str, str]] = {}
+    for e in sorted(entries, key=lambda x: x["id"]):
+        for t in ((e.get("manifest") or {}).get("ui") or {}).get("tabs") or []:
+            key = t.get("replaces")
+            if key in LEGACY_PAGES and key not in out:
+                out[key] = {"mod": e["id"], "tab": t["id"], "title": t.get("title") or e.get("name") or e["id"]}
     return out
 
 

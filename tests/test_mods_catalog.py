@@ -28,9 +28,10 @@ def repo(full, stars=1, private=False, pushed="2026-10-01T00:00:00Z", topics=("o
 def manifest(mid, version="1.0.0", **kw):
     m = {"id": mid, "name": mid.replace("-", " ").title(), "version": version, "description": f"The {mid} mod",
          "runtime": {"type": "process", "command": ["python", "-m", "x"]}, "permissions": ["notify"],
-         "tags": ["hardware"]}
+         "tags": ["hardware"],
+         "tutorial": {"version": 1, "steps": [{"title": "Start", "body": "Open the tab."}]}}
     m.update(kw)
-    return m
+    return {k: v for k, v in m.items() if v is not None}
 
 
 class FakeGitHub:

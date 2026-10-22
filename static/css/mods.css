@@ -32,3 +32,40 @@
   color: inherit; opacity: .65; border: 1px solid currentColor;
 }
 .sidebar .list-item.mod-nav-item .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A built-in page that is now a mod, with the mod not installed (static/js/modLinks.js):
+   a card that says so and links to Browse, never a blank tab. */
+.mod-moved-body { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; overflow: auto; }
+.mod-moved-card { max-width: 440px; text-align: center; font-size: 13.5px; line-height: 1.5; }
+.mod-moved-card h3 { font-size: 16px; margin: 0 0 8px; }
+.mod-moved-card p { margin: 0 0 14px; opacity: .85; }
+.mod-moved-card .mod-moved-dim { opacity: .6; }
+.mod-moved-panel { height: auto; min-height: 260px; }
+
+/* A mod's tutorial (static/js/modPanel.js): a small dialog of steps over the mod's tab. */
+.mod-tut-backdrop { position: fixed; inset: 0; z-index: 10050; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0, 0, 0, .45); }
+.mod-tut { width: min(460px, 100%); max-height: calc(100vh - 32px); overflow: auto; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 16px; border-radius: 14px; font-size: 13.5px; line-height: 1.5; color: var(--fg, #ddd);
+  background: var(--bg-secondary, var(--bg, #161616)); border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .45); }
+.mod-tut.mod-tut-page { width: min(900px, 100%); height: min(640px, calc(100vh - 32px)); }
+.mod-tut-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; opacity: .85; }
+.mod-tut-head > span:first-child { flex: 1; }
+.mod-tut-head .bg-close { font: inherit; font-size: 16px; line-height: 1; background: none; border: 0; color: inherit; cursor: pointer; opacity: .7; }
+.mod-tut-count { font-weight: 400; opacity: .7; }
+.mod-tut-img { width: 100%; max-height: 220px; object-fit: contain; border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.mod-tut-title { font-size: 16px; margin: 0; }
+.mod-tut-body p { margin: 0 0 8px; }
+.mod-tut-body ul, .mod-tut-body ol { margin: 0 0 8px; padding-left: 20px; }
+.mod-tut-body code { font-size: 12px; padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.mod-tut-body a { color: var(--accent, #58a6ff); }
+.mod-tut-frame { flex: 1; min-height: 0; width: 100%; border: 0; border-radius: 8px; background: var(--bg, #111); }
+.mod-tut-foot { display: flex; align-items: center; gap: 6px; }
+.mod-tut-foot .grow, .mod-tut-dots { flex: 1; }
+.mod-tut-dots { display: flex; justify-content: center; gap: 5px; }
+.mod-tut-dots i { width: 6px; height: 6px; border-radius: 50%; background: color-mix(in srgb, var(--fg) 25%, transparent); }
+.mod-tut-dots i.on { background: var(--accent, #58a6ff); }
+.mod-btn.mod-tut-primary { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }
+.mod-tut-skip { opacity: .75; }

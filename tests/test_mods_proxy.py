@@ -304,17 +304,23 @@ def test_websocket_pass_through(mods_dir):
     assert seen["user"] == "alice" and seen["path"] == "/live?x=1"
 
 
-def test_mod_iframes_allow_modals_and_nothing_more():
-    """confirm()/alert() in a mod page need allow-modals on the iframe too;
-    the CSP the proxy sends already allows it. Nothing else is loosened."""
+def test_mod_iframe_sandbox_matches_the_proxy_csp():
+    """The iframe's sandbox attribute and the proxy's CSP sandbox must list the
+    same flags: a browser applies both, so a flag in only one of them is lost
+    (allow-popups-to-escape-sandbox was only in the CSP, so popups from a mod
+    page stayed sandboxed). Nothing beyond these is loosened."""
     import os
     import re
     from src.mods import proxy
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     js = open(os.path.join(root, "static", "js", "modPanel.js"), encoding="utf-8").read()
     frame = set(re.search(r"const SANDBOX = '([^']*)'", js).group(1).split())
-    assert frame == {"allow-scripts", "allow-forms", "allow-popups", "allow-downloads", "allow-modals"}
     csp = set(proxy.SANDBOX_CSP.split()[1:])
-    assert frame <= csp
+    assert proxy.SANDBOX_CSP.split()[0] == "sandbox"
+    assert frame == csp
+    assert frame == {"allow-scripts", "allow-forms", "allow-popups", "allow-popups-to-escape-sandbox",
+                     "allow-downloads", "allow-modals"}
     assert "allow-same-origin" not in csp | frame and not any("top-navigation" in t for t in csp | frame)
-    assert js.count('sandbox="${SANDBOX}"') == 2
+    # Every mod frame (tab, home card, tutorial page) uses the one constant.
+    assert js.count('sandbox="${SANDBOX}"') == 3
+    assert len(re.findall(r'sandbox="', js)) == 3

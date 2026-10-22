@@ -316,6 +316,7 @@ def prepare(source: str, ref: Optional[str] = None, subdir: Optional[str] = None
         "new_permissions": sorted(set(manifest["permissions"]) - granted) if existing else manifest["permissions"],
         "ui": manifest["ui"],
         "tools": bool(manifest["tools"]),
+        "tutorial": _tutorial_summary(manifest.get("tutorial")),
         "warnings": manifest.get("warnings") or [],
     }
 
@@ -457,6 +458,24 @@ def set_placement(mod_id: str, section: Any = None, hidden: Any = False) -> Dict
     return _update(mod_id, placement=value)
 
 
+def mark_tutorial_seen(mod_id: str, user: str, version: int) -> Dict[str, Any]:
+    """Remember that `user` saw (or skipped) version `version` of the mod's
+    tutorial (src/mods/tutorial.py). Kept across updates."""
+    with _lock:
+        data = _load()
+        m = data["mods"].get(mod_id)
+        if not m:
+            raise RegistryError(f"no mod {mod_id!r}", 404)
+        seen = dict(m.get("tutorial_seen") or {})
+        key = str(user or "")[:120]
+        seen[key] = max(int(version or 1), int(seen.get(key) or 0))
+        if len(seen) > 5000:   # a bound, not a real limit
+            seen = dict(list(seen.items())[-5000:])
+        m["tutorial_seen"] = seen
+        _save(data)
+        return dict(m)
+
+
 def rotate_token(mod_id: str) -> Dict[str, Any]:
     return _update(mod_id, token=_encrypt(signing.new_token()), token_rotated_at=time.time())
 
@@ -501,7 +520,14 @@ def public(entry: Dict[str, Any]) -> Dict[str, Any]:
         "warnings": man.get("warnings") or [],
         "tools": man.get("tools"),
         "events": man.get("events"),
+        "tutorial": _tutorial_summary(man.get("tutorial")),
     }
+
+
+def _tutorial_summary(tut: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not tut:
+        return None
+    return {"version": tut.get("version") or 1, "steps": len(tut.get("steps") or []), "has_page": bool(tut.get("path"))}
 
 
 def python_for(mod_id: str) -> str:

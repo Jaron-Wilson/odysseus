@@ -279,6 +279,8 @@ def validate(raw: Any) -> Dict[str, Any]:
                "icon": str(t.get("icon") or "")[:32],
                "path": _path(t.get("path"), f"`ui.tabs[{i}].path`", errors, "/")}
         tab.update(placement.check_tab(t, f"ui.tabs[{i}]", errors, warnings))
+        if tab.get("replaces") and any(x.get("replaces") == tab["replaces"] for x in tabs):
+            errors.append(f"`ui.tabs[{i}].replaces`: only one tab can replace {tab['replaces']!r}")
         tabs.append(tab)
     cards = []
     for i, c in enumerate(ui.get("home_cards") or []):
@@ -332,6 +334,11 @@ def validate(raw: Any) -> Dict[str, Any]:
     if out["events"]["subscribes"] and "events.subscribe" not in out["permissions"]:
         errors.append("`events.subscribes` needs the events.subscribe permission")
 
+    # ── tutorial (src/mods/tutorial.py) ──
+    from src.mods import tutorial
+    out["tutorial"] = tutorial.check(raw.get("tutorial"), bool(out["ui"]["settings_path"]),
+                                     lambda v, where, errs: _path(v, where, errs, None), errors, warnings)
+
     if errors:
         raise ManifestError(errors)
     out["warnings"] = warnings
@@ -350,7 +357,10 @@ def load(mod_dir: str) -> Dict[str, Any]:
         raise ManifestError([f"no {MANIFEST_FILE} at the top of the mod"])
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise ManifestError([f"{MANIFEST_FILE} is not valid JSON: {e}"])
-    return validate(raw)
+    out = validate(raw)
+    from src.mods import tutorial
+    out["warnings"] = out["warnings"] + tutorial.missing_images(out.get("tutorial"), mod_dir)
+    return out
 
 
 def describe_permissions(perms: List[str]) -> List[Dict[str, str]]:
