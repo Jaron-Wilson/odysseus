@@ -28,6 +28,12 @@ def _port_open(host: str, port: int, timeout: float = None) -> bool:
         return False
 
 
+def chroma_disabled() -> bool:
+    """CHROMADB_DISABLED=1 turns vector memory and RAG off, as if ChromaDB
+    were not running (see docs/mods.md, running a test instance)."""
+    return os.getenv("CHROMADB_DISABLED", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def get_chroma_client():
     """Get or create the singleton ChromaDB HTTP client.
 
@@ -37,6 +43,10 @@ def get_chroma_client():
     global _client
     if _client is not None:
         return _client
+
+    if chroma_disabled():
+        # A test instance next to a live one must not share its vectors.
+        raise RuntimeError("ChromaDB is turned off (CHROMADB_DISABLED)")
 
     try:
         import chromadb

@@ -31,7 +31,7 @@ Settings > Mods (admins only) has two views: **Installed** (below) and **Browse*
 3. Each installed mod shows its status (running, starting, stopped, backoff, failed), port, restart
    count and last error, with **Enable/Disable**, **Start/Stop/Restart**, **Logs**, **Update**
    (fetch a newer version from the same place, or another branch or tag; new permissions are shown
-   and must be approved again), **New token**, **Remove** (optionally keeping its data), who may use
+   and must be approved again), **New token**, **Remove** (keeping its data unless you say otherwise; for a docker mod also its volumes, and optionally deleting the images built for it), who may use
    it (admins or all users) and **Mute notifications**. A mod with a newer version out has an
    **Update available** badge, and its Update button offers that version's tag. A mod with tabs also has **Show in** (the
    sidebar group its tabs go in; the default is the group its manifest names) and **Hide from
@@ -169,6 +169,36 @@ the raw contract).
 A mod must work **standalone and under the core**, and decides by whether `ODYSSEUS_URL` is set.
 Standalone, it has its own login and its own notification channels; under the core it never has a
 login and trusts only verified identity headers.
+
+### Running a test instance
+
+To try a mod (or a change to the mod system) next to a live Odysseus on the same machine, run a
+second instance that shares nothing with it:
+
+```bash
+export ODYSSEUS_ENV_FILE=none                 # no .env: the live one holds its data dir and keys
+export ODYSSEUS_DATA_DIR=$(mktemp -d ~/odysseus-test-XXXX)   # not /tmp: snap docker cannot see it
+export APP_PORT=7314                          # its own loopback calls go to 7314, not the live 7000
+export AUTH_ENABLED=true
+export CHROMADB_DISABLED=1                    # or CHROMADB_PORT=<a test chroma>; never the live 8100
+ODYSSEUS_ADMIN_USER=admin ODYSSEUS_ADMIN_PASSWORD=<pick one> ODYSSEUS_SKIP_ADMIN_PROMPT=1 python setup.py
+uvicorn app:app --host 127.0.0.1 --port 7314
+```
+
+- **.env.** The server reads only `<app root>/.env`, the folder `app.py` is in, or the file
+  `ODYSSEUS_ENV_FILE` names (`none` for no file). It no longer searches parent folders, which made a
+  checkout under `~/odysseus/.claude/worktrees/` read the main checkout's `.env`. The live
+  deployment runs from the main checkout, so it still reads its own `.env`. (`setup.py` copies
+  `.env.example` to `.env` in the checkout when there is none; with `ODYSSEUS_ENV_FILE=none` it
+  is not read, and you can delete it.)
+- **Model discovery** still scans localhost and the Tailscale peers for model servers (it only
+  reads), and the test instance uses what it finds.
+- **Docker.** Mods of the test instance get compose projects with the test instance's own id
+  (see [Runtime](#runtime)), so its retry, stop or remove never touches the live instance's
+  containers. Do not copy a live data dir for a test: the copy keeps the live instance id and
+  project names.
+- **Clean up** by stopping the server, removing its docker mods (Settings > Mods > Remove, with the
+  images) and deleting `$ODYSSEUS_DATA_DIR`.
 
 ## Publishing a mod
 
@@ -342,19 +372,31 @@ X-Odysseus-Sig:  hex(HMAC-SHA256(key = mod token, msg = "v1\n<mod id>\n<user>\n<
 ```
 
 A mod rejects a request whose signature does not match or whose timestamp is more than 300
-seconds off. Calls from the core itself (tools, events) come as user `odysseus-core`. With sign-in
-turned off, the user is empty.
+seconds off. The user is never empty:
+
+| Request | `X-Odysseus-User` |
+|---|---|
+| A page or API call through the proxy | The signed-in user; `local` with sign-in turned off |
+| A tool call | The user the agent works for, so the mod can apply its own permissions; `local` with sign-in turned off, `odysseus-core` if the call has no user |
+| Reading the tool list, delivering an event | `odysseus-core`: the core on its own, for no user |
+
+The health check is sent without identity headers.
 
 Responses: a `Location` inside the mod is rewritten to the proxied path, and cookies the mod sets
 are scoped to its path (cookie names starting `odysseus` are dropped). Every response gets a CSP
-`sandbox` (scripts, forms, popups and downloads allowed, no same origin), so mod pages run with an
+`sandbox` (scripts, forms, popups, downloads and modals allowed, no same origin; the iframe's
+`sandbox` attribute allows the same, so `confirm()` and `alert()` work), so mod pages run with an
 **opaque origin**. They cannot read Odysseus's pages, cookies or storage, and their own requests
 carry no Odysseus session. So pages load under a **frame URL**,
 `/mods/<id>/~<frame token>/<path>`, where the token (HMAC of mod, user and expiry, 12 hours) is
 what authenticates the page's requests. A signed-in browser that opens `/mods/<id>/...` directly
 is redirected to its frame URL. Mod pages must therefore use **relative URLs**. Because the page's
 origin is opaque, its own `fetch()` calls are CORS requests with `Origin: null`; under a valid frame
-token the proxy answers their preflight and allows `Origin: null` (and only then).
+token the proxy answers their preflight and allows `Origin: null` (and only then). The app's
+global CORS middleware leaves exactly those requests (`Origin: null` to `/mods/<id>/~<token>/...`)
+to the proxy (`ModAwareCORSMiddleware` in `core/middleware.py`); everything else keeps the global
+CORS rules, which reject `Origin: null`. So a mod page can send JSON `POST`, `PUT` and `DELETE`
+requests and custom headers to its own routes.
 
 Only the user's own mods are reachable: a mod with access `admins` is for admins, `users` for every
 signed-in user. A disabled mod answers 404, and a lazy one is started on first use.
@@ -406,10 +448,11 @@ object:
 } ] }
 ```
 
-The core reads the list when the mod starts (up to 24 tools; names `[A-Za-z0-9_-]`, up to 40
-characters) and shows them to the model as `mod__<id>__<name>`. A call is `POST
-<tools.endpoint>/<name>` with the arguments as the JSON body, the identity of `odysseus-core`, and a
-120 second timeout. The answer is `{"output": "text for the model", "data": {...}}` or
+The core reads the list when the mod starts, as `odysseus-core` (up to 24 tools; names
+`[A-Za-z0-9_-]`, up to 40 characters) and shows them to the model as `mod__<id>__<name>`. A call is
+`POST <tools.endpoint>/<name>` with the arguments as the JSON body, the identity of the user the
+agent works for (`local` with sign-in off, `odysseus-core` if there is none), `X-Odysseus-Session`
+when it runs in a chat, and a 120 second timeout. The answer is `{"output": "text for the model", "data": {...}}` or
 `{"error": "..."}`. Output is cut at 12,000 characters.
 
 **Which tools the agent gets.** Only those of enabled mods the user may use, and only when the
@@ -479,10 +522,23 @@ the shown tabs in order (`src/mods/placement.py`).
 ### Runtime
 
 - A process mod runs in its folder with the environment above; its output goes to its log.
-- A docker mod runs `docker compose -p odysseus-mod-<id> -f <compose> up -d` with the same
-  environment available for interpolation, and `down` to stop. It must publish `MOD_PORT` on
-  `127.0.0.1` (and reach `ODYSSEUS_URL`, which is loopback: use `network_mode: host` or
-  `extra_hosts: ["host.docker.internal:host-gateway"]` with the matching URL).
+- A docker mod runs `docker compose -p <project> -f <compose> up -d --remove-orphans` with the
+  same environment available for interpolation, and `down` to stop. The first start after an
+  install or update adds `--build`, so Update runs images built from the new code. It must publish
+  `MOD_PORT` on `127.0.0.1` (and reach `ODYSSEUS_URL`, which is loopback: use `network_mode: host`
+  or `extra_hosts: ["host.docker.internal:host-gateway"]` with the matching URL).
+- The compose project is `odysseus-mod-<id>-<instance>`, where `<instance>` is a random id kept in
+  `mods/instance-id`, so two Odysseus instances on one Docker host never stop or recreate each
+  other's containers. It is saved in the registry entry (`compose_project`) at install. A docker
+  mod installed before instance ids existed keeps its old project `odysseus-mod-<id>` (and with it
+  its containers and volumes); it is saved on its first start or update. Project names do not
+  help with a fixed `container_name:` in the compose file, which two instances cannot both use:
+  leave it out.
+- **Remove** keeps the mod's data by default. For a docker mod that also keeps its volumes, and it
+  offers to delete the images built for it: `DELETE /api/mods/<id>?keep_data=false` adds
+  `compose down -v`, `remove_images=true` adds `--rmi local` and then removes the `image:` of each
+  service that has a `build:` section. Pulled images are never removed, nor an image another
+  container still uses.
 - The core waits up to 45 seconds for `health` to answer 200, then checks it every 10 seconds.
   Three failed checks or an exit restart the mod with backoff (2, 4, 8 ... seconds, at most 5
   minutes); 10 healthy minutes reset the count.
@@ -599,7 +655,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `static/js/modNav.js` | Mod tabs in the sidebar groups |
 
 Hooks in the core: the router and the auth exemptions for `/api/mods/v1/` (the token checks
-itself) and frame URLs in `app.py`; the mod CSP in `core/middleware.py`; tool selection and the
+itself) and frame URLs in `app.py`; the mod CSP and `ModAwareCORSMiddleware` in `core/middleware.py`; tool selection and the
 research gate in `src/agent_loop.py`; `mod__` tools in `src/tool_execution.py` and
 `src/tool_schemas.py`; mod tools in the tool index (`src/tool_index.py`).
 

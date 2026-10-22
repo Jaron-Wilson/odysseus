@@ -112,7 +112,7 @@ async def refresh(mod_id: str) -> List[Dict[str, Any]]:
     port = runtime.state(mod_id).port
     if not port:
         return cached(mod_id)
-    headers = signing.sign_identity(registry.token_of(mod_id), mod_id, "odysseus-core")
+    headers = signing.sign_identity(registry.token_of(mod_id), mod_id, signing.CORE_USER)
     try:
         r = await runtime._client().get(f"http://127.0.0.1:{port}{tcfg['endpoint']}", headers=headers, timeout=10)
         r.raise_for_status()
@@ -273,7 +273,8 @@ async def execute(tool: str, content: str, owner: Optional[str], session_id: Opt
         return f"{tool}: not running", {"error": f"The {mod_id} mod is not running ({st.last_error or st.status}).",
                                          "exit_code": 1}
     tcfg = (entry.get("manifest") or {}).get("tools") or {}
-    headers = signing.sign_identity(registry.token_of(mod_id), mod_id, owner or "local")
+    from src.mods import access
+    headers = signing.sign_identity(registry.token_of(mod_id), mod_id, signing.caller(owner, access.auth_disabled()))
     headers["Content-Type"] = "application/json"
     if session_id:
         headers["X-Odysseus-Session"] = session_id

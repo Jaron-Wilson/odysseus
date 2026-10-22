@@ -363,12 +363,23 @@ def _run_setup(mod_id: str, manifest: Dict[str, Any]) -> None:
 
 # ── Install / update, step 2 ─────────────────────────────────────────────
 
+def approved_list(approved: Any) -> List[str]:
+    """The `permissions` of a confirm: a list of permission id strings."""
+    if approved is None:
+        return []
+    if not isinstance(approved, list) or not all(isinstance(p, str) for p in approved):
+        raise RegistryError('permissions must be a list of permission ids (strings), like ["notify", "storage"]')
+    return approved
+
+
 def confirm(install_id: str, approved: List[str]) -> Dict[str, Any]:
     """Approve a prepared install or update. `approved` must equal the
     requested permissions (the user saw and accepted all of them)."""
+    from src.mods import runtime
+    approved = approved_list(approved)
     meta = _staged(install_id)
     manifest = meta["manifest"]
-    if sorted(set(approved or [])) != sorted(manifest["permissions"]):
+    if sorted(set(approved)) != sorted(manifest["permissions"]):
         raise RegistryError("approve every permission the mod asks for, or cancel the install", 400)
     mod_id = manifest["id"]
     stage_src = os.path.join(paths.staging_root(), install_id, "src")
@@ -402,7 +413,16 @@ def confirm(install_id: str, approved: List[str]) -> Dict[str, Any]:
         })
         if not existing:
             entry.update({"installed_at": now, "enabled": False, "access": "admins",
-                          "token": _encrypt(signing.new_token())})
+                          "token": _encrypt(signing.new_token()),
+                          "compose_project": runtime.new_compose_project(mod_id)})
+        elif not existing.get("compose_project"):
+            # Installed before compose projects had an instance id: a docker mod
+            # ran as odysseus-mod-<id> and keeps that (its volumes are there).
+            was_docker = ((existing.get("manifest") or {}).get("runtime") or {}).get("type") == "docker"
+            entry["compose_project"] = (runtime.LEGACY_PROJECT_PREFIX + mod_id if was_docker
+                                        else runtime.new_compose_project(mod_id))
+        # The next start of a docker mod rebuilds its images from this code.
+        entry["build_pending"] = manifest["runtime"]["type"] == "docker"
         data["mods"][mod_id] = entry
         _save(data)
     try:

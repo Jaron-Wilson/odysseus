@@ -3,7 +3,14 @@
 Identity (core to mod). Every request the core forwards to a mod, and every
 event it delivers, carries:
 
-    X-Odysseus-User  the signed-in user ("" never: "local" when auth is off)
+    X-Odysseus-User  who the request is for (never empty):
+                       - the signed-in user, for pages and API calls through
+                         the proxy, and for tool calls (the user the agent
+                         works for);
+                       - "local" for those when sign-in is turned off;
+                       - "odysseus-core" (CORE_USER) for what the core does
+                         on its own: reading the tool list, delivering
+                         events, and a tool call that has no user.
     X-Odysseus-Mod   the mod id
     X-Odysseus-Ts    unix seconds
     X-Odysseus-Sig   hex HMAC-SHA256(key=ODYSSEUS_MOD_TOKEN,
@@ -33,7 +40,17 @@ SKEW_S = 300
 FRAME_TTL_S = 12 * 3600
 IDENTITY_HEADERS = ("x-odysseus-user", "x-odysseus-mod", "x-odysseus-ts", "x-odysseus-sig")
 
+CORE_USER = "odysseus-core"
+LOCAL_USER = "local"
+
 _frame_secret: Optional[bytes] = None
+
+
+def caller(user: Optional[str], auth_disabled: bool) -> str:
+    """The X-Odysseus-User for a call made for `user` (see the module doc)."""
+    if user:
+        return user
+    return LOCAL_USER if auth_disabled else CORE_USER
 
 
 def new_token() -> str:

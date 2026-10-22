@@ -26,6 +26,41 @@ def is_cors_preflight(method: str, headers) -> bool:
     return method == "OPTIONS" and "access-control-request-method" in headers
 
 
+def is_mod_frame_cors(scope) -> bool:
+    """True for a request from a sandboxed mod page to its own frame-token
+    URL: path /mods/<id>/~<token>/... and `Origin: null` (a sandboxed frame
+    has an opaque origin). Those requests carry no cookie; the token in the
+    URL is the credential, and src/mods/proxy.py answers their CORS itself
+    (Origin null only, and only under a valid token). Every other request,
+    including any other path with Origin null, stays with CORSMiddleware."""
+    if scope.get("type") != "http":
+        return False
+    parts = (scope.get("path") or "").split("/", 3)
+    # ["", "mods", "<id>", "~<token>/..."]
+    if len(parts) < 4 or parts[0] or parts[1] != "mods" or not parts[2] or not parts[3].startswith("~"):
+        return False
+    origins = [v for k, v in scope.get("headers") or [] if k == b"origin"]
+    return origins == [b"null"]
+
+
+class ModAwareCORSMiddleware:
+    """CORSMiddleware, except that mod frame requests (is_mod_frame_cors) go
+    straight to the app. Starlette's CORSMiddleware answers every preflight
+    itself and rejects `Origin: null` with a 400, so a sandboxed mod page could
+    never send a JSON POST or a custom header to its own routes."""
+
+    def __init__(self, app, **cors_options):
+        from starlette.middleware.cors import CORSMiddleware
+        self.app = app
+        self.cors = CORSMiddleware(app, **cors_options)
+
+    async def __call__(self, scope, receive, send):
+        if is_mod_frame_cors(scope):
+            await self.app(scope, receive, send)
+            return
+        await self.cors(scope, receive, send)
+
+
 def _adsb_frame_src() -> str:
     """" <origin>" for the configured ADS-B receiver, or "" (src/adsb.py)."""
     try:

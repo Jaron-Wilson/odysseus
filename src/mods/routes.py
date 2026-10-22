@@ -346,11 +346,12 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         body = await _json(request)
         iid = str(body.get("install_id") or "")
         try:
+            approved = registry.approved_list(body.get("permissions"))
             meta = registry._staged(iid)
             update_of = meta.get("update_of")
             if update_of:
                 await runtime.stop(update_of, "stopped for an update")
-            entry = await asyncio.to_thread(registry.confirm, iid, body.get("permissions") or [])
+            entry = await asyncio.to_thread(registry.confirm, iid, approved)
         except registry.RegistryError as e:
             return _err(e)
         mod_id = entry["id"]
@@ -533,11 +534,15 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         return {"mod": _view(registry.get(mod_id))}
 
     @router.delete("/api/mods/{mod_id}")
-    async def delete_mod(request: Request, mod_id: str, keep_data: bool = False):
+    async def delete_mod(request: Request, mod_id: str, keep_data: bool = True, remove_images: bool = False):
+        """Remove a mod. keep_data (the default) keeps its data folder and, for
+        a docker mod, its volumes; remove_images also deletes the images built
+        for a docker mod (`compose down --rmi local`)."""
         _require_admin(request)
         if not registry.get(mod_id):
             raise HTTPException(404, "No such mod")
         await runtime.stop(mod_id, "removed")
+        await runtime.remove_docker(mod_id, images=remove_images, volumes=not keep_data)
         try:
             await asyncio.to_thread(registry.remove, mod_id, keep_data)
         except registry.RegistryError as e:

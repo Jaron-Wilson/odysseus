@@ -166,7 +166,7 @@ def cookie_user(request) -> Optional[str]:
     if u and u not in ("api", "internal-tool"):
         return u
     if access.auth_disabled():
-        return "local"
+        return signing.LOCAL_USER
     return None
 
 
@@ -252,7 +252,7 @@ async def _handle_http(request: Request, mod_id: str, rest: str) -> Response:
 
 def _ws_cookie_user(ws: WebSocket) -> Optional[str]:
     if access.auth_disabled():
-        return "local"
+        return signing.LOCAL_USER
     mgr = getattr(ws.app.state, "auth_manager", None)
     if mgr is None:
         return None

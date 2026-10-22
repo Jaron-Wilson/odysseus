@@ -10,7 +10,8 @@
 // `section`/`after`/`order`, or the admin's choice in Settings > Mods), in
 // order, already sorted by the server (src/mods/placement.py).
 
-const SANDBOX = 'allow-scripts allow-forms allow-popups allow-downloads';
+// allow-modals: confirm(), alert() and prompt() work (the CSP the proxy sends allows them too).
+const SANDBOX = 'allow-scripts allow-forms allow-popups allow-downloads allow-modals';
 const REFRESH_MS = 6 * 60 * 60 * 1000;   // frame tokens last 12 hours
 
 let _mods = null;

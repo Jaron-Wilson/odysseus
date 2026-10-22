@@ -290,9 +290,13 @@ async function onAction(btn) {
   }
   if (action === 'remove') {
     if (!confirm(`Remove ${m.name || id}? Its code is deleted.`)) return;
-    const keep = confirm('Keep its data (settings and files) in case you install it again?\n\nOK keeps it, Cancel deletes it too.');
+    const docker = ((m.runtime || {}).type) === 'docker';
+    const keep = confirm(docker
+      ? 'Keep its data (settings, files and Docker volumes) in case you install it again?\n\nOK keeps it, Cancel deletes it too.'
+      : 'Keep its data (settings and files) in case you install it again?\n\nOK keeps it, Cancel deletes it too.');
+    const images = docker && confirm('Also remove the Docker images built for it?\n\nOK removes them, Cancel keeps them.');
     try {
-      await api('DELETE', `${API}/${encodeURIComponent(id)}?keep_data=${keep}`);
+      await api('DELETE', `${API}/${encodeURIComponent(id)}?keep_data=${keep}&remove_images=${images}`);
       _mods = _mods.filter((x) => x.id !== id);
       renderList();
       window.dispatchEvent(new CustomEvent('odysseus:mods-changed'));
