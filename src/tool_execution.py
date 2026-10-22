@@ -576,11 +576,6 @@ def _propose_plan(content: str, session_id: Optional[str], owner: Optional[str])
     return desc, result
 
 
-def _game_tool_names() -> frozenset:
-    from src.agent_tools.game_tools import ALL_TOOLS
-    return ALL_TOOLS
-
-
 def _is_company_chat_tool(tool: str) -> bool:
     from src.agent_tools.company_chat_tools import ALL_TOOLS
     return tool in ALL_TOOLS
@@ -904,15 +899,6 @@ async def execute_tool_block(
         from src.agent_tools import company_chat_tools
         desc = f"{tool}: {content.split(chr(10))[0][:60]}"
         result = await asyncio.to_thread(company_chat_tools.run_tool, tool, content, owner)
-    elif tool in _game_tool_names():
-        # Game streaming from the PC (src/agent_tools/game_tools.py), admin only.
-        from src.agent_tools import game_tools
-        desc = f"{tool}: {content.split(chr(10))[0][:60]}"
-        try:
-            result = await game_tools.run_tool(tool, content, owner)
-        except Exception as e:
-            logger.warning("%s failed: %s", tool, e, exc_info=True)
-            result = {"error": f"{tool}: {type(e).__name__}: {e}"[:400], "exit_code": 1}
     elif tool == "chat_memory":
         desc = "chat_memory"
         from src import chat_memory

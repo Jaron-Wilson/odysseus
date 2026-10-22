@@ -203,8 +203,6 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
-        # A redirect to Moonlight Web at /play/ (see play_redirect).
-        "/play",
     }
     # /sw.js is the service worker, served from the root so it gets root scope.
     # It has to be fetchable before anyone is logged in: redirecting it to
@@ -735,9 +733,8 @@ app.include_router(setup_claude_sessions_routes())
 # The ADS-B receiver (a Pi on the tailnet): status and its live map, admin only (routes/adsb_routes.py).
 from routes.adsb_routes import setup_adsb_routes
 app.include_router(setup_adsb_routes())
-# PC game streaming: the Games page (Sunshine on the PC, Moonlight Web at /play/), admin only (routes/games_routes.py).
-from routes.games_routes import setup_games_routes
-app.include_router(setup_games_routes())
+# PC game streaming is the Games mod now (github.com/Jaron-Wilson/odysseus-games): its tab replaces
+# the `games` page, and it finds the PC through GET /api/mods/v1/machines (machines.read).
 
 # Mods: /mods/<id>/ (the proxy), /api/mods (manage), /api/mods/v1 (the mod API).
 from src.mods.routes import setup_mods_routes
@@ -980,16 +977,6 @@ async def serve_index(request: Request):
 @app.get("/thread-pane")
 async def serve_thread_pane(request: Request):
     return await serve_index(request)
-
-# Moonlight Web (the browser game client, src/games.py) is published at
-# /play/ by Tailscale Serve, beside Odysseus at /. Its pages use relative
-# asset paths, so a bare /play breaks; once Serve mounts it at /play/ (see
-# docs/games.md), the bare /play comes here and gets the slash. Exempt from
-# the login redirect: it is only a redirect, and Moonlight Web has its own.
-@app.get("/play", include_in_schema=False)
-async def play_redirect(request: Request):
-    q = request.url.query
-    return RedirectResponse(url="/play/" + (f"?{q}" if q else ""), status_code=302)
 
 @app.get("/notes")
 async def serve_notes(request: Request):
@@ -1390,12 +1377,6 @@ async def _startup_event():
     # removes the feature.
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
-    # Games: the Steam sync once a night, when switched on (src/games.py).
-    try:
-        from src import games as _games
-        _startup_tasks.append(asyncio.create_task(_games.nightly_loop()))
-    except Exception as _e:
-        logger.warning("Could not start the nightly Steam sync: %s", _e)
     # What's new: refresh the merged-PR list from git and GitHub now and then.
     try:
         from src import whats_new

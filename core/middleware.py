@@ -74,18 +74,6 @@ def _adsb_frame_src() -> str:
     return f" {origin}"
 
 
-def _games_frame_src() -> str:
-    """" <origin>" for Moonlight Web when it is on another origin (src/games.py)."""
-    try:
-        from src.games import moonlight_frame_origin
-        origin = moonlight_frame_origin()
-    except Exception:
-        return ""
-    if not origin or any(c in origin for c in " ;,'\"\r\n"):
-        return ""
-    return f" {origin}"
-
-
 def require_admin(request: Request):
     """Raise 403 if the current user isn't an admin.
     Allows access when auth is explicitly disabled, or when the request carries
@@ -215,9 +203,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "connect-src 'self'; "
                 # YouTube's privacy-enhanced player, loaded on click, and the
                 # ADS-B receiver's own map (src/adsb.py): only the origin set
-                # on that page, never a wildcard. And Moonlight Web, the game
-                # stream, when it is set to another origin than /play/ here.
-                f"frame-src 'self' https://www.youtube-nocookie.com{_adsb_frame_src()}{_games_frame_src()}; "
+                # on that page, never a wildcard.
+                f"frame-src 'self' https://www.youtube-nocookie.com{_adsb_frame_src()}; "
                 + ("frame-ancestors 'self'" if is_thread_pane else "frame-ancestors 'none'")
             )
         return response

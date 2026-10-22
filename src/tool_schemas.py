@@ -1484,10 +1484,6 @@ FUNCTION_TOOL_SCHEMAS.extend(_google_products.function_schemas())
 from src.agent_tools.company_chat_tools import SCHEMAS as _COMPANY_CHAT_SCHEMAS  # noqa: E402
 FUNCTION_TOOL_SCHEMAS.extend(_COMPANY_CHAT_SCHEMAS)
 
-# Game streaming from the PC (src/agent_tools/game_tools.py).
-from src.agent_tools.game_tools import SCHEMAS as _GAME_SCHEMAS  # noqa: E402
-FUNCTION_TOOL_SCHEMAS.extend(_GAME_SCHEMAS)
-
 
 # ---------------------------------------------------------------------------
 # Converter: native function call -> ToolBlock

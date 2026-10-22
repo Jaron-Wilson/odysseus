@@ -257,7 +257,6 @@
   <link rel="stylesheet" href="/static/css/terminal.css">
   <link rel="stylesheet" href="/static/css/claudeSessions.css">
   <link rel="stylesheet" href="/static/css/adsbPanel.css">
-  <link rel="stylesheet" href="/static/css/gamesPanel.css">
   <link rel="stylesheet" href="/static/css/mods.css">
   <link rel="stylesheet" href="/static/css/plans.css">
   <link rel="stylesheet" href="/static/css/nativePlans.css">
@@ -1124,16 +1123,6 @@
                 <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
               </svg>
               <span class="grow">ADS-B receiver</span>
-            </div>
-            <!-- PC game streaming: Sunshine's games, played in Moonlight Web at /play/ (gamesPanel.js). Admin only. -->
-            <div class="list-item" id="tool-games-btn" title="Your PC games: play them here in the browser">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                style="flex-shrink:0;opacity:0.5;">
-                <rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3"/>
-                <circle cx="15.5" cy="11.5" r=".9"/><circle cx="17.5" cy="13.8" r=".9"/>
-              </svg>
-              <span class="grow">Games</span>
             </div>
             <div class="list-item" id="tool-cookbook-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -2590,88 +2579,6 @@
             <div id="devices-machines"><div class="admin-toggle-sub">Loading…</div></div>
             <div id="devices-msg" class="admin-toggle-sub" style="margin-top:6px"></div>
           </div>
-          <!-- Game streaming: Sunshine on the PC, Moonlight Web here (src/games.py), filled in by gamesSettings.js. -->
-          <div class="admin-card" id="games-settings-card" data-goto-keywords="games game streaming sunshine moonlight steam play pc games">
-            <h2>Game streaming<span style="flex:1"></span><button class="settings-btn" style="padding:2px 10px;font-size:12px;float:right" id="games-health-refresh" type="button">Check</button></h2>
-            <div class="admin-toggle-sub" style="margin-bottom:6px">Play your PC's games in the browser from the <strong>Games</strong> page. <strong>Sunshine</strong> on the PC hosts the games; <strong>Moonlight Web</strong> on this server is the player, at <code>/play/</code>. The login is Sunshine's web UI account. Setup and firewall notes: docs/games.md.</div>
-            <div id="games-health" class="settings-col" style="gap:2px"><div class="admin-toggle-sub">Loading…</div></div>
-            <div class="settings-col" style="margin-top:8px">
-              <div class="settings-row">
-                <label class="settings-label" for="games-urls">Sunshine addresses</label>
-                <textarea id="games-urls" class="settings-select" rows="2" spellcheck="false" placeholder="https://192.168.1.50:47990 (LAN first)&#10;https://100.x.y.z:47990 (then the tailnet; blank: found on the tailnet)" style="flex:1;font-family:inherit"></textarea>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-user">Sunshine username</label>
-                <input id="games-user" class="settings-select" type="text" autocomplete="off" spellcheck="false" placeholder="blank: from the credentials file" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-pass">Sunshine password</label>
-                <input id="games-pass" class="settings-select" type="password" autocomplete="new-password" placeholder="Not set" />
-                <button class="settings-btn" id="games-pass-clear" type="button" title="Remove the saved password">Clear</button>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-credfile">Credentials file</label>
-                <input id="games-credfile" class="settings-select" type="text" spellcheck="false" placeholder="~/.secrets/sunshine.env (SUNSHINE_USER, SUNSHINE_PASS)" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-moonlight">Moonlight Web</label>
-                <input id="games-moonlight" class="settings-select" type="text" spellcheck="false" placeholder="/play/" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-moonlight-health">Moonlight Web check</label>
-                <input id="games-moonlight-health" class="settings-select" type="text" spellcheck="false" placeholder="http://127.0.0.1:8090/play/" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-play-in">Play opens in</label>
-                <select id="games-play-in" class="settings-select">
-                  <option value="odysseus">The Games page (this tab)</option>
-                  <option value="new_tab">A new browser tab</option>
-                </select>
-              </div>
-              <details>
-                <summary class="admin-toggle-sub" style="cursor:pointer">Covers, Steam sync and certificate</summary>
-                <div class="settings-col" style="margin-top:6px">
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-covers">Covers folder here</label>
-                    <input id="games-covers" class="settings-select" type="text" spellcheck="false" placeholder="blank: Odysseus's own cache (data/game-covers)" />
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-pc-host">The PC</label>
-                    <input id="games-pc-host" class="settings-select" type="text" spellcheck="false" placeholder="blank: the machine a Sunshine address points at" />
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-pc-covers">Covers folder on the PC</label>
-                    <input id="games-pc-covers" class="settings-select" type="text" spellcheck="false" placeholder="blank: where the other covers are, or C:\Users\you\sunshine-covers" />
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-libs">Steam libraries</label>
-                    <textarea id="games-libs" class="settings-select" rows="2" spellcheck="false" style="flex:1;font-family:inherit"></textarea>
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-nightly">Sync Steam games nightly</label>
-                    <input id="games-nightly" type="checkbox" />
-                    <span class="admin-toggle-sub">At 04:30, adds newly installed games to Sunshine.</span>
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-tls">Sunshine certificate</label>
-                    <select id="games-tls" class="settings-select">
-                      <option value="pin">Remember it on first contact, refuse a different one</option>
-                      <option value="off">Don't check it</option>
-                    </select>
-                    <button class="settings-btn" id="games-forget-cert" type="button" title="After reinstalling Sunshine: accept its new certificate on the next contact">Forget certificates</button>
-                  </div>
-                  <div id="games-certs" class="admin-toggle-sub"></div>
-                </div>
-              </details>
-              <div class="settings-row">
-                <span class="admin-toggle-sub" id="games-cred-state"></span>
-                <button class="admin-btn-add" id="games-save" type="button">Save</button>
-                <button class="settings-btn" id="games-test" type="button">Test</button>
-              </div>
-              <div id="games-pairings" class="settings-col"></div>
-              <div id="games-msg" class="admin-toggle-sub"></div>
-            </div>
-          </div>
           <div class="admin-card">
             <h2>Services</h2>
             <div class="admin-toggle-sub" style="margin-bottom:4px">MCP servers that are not on one of your machines, like Cloudflare's. Set them up under Agent Tools.</div>
@@ -3720,8 +3627,6 @@
 <script type="module" src="/static/js/usagePage.js"></script>
 <script type="module" src="/static/js/claudeSessions.js"></script>
 <script type="module" src="/static/js/adsbPanel.js"></script>
-<script type="module" src="/static/js/gamesPanel.js"></script>
-<script type="module" src="/static/js/gamesSettings.js"></script>
 <script type="module" src="/static/js/modsSettings.js"></script>
 <script type="module" src="/static/js/plans.js"></script>
 <script type="module" src="/static/js/company.js"></script>
