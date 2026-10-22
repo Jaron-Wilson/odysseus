@@ -50,8 +50,14 @@ The core runs `python` in `runtime.command` with the mod's `.venv` when one exis
 - `permissions`: only what the mod needs. The user sees and approves every one at install.
   `notify`, `events.emit`, `events.subscribe`, `devices.read`, `devices.control`, `network.lan`,
   `storage`, `llm.call`. Settings (`GET/PUT settings`) need none.
-- `ui.tabs[]` (`id`, `title`, `icon`, `path`), `ui.home_cards[]` (`id`, `title`, `path`, `height`
-  60 to 600), `ui.settings_path`.
+- `ui.tabs[]` (`id`, `title`, `icon`, `path`, and where it goes in the sidebar: `section`, `after`,
+  `order`), `ui.home_cards[]` (`id`, `title`, `path`, `height` 60 to 600), `ui.settings_path`.
+- `section` is a sidebar group: `organize` (Organize), `create` (Create & research), `build`
+  (Build), `system` (System) or `mods` (Mods, the default). `after` is a built-in page in that
+  group to sit right after, like `print` (the 3D print helper) in `create` or `devices` in
+  `system`; `order` (a whole number, default 0) sorts tabs in the same spot, then the title does.
+  An unknown group is only a warning: the tab goes in Mods. The admin can move or hide it in
+  Settings > Mods. The full list of groups and pages is in docs/mods.md, "Where tabs go".
 - `tools`: `endpoint` (default `/mod/tools`) and `keywords`. The agent only gets the mod's tools
   when a message matches a keyword (or tool retrieval picks one), so choose words people will say.
 - `events`: `emits` (types like `my-mod.clicked`), `subscribes` (patterns like `print-hub/print.*`

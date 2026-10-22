@@ -28,7 +28,9 @@ Settings > Mods (admins only):
    count and last error, with **Enable/Disable**, **Start/Stop/Restart**, **Logs**, **Update**
    (fetch a newer version from the same place, or another branch or tag; new permissions are shown
    and must be approved again), **New token**, **Remove** (optionally keeping its data), who may use
-   it (admins or all users) and **Mute notifications**.
+   it (admins or all users) and **Mute notifications**. A mod with tabs also has **Show in** (the
+   sidebar group its tabs go in; the default is the group its manifest names) and **Hide from
+   sidebar** (see [Where tabs go](#where-tabs-go)).
 4. **Where mod notifications go**: push to browsers and the phone, the notification list in
    Odysseus, Discord (the webhook in Integrations), ntfy, and text messages at or above a level.
 5. **New mod**: copies the mod template into a folder with your id and name filled in.
@@ -104,7 +106,8 @@ login and trusts only verified identity headers.
   },
   "permissions": ["notify", "events.emit", "devices.read", "network.lan", "storage", "llm.call"],
   "ui": {
-    "tabs": [{ "id": "printer", "title": "Printer", "icon": "print", "path": "/" }],
+    "tabs": [{ "id": "printer", "title": "Printer", "icon": "print", "path": "/",
+               "section": "create", "after": "print" }],
     "home_cards": [{ "id": "status", "title": "Printer", "path": "/cards/status", "height": 180 }],
     "settings_path": "/settings"
   },
@@ -117,7 +120,9 @@ login and trusts only verified identity headers.
 }
 ```
 
-Every problem in a manifest is reported at once.
+Every problem in a manifest is reported at once. A few things are warnings rather than errors (a
+`section` or `after` this Odysseus does not have): the mod still installs, and the warning is shown
+when you review it, on its card in Settings > Mods and by `python -m src.mods validate`.
 
 | Field | Rules |
 |---|---|
@@ -136,7 +141,11 @@ Every problem in a manifest is reported at once.
 | `runtime.idle_stop_minutes` | Stop a lazy mod after this long unused (0: never). |
 | `runtime.env` | Extra environment variables. Names starting `ODYSSEUS_` or `MOD_` are refused. |
 | `permissions` | From the list below. |
-| `ui.tabs[]` | `id`, `title`, `icon` (optional), `path`. Each is a Workspace tab. |
+| `ui.tabs[]` | `id`, `title`, `icon` (optional), `path`, and optionally `section`, `after` and `order`. Each is a Workspace tab, listed in the sidebar and the Workspace "+" menu. |
+| `ui.tabs[].icon` | One of the Workspace icon names (`print`, `calendar`, `notes`, `terminal`, `devices`, `research`, `gallery` ...); anything else shows the mod icon. |
+| `ui.tabs[].section` | The nav group the tab goes in: a group id from the table under [Where tabs go](#where-tabs-go), like `create`. Missing: `mods`. An id this Odysseus does not have is a warning, and the tab goes in Mods. |
+| `ui.tabs[].after` | The key of a built-in page in that group (like `print`): the tab goes right after it. Missing, or a page that is not in the group (a warning): the end of the group. |
+| `ui.tabs[].order` | A whole number from -1000 to 1000, default 0. Tabs in the same spot (after the same page, or at the end) are sorted by `order`, then by title. |
 | `ui.home_cards[]` | `id`, `title` (optional), `path`, `height` (60 to 600 pixels, default 180). |
 | `ui.settings_path` | The mod's settings page, opened from its tab. |
 | `tools.endpoint` | Default `/mod/tools`. |
@@ -276,11 +285,56 @@ for a `controls_devices` tool to run at all.
 
 ### UI
 
-- Each `ui.tabs` entry is a Workspace tab (in the "+" menu under Mods). The page is shown in a
-  sandboxed frame, with **Settings** (the `settings_path`) and **Reload** in its header.
+- Each `ui.tabs` entry is a Workspace tab. It is listed in the sidebar and in the Workspace "+"
+  menu, in the group its `section` names (see below), with its icon and a small "mod" badge. The
+  page is shown in a sandboxed frame, with **Settings** (the `settings_path`) and **Reload** in its
+  header. Studio and Classic have no tabs, so there the sidebar item opens it as a window.
 - Each `ui.home_cards` entry is a small framed page under the Home dashboard, `height` pixels
   tall, with **Open** going to the mod's first tab.
 - Pages should match Odysseus: dark, system font, 13 to 14 px text, quiet borders.
+
+#### Where tabs go
+
+The sidebar's tool groups, with the ids a tab's `section` uses (`static/js/toolPages.js` has the
+list, in this order), and the built-in pages in each, which are what `after` may name:
+
+| `section` | Shown as | Built-in pages (`after`), in order |
+|---|---|---|
+| `organize` | Organize | `calendar`, `tasks`, `notes`, `plans`, `brain` |
+| `create` | Create & research | `library`, `gallery`, `research`, `compare`, `print` (3D print helper) |
+| `build` | Build | `code`, `terminal`, `browser`, `background`, `company`, `claude-sessions`, `devops`, `odysseus-dev` |
+| `system` | System | `devices`, `adsb`, `games`, `cookbook`, `theme`, `usage`, `whats-new` |
+| `mods` | Mods | None. The default; the group only appears when a tab is in it. |
+
+For example, Print Hub's Printer tab, next to the built-in 3D print helper:
+
+```json
+"ui": {
+  "tabs": [
+    { "id": "printer", "title": "Printer", "icon": "print", "path": "/", "section": "create", "after": "print" },
+    { "id": "queue", "title": "Print queue", "icon": "tasks", "path": "/queue", "section": "create", "after": "print", "order": 1 }
+  ]
+}
+```
+
+That gives Create & research: Library, Gallery, Deep Research, Compare, 3D print helper, Printer,
+Print queue. A built-in page that is hidden (admin only, or turned off in Customize UI) keeps its
+place, so the tab stays where it would be.
+
+How it is decided, per tab:
+
+1. Disabled mods, and mods the user may not use (**Who can use it**), are not shown.
+2. The group is the admin's **Show in** choice for the mod, else the manifest's `section`, else
+   Mods. A group that no longer exists counts as none.
+3. `after` only holds in the manifest's own group: a tab moved to another group with **Show in**
+   goes at the end of it.
+4. **Hide from sidebar** leaves the mod's tabs out of the sidebar and the "+" menu. Its home cards,
+   tools and any tab already open keep working.
+
+The choice is kept in the registry entry as `"placement": {"section": "build", "hidden": false}`
+(`POST /api/mods/<id>/placement` with the same fields; an empty `section` means the manifest's).
+`GET /api/mods/ui` gives each tab its resolved `section`, `after`, `order` and `hidden`, and `nav`,
+the shown tabs in order (`src/mods/placement.py`).
 
 ### Runtime
 
@@ -341,6 +395,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | File | Does |
 |---|---|
 | `src/mods/manifest.py` | Validates `odysseus-mod.json` |
+| `src/mods/placement.py` | Where tabs go: `section`, `after`, `order` and the admin's override |
 | `src/mods/registry.py` | Install (prepare, confirm), update, enable, remove, tokens |
 | `src/mods/runtime.py` | Start, stop, health checks, restart with backoff, logs, idle stop |
 | `src/mods/proxy.py` | `/mods/<id>/` HTTP and WebSocket proxy |
@@ -351,6 +406,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |
 | `static/js/modsSettings.js` | Settings > Mods |
 | `static/js/modPanel.js` | Mod tabs and home cards (used by `workspace/shell.js` and `home.js`) |
+| `static/js/modNav.js` | Mod tabs in the sidebar groups |
 
 Hooks in the core: the router and the auth exemptions for `/api/mods/v1/` (the token checks
 itself) and frame URLs in `app.py`; the mod CSP in `core/middleware.py`; tool selection and the

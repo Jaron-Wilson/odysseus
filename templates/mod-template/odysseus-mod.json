@@ -16,7 +16,7 @@
   },
   "permissions": ["notify", "events.emit", "events.subscribe"],
   "ui": {
-    "tabs": [{ "id": "main", "title": "My Mod", "icon": "box", "path": "/" }],
+    "tabs": [{ "id": "main", "title": "My Mod", "icon": "box", "path": "/", "section": "mods" }],
     "home_cards": [{ "id": "summary", "title": "My Mod", "path": "/cards/summary", "height": 120 }],
     "settings_path": "/settings"
   },

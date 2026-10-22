@@ -4,7 +4,9 @@
 // start, stop, restart, update, remove and token rotation; install from a git
 // URL or a folder on this server (fetched first, then the permissions are
 // shown and must be approved); the notification channels mods may use; and
-// "New mod", which copies the mod template into a folder.
+// "New mod", which copies the mod template into a folder. Per mod, "Show in"
+// and "Hide from sidebar" choose where its tabs go in the navigation
+// (src/mods/placement.py); the choice wins over the manifest's `section`.
 //
 // settings.js calls load() whenever the Mods tab is opened.
 
@@ -41,6 +43,7 @@ const dot = (status) => `<span style="display:inline-block;width:8px;height:8px;
   STATUS_COLOR[status] || '#8b949e'}"></span>`;
 
 let _mods = [];
+let _groups = [];      // nav groups a mod tab can go in: [{id, label}]
 let _staged = null;     // the install or update waiting for approval
 let _openLogs = new Set();
 
@@ -48,6 +51,29 @@ function sourceText(src) {
   if (!src) return '';
   const where = src.url || src.path || '';
   return `${where}${src.ref ? ` @ ${src.ref}` : ''}${src.subdir ? ` (${src.subdir})` : ''}`;
+}
+
+function groupLabel(id) {
+  return (_groups.find((g) => g.id === id) || {}).label || 'Mods';
+}
+
+// "Show in" and "Hide from sidebar", for a mod with tabs.
+function placementRow(m) {
+  const tabs = (m.ui || {}).tabs || [];
+  if (!tabs.length) return '';
+  const known = new Set(_groups.map((g) => g.id));
+  const declared = [...new Set(tabs.map((t) => (known.has(t.section) ? t.section : 'mods')))];
+  const def = declared.length === 1 ? groupLabel(declared[0]) : 'as the mod says';
+  const pl = m.placement || {};
+  const opts = [`<option value=""${!pl.section ? ' selected' : ''}>Default (${esc(def)})</option>`]
+    .concat(_groups.map((g) => `<option value="${esc(g.id)}"${pl.section === g.id ? ' selected' : ''}>${esc(g.label)}</option>`));
+  return `
+    <div class="settings-row" style="flex-wrap:wrap;gap:10px;margin-top:6px">
+      <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px" title="Which sidebar group its tabs go in (and the same group in the Workspace + menu)">Show in
+        <select class="settings-select" data-mod-section="${esc(m.id)}" style="width:auto">${opts.join('')}</select></label>
+      <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px" title="Leave its tabs out of the sidebar and the Workspace + menu. Its home cards, tools and open tabs keep working.">
+        <input type="checkbox" data-mod-hide="${esc(m.id)}"${pl.hidden ? ' checked' : ''}> Hide from sidebar</label>
+    </div>`;
 }
 
 function renderMod(m) {
@@ -68,6 +94,7 @@ function renderMod(m) {
     <div class="admin-toggle-sub">${esc(m.description || '')}</div>
     <div class="admin-toggle-sub">From ${esc(sourceText(m.source))}${m.commit ? ` (${esc(String(m.commit).slice(0, 10))})` : ''} · ${esc((m.runtime || {}).type || 'process')}, starts ${esc((m.runtime || {}).start || 'lazy')}${bits.length ? ` · ${bits.join(' · ')}` : ''}</div>
     ${err ? `<div class="admin-toggle-sub" style="color:var(--red, #d33)">${esc(err)}</div>` : ''}
+    ${(m.warnings || []).map((w) => `<div class="admin-toggle-sub" style="color:var(--yellow, #d29922)">${esc(w)}</div>`).join('')}
     <details style="margin-top:4px"><summary class="admin-toggle-sub" style="cursor:pointer">Permissions</summary>
       <ul class="admin-toggle-sub" style="margin:4px 0 0 18px;padding:0">${perms}</ul></details>
     <div class="settings-row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
@@ -84,7 +111,7 @@ function renderMod(m) {
         </select></label>
       <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">
         <input type="checkbox" data-mod-mute="${esc(m.id)}"${m.notify_muted ? ' checked' : ''}> Mute notifications</label>
-    </div>
+    </div>${placementRow(m)}
     <pre class="mods-log" data-mod-log="${esc(m.id)}" style="display:${_openLogs.has(m.id) ? 'block' : 'none'};max-height:260px;overflow:auto;font-size:11px;background:var(--bg-tertiary, rgba(0,0,0,.25));padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:8px"></pre>
   </div>`;
 }
@@ -125,6 +152,7 @@ function renderStaged() {
     ${setup ? `<div class="admin-toggle-sub">After approval it runs these setup commands:<br>${setup}</div>` : ''}
     <div class="admin-toggle-sub" style="margin-top:6px"><strong>It asks for:</strong></div>
     <ul class="admin-toggle-sub" style="margin:2px 0 0 18px;padding:0">${perms}</ul>
+    ${(s.warnings || []).map((w) => `<div class="admin-toggle-sub" style="color:var(--yellow, #d29922)">Note: ${esc(w)}</div>`).join('')}
     <div class="admin-toggle-sub" style="margin-top:6px">Adds ${(ui.tabs || []).length} tab(s), ${(ui.home_cards || []).length} home card(s)${s.tools ? ' and agent tools' : ''}.
       ${s.runtime === 'docker' ? '' : 'A process mod runs as the same user as Odysseus and can read what that user can; only approve code you trust.'}</div>
     <div class="settings-row" style="gap:6px;margin-top:8px">
@@ -148,6 +176,7 @@ async function load() {
   try {
     const d = await api('GET', API);
     _mods = d.mods || [];
+    _groups = Array.isArray(d.nav_groups) ? d.nav_groups : [];
     renderList();
     renderNotify(d.notify);
   } catch (e) { say(e.message, true); }
@@ -283,6 +312,13 @@ async function onChange(ev) {
     if (t.dataset.modAccess) {
       replaceMod((await api('POST', `${API}/${encodeURIComponent(t.dataset.modAccess)}/access`, { access: t.value })).mod);
       say('Saved.');
+    } else if (t.dataset.modSection || t.dataset.modHide) {
+      const id = t.dataset.modSection || t.dataset.modHide;
+      const card = t.closest('[data-mod-card]');
+      const section = card?.querySelector('[data-mod-section]')?.value || null;
+      const hidden = !!card?.querySelector('[data-mod-hide]')?.checked;
+      replaceMod((await api('POST', `${API}/${encodeURIComponent(id)}/placement`, { section, hidden })).mod);
+      say(hidden ? 'Hidden from the sidebar.' : `Its tabs show in ${section ? groupLabel(section) : 'the group the mod asks for'}.`);
     } else if (t.dataset.modMute) {
       replaceMod((await api('POST', `${API}/${encodeURIComponent(t.dataset.modMute)}/mute`, { muted: t.checked })).mod);
       say(t.checked ? 'Muted.' : 'Unmuted.');

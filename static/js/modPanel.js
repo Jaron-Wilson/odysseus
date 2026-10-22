@@ -5,12 +5,16 @@
 // origin, so they never see Odysseus's cookies, storage or page.
 //
 // The workspace shell (workspace/shell.js) turns each tab into a tab tool and
-// lists them in its "+" menu.
+// lists them in its "+" menu; modNav.js puts them in the sidebar. Both read
+// nav(): the tabs in the nav group each one goes in (the manifest's
+// `section`/`after`/`order`, or the admin's choice in Settings > Mods), in
+// order, already sorted by the server (src/mods/placement.py).
 
 const SANDBOX = 'allow-scripts allow-forms allow-popups allow-downloads';
 const REFRESH_MS = 6 * 60 * 60 * 1000;   // frame tokens last 12 hours
 
 let _mods = null;
+let _nav = [];
 let _loading = null;
 let _loadedAt = 0;
 const _listeners = new Set();
@@ -19,8 +23,9 @@ const _panels = new Map();   // "<mod>:<tab>" -> backdrop element
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function _sig(mods) {
-  return JSON.stringify((mods || []).map((m) => [m.id, m.tabs.map((t) => [t.id, t.title]), m.home_cards.map((c) => c.id)]));
+function _sig(mods, nav) {
+  return JSON.stringify([(mods || []).map((m) => [m.id, m.tabs.map((t) => [t.id, t.title]), m.home_cards.map((c) => c.id)]),
+    (nav || []).map((n) => [n.mod, n.tab, n.section, n.after])]);
 }
 
 // The mods this user may use: [{id, name, status, tabs[], home_cards[], settings_url}].
@@ -31,10 +36,11 @@ export async function list(force = false) {
     try {
       const res = await fetch('/api/mods/ui', { credentials: 'same-origin' });
       const d = res.ok ? await res.json() : { mods: [] };
-      const before = _sig(_mods);
+      const before = _sig(_mods, _nav);
       _mods = Array.isArray(d.mods) ? d.mods : [];
+      _nav = Array.isArray(d.nav) ? d.nav : [];
       _loadedAt = Date.now();
-      if (_sig(_mods) !== before) _listeners.forEach((fn) => { try { fn(_mods); } catch (_) { /* one listener */ } });
+      if (_sig(_mods, _nav) !== before) _listeners.forEach((fn) => { try { fn(_mods); } catch (_) { /* one listener */ } });
     } catch (_) {
       _mods = _mods || [];
     } finally {
@@ -47,6 +53,12 @@ export async function list(force = false) {
 
 // Called with the new list whenever the set of mods, tabs or cards changes.
 export function onChange(fn) { _listeners.add(fn); return () => _listeners.delete(fn); }
+
+// The tabs to show in the navigation, in order:
+// [{mod, tab, title, icon, section, after, order}]. `section` is a group id
+// from toolPages.js GROUPS, or 'mods'; `after` is the key of the built-in page
+// it follows (null: the end of the group). Hidden tabs are not in it.
+export function nav() { return _nav; }
 
 export const tabKey = (modId, tabId) => `mod:${modId}:${tabId}`;
 
@@ -119,5 +131,5 @@ export function cardElement(m, card) {
 // Settings > Mods says when mods change.
 window.addEventListener('odysseus:mods-changed', () => { list(true); });
 
-window.modPanel = { list, open, close, onChange, tabKey, cardElement };
+window.modPanel = { list, nav, open, close, onChange, tabKey, cardElement };
 export default window.modPanel;

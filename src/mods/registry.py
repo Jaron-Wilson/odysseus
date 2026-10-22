@@ -316,6 +316,7 @@ def prepare(source: str, ref: Optional[str] = None, subdir: Optional[str] = None
         "new_permissions": sorted(set(manifest["permissions"]) - granted) if existing else manifest["permissions"],
         "ui": manifest["ui"],
         "tools": bool(manifest["tools"]),
+        "warnings": manifest.get("warnings") or [],
     }
 
 
@@ -425,6 +426,17 @@ def set_access(mod_id: str, access: str) -> Dict[str, Any]:
     return _update(mod_id, access=access)
 
 
+def set_placement(mod_id: str, section: Any = None, hidden: Any = False) -> Dict[str, Any]:
+    """The user's choice of where the mod's tabs go (src/mods/placement.py).
+    An empty section means the manifest's own."""
+    from src.mods import placement
+    try:
+        value = placement.clean_override(section, hidden)
+    except ValueError as e:
+        raise RegistryError(str(e))
+    return _update(mod_id, placement=value)
+
+
 def rotate_token(mod_id: str) -> Dict[str, Any]:
     return _update(mod_id, token=_encrypt(signing.new_token()), token_rotated_at=time.time())
 
@@ -465,6 +477,8 @@ def public(entry: Dict[str, Any]) -> Dict[str, Any]:
         "runtime": {k: man.get("runtime", {}).get(k) for k in ("type", "start", "health", "idle_stop_minutes")},
         "permissions": mf.describe_permissions(entry.get("granted_permissions") or []),
         "ui": man.get("ui") or {},
+        "placement": {"section": None, "hidden": False, **(entry.get("placement") or {})},
+        "warnings": man.get("warnings") or [],
         "tools": man.get("tools"),
         "events": man.get("events"),
     }
