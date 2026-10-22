@@ -278,6 +278,10 @@ async def execute(tool: str, content: str, owner: Optional[str], session_id: Opt
     headers["Content-Type"] = "application/json"
     if session_id:
         headers["X-Odysseus-Session"] = session_id
+    from src.mods import runs as mod_runs
+    run_id = mod_runs.run_header(mod_id)
+    if run_id:
+        headers["X-Odysseus-Run"] = run_id      # the mod's own agent run (src/mods/runs.py)
     url = f"http://127.0.0.1:{port}{tcfg.get('endpoint', '/mod/tools').rstrip('/')}/{name}"
     try:
         r = await runtime._client().post(url, content=json.dumps(args), headers=headers, timeout=CALL_TIMEOUT_S)

@@ -24,8 +24,9 @@ from typing import Any, Deque, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from src.mods import (access, catalog, events, manifest as mf, notify, placement, proxy, registry, runtime, tools,
-                      tutorial)
+from src.mods import (access, catalog, events, manifest as mf, notify, placement, proxy, registry, runtime, runs,
+                      tools, tutorial, usage_api)
+from src.mods import llm as mod_llm
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ MAX_KV_VALUE_BYTES = 64 * 1024
 _KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 # Per-mod, per-permission rate limits: (calls, seconds).
 RATE_LIMITS = {"notify": (30, 60), "llm.call": (20, 60), "events.emit": (240, 60), "devices.control": (30, 60),
-               "tools.refresh": (6, 60)}
+               "tools.refresh": (6, 60), "agent.run": (120, 60), "budgets": (120, 60)}
 _calls: Dict[tuple, Deque[float]] = defaultdict(deque)
 _background: set = set()   # running background tasks (kept so they are not garbage collected)
 
@@ -290,6 +291,16 @@ def _setup_v1(router: APIRouter) -> None:
         _write_json(_kv_path(e["id"]), data)
         return {"ok": True, "existed": existed}
 
+    @router.get("/api/mods/v1/llm/models")
+    async def v1_llm_models(request: Request, user: str = "", local_only: bool = False):
+        """The models the mod may name in llm/chat and agent runs (src/mods/llm.py)."""
+        e = _mod(request, "llm.call")
+        owner = _owner_for(e, {"user": user})
+        items = await asyncio.to_thread(mod_llm.models, owner or None)
+        if local_only:
+            items = [m for m in items if m["local"]]
+        return {"models": items}
+
     @router.post("/api/mods/v1/llm/chat")
     async def v1_llm(request: Request):
         e = _mod(request, "llm.call")
@@ -300,26 +311,31 @@ def _setup_v1(router: APIRouter) -> None:
                            and isinstance(m.get("content"), str) for m in messages)):
             raise HTTPException(400, "messages must be a list of {role, content} under 100 KB")
         role = body.get("model_role") or "utility"
-        if role not in ("utility", "default"):
-            raise HTTPException(400, "model_role must be utility or default")
         try:
             max_tokens = max(16, min(int(body.get("max_tokens") or 1024), 8192))
             temperature = max(0.0, min(float(body.get("temperature") if body.get("temperature") is not None else 0.3), 2.0))
-        except (TypeError, ValueError):
-            raise HTTPException(400, "max_tokens and temperature must be numbers")
+            scope = usage_api.clean_path(body.get("scope"))
+        except (TypeError, ValueError) as ex:
+            raise HTTPException(400, str(ex) if "scope" in str(ex) else "max_tokens and temperature must be numbers")
         owner = _owner_for(e, body)
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
-        url, model, headers = resolve_endpoint(role, owner=owner or None)
-        if not url or not model:
-            raise HTTPException(503, "No model is configured (Settings > AI Defaults)")
+        why = usage_api.stop_reason(e["id"], scope)
+        if why:
+            raise HTTPException(402, f"Not sent: {why}")
         try:
-            text = await llm_call_async(url, model, messages, temperature=temperature, max_tokens=max_tokens,
-                                        headers=headers, owner=owner or None, timeout=180)
+            url, model, headers = await asyncio.to_thread(
+                mod_llm.resolve, owner or None, body.get("model"), role, bool(body.get("local_only")))
+        except mod_llm.ModelError as ex:
+            raise HTTPException(ex.status, ex.message)
+        from src.llm_core import llm_call_async
+        from src.usage import usage_scope
+        try:
+            with usage_scope(source="mod", owner=owner or None, source_scope=usage_api.full_scope(e["id"], scope)):
+                text = await llm_call_async(url, model, messages, temperature=temperature, max_tokens=max_tokens,
+                                            headers=headers, owner=owner or None, timeout=180)
         except Exception as ex:
             raise HTTPException(502, f"The model call failed: {type(ex).__name__}")
         runtime.log_line(e["id"], f"[odysseus] llm/chat via {model}")
-        return {"content": text, "model": model}
+        return {"content": text, "model": model, "local": mod_llm.is_local_url(url)}
 
     @router.post("/api/mods/v1/tools/refresh")
     async def v1_tools_refresh(request: Request):
@@ -349,6 +365,10 @@ def _setup_v1(router: APIRouter) -> None:
         _background.add(task)
         task.add_done_callback(_background.discard)
         return {"ok": True, "queued": True}
+
+    # Agent runs (src/mods/runs.py) and usage scopes and budgets (src/mods/usage_api.py).
+    runs.setup(router, _mod, _owner_for)
+    usage_api.setup(router, _mod)
 
 
 # ── Admin and UI ─────────────────────────────────────────────────────────

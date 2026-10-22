@@ -26,9 +26,11 @@ from typing import Any, Dict, Iterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
-SOURCES = ("chat", "task", "subagent", "company", "tts", "other")
+SOURCES = ("chat", "task", "subagent", "company", "mod", "tts", "other")
+# source_scope: "mod:<mod id>/<scope path>" for a mod's model calls and agent
+# runs (src/mods/usage_api.py); budgets match it as a path prefix.
 SCOPE_FIELDS = ("owner", "source", "session_id", "task_run_id", "company_id",
-                "company_agent_id", "company_run_id")
+                "company_agent_id", "company_run_id", "source_scope")
 
 _scope: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
     "odysseus_usage_scope", default=None)
@@ -120,6 +122,7 @@ def record_usage(*, endpoint_url: Optional[str] = None, model: Optional[str] = N
                  source: Optional[str] = None, session_id: Optional[str] = None,
                  task_run_id: Optional[str] = None, company_id: Optional[str] = None,
                  company_agent_id: Optional[str] = None, company_run_id: Optional[str] = None,
+                 source_scope: Optional[str] = None,
                  endpoint_id: Optional[str] = None, provider: Optional[str] = None,
                  billing_type: Optional[str] = None, cost_usd: Optional[float] = None,
                  occurred_at: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
@@ -184,7 +187,7 @@ def _record(**kw) -> Optional[Dict[str, Any]]:
             id=str(uuid.uuid4()), owner=attr["owner"], occurred_at=kw["occurred_at"] or utcnow(),
             source=source, session_id=attr["session_id"], task_run_id=attr["task_run_id"],
             company_id=attr["company_id"], company_agent_id=attr["company_agent_id"],
-            company_run_id=attr["company_run_id"], endpoint_id=endpoint_id,
+            company_run_id=attr["company_run_id"], source_scope=attr["source_scope"], endpoint_id=endpoint_id,
             provider=pricing.provider_label(priced.get("provider"), kw["endpoint_url"]), model=kw["model"],
             billing_type=priced["billing_type"], input_tokens=inp, cached_input_tokens=cached,
             output_tokens=out, cost_usd=float(priced["cost_usd"] or 0.0),
@@ -215,7 +218,8 @@ def _row(r) -> Dict[str, Any]:
         "occurred_at": r.occurred_at.isoformat() if r.occurred_at else None,
         "source": r.source, "session_id": r.session_id, "task_run_id": r.task_run_id,
         "company_id": r.company_id, "company_agent_id": r.company_agent_id,
-        "company_run_id": r.company_run_id, "endpoint_id": r.endpoint_id,
+        "company_run_id": r.company_run_id, "source_scope": getattr(r, "source_scope", None),
+        "endpoint_id": r.endpoint_id,
         "provider": r.provider, "model": r.model, "billing_type": r.billing_type,
         "input_tokens": r.input_tokens, "cached_input_tokens": r.cached_input_tokens,
         "output_tokens": r.output_tokens, "cost_usd": r.cost_usd,
@@ -352,6 +356,12 @@ def summary(owner: Optional[str], *, all_users: bool = False, start: Optional[da
         sub_usd = sub["fixed_usd"] if include_fixed else sub["allocated_usd"]
         by_agent = _group(q.filter(UsageEvent.company_agent_id != None), UsageEvent.company_agent_id)  # noqa: E711
         _name_agents(db, by_agent)
+        # "mod:<id>/..." -> "mod:<id>": one row per mod.
+        mod_key = func.substr(UsageEvent.source_scope, 1,
+                              func.instr(UsageEvent.source_scope + "/", "/") - 1)
+        by_mod = _group(q.filter(UsageEvent.source_scope != None), mod_key)  # noqa: E711
+        for r in by_mod:
+            r["mod_id"] = (r.get("key") or "")[4:] if str(r.get("key") or "").startswith("mod:") else r.get("key")
         return {
             "start": start.isoformat() + "Z", "end": end.isoformat() + "Z",
             "scope": "all" if all_users else (owner or "single-user"),
@@ -370,6 +380,7 @@ def summary(owner: Optional[str], *, all_users: bool = False, start: Optional[da
             "by_session": by_session,
             "by_company": _group(q.filter(UsageEvent.company_id != None), UsageEvent.company_id),  # noqa: E711
             "by_company_agent": by_agent,
+            "by_mod": by_mod,
             "by_owner": _group(q, UsageEvent.owner) if all_users else [],
             "daily": daily,
         }

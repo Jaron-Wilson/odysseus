@@ -686,6 +686,8 @@ class UsageEvent(Base):
     company_id = Column(String, nullable=True, index=True)
     company_agent_id = Column(String, nullable=True, index=True)
     company_run_id = Column(String, nullable=True)
+    # A mod's call or agent run: "mod:<mod id>/<scope path>" (src/mods/usage_api.py).
+    source_scope = Column(String, nullable=True, index=True)
     endpoint_id = Column(String, nullable=True)
     provider = Column(String, nullable=True)
     model = Column(String, nullable=True)
@@ -1020,6 +1022,21 @@ def _migrate_add_company_agent_pause_reason():
                     logging.getLogger(__name__).info(f"Migrated: added '{col}' to company_agents")
     except Exception as e:
         logging.getLogger(__name__).warning(f"company_agents pause_reason migration failed: {e}")
+
+
+def _migrate_add_usage_source_scope():
+    """usage_events.source_scope: usage of a mod's model calls and agent runs."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(usage_events)"))]
+            if cols and "source_scope" not in cols:
+                conn.execute(text("ALTER TABLE usage_events ADD COLUMN source_scope VARCHAR"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_usage_events_source_scope "
+                                  "ON usage_events (source_scope)"))
+                conn.commit()
+                logging.getLogger(__name__).info("Migrated: added 'source_scope' to usage_events")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"usage_events source_scope migration failed: {e}")
 
 
 def _migrate_chatgpt_plan_native_tools():
@@ -2113,6 +2130,7 @@ def init_db():
     _migrate_chatgpt_plan_native_tools()
     _migrate_add_task_run_model_column()
     _migrate_add_company_agent_pause_reason()
+    _migrate_add_usage_source_scope()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()
