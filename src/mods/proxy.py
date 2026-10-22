@@ -142,12 +142,25 @@ def _is_navigation(request: Request) -> bool:
     return request.method == "GET" and "text/html" in (request.headers.get("accept") or "")
 
 
+PUBLIC_PREFIX = "/public/"
+
+
+def is_public(entry: dict, tok: Optional[str], upath: str) -> bool:
+    """A webhook path: /mods/<id>/public/..., without a frame token, of a mod
+    granted public.http. It reaches the mod with no sign-in, signed as
+    `odysseus-public`; the mod checks its own secrets (docs/mods.md)."""
+    return (tok is None and upath.startswith(PUBLIC_PREFIX)
+            and "public.http" in (entry.get("granted_permissions") or []))
+
+
 def _resolve(mod_id: str, rest: str, cookie_user: Optional[str]):
     """(entry, user, frame token, upstream path) or a Response to send."""
     entry = registry.get(mod_id)
     if not entry or not entry.get("enabled"):
         return page(404, "No such mod", f"There is no enabled mod called {mod_id}.")
     tok, upath = signing.split_frame_path(rest)
+    if is_public(entry, tok, upath):
+        return entry, signing.PUBLIC_USER, None, upath
     user: Optional[str]
     if tok is not None:
         user = signing.check_frame_token(tok, mod_id)
@@ -224,7 +237,7 @@ async def _handle_http(request: Request, mod_id: str, rest: str) -> Response:
     entry, user, tok, upath = res
     if user is None:
         return page(401, "Not signed in", "Sign in to Odysseus first.")
-    if tok is None and _is_navigation(request):
+    if tok is None and user != signing.PUBLIC_USER and _is_navigation(request):
         # Pages always load under a frame token (see the module doc).
         q = request.url.query
         target = f"/mods/{mod_id}/~{signing.frame_token(mod_id, user)}{upath}" + (f"?{q}" if q else "")
@@ -290,7 +303,7 @@ async def handle_ws(websocket: WebSocket, mod_id: str, rest: str) -> None:
     if user is None:
         await websocket.close(code=1008)
         return
-    if tok is None:
+    if tok is None and user != signing.PUBLIC_USER:
         # Cookie-authenticated: block cross-site WebSocket hijacking. (A mod
         # page has an opaque origin and sends "null"; it uses its frame token.)
         host = public_host(websocket.headers).lower()

@@ -104,8 +104,8 @@ Writes:
   These are you acting directly, so there is no approval card.
 - **The assistant's** `manage_calendar` create, update and delete on a Google calendar wait for
   your **Approve** in the chat (see the next sections), then go to Google.
-- Invitations are not emailed for changes made here (`sendUpdates=none`); use `google_meet` to
-  invite people.
+- Invitations are not emailed for changes made here (`sendUpdates=none`); the Phone & Messages
+  mod's meeting tool makes a Meet and invites people.
 
 When something is wrong (Google not connected, the connection revoked, Calendar turned off, a
 permission missing, the Calendar API not enabled), the Calendar page shows the reason above the
@@ -170,7 +170,6 @@ what is connected).
 | `google_tasks_list` | Tasks | task lists, or the tasks in one | no |
 | `google_task_create` | Tasks | add a task with notes and a due date | yes |
 | `google_contacts_search` | Contacts | look someone up by name, email or phone | no |
-| `google_meet` | Calendar | make or join a Meet (see docs/google-meet.md) | yes |
 
 Long results are cut down (12,000 characters by default, 100 rows for sheets) with a note
 saying which `offset` or `range` reads on. After a create or edit, the chat reply always gets a
@@ -191,10 +190,10 @@ What asks first:
 | Where | Asks before | Never asks |
 | --- | --- | --- |
 | Drive, Docs, Sheets, Slides, Tasks | every tool in the table above marked "Changes things": `google_drive_upload`, `google_drive_create_folder`, `google_doc_create`, `google_doc_edit`, `google_sheet_write`, `google_sheet_append`, `google_sheet_create`, `google_slides_create`, `google_task_create` | `google_status` and every `*_read`, `*_search`, `*_list` tool |
-| Google Meet | `google_meet` start, now, create, schedule (each makes a Calendar event and a Meet space, and may email invites) | join, status |
+| Google Meet | the Phone & Messages mod's `meet_create` tool (it makes a Calendar event and a Meet space through the mod API, `POST /api/mods/v1/google/meet`, and may email invites; it is `asks_first`, so the mod tool flow asks) | joining, status |
 | Google Calendar | `manage_calendar` create_event, update_event, delete_event, or a batch of events, on a Google calendar linked through this connection (Organize > Calendar), or on a CalDAV calendar whose account URL is Google's (`apidata.googleusercontent.com`, `google.com/calendar/dav`) | list_events, list_calendars; local calendars and other CalDAV servers (Fastmail, iCloud, Nextcloud...); your own create/edit/delete on the Calendar page |
 | Gmail | `send_email`, `reply_to_email`, `archive_email`, `delete_email`, `mark_email_read`, `bulk_email` on a mailbox whose IMAP or SMTP server is Google's (`imap.gmail.com`, `smtp.gmail.com`, so Google Workspace mail counts) or whose address is `@gmail.com` | list, read and search email; drafts (`draft_email`, `draft_email_reply`, `ai_draft_email_reply` save a draft in Odysseus, not in Gmail); other mailboxes |
-| `app_api` | a POST, PUT, PATCH or DELETE to `/api/email`, `/api/calendar`, `/api/caldav`, `/api/meet` or `/api/google` is refused outright while this is on (it cannot ask); the named tools above are the way | GETs |
+| `app_api` | a POST, PUT, PATCH or DELETE to `/api/email`, `/api/calendar`, `/api/caldav` or `/api/google` is refused outright while this is on (it cannot ask); the named tools above are the way | GETs |
 
 How an answer works:
 

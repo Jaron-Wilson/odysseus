@@ -35,9 +35,8 @@ PRODUCTS: Dict[str, Dict] = {
         "scopes": [CALENDAR_SCOPE],
         "extra": [CALENDAR_LIST_SCOPE, MEET_SETTINGS_SCOPE],
         "api": "Google Calendar API (and Google Meet REST API)",
-        "tools": ["google_meet"],
         "about": "Your Google calendars in Organize > Calendar (pick which ones, see and edit their events), "
-                 "and Google Meet meetings with invites from your calendar (the google_meet tool).",
+                 "and Google Meet meetings with invites from your calendar (with the Phone & Messages mod).",
     },
     "drive": {
         "label": "Google Drive",
@@ -332,8 +331,7 @@ def index_descriptions() -> Dict[str, str]:
 
 
 def tools_for(product: str) -> List[str]:
-    """The google_* tools a product unlocks (Calendar's google_meet lives in
-    src/meet/ and is listed on the card only)."""
+    """The google_* tools a product unlocks."""
     return [n for n, t in TOOLS.items() if t["product"] == product]
 
 

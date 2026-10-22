@@ -56,7 +56,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(cdb, "SessionLocal", ts)
     monkeypatch.setattr(croutes, "SessionLocal", ts, raising=False)
 
-    calls = {"google": [], "mcp": [], "writeback": [], "meet": [], "notify": []}
+    calls = {"google": [], "mcp": [], "writeback": [], "notify": []}
 
     # Google Workspace: connected, and every product call recorded.
     from src.google_workspace import connection, tools as gtools
@@ -104,25 +104,6 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(wb, "writeback_event", fake_writeback)
     import routes.prefs_routes as prefs
     monkeypatch.setattr(prefs, "_load_for_user", lambda user=None: {})
-
-    # Meet.
-    from routes import meet_routes
-
-    async def fake_create(owner, is_admin, body):
-        calls["meet"].append(body)
-        return {"message": "Made it", "url": "https://meet.google.com/abc-defg-hij", "title": body.get("title")}
-    monkeypatch.setattr(meet_routes, "create_meeting", fake_create)
-
-    async def fake_join(owner, is_admin, body):
-        class M:
-            via = "browser"
-            url = body["url"]
-            dial_in = {}
-
-            def public(self):
-                return {"url": self.url}
-        return M()
-    monkeypatch.setattr(meet_routes, "start_join", fake_join)
 
     import src.chat_queue as cq
 
@@ -273,29 +254,6 @@ def test_another_user_cannot_see_or_answer_it(env, client):
     assert client.get(f"/api/action_approvals/{aid}", headers=BOB).status_code == 404
     assert client.post(f"/api/action_approvals/{aid}/approve", headers=BOB).status_code == 404
     assert env["google"] == []
-
-
-# ── Meet ─────────────────────────────────────────────────────────────────
-
-@pytest.mark.parametrize("args", [
-    {"action": "start", "title": "Quick sync", "attendees": ["bob@x.com"]},
-    {"action": "schedule", "title": "Planning", "start": "tomorrow at 3pm"},
-    {"title": "No action means start"},
-])
-def test_meet_create_is_held(args, env, client):
-    _, out = _call("google_meet", args, owner="ann")
-    assert _held(out) and env["meet"] == []
-    client.post(f"/api/action_approvals/{out['action_approval']['id']}/approve", headers=ANN)
-    assert len(env["meet"]) == 1
-
-
-@pytest.mark.parametrize("args", [{"action": "join", "url": "https://meet.google.com/abc-defg-hij"},
-                                  {"action": "status"}])
-def test_meet_join_and_status_are_not_held(args, env, monkeypatch):
-    from src.meet import tool as meet_tool
-    monkeypatch.setattr(meet_tool, "_status", lambda owner: "ok")
-    _, out = _call("google_meet", args)
-    assert not _held(out)
 
 
 # ── Google Calendar over CalDAV, and other calendars ────────────────────

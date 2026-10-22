@@ -65,6 +65,22 @@ PERMISSIONS: Dict[str, str] = {
     "llm.call": "Ask your configured AI models questions (uses your model routing and your usage)",
 }
 
+# What a mod needs to reach the agent like a built-in feature (the mod API in
+# src/mods/host_api.py), and webhooks that reach it without a sign-in
+# (src/mods/proxy.py, "Public paths" in docs/mods.md).
+PERMISSIONS.update({
+    "chats": ("Read the names of your chats, start chats, and send messages to the agent in them "
+              "(it answers with its tools and memory, as if you typed them)"),
+    "speech": "Use the server's speech to text and text to speech engines",
+    "browser": ("Drive the cloud browser on the server (it opens its own tabs; the browser's profile "
+                "holds whatever accounts are signed in there)"),
+    "google.calendar": "Make events with a Google Meet link in your Google Calendar, which emails the invites",
+    "calendar.read": "Read your calendar events that have a Google Meet link",
+    "users": "See whether a user is an admin",
+    "public.http": ("Receive requests from anyone who can reach Odysseus, without a sign-in, at "
+                    "/mods/<id>/public/ (webhooks; the mod must check its own secrets)"),
+})
+
 RUNTIME_TYPES = ("process", "docker")
 START_MODES = ("lazy", "boot")
 

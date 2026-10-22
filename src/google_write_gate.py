@@ -12,8 +12,8 @@ and Deny. What counts:
   Google Workspace   every google_* tool marked "mutates" in
                      src/google_workspace/products.py (create, edit, write,
                      append, upload, new folder, add task)
-  Google Meet        google_meet start / now / create / schedule (each makes a
-                     Calendar event and a Meet space); join and status are free
+  Google Meet        made by the Phone & Messages mod: its meet_create tool is
+                     `asks_first`, so the mod tool flow asks (src/mods/tools.py)
   Google Calendar    manage_calendar create_event / update_event /
                      delete_event (and a batch of events) when the calendar
                      is linked through the connected Google account (source
@@ -28,7 +28,7 @@ and Deny. What counts:
                      SMTP server is Google's (imap.gmail.com, smtp.gmail.com,
                      Google Workspace) or whose address is @gmail.com
   app_api            writes (POST/PUT/PATCH/DELETE) to /api/email, /api/calendar,
-                     /api/caldav, /api/meet or /api/google are refused while this
+                     /api/caldav or /api/google are refused while this
                      is on: the named tools above are the way, and they ask
 
 Reads (google_*_read/search/list, google_status, list_events,
@@ -62,9 +62,8 @@ EMAIL_WRITE_TOOLS = ("send_email", "reply_to_email", "archive_email", "delete_em
 BARE_EMAIL_TOOLS = ("list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
                     "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment",
                     "search_emails", "draft_email", "draft_email_reply", "ai_draft_email_reply")
-MEET_WRITE_ACTIONS = ("start", "now", "create", "schedule")
 CAL_WRITE_ACTIONS = ("create_event", "update_event", "delete_event")
-APP_API_GUARDED = ("/api/email", "/api/calendar", "/api/caldav", "/api/meet", "/api/google")
+APP_API_GUARDED = ("/api/email", "/api/calendar", "/api/caldav", "/api/google")
 
 _GOOGLE_MAIL_HOSTS = ("gmail.com", "googlemail.com", "google.com")
 _GOOGLE_ADDRESS = re.compile(r"@(gmail|googlemail)\.com\s*>?\s*$", re.I)
@@ -407,32 +406,6 @@ def _describe_calendar(owner: Optional[str], a: Dict) -> Optional[Dict]:
         db.close()
 
 
-# ── Google Meet ──────────────────────────────────────────────────────────
-
-def _describe_meet(content: str) -> Optional[Dict]:
-    from src.meet import tool as meet_tool
-    a = meet_tool._args(content)
-    action = str(a.get("action") or "").lower()
-    if not action:
-        action = "join" if a.get("url") else ("schedule" if a.get("start") not in (None, "", "now") else "start")
-    if action not in MEET_WRITE_ACTIONS:
-        return None
-    title = str(a.get("title") or "Meeting")
-    start = "now" if action in ("start", "now") else str(a.get("start") or "")
-    att = a.get("attendees") or []
-    att_s = ", ".join(att) if isinstance(att, list) else str(att)
-    details = [("Title", title), ("Starts", start or "(not given)")]
-    if a.get("minutes") or a.get("duration"):
-        details.append(("Length", f"{a.get('minutes') or a.get('duration')} minutes"))
-    if att_s:
-        details.append(("Invites", att_s))
-    what = (f"Start a Google Meet now: \"{_short(title, 80)}\"" if start == "now"
-            else f"Schedule a Google Meet \"{_short(title, 80)}\" for {start}")
-    what += " (makes an event in your Google Calendar" + (f" and emails invites to {_short(att_s, 120)})" if att_s else ")")
-    return {"action": "Make a Meet", "title": what, "details": details,
-            "body": str(a.get("description") or ""), "body_label": "Description", "target": {"name": title}}
-
-
 # ── Google Workspace (google_* tools) ────────────────────────────────────
 
 async def _file_title(owner: Optional[str], raw: str) -> str:
@@ -565,7 +538,7 @@ def is_candidate(tool: str, content: str = "") -> bool:
     """Cheap first look, no lookups: could this call be a Google write?"""
     from src.google_workspace import products as P
     t = normalize(tool)
-    if t in P.WRITE_TOOLS or t in EMAIL_WRITE_TOOLS or t in ("google_meet", "manage_calendar"):
+    if t in P.WRITE_TOOLS or t in EMAIL_WRITE_TOOLS or t == "manage_calendar":
         return True
     return t == "app_api" and bool(_app_api_write(content))
 
@@ -578,8 +551,6 @@ async def classify(tool: str, content: str, owner: Optional[str]) -> Optional[Di
     a = _args(content)
     if t in P.WRITE_TOOLS:
         info = await _describe_workspace(owner, t, a)
-    elif t == "google_meet":
-        info = _describe_meet(content)
     elif t == "manage_calendar":
         info = await asyncio.to_thread(_describe_calendar, owner, a)
     elif t in EMAIL_WRITE_TOOLS:
@@ -641,7 +612,7 @@ async def intercept(tool: str, content: str, owner: Optional[str], session_id: O
         return ("app_api: refused", {
             "error": (f"Not done: {what} could change the user's Google account or mailbox, and app_api "
                       "cannot ask them first. Use the named tool instead (send_email, manage_calendar, "
-                      "google_meet, google_*): it shows the change to the user for approval."),
+                      "google_*): it shows the change to the user for approval."),
             "exit_code": 1})
     try:
         info = await classify(tool, content, owner)

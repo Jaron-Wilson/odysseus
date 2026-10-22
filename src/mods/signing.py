@@ -42,6 +42,9 @@ IDENTITY_HEADERS = ("x-odysseus-user", "x-odysseus-mod", "x-odysseus-ts", "x-ody
 
 CORE_USER = "odysseus-core"
 LOCAL_USER = "local"
+# A /mods/<id>/public/ path of a mod granted public.http: nobody signed in
+# (a webhook). The mod accepts it only on its /public/ routes.
+PUBLIC_USER = "odysseus-public"
 
 _frame_secret: Optional[bytes] = None
 

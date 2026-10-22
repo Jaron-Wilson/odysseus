@@ -404,6 +404,8 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
     access.set_auth_manager(auth_manager)
     router = APIRouter(tags=["mods"])
     _setup_v1(router)
+    from src.mods.host_api import setup_host_routes
+    setup_host_routes(router)
 
     @router.get("/api/mods")
     async def list_mods(request: Request):

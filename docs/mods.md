@@ -362,6 +362,13 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `network.lan` | Talking to machines on the local network. Shown to the user; only enforceable for docker mods |
 | `storage` | The key-value store the core keeps for it (`kv`) |
 | `llm.call` | `POST llm/chat` through the user's model routing |
+| `chats` | The user's chats: list them, start one, switch its model, send a message and get (or stream) the agent's answer, stop it, add a note; the models they can pick; what is running for them (see [The agent, speech and Google](#the-agent-speech-and-google)) |
+| `speech` | The server's speech to text and text to speech engines |
+| `browser` | The cloud browser's CDP address and X11 display |
+| `google.calendar` | Make an event with a Google Meet in the user's Google Calendar |
+| `calendar.read` | The user's calendar events that have a Google Meet link |
+| `users` | Whether a user is an admin |
+| `public.http` | Requests to `/mods/<id>/public/...` reach the mod with no sign-in (see [Public paths](#public-paths)) |
 
 Settings (`GET/PUT settings`) and `GET me` need no permission.
 
@@ -408,6 +415,20 @@ seconds off. The user is never empty:
 
 The health check is sent without identity headers.
 
+### Public paths
+
+A mod granted `public.http` gets webhooks: anything under `/mods/<id>/public/` (without a
+frame token) reaches it with no sign-in, HTTP and WebSocket, signed as the user
+`odysseus-public`. The mod must accept that user on its `/public/` routes only, and check its
+own secrets there (a secret in the path, a provider's signature). Without the permission those
+paths need a sign-in like any other. They are the only paths a request that arrives through
+Tailscale Funnel may reach (`FunnelGuardMiddleware` in `core/middleware.py`), so a mod can
+expose exactly one of them to the internet:
+
+```
+tailscale funnel --bg --https=8443 --set-path=/mods/phone/public/twilio http://127.0.0.1:7000/mods/phone/public/twilio
+```
+
 Responses: a `Location` inside the mod is rewritten to the proxied path, and cookies the mod sets
 are scoped to its path (cookie names starting `odysseus` are dropped). Every response gets a CSP
 `sandbox` (scripts, forms, popups, popups that escape the sandbox, downloads and modals allowed, no
@@ -450,6 +471,39 @@ signed-in user. A disabled mod answers 404, and a lazy one is started on first u
 
 Calls are rate limited per mod: notify 30 a minute, llm 20, events 240, device commands 30, tool
 refreshes 6. A missing permission answers 403, a bad token 401.
+
+### The agent, speech and Google
+
+What a mod needs to reach the agent the way a built-in feature does (`src/mods/host_api.py`).
+Phone & Messages uses them: a text conversation, a phone call and a Google Meet are each a
+chat, and each thing said is a turn in it, heard and spoken through the server's engines.
+
+Every call that is about a person names them, `user` (a query parameter, or in the body):
+the `X-Odysseus-User` the mod was given, or the owner it saved with its settings for a webhook
+that comes in with no one signed in. It must be a user who may use the mod (with sign-in
+turned off, any name, usually `local`). There is no fallback to the primary admin: a chat is
+someone's.
+
+| Call | Permission | Body / answer |
+|---|---|---|
+| `GET chats?user=&q=&limit=` | `chats` | `{chats: [{id, name, model, last_activity, busy}]}`, newest first, archived left out, `q` matches the name |
+| `GET chats/<id>?user=` | `chats` | One chat, or 404 when it is not theirs |
+| `POST chats` | `chats` | `{user, name, model, endpoint_id}` (no model: the user's default chat model). Answers the chat |
+| `POST chats/<id>/model` | `chats` | `{user, model, endpoint_id}`: a model from `GET models` |
+| `POST chats/<id>/turn` | `chats` | `{user, message, source, voice_call, note, interrupt, stream}`. The message goes into the chat and the agent answers with its tools and memory, as a detached run (the path a queued message takes). `voice_call` adds the voice call note (short, spoken replies), `note` is added to the system prompt for this turn, `interrupt` (default true) stops a reply still running first, else a busy chat answers `{code: "busy"}`. With `stream`, server-sent events `{delta}`, `{error, message}`, then `{done, text, ok}`; without, `{ok, text, error}`. 60 a minute |
+| `POST chats/<id>/stop` | `chats` | `{user}`: stop the reply (it keeps what it said) |
+| `POST chats/<id>/note` | `chats` | `{user, text, source, meta}`: a line in the chat that is not a turn; `meta.excluded` shows it without the model reading it |
+| `GET models?user=` | `chats` | `{models: [{model, name, endpoint_id, endpoint_name, url}], default: {model, endpoint_id}}` |
+| `GET activity?user=` | `chats` | `{lines}`: coding agents, background jobs and chats replying |
+| `GET speech/status` | `speech` | `{problems}`: why it cannot hear or speak without a browser (empty when it can) |
+| `POST speech/transcribe` | `speech` | A WAV as the body (up to 25 MB). Answers `{text}` |
+| `POST speech/synthesize` | `speech` | `{text}` (up to 4000 characters). Answers `audio/wav` |
+| `GET browser` | `browser` | `{available, running}` |
+| `POST browser/session` | `browser` | Starts the cloud browser if needed: `{cdp_url, x11_display}`. The mod connects over CDP itself and opens its own tabs |
+| `GET google/calendar?user=` | `google.calendar` | `{configured, connected, email, can_open_access}` (connecting is in Settings > Google) |
+| `POST google/meet` | `google.calendar` | `{user, title, start ("now", ISO or words), minutes, attendees, description, open_access}`: a Calendar event with a new Meet; Google emails the invites. Answers `{url, title, start, end, attendees, event_id, open_access, access_hint, starts_now, ...}`, or 400 with the reason. 20 a minute |
+| `GET calendar/meetings?user=&hours=` | `calendar.read` | `{events: [{uid, summary, dtstart, dtend, location, description}]}`: each occurrence from an hour ago to `hours` ahead whose text has a Meet link |
+| `GET users/<name>` | `users` | `{user, admin}` |
 
 ### Events
 
@@ -535,7 +589,7 @@ instead, with the same rules, so callers do not change.
 
 Rules, whoever provides it:
 
-- **Only the user's own allowed numbers** (Settings > Calls & Meetings > Phone SMS), unless the
+- **Only the user's own allowed numbers** (Settings > Calls & Meetings > Text messages), unless the
   user granted the mod more: Settings > Mods, the mod's card, **Text messages** (per user and per
   mod; `POST /api/mods/<id>/grants` with `{"capability": "messaging.sms", "numbers": [...]}`).
 - **Rate limit**: 10 sends a minute and 100 a day per calling mod (`status`: 60 a minute).
@@ -705,7 +759,9 @@ else reads it.
 #### Pages that moved to mods
 
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
-receiver), `games`, `print` (3D print helper, now part of Print Hub), `devops`, `company`, and later `code`, `terminal`,
+receiver), `games`, `print` (3D print helper, now part of Print Hub), `devops`, `company`, `phone` (texting
+the agent, phone calls, the SIP line and Google Meet, which were Settings > Calls & Meetings; now
+the Phone & Messages mod, `/meet` opens it), and later `code`, `terminal`,
 `browser`, `claude-sessions`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
 `src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,
 `/#games?play=...`) and saved Workspace tabs keep working:
@@ -863,6 +919,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/proxy.py` | `/mods/<id>/` HTTP and WebSocket proxy |
 | `src/mods/signing.py` | Identity signatures and frame tokens |
 | `src/mods/routes.py` | The mod API, the admin API and the proxy routes |
+| `src/mods/host_api.py` | The mod API for the agent (chats), speech, the cloud browser, Google Meet and the calendar |
 | `src/mods/events.py`, `notify.py` | The event bus and notification fan-out |
 | `src/mods/tools.py` | Tool lists, selection per message and calls |
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |

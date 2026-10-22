@@ -24,7 +24,6 @@ from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool,
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 from .claude_code_tool import ClaudeCodeTool
 from .notify_tool import NotifyDeviceTool
-from .call_me_tool import CallMeTool
 from .devices_tool import ManageDevicesTool
 from .bg_job_tools import ManageBgJobsTool
 
@@ -32,7 +31,6 @@ TOOL_HANDLERS = {
     "bash": BashTool().execute,
     "claude_code": ClaudeCodeTool().execute,
     "notify_device": NotifyDeviceTool().execute,
-    "call_me": CallMeTool().execute,
     "manage_devices": ManageDevicesTool().execute,
     "python": PythonTool().execute,
     "web_search": WebSearchTool().execute,
@@ -90,15 +88,13 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "list_cookbook_servers",
              # Other tools the agent reaches for that were also missing.
              "edit_image", "trigger_research", "manage_research",
-             "claude_code", "notify_device", "manage_devices", "call_me",
+             "claude_code", "notify_device", "manage_devices",
              "chat_memory",
              # Threads of a chat: a branch, or a subagent run in the
              # background (src/chat_subagents.py).
              "branch_thread", "spawn_subagent",
              # The merged PRs (src/whats_new.py), read-only.
              "whats_new",
-             # Make or join a Google Meet (src/meet/tool.py).
-             "google_meet",
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.

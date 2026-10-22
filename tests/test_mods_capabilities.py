@@ -430,3 +430,19 @@ def test_calling_a_provider_by_name(env):
 def test_proxy_blocks_the_capability_endpoint(path, blocked):
     from src.mods import proxy
     assert proxy.core_only(path) is blocked
+
+
+def test_sms_notifications_follow_the_provider_mod(env):
+    """Mod notifications by text (src/mods/notify.py) go through the mod that
+    provides messaging.sms, so they use its reply URL, not the core's."""
+    import asyncio
+    from src.mods import notify
+    assert asyncio.run(notify._sms("alice", "built in")) == "reply_url" and len(env["sent"]) == 1
+    _, ptok = add_mod({"provides": ["messaging.sms"]}, mod_id="phone")
+    seen = []
+    with UvicornThread(_provider_app(ptok, seen)) as srv:
+        mark_running("phone", srv.port)
+        assert asyncio.run(notify._sms("alice", "Print failed")) == "phone-mod"
+    assert seen == [{"cap": "messaging.sms", "action": "send", "user": "alice", "caller": "core",
+                     "body": {"to": ALICE, "text": "Print failed"}}]
+    assert len(env["sent"]) == 1

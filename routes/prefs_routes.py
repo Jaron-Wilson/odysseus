@@ -8,9 +8,9 @@ from src.constants import USER_PREFS_FILE
 
 PREFS_FILE = USER_PREFS_FILE
 
-# Kept in this store but owned by their own routes, which hold credentials
-# there (the phone call provider's auth token, encrypted). The generic API
-# neither shows nor writes them; src/telephony/config.py does.
+# Kept in this store but not for the generic API: "phone_calls" held the
+# phone call provider's auth token (encrypted) before phone calls moved to
+# the Phone & Messages mod, and old stores still have it.
 PRIVATE_KEYS = {"phone_calls"}
 
 

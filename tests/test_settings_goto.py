@@ -199,7 +199,7 @@ def test_the_index_is_read_from_the_real_settings_page(make_page):
     assert len(paths) == len(idx), "ids are unique"
     assert paths["set-vcStt"] == "AI Defaults > Voice call > Hears with"
     assert paths["voice-call-settings"] == "AI Defaults > Voice call"
-    assert paths["sms-card"] == "Calls & Meetings > Phone SMS"
+    assert paths["sms-card"] == "Calls & Meetings > Text messages"
     assert paths["tab:system"] == "System"
     # Cards the page hides (the old Text to Speech card) are not places to go.
     assert not any(p.startswith("AI Defaults > Text to Speech") for p in paths.values())
@@ -294,9 +294,9 @@ def test_workspace_brings_a_background_settings_tab_forward(make_page):
 
 def test_a_fold_out_is_opened_on_the_way(make_page):
     pg = make_page()
-    pg.evaluate("() => window.__nav.goToSetting('sms-card/details0')")
+    pg.evaluate("() => window.__nav.goToSetting('google-account-card/details0')")
     _wait_landed(pg)
-    assert pg.evaluate("document.querySelector('#sms-card details').open")
+    assert pg.evaluate("document.querySelector('#google-account-card details').open")
 
 
 # ── Asking the Utility model ────────────────────────────────────────────
@@ -379,7 +379,7 @@ def test_take_me_to_in_a_composer_offers_a_chip(make_page, design):
     pg = make_page(design)
     pg.fill("#message", "take me to the sms settings")
     chip = pg.locator("#chat-container .settings-goto-chip")
-    assert chip.is_visible() and "Phone SMS" in chip.inner_text()
+    assert chip.is_visible() and "Text messages" in chip.inner_text()
     pg.fill("#message", "hello there")
     assert not chip.is_visible()
     pg.fill("#message", "bring me to the ai voice settings")

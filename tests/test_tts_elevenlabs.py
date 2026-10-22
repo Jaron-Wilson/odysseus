@@ -147,10 +147,6 @@ def test_wav_request_is_pcm_wrapped(http, tmp_path, monkeypatch):
     assert audio[:4] == b"RIFF"
     with wave.open(io.BytesIO(audio)) as w:
         assert (w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()) == (1, 2, 16000, 800)
-    # The phone codec can read it.
-    from src.telephony import codec
-    samples, rate = codec.decode_audio(audio)
-    assert rate == 16000 and len(samples) == 800
 
 
 def test_per_reply_cap(http, tmp_path, monkeypatch):
@@ -245,9 +241,10 @@ def test_guard_without_kokoro_hands_to_browser(http, tmp_path, monkeypatch):
         svc.synthesize_checked("Low on credits.")
     assert ei.value.status == 409 and getattr(ei.value, "fallback", "") == "browser"
     assert svc.get_stats()["effective_provider"] == "browser"
-    from src.telephony import call
+    # What a mod that speaks on a phone line is told (src/mods/host_api.py).
+    from src.mods import host_api
     monkeypatch.setattr("services.tts.get_tts_service", lambda: svc)
-    assert any("Kokoro is not ready" in p for p in call.engines_ready())
+    assert any("Kokoro is not ready" in p for p in host_api.speech_problems())
 
 
 def test_guard_absolute_floor(http, tmp_path, monkeypatch):

@@ -135,7 +135,11 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "print", "label": "3D print", "group": "create",
       "desc": "3D printing: the Print Hub mod (live view, new print, the print helper)",
       "aliases": ["3d print", "3d printing", "3d print helper", "print helper", "print hub", "printhub", "stl", "3mf",
-                  "bambu", "slicer", "supports", "make it printable", "printer", "3d printer"] }
+                  "bambu", "slicer", "supports", "make it printable", "printer", "3d printer"] },
+    { "key": "phone", "label": "Phone & Messages", "group": "organize",
+      "desc": "Text the agent, call it (the SIP line or a phone number) and bring it into a Google Meet: the Phone & Messages mod",
+      "aliases": ["phone", "phone calls", "calls", "calls and meetings", "sms", "text messages", "texting", "sip",
+                  "sip line", "softphone", "linphone", "twilio", "google meet", "meet", "meetings", "join a meeting"] }
   ]
 } /* tool-pages:end */;
 

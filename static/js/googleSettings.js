@@ -51,7 +51,7 @@ const TOOL_LABELS = {
   google_doc_edit: 'edit', google_sheet_read: 'read', google_sheet_write: 'write',
   google_sheet_append: 'append', google_sheet_create: 'create', google_slides_read: 'read',
   google_slides_create: 'create', google_tasks_list: 'list', google_task_create: 'add',
-  google_contacts_search: 'search', google_meet: 'make or join a Meet',
+  google_contacts_search: 'search',
 };
 
 let state = {};

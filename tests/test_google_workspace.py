@@ -289,8 +289,8 @@ def test_a_meet_era_connection_counts_as_calendar(google, tmp_path):
     connection._save("alice", {"email": "a@x.com", "refresh_token": secret_storage.encrypt(REFRESH),
                                "scopes": f"openid {P.CALENDAR_SCOPE}"})
     assert connection.enabled_products("alice") == ["calendar"]
-    from src.meet import google_calendar
-    assert google_calendar.status("alice")["connected"] is True
+    from src.google_workspace import meet as google_meet
+    assert google_meet.status("alice")["connected"] is True
 
 
 # ── What the grant really holds (tokeninfo) ──────────────────────────────

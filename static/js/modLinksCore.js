@@ -29,6 +29,7 @@ export const LEGACY_PAGES = {
   'usage': 'Usage',
   'plans': 'Plans',
   'whats-new': "What's new",
+  'phone': 'Phone & Messages',
 };
 
 const MOD_ID_RE = /^[a-z][a-z0-9-]{1,31}$/;
