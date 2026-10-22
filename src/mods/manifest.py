@@ -334,6 +334,10 @@ def validate(raw: Any) -> Dict[str, Any]:
     if out["events"]["subscribes"] and "events.subscribe" not in out["permissions"]:
         errors.append("`events.subscribes` needs the events.subscribe permission")
 
+    # ── capabilities (src/mods/capabilities.py) ──
+    from src.mods import capabilities
+    out.update(capabilities.check(raw, out["events"], errors, warnings))
+
     # ── tutorial (src/mods/tutorial.py) ──
     from src.mods import tutorial
     out["tutorial"] = tutorial.check(raw.get("tutorial"), bool(out["ui"]["settings_path"]),

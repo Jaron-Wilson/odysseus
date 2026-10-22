@@ -28,7 +28,9 @@ MIN_CORE_RE = re.compile(r"^\d+(?:\.\d+){0,2}$")
 TAG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,31}$")
 SUBDIR_RE = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
 RESERVED_IDS = {"v1", "v2", "install", "settings", "events", "scaffold", "ui", "core", "odysseus", "catalog"}
-ENTRY_KEYS = {"repo", "id", "verified", "notes", "blocked_versions", "min_core", "subdir", "tags"}
+CAP_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}(?:\.[a-z][a-z0-9-]{0,31}){1,4}$")
+ENTRY_KEYS = {"repo", "id", "verified", "notes", "blocked_versions", "min_core", "subdir", "tags",
+              "provides", "requires", "optional"}
 TOP_KEYS = {"$schema", "schema_version", "name", "mods"}
 
 
@@ -88,6 +90,11 @@ def check(data: Any) -> List[str]:
         tags = e.get("tags", [])
         if not isinstance(tags, list) or len(tags) > 10 or not all(isinstance(t, str) and TAG_RE.match(t) for t in tags):
             problems.append(f"{w}: tags must be at most 10 lowercase slugs like 3d-printing")
+        for kind in ("provides", "requires", "optional"):
+            caps = e.get(kind, [])
+            if not isinstance(caps, list) or len(caps) > 16 or not all(
+                    isinstance(c, str) and len(c) <= 64 and CAP_RE.match(c) for c in caps):
+                problems.append(f"{w}: {kind} must be at most 16 capability ids like messaging.sms")
     return problems
 
 

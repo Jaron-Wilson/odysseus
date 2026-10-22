@@ -115,3 +115,37 @@ def test_standalone_app_asks_for_a_password(monkeypatch):
         assert _req(base + "/", headers=sign_identity("x", "my-mod", "alice"))[0] == 401
     finally:
         srv.shutdown()
+
+
+def test_providing_a_capability():
+    """ModApp.provide serves /mod/cap/<capability>/<action> to the core only."""
+    app = ModApp(core=CoreClient(url="http://127.0.0.1:9", token="odm_t", mod_id="my-mod"))
+
+    @app.provide("my-mod.jobs", "list")
+    def jobs(req, args):
+        return {"jobs": [], "user": req.user, "caller": req.caller, "limit": args.get("limit")}
+
+    srv, base = _serve(app)
+    try:
+        h = dict(sign_identity("odm_t", "my-mod", "alice"), **{"Content-Type": "application/json",
+                                                               "X-Odysseus-Caller": "notes-mod"})
+        code, body = _req(base + "/mod/cap/my-mod.jobs/list", "POST", {"limit": 2}, h)
+        assert code == 200 and json.loads(body) == {"jobs": [], "user": "alice", "caller": "notes-mod", "limit": 2}
+        # The core asking for itself (no caller), with GET for a read.
+        code, body = _req(base + "/mod/cap/my-mod.jobs/list?limit=5", headers=sign_identity("odm_t", "my-mod", "alice"))
+        assert code == 200 and json.loads(body)["caller"] == "" and json.loads(body)["limit"] == "5"
+        # Never through the proxy, never unsigned, never an action it does not have.
+        proxied = dict(h, **{"X-Forwarded-Prefix": "/mods/my-mod"})
+        assert _req(base + "/mod/cap/my-mod.jobs/list", "POST", {}, proxied)[0] == 403
+        assert _req(base + "/mod/cap/my-mod.jobs/list", "POST", {}, {"X-Odysseus-Caller": "x"})[0] == 401
+        assert _req(base + "/mod/cap/my-mod.jobs/delete", "POST", {}, h)[0] == 404
+    finally:
+        srv.shutdown()
+
+
+def test_using_a_capability_standalone(capsys):
+    c = CoreClient(url="", token="", mod_id="my-mod")
+    assert c.send_text("Done")["standalone"] and "[text] Done" in capsys.readouterr().out
+    assert c.capabilities()["missing"] == []
+    with pytest.raises(Exception):
+        c.cap("print-hub.jobs", "list")
