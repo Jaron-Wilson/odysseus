@@ -26,7 +26,7 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
   - **Workspace** -- browser-style tabs for chats, tools and emails, split view, and a Home dashboard.<br>　<sub>Workspace · Studio · Classic interfaces · Ctrl+K searches everything · grouped sidebar</sub>
   - **Coding agents** -- hand a coding task to a real agent with a filesystem, behind a plan you approve.<br>　<sub>OpenCode · Claude Code · Google Antigravity · native Markdown plans · live console · background runs</sub>
   - **Company** -- an organization of AI agents (CEO, managers, reports) working an issue board, on any model.<br>　<sub>org chart · issues · approvals · budgets · @mentions in chat</sub>
-  - **Voice & phone** -- talk with the agent in a chat, over a phone line, by text message, or in a Google Meet.<br>　<sub>/call · local Whisper / Parakeet / Kokoro · ElevenLabs · Twilio · tailnet SIP · SMS gateway</sub>
+  - **Voice & phone** -- talk with the agent in a chat, over a phone line, by text message, or in a Google Meet.<br>　<sub>/call · local Whisper / Parakeet / Kokoro · ElevenLabs (add-on) · Twilio · tailnet SIP · SMS gateway</sub>
   - **Devices** -- link your computers and phone, and the agent can act on them.<br>　<sub>one-command enroll · desktop MCP · music bar + overlay · sound streaming · game streaming</sub>
   - **Mods** -- install add-ons from a git URL: their own pages, home cards, agent tools and notifications, with permissions you approve.<br>　<sub>Settings > Mods · sandboxed pages · signed identity · process or Docker · template + SDK · [docs/mods.md](docs/mods.md)</sub>
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
@@ -388,7 +388,7 @@ and lets you open a chat to ask about one.
 - **Needs to know** notes per chat, **Tidy** (notes first, then prune), and **Use as reference** for pulling another chat in.
 - **Voice call**: the phone button by the composer, or `/call`. Talk hands-free with the agent in the open chat, cut in while it speaks, minimize the call to a pill, or move it to another device. Engines are picked in **Settings > AI Defaults > Voice call**:
   - speech to text: the browser, **Local: Whisper** (faster-whisper) or **Local: Parakeet** (onnx-asr);
-  - text to speech: the browser, **Local: Kokoro** (kokoro-onnx, no torch), any OpenAI-compatible endpoint, or **ElevenLabs** (API key stored encrypted, with a credit guard that falls back to a local or browser voice).
+  - text to speech: the browser, **Local: Kokoro** (kokoro-onnx, no torch), any OpenAI-compatible endpoint, or an add-on voice like **ElevenLabs** (the [ElevenLabs voice](https://github.com/Jaron-Wilson/odysseus-elevenlabs) add-on, with a credit reserve that falls back to Kokoro or the browser voice).
   - Local models download from that page into the data directory. The packages are in `requirements-optional.txt` (see [Optional Dependencies](#optional-dependencies)).
 - **Music and video in the chat**: YouTube links, audio and video links get a player under the message.
 

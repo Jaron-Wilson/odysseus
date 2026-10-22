@@ -63,7 +63,6 @@ const PRECACHE = [
   '/static/js/callHandoff.js',
   '/static/js/callPresenceWorker.js',
   '/static/js/ttsEngines.js',
-  '/static/js/ttsElevenLabs.js',
   '/static/js/settingsNav.js',
   '/static/js/toolPages.js',
   '/static/js/toolGroups.js',
