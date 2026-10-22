@@ -462,7 +462,7 @@ These cards live in **Settings > Calls & Meetings**.
 <details>
 <summary>Google, calendar and email</summary>
 
-- **Settings > Google**: one Google connection (your own OAuth client) for Calendar, Drive, Docs, Sheets, Slides, Tasks and Contacts, switched on per product. The assistant asks in the chat before any write to your Google account or Gmail (see [Gmail and Google account changes](#gmail-and-google-account-changes) and [docs/google.md](docs/google.md)).
+- **Settings > Google**: the Google connection (your own OAuth client) for Calendar and Meet. Drive, Docs, Sheets, Slides, Tasks and Contacts are the Google add-on (mod `google`). The assistant asks in the chat before any write to your Google account or Gmail (see [Gmail and Google account changes](#gmail-and-google-account-changes) and [docs/google.md](docs/google.md)).
 - **Organize > Calendar** syncs Google Calendar both ways through that connection, including shared and family calendars (Calendar gear > Google Calendar).
 - **Inbound mail**: a Cloudflare Email Worker (`tools/mail-worker/`) keeps a copy of mail sent to your routed addresses and forwards it on, and Odysseus shows it in an **Inbound** inbox with **Ask AI about this**. Email windows can be sized to the chat column, and HTML emails show as designed.
 
