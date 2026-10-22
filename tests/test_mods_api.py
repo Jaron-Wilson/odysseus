@@ -66,6 +66,9 @@ def test_me_and_disabled_mods(client):
     ("post", "/api/mods/v1/devices/phone/command", {"command": "notify"}, "devices.control"),
     ("get", "/api/mods/v1/kv", None, "storage"),
     ("post", "/api/mods/v1/llm/chat", {"messages": [{"role": "user", "content": "hi"}]}, "llm.call"),
+    ("get", "/api/mods/v1/stats?scope=devops", None, "stats.read"),
+    ("get", "/api/mods/v1/stats/transcripts/0123abcd", None, "stats.read"),
+    ("get", "/api/mods/v1/machines", None, "machines.read"),
 ])
 def test_each_route_needs_its_permission(client, method, path, body, perm):
     _, tok = add_mod(permissions=[])
@@ -177,3 +180,83 @@ def test_ui_list_gives_frame_urls_only_for_mods_the_user_may_use(client):
     assert {m["id"] for m in bob} == {"shared-mod"}
     tab = next(m for m in alice if m["id"] == "test-mod")["tabs"][0]
     assert tab["url"].startswith("/mods/test-mod/~") and tab["url"].endswith("/")
+
+
+# ── Read-only core APIs: stats (stats.read) and machines (machines.read) ──
+
+def test_stats_reads_the_devops_snapshot(client, monkeypatch):
+    from src import devops_stats
+    seen = {}
+
+    def snap(hours=24, owner=""):
+        seen["hours"] = hours
+        return {"now": 1.0, "hours": hours, "windows": [1, 24, 168, 720], "live": {"replies": []},
+                "chat": {"models": []}, "coders": {"runs": 0}}
+    monkeypatch.setattr(devops_stats, "snapshot", snap)
+    _, tok = add_mod(permissions=["stats.read"])
+    r = client.get("/api/mods/v1/stats?scope=devops&hours=168", headers=bearer(tok))
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["scope"] == "devops" and d["hours"] == 168 and seen["hours"] == 168 and "live" in d
+    assert client.get("/api/mods/v1/stats?scope=email", headers=bearer(tok)).status_code == 400
+    assert client.get("/api/mods/v1/stats", headers=bearer(tok)).status_code == 400
+
+
+def test_stats_are_only_for_a_mod_only_admins_may_use(client, monkeypatch):
+    from src import devops_stats
+    monkeypatch.setattr(devops_stats, "snapshot", lambda hours=24, owner="": {"hours": hours})
+    _, tok = add_mod(permissions=["stats.read"], access="users")
+    r = client.get("/api/mods/v1/stats?scope=devops", headers=bearer(tok))
+    assert r.status_code == 403 and "admins" in r.json()["detail"]
+    assert client.get("/api/mods/v1/stats/transcripts/0123abcd", headers=bearer(tok)).status_code == 403
+
+
+def test_stats_are_rate_limited(client, monkeypatch):
+    from src import devops_stats
+    monkeypatch.setattr(devops_stats, "snapshot", lambda hours=24, owner="": {"hours": hours})
+    monkeypatch.setitem(routes.RATE_LIMITS, "stats.read", (2, 60))
+    _, tok = add_mod(permissions=["stats.read"])
+    codes = [client.get("/api/mods/v1/stats?scope=devops", headers=bearer(tok)).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
+
+
+def test_stats_transcript_is_the_core_viewers_detail(client, monkeypatch):
+    import routes.transcript_routes as tr
+    rec = {"id": "0123abcd", "owner": "bob", "engine": "claude", "model": "opus", "action": "fix",
+           "status": "done", "started": 1.0, "finished": 2.0, "chat_session_id": "s1", "chat_name": "Chat"}
+    monkeypatch.setattr(tr, "_record_for", lambda rid: rec if rid == "0123abcd" else None)
+    monkeypatch.setattr(tr.summaries, "get_summary", lambda d: {
+        "engine": "claude", "counts": {"messages": 3}, "blocks": [{"kind": "text", "text": "hi"}],
+        "final_text": "done", "resume_command": "claude --resume x", "preview": "hi"})
+    _, tok = add_mod(permissions=["stats.read"])
+    r = client.get("/api/mods/v1/stats/transcripts/0123abcd", headers=bearer(tok))
+    assert r.status_code == 200, r.text
+    d = r.json()
+    # Server-wide: another user's run is readable by an admin-only mod.
+    assert d["id"] == "0123abcd" and d["counts"] == {"messages": 3} and d["blocks"][0]["text"] == "hi"
+    assert d["resume_command"] == "claude --resume x" and d["chat_session_id"] == "s1"
+    assert client.get("/api/mods/v1/stats/transcripts/ffffffff", headers=bearer(tok)).status_code == 404
+    assert client.get("/api/mods/v1/stats/transcripts/..%2Fetc", headers=bearer(tok)).status_code == 404
+    assert tr.detail_for("../../x") is None
+
+
+def test_machines_lists_tailnet_peers_with_their_ssh_user(client, monkeypatch):
+    from src import machines
+    calls = []
+    peers = [{"host": "desktop-jaron", "name": "DESKTOP-JARON", "dns": "desktop-jaron.tail.ts.net",
+              "ips": ["100.102.86.125"], "os": "windows", "online": True, "last_seen": "", "age_days": 0.1,
+              "is_self": False, "shared": False},
+             {"host": "jaron-dev-server", "name": "jaron-dev-server", "dns": "jaron-dev-server.tail.ts.net",
+              "ips": ["100.121.62.9"], "os": "linux", "online": True, "last_seen": "", "age_days": 0.0,
+              "is_self": True, "shared": False}]
+    monkeypatch.setattr(machines, "peers", lambda refresh=False: calls.append(refresh) or peers)
+    monkeypatch.setattr(machines, "load_prefs", lambda: {"desktop-jaron": {"ssh_user": "jaron", "gpu": True}})
+    _, tok = add_mod(permissions=["machines.read"])
+    r = client.get("/api/mods/v1/machines", headers=bearer(tok))
+    assert r.status_code == 200, r.text
+    ms = r.json()["machines"]
+    assert [m["host"] for m in ms] == ["desktop-jaron", "jaron-dev-server"]
+    assert ms[0]["ssh_user"] == "jaron" and ms[1]["ssh_user"] == "" and ms[0]["ips"] == ["100.102.86.125"]
+    assert set(ms[0]) == {"host", "name", "dns", "ips", "os", "online", "last_seen", "is_self", "shared", "ssh_user"}
+    client.get("/api/mods/v1/machines?refresh=1", headers=bearer(tok))
+    assert calls == [False, True]

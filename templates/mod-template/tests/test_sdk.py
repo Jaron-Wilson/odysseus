@@ -115,3 +115,27 @@ def test_standalone_app_asks_for_a_password(monkeypatch):
         assert _req(base + "/", headers=sign_identity("x", "my-mod", "alice"))[0] == 401
     finally:
         srv.shutdown()
+
+
+def test_devcore_serves_machines_and_stats_with_their_permissions(tmp_path):
+    from odysseus_mod import CoreError
+    from odysseus_mod.devcore import DevCore
+    (tmp_path / "odysseus-mod.json").write_text(json.dumps({
+        "id": "probe", "name": "Probe", "version": "0.1.0", "permissions": ["machines.read"],
+        "runtime": {"type": "process", "command": ["python", "-m", "nothing"]}}))
+    core = DevCore(str(tmp_path), state_dir=str(tmp_path / ".devcore"))
+    threading.Thread(target=core.server.serve_forever, daemon=True).start()
+    try:
+        c = CoreClient(url=core.url, token=core.token, mod_id="probe")
+        assert c.machines()[0]["os"] == "windows"
+        with pytest.raises(CoreError) as e:
+            c.stats("devops")
+        assert e.value.status == 403 and "stats.read" in e.value.detail
+        core.perms.add("stats.read")
+        core.transcripts["0123abcd"] = {"id": "0123abcd", "blocks": []}
+        assert c.stats("devops", 24)["scope"] == "devops"
+        assert c.stats_transcript("0123abcd")["id"] == "0123abcd"
+        with pytest.raises(CoreError):
+            c.stats_transcript("ffffffff")
+    finally:
+        core.server.shutdown()

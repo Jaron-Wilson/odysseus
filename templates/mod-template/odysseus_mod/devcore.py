@@ -47,9 +47,12 @@ PERMS_FOR = {
     ("POST", "notify"): "notify", ("POST", "events"): "events.emit",
     ("GET", "events/subscriptions"): "events.subscribe", ("POST", "events/subscriptions"): "events.subscribe",
     ("DELETE", "events/subscriptions"): "events.subscribe", ("GET", "devices"): "devices.read",
-    ("POST", "llm/chat"): "llm.call",
+    ("POST", "llm/chat"): "llm.call", ("GET", "machines"): "machines.read", ("GET", "stats"): "stats.read",
 }
 FAKE_DEVICES = [{"name": "dev-phone", "kind": "phone", "commands": ["notify", "open_url"], "online": True}]
+FAKE_MACHINES = [{"host": "dev-pc", "name": "DEV-PC", "dns": "dev-pc.example.ts.net", "ips": ["100.64.0.2"],
+                  "os": "windows", "online": True, "last_seen": "", "is_self": False, "shared": False,
+                  "ssh_user": ""}]
 
 
 def tutorial_problems(manifest: Dict[str, Any], mod_dir: str = ".") -> List[str]:
@@ -96,6 +99,13 @@ class DevCore:
         self.subs: List[Dict[str, str]] = [{"pattern": p, "path": (self.manifest.get("events") or {}).get(
             "webhook", "/mod/events")} for p in (self.manifest.get("events") or {}).get("subscribes", [])]
         self.tool_refreshes = 0
+        # What machines and stats answer; tests replace them.
+        self.machines: List[Dict[str, Any]] = [dict(m) for m in FAKE_MACHINES]
+        self.stats: Dict[str, Any] = {"now": time.time(), "hours": 24, "windows": [1, 24, 168, 720],
+                                      "live": {"replies": [], "coders": [], "shell_jobs": [], "queued_messages": 0},
+                                      "chat": {"hours": 24, "replies": 0, "models": [], "series": []},
+                                      "coders": {"runs": 0, "coders": [], "recent": []}}
+        self.transcripts: Dict[str, Dict[str, Any]] = {}
         self.tools_seen: List[str] = []
         self.warnings = tutorial_problems(self.manifest, mod_dir)
         for w in self.warnings:
@@ -211,6 +221,8 @@ class DevCore:
             perm = "storage"
         if path.startswith("devices/") and path.endswith("/command"):
             perm = "devices.control"
+        if path.startswith("stats/"):
+            perm = "stats.read"
         if perm and perm not in self.perms:
             return 403, {"detail": f"This mod was not granted the {perm} permission"}
         if path == "me":
@@ -256,6 +268,13 @@ class DevCore:
             return 200, {"ok": True, "queued": True}
         if path == "devices":
             return 200, {"devices": FAKE_DEVICES}
+        if path == "machines":
+            return 200, {"machines": self.machines}
+        if path == "stats":
+            return 200, {"scope": "devops", **self.stats}
+        if path.startswith("stats/transcripts/"):
+            t = self.transcripts.get(path.rsplit("/", 1)[1])
+            return (200, t) if t else (404, {"detail": "No transcript to show for this run"})
         if path.startswith("devices/"):
             print(f"[devcore] device command {body}", flush=True)
             return 200, {"ok": True, "devcore": True}

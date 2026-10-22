@@ -173,6 +173,27 @@ class CoreClient:
         return self.call("POST", f"devices/{urllib.request.quote(name)}/command",
                          {"command": command, "params": params or {}})
 
+    def machines(self, refresh: bool = False) -> List[Dict[str, Any]]:
+        """The tailnet's machines (machines.read): host, name, dns, ips, os,
+        online, last_seen, is_self, shared and the ssh_user set in Odysseus."""
+        if self.standalone:
+            return []
+        return self.call("GET", "machines" + ("?refresh=1" if refresh else "")).get("machines", [])
+
+    def stats(self, scope: str = "devops", hours: float = 24) -> Dict[str, Any]:
+        """Read-only server stats (stats.read, admin-only mods). scope
+        "devops": what is running, model speed, coder runs."""
+        if self.standalone:
+            raise CoreError(503, "no server stats without Odysseus")
+        from urllib.parse import urlencode
+        return self.call("GET", "stats?" + urlencode({"scope": scope, "hours": hours}))
+
+    def stats_transcript(self, run_id: str) -> Dict[str, Any]:
+        """One coder run's parsed transcript (stats.read)."""
+        if self.standalone:
+            raise CoreError(503, "no transcripts without Odysseus")
+        return self.call("GET", f"stats/transcripts/{urllib.request.quote(run_id, safe='')}")
+
     def settings(self) -> Dict[str, Any]:
         if self.standalone:
             return self._local("settings.json")

@@ -359,6 +359,8 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `network.lan` | Talking to machines on the local network. Shown to the user; only enforceable for docker mods |
 | `storage` | The key-value store the core keeps for it (`kv`) |
 | `llm.call` | `POST llm/chat` through the user's model routing |
+| `stats.read` | `GET stats` and `GET stats/transcripts/<run>`: server-wide activity (what is running, model speed, coder runs and their transcripts). Only for a mod that only admins may use: with **Who can use it** set to all users, these calls answer 403 |
+| `machines.read` | `GET machines`: the tailnet's machines (name, addresses, operating system, online), with the SSH user set for each in Settings > Devices. No keys and no commands |
 
 Settings (`GET/PUT settings`) and `GET me` need no permission.
 
@@ -441,10 +443,13 @@ signed-in user. A disabled mod answers 404, and a lazy one is started on first u
 | `GET settings` / `PUT settings` | | Its settings object (up to 64 KB), shown on its settings page |
 | `GET kv`, `GET/PUT/DELETE kv/<key>` | `storage` | Up to 256 keys of 64 KB each |
 | `POST llm/chat` | `llm.call` | `{messages, max_tokens, temperature, model_role}` (`model_role` `utility` or `default`). Answers `{content, model}` |
+| `GET stats?scope=devops&hours=24` | `stats.read` | `{scope, now, hours, windows, live, chat, coders}`: `src/devops_stats.py`'s snapshot (`hours` is 1, 24, 168 or 720). `live` is what is running (replies, coder runs, shell jobs, queued messages), `chat` the model speed per model with a series for a chart, `coders` each coder's runs, success rate and the recent runs. Another `scope` is a 400 |
+| `GET stats/transcripts/<run>` | `stats.read` | One coder run's parsed transcript, as `/api/transcript/runs/<run>` answers its owner: `{id, engine, model, status, counts, blocks, final_text, resume_command, ...}`; 404 when it has none |
+| `GET machines?refresh=1` | `machines.read` | `{machines: [{host, name, dns, ips, os, online, last_seen, is_self, shared, ssh_user}]}` (`refresh` asks Tailscale again instead of the 15 second cache) |
 | `POST tools/refresh` | | The mod's tools changed: the core reads `GET <tools.endpoint>` again. Answers `{ok, queued}` at once and refreshes in the background; `{"wait": true}` waits and answers `{ok, tools: [names]}` (only from a server that serves requests in parallel). 400 for a mod without `tools` |
 
 Calls are rate limited per mod: notify 30 a minute, llm 20, events 240, device commands 30, tool
-refreshes 6. A missing permission answers 403, a bad token 401.
+refreshes 6, stats 120. A missing permission answers 403, a bad token 401.
 
 ### Events
 
