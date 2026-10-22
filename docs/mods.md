@@ -431,7 +431,7 @@ signed-in user. A mod whose manifest says `admin_only` is for admins whatever it
 
 | Call | Permission | Body / answer |
 |---|---|---|
-| `GET me` | | `{id, name, version, permissions, core_api, base_path}` |
+| `GET me` | | `{id, name, version, permissions, core_api, base_path, admin_only, access}` (`access` is who can use it: `admins` or `users`) |
 | `POST notify` | `notify` | `{title, body, level, url, tag, image_url, user}`. `level` is `info` (default), `success`, `warning`, `error` or `critical`. `url` must be a relative path in Odysseus; a tab link (`/#mod/<id>/<tab>?path=/jobs/42`, see [Links into a mod](#links-into-a-mod)) opens the mod's tab inside Odysseus. `user` picks who gets it (default: the admins). Answers `{ok, channels}` |
 | `POST events` | `events.emit` | `{type, data}`; `type` must be in `events.emits`; `data` up to 64 KB. Answers `{ok, id, delivered_to}` |
 | `GET events/subscriptions` | `events.subscribe` | The mod's subscriptions |

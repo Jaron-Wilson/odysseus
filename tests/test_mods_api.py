@@ -184,8 +184,8 @@ def test_an_admin_only_mod_is_never_for_other_users(client):
     its access set to "users" by hand, only admins get its pages and tools,
     and the access setting can't be changed to "users"."""
     from src.mods import access, tools
-    entry, _ = add_mod({"admin_only": True, "ui": {"tabs": [{"id": "main", "path": "/"}]}},
-                       mod_id="shell-mod", access="users")
+    entry, tok = add_mod({"admin_only": True, "ui": {"tabs": [{"id": "main", "path": "/"}]}},
+                         mod_id="shell-mod", access="users")
     assert access.may_use(entry, "alice") and not access.may_use(entry, "bob")
     assert not tools._user_allowed(entry, "bob") and tools._user_allowed(entry, "alice")
     bob = client.get("/api/mods/ui", headers={"x-test-user": "bob"}).json()["mods"]
@@ -197,6 +197,8 @@ def test_an_admin_only_mod_is_never_for_other_users(client):
     listed = next(m for m in client.get("/api/mods", headers={"x-test-user": "alice"}).json()["mods"]
                   if m["id"] == "shell-mod")
     assert listed["admin_only"] is True and listed["access"] == "admins"
+    me = client.get("/api/mods/v1/me", headers=bearer(tok)).json()
+    assert me["admin_only"] is True and me["access"] == "admins"
     # Without the flag the same setting opens it to everyone.
     plain, _ = add_mod(mod_id="plain-mod", access="users")
     assert access.may_use(plain, "bob")
