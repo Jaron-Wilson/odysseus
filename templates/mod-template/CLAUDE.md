@@ -54,7 +54,7 @@ The core runs `python` in `runtime.command` with the mod's `.venv` when one exis
   `order`), `ui.home_cards[]` (`id`, `title`, `path`, `height` 60 to 600), `ui.settings_path`.
 - `section` is a sidebar group: `organize` (Organize), `create` (Create & research), `build`
   (Build), `system` (System) or `mods` (Mods, the default). `after` is a built-in page in that
-  group to sit right after, like `print` (the 3D print helper) in `create` or `devices` in
+  group to sit right after, like `compare` in `create` or `devices` in
   `system`; `order` (a whole number, default 0) sorts tabs in the same spot, then the title does.
   An unknown group is only a warning: the tab goes in Mods. The admin can move or hide it in
   Settings > Mods. The full list of groups and pages is in docs/mods.md, "Where tabs go".

@@ -50,11 +50,19 @@ def test_python_and_js_legacy_lists_match():
 
 def test_legacy_keys_are_built_in_page_keys_today():
     """Each key is (or was) a sidebar page and a Workspace tab key, so a
-    saved tab or a #<key> link with it is what the mapping meets."""
+    saved tab or a #<key> link with it is what the mapping meets. A page that
+    already left the core is in toolPages.js's `moved` list instead, and has
+    no built-in Workspace tab any more."""
     from src import tool_pages
     keys = {p["key"] for p in tool_pages.PAGES}
+    moved = {p["key"] for p in tool_pages.MOVED}
+    assert moved == {"print"}
+    assert not keys & moved
     shell = _read("static", "js", "workspace", "shell.js")
     for key in placement.LEGACY_PAGES:
+        if key in moved:
+            assert f"key: '{key}'" not in shell, key
+            continue
         assert key in keys, key
         assert f"key: '{key}'" in shell, key
 
@@ -227,7 +235,7 @@ def test_notifications_may_link_into_a_mod_tab():
 def test_mod_links_load_before_the_built_in_pages():
     html = _read("static", "index.html")
     order = [m.group(1) for m in re.finditer(r'<script type="module" src="/static/js/([^"?]+)', html)]
-    first_page = min(order.index(p) for p in ("adsbPanel.js", "gamesPanel.js", "printPanel.js", "devopsPage.js",
+    first_page = min(order.index(p) for p in ("adsbPanel.js", "gamesPanel.js", "devopsPage.js",
                                               "company.js", "sessions.js"))
     assert order.index("modLinks.js") < first_page
 

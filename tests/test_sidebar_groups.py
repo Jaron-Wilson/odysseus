@@ -41,7 +41,7 @@ _TAXONOMY = json.loads(re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-p
 _TOOL_IDS = ["tool-memory-btn", "tool-calendar-btn", "tool-compare-btn", "tool-cookbook-btn", "tool-research-btn",
              "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-plans-btn", "tool-tasks-btn", "tool-bg-btn", "tool-company-btn",
              "tool-devops-btn", "tool-code-btn", "tool-browser-btn", "tool-devices-btn", "tool-terminal-btn",
-             "tool-claude-sessions-btn", "tool-adsb-btn", "tool-games-btn", "tool-print-btn",
+             "tool-claude-sessions-btn", "tool-adsb-btn", "tool-games-btn",
              "tool-odysseus-dev-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]
 
 
@@ -222,7 +222,7 @@ def test_the_groups_render_in_every_design(make_page, design):
     assert [g["label"] for g in gs] == ["Organize", "Create & research", "Build", "System"]
     assert [g["items"] for g in gs] == [
         ["tool-calendar-btn", "tool-tasks-btn", "tool-notes-btn", "tool-plans-btn", "tool-memory-btn"],
-        ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn", "tool-print-btn"],
+        ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn"],
         ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-company-btn", "tool-claude-sessions-btn", "tool-devops-btn",
          "tool-odysseus-dev-btn"],
         ["tool-devices-btn", "tool-adsb-btn", "tool-games-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]]
@@ -316,7 +316,7 @@ def test_the_new_tab_menu_lists_the_tools_in_the_same_groups(make_page):
     assert menu["top"] == ["New chat", "Inbox", "Settings"]
     assert menu["groups"] == [
         ["Organize", ["Calendar", "Tasks", "Notes", "Plans", "Brain"]],
-        ["Create & research", ["Library", "Gallery", "Deep Research", "Compare", "3D print helper"]],
+        ["Create & research", ["Library", "Gallery", "Deep Research", "Compare"]],
         ["Build", ["Code", "Terminal", "Browser", "Background", "Company", "Claude sessions", "DevOps", "Odysseus dev"]],
         ["System", ["Devices", "ADS-B receiver", "Games", "Cookbook", "Theme", "Usage", "What's new"]]]
     pg.click(".ws-menu-group button:has-text('Devices')")
@@ -328,7 +328,7 @@ def test_the_new_tab_menu_leaves_out_what_a_non_admin_cant_open(make_page):
     pg = make_page("workspace", admin=False)
     pg.click(".ws-new-btn")
     names = pg.evaluate("[...document.querySelectorAll('.ws-menu button')].map(b => b.textContent.trim())")
-    for gone in ("Code", "Terminal", "DevOps", "Odysseus dev", "Devices", "ADS-B receiver", "Games", "3D print helper"):
+    for gone in ("Code", "Terminal", "DevOps", "Odysseus dev", "Devices", "ADS-B receiver", "Games"):
         assert gone not in names
     assert "Browser" in names and "Calendar" in names
 
@@ -395,7 +395,7 @@ def test_ctrl_k_lists_pages_above_settings_and_enter_opens_it(make_page):
     ("claude sessions", "tool-claude-sessions-btn"), ("company", "tool-company-btn"), ("org chart", "tool-company-btn"),
     ("usage", "tool-usage-btn"), ("cost", "tool-usage-btn"),
     ("odysseus-dev", "tool-odysseus-dev-btn"), ("calendar", "tool-calendar-btn"), ("tasks", "tool-tasks-btn"),
-    ("compare", "tool-compare-btn"), ("3d print", "tool-print-btn"), ("research", "tool-research-btn"), ("theme", "tool-theme-btn"),
+    ("compare", "tool-compare-btn"), ("research", "tool-research-btn"), ("theme", "tool-theme-btn"),
     ("memories", "tool-memory-btn"), ("documents", "tool-library-btn"), ("email", "email-section-title"),
     ("sessions", "chats-library-btn"),
 ])
@@ -404,6 +404,18 @@ def test_the_agents_open_panel_opens_any_page(make_page, panel, clicked):
     pg.evaluate(f"""() => import('/static/js/chatStream.js').then(m =>
         m.handleUIControl({{ ui_event: 'open_panel', panel: {json.dumps(panel)} }}))""")
     pg.wait_for_function(f"() => calls.includes({json.dumps(clicked)})")
+
+
+@pytest.mark.parametrize("panel", ["print", "3d print", "print helper"])
+def test_open_panel_for_a_page_that_moved_to_a_mod_shows_the_moved_card(make_page, panel):
+    # The 3D print helper is now the Print Hub mod. With no mod that
+    # `replaces: "print"`, "take me to 3D print" opens the "now a mod" card
+    # (modLinks.openLegacy), never nothing.
+    pg = make_page("classic")
+    pg.evaluate(f"""() => import('/static/js/chatStream.js').then(m =>
+        m.handleUIControl({{ ui_event: 'open_panel', panel: {json.dumps(panel)} }}))""")
+    pg.wait_for_function("() => document.querySelector('.mod-moved-backdrop[data-moved-key=\"print\"]')")
+    assert "This feature is now a mod" in pg.inner_text(".mod-moved-backdrop")
 
 
 def test_the_agents_open_panel_skills_opens_brain_at_skills(make_page):

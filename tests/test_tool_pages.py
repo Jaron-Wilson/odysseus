@@ -40,6 +40,7 @@ def _ui(cmd, owner=None):
 def test_the_agent_reads_the_same_list_as_the_page():
     block = re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-pages:end\s*\*/", _JS, re.S).group(1)
     assert json.loads(block)["pages"] == tool_pages.PAGES
+    assert [p["key"] for p in json.loads(block)["moved"]] == [p["key"] for p in tool_pages.MOVED]
     assert [g["id"] for g in tool_pages.GROUPS] == ["organize", "create", "build", "system"]
     assert {"devices", "terminal", "browser", "code", "calendar", "tasks", "devops", "background", "company", "claude-sessions", "adsb", "games", "print",
             "odysseus-dev", "research", "compare", "library", "notes", "plans", "brain", "gallery", "cookbook",
@@ -84,6 +85,23 @@ def test_open_panel_opens_any_page(cmd, key):
     out = _ui(cmd)
     assert out["ui_event"] == "open_panel" and out["panel"] == key, out
     assert out["results"] == f"Opening {tool_pages.page(key)['label']}"
+
+
+def test_a_page_that_moved_to_a_mod_still_opens():
+    """The 3D print helper moved into the Print Hub mod. It is no longer a
+    built-in page (a mod tab's `after` can't name it), but "take me to 3D
+    print" still opens it: the browser routes the key through
+    modLinks.openLegacy (the mod's tab, or the "now a mod" card)."""
+    from src.mods import placement
+    assert "print" not in [p["key"] for p in tool_pages.PAGES]
+    assert "print" not in placement.page_keys("create")
+    assert "print" in placement.LEGACY_PAGES
+    for name in ("3d print", "3D printing", "print helper", "the 3d print page", "make it printable", "bambu"):
+        assert tool_pages.page(name)["key"] == "print", name
+    out = _ui("open_panel 3d print helper")
+    assert out["ui_event"] == "open_panel" and out["panel"] == "print", out
+    assert "Create & research: library, gallery, research, compare, print" in tool_pages.names_for_prompt()
+    assert "if (p.moved)" in _JS and "openLegacy(p.key)" in _JS
 
 
 def test_open_panel_settings_still_carries_the_setting():
