@@ -15,7 +15,8 @@ from tests.test_mods_api import FakeAuth, client  # noqa: F401
 def _man(tabs):
     return mf.validate({"id": "print-hub", "name": "Print Hub", "version": "0.1.0",
                         "runtime": {"type": "process", "command": ["python", "-m", "printhub"]},
-                        "ui": {"tabs": tabs}})
+                        "ui": {"tabs": tabs},
+                        "tutorial": {"steps": [{"title": "Start", "body": "Open the tab."}]}})
 
 
 # ── Manifest validation ─────────────────────────────────────────────────

@@ -3,6 +3,7 @@
   /mods/<id>/...                 the mod's own server, proxied (src/mods/proxy.py)
   /api/mods                      admin: list, install, update, remove, logs...
   /api/mods/ui                   any user: the tabs and home cards to show
+  /api/mods/<id>/tutorial...     any user who may use the mod: its tutorial (src/mods/tutorial.py)
   /api/mods/v1/...               mods: the mod API, bearer ODYSSEUS_MOD_TOKEN
 
 The mod API is exempt from AuthMiddleware (app.py) because mods do not hold a
@@ -23,7 +24,8 @@ from typing import Any, Deque, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from src.mods import access, catalog, events, manifest as mf, notify, placement, proxy, registry, runtime, tools
+from src.mods import (access, catalog, events, manifest as mf, notify, placement, proxy, registry, runtime, tools,
+                      tutorial)
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +35,10 @@ MAX_KV_KEYS = 256
 MAX_KV_VALUE_BYTES = 64 * 1024
 _KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 # Per-mod, per-permission rate limits: (calls, seconds).
-RATE_LIMITS = {"notify": (30, 60), "llm.call": (20, 60), "events.emit": (240, 60), "devices.control": (30, 60)}
+RATE_LIMITS = {"notify": (30, 60), "llm.call": (20, 60), "events.emit": (240, 60), "devices.control": (30, 60),
+               "tools.refresh": (6, 60)}
 _calls: Dict[tuple, Deque[float]] = defaultdict(deque)
+_background: set = set()   # running background tasks (kept so they are not garbage collected)
 
 
 def _err(e: registry.RegistryError):
@@ -116,16 +120,20 @@ def _mod(request: Request, permission: Optional[str] = None) -> Dict[str, Any]:
     if permission and permission not in (entry.get("granted_permissions") or []):
         raise HTTPException(403, f"This mod was not granted the {permission} permission")
     if permission in RATE_LIMITS:
-        n, per = RATE_LIMITS[permission]
-        q = _calls[(mod_id, permission)]
-        now = time.time()
-        while q and now - q[0] > per:
-            q.popleft()
-        if len(q) >= n:
-            raise HTTPException(429, f"Too many {permission} calls; at most {n} per {per} seconds")
-        q.append(now)
+        _rate(mod_id, permission)
     runtime.touch(mod_id)
     return entry
+
+
+def _rate(mod_id: str, key: str) -> None:
+    n, per = RATE_LIMITS[key]
+    q = _calls[(mod_id, key)]
+    now = time.time()
+    while q and now - q[0] > per:
+        q.popleft()
+    if len(q) >= n:
+        raise HTTPException(429, f"Too many {key} calls; at most {n} per {per} seconds")
+    q.append(now)
 
 
 def _owner_for(entry: Dict[str, Any], body: Dict[str, Any]) -> str:
@@ -313,6 +321,35 @@ def _setup_v1(router: APIRouter) -> None:
         runtime.log_line(e["id"], f"[odysseus] llm/chat via {model}")
         return {"content": text, "model": model}
 
+    @router.post("/api/mods/v1/tools/refresh")
+    async def v1_tools_refresh(request: Request):
+        """The mod's tools changed (it was configured, a device appeared...):
+        read GET <tools.endpoint> again. By default this happens in the
+        background, so a mod that serves one request at a time cannot
+        deadlock; `{"wait": true}` waits and answers the new tool names."""
+        e = _mod(request)
+        if not (e.get("manifest") or {}).get("tools"):
+            raise HTTPException(400, "This mod has no `tools` in its manifest")
+        _rate(e["id"], "tools.refresh")
+        body = await _json(request) if (request.headers.get("content-length") or "0") != "0" else {}
+        if body.get("wait") is True:
+            found = await tools.refresh(e["id"])
+            runtime.log_line(e["id"], f"[odysseus] tool list refreshed: {len(found)} tool(s)")
+            return {"ok": True, "tools": [t["name"] for t in found]}
+
+        async def later(mod_id: str) -> None:
+            await asyncio.sleep(0.2)
+            try:
+                found = await tools.refresh(mod_id)
+                runtime.log_line(mod_id, f"[odysseus] tool list refreshed: {len(found)} tool(s)")
+            except Exception as ex:   # logged, never raised into the event loop
+                logger.warning("[mods] tool refresh for %s failed: %s", mod_id, ex)
+
+        task = asyncio.get_running_loop().create_task(later(e["id"]))
+        _background.add(task)
+        task.add_done_callback(_background.discard)
+        return {"ok": True, "queued": True}
+
 
 # ── Admin and UI ─────────────────────────────────────────────────────────
 
@@ -419,12 +456,55 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
             out.append({
                 "id": entry["id"], "name": entry.get("name"),
                 "status": runtime.state(entry["id"]).status,
+                # The frame URL prefix, for deep links to a page under a tab (#mod/<id>/<tab>?path=...).
+                "base": base,
                 "tabs": [dict(t, url=base + t["path"], **placement.resolve(t, override)) for t in ui.get("tabs") or []],
                 "home_cards": [dict(c, url=base + c["path"]) for c in ui.get("home_cards") or []],
                 "settings_url": base + ui["settings_path"] if ui.get("settings_path") else None,
+                "tutorial": tutorial.summary(entry, user),
             })
         # `nav`: the tabs in sidebar order, in their groups, hidden ones left out.
-        return {"mods": out, "nav": placement.nav(shown), "groups": placement.groups()}
+        # `replaces`: which mod tab takes over an old built-in page key (#adsb...).
+        return {"mods": out, "nav": placement.nav(shown), "groups": placement.groups(),
+                "replaces": placement.replacements(shown), "legacy_pages": placement.LEGACY_PAGES}
+
+    # ── Tutorials (src/mods/tutorial.py): any user who may use the mod ──
+    def _usable(request: Request, mod_id: str):
+        user = proxy.cookie_user(request)
+        if user is None:
+            raise HTTPException(401, "Not signed in")
+        entry = registry.get(mod_id)
+        if not entry or not entry.get("enabled") or not access.may_use(entry, user):
+            raise HTTPException(404, "No such mod")
+        return entry, user
+
+    @router.get("/api/mods/{mod_id}/tutorial")
+    async def tutorial_get(request: Request, mod_id: str):
+        entry, user = _usable(request, mod_id)
+        tut = tutorial.public(entry, user, proxy.frame_base(mod_id, user))
+        if not tut:
+            raise HTTPException(404, "This mod has no tutorial")
+        return {"tutorial": tut}
+
+    @router.post("/api/mods/{mod_id}/tutorial/seen")
+    async def tutorial_seen(request: Request, mod_id: str):
+        entry, user = _usable(request, mod_id)
+        tut = tutorial.of(entry)
+        if not tut:
+            raise HTTPException(404, "This mod has no tutorial")
+        registry.mark_tutorial_seen(mod_id, user, int(tut.get("version") or 1))
+        return {"ok": True, "version": tut.get("version") or 1}
+
+    @router.get("/api/mods/{mod_id}/tutorial/image/{step}")
+    async def tutorial_image(request: Request, mod_id: str, step: int):
+        entry, _user = _usable(request, mod_id)
+        hit = tutorial.image_file(entry, step)
+        if not hit:
+            raise HTTPException(404, "No such image")
+        from fastapi.responses import FileResponse
+        return FileResponse(hit[0], media_type=hit[1], headers={
+            "Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox"})
 
     # ── Finding mods (src/mods/catalog.py). Before /api/mods/{mod_id}. ──
     def _cat_err(e: catalog.CatalogError):

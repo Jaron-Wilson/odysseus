@@ -22,5 +22,17 @@
     "settings_path": "/settings"
   },
   "tools": { "endpoint": "/mod/tools", "keywords": ["my mod"] },
-  "events": { "emits": ["my-mod.clicked"], "subscribes": ["*/*.finished"] }
+  "events": { "emits": ["my-mod.clicked"], "subscribes": ["*/*.finished"] },
+  "tutorial": {
+    "version": 1,
+    "steps": [
+      { "title": "Welcome to My Mod",
+        "body": "This tab is My Mod's page. Press **Click** to count a click: each one sends you a notification." },
+      { "title": "Your greeting",
+        "body": "Pick the word the agent greets you with in this mod's settings.",
+        "action": { "label": "Open settings", "settings": true } },
+      { "title": "Ask the agent",
+        "body": "In a chat, ask *how many times was the my mod button clicked?* and the agent answers with this mod's tool. The Home page has a card with the count." }
+    ]
+  }
 }

@@ -52,6 +52,26 @@ PERMS_FOR = {
 FAKE_DEVICES = [{"name": "dev-phone", "kind": "phone", "commands": ["notify", "open_url"], "online": True}]
 
 
+def tutorial_problems(manifest: Dict[str, Any], mod_dir: str = ".") -> List[str]:
+    """What Odysseus would say about the manifest's `tutorial` (a rough copy
+    of its checks; `python -m src.mods validate` is the real one). Every mod
+    needs one: it is shown the first time someone opens the mod."""
+    tut = manifest.get("tutorial")
+    if not isinstance(tut, dict):
+        return ["no `tutorial`: every mod needs one (shown the first time someone opens it), "
+                "and Odysseus will not list it as Verified without one"]
+    out = []
+    steps = tut.get("steps")
+    if steps is None and not tut.get("path"):
+        out.append("`tutorial` needs `steps` or a `path`")
+    for i, s in enumerate(steps or []):
+        if not isinstance(s, dict) or not str(s.get("title") or "").strip() or not str(s.get("body") or "").strip():
+            out.append(f"`tutorial.steps[{i}]` needs a `title` and a `body`")
+        elif s.get("image") and not os.path.isfile(os.path.join(mod_dir, str(s["image"]))):
+            out.append(f"`tutorial.steps[{i}].image` {s['image']!r} is not a file in the mod")
+    return out
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -75,6 +95,11 @@ class DevCore:
         self.events: List[Dict[str, Any]] = []
         self.subs: List[Dict[str, str]] = [{"pattern": p, "path": (self.manifest.get("events") or {}).get(
             "webhook", "/mod/events")} for p in (self.manifest.get("events") or {}).get("subscribes", [])]
+        self.tool_refreshes = 0
+        self.tools_seen: List[str] = []
+        self.warnings = tutorial_problems(self.manifest, mod_dir)
+        for w in self.warnings:
+            print(f"[devcore] warning: {w}", flush=True)
         self.proc: Optional[subprocess.Popen] = None
         self.server = ThreadingHTTPServer(("127.0.0.1", port), self._handler())
         self.server.daemon_threads = True
@@ -213,6 +238,22 @@ class DevCore:
                                   "path": body.get("path") or "/mod/events"})
                 return 200, {"pattern": body.get("pattern"), "path": body.get("path") or ""}
             return 200, {"subscriptions": self.subs}
+        if path == "tools/refresh" and method == "POST":
+            if not self.manifest.get("tools"):
+                return 400, {"detail": "This mod has no `tools` in its manifest"}
+            self.tool_refreshes += 1
+
+            def reread():
+                try:
+                    self.tools_seen = [t.get("function", {}).get("name", "") for t in self.list_tools()]
+                except Exception as e:
+                    print(f"[devcore] could not read the tool list: {e}", flush=True)
+
+            if body.get("wait") is True:
+                reread()
+                return 200, {"ok": True, "tools": self.tools_seen}
+            threading.Thread(target=reread, daemon=True).start()
+            return 200, {"ok": True, "queued": True}
         if path == "devices":
             return 200, {"devices": FAKE_DEVICES}
         if path.startswith("devices/"):

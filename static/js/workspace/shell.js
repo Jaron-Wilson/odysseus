@@ -20,6 +20,8 @@ import { clearRightDock } from '../modalSnap.js';
 import * as Home from './home.js';
 import ToolPages from '../toolPages.js';
 import ModPanel from '../modPanel.js';
+import ModLinks from '../modLinks.js';
+import { LEGACY_PAGES, mapSavedTab } from '../modLinksCore.js';
 
 const LS_KEY = 'odysseus-ws-tabs-v1';
 const TABBAR_H = 40;
@@ -104,9 +106,30 @@ const TOOLS = [
   { key: 'code', label: 'Code', icon: 'code', sel: '.ide-backdrop', win: '.bg-panel', open: '#tool-code-btn',
     title: (el) => { const n = el.querySelector('.ide-project-name')?.textContent.trim();
       return n && n !== 'Pick a project' ? 'Code: ' + n : 'Code'; } },
-  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not([data-mod-tab]):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel)):not(:has(> .games-panel)):not(:has(> .print-panel)):not(:has(> .plans-panel)):not(:has(> .company-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
+  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not([data-mod-tab]):not([data-moved-key]):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel)):not(:has(> .games-panel)):not(:has(> .print-panel)):not(:has(> .plans-panel)):not(:has(> .company-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
 ];
+// A built-in page that is now a mod (modLinksCore.js LEGACY_PAGES) keeps its
+// saved tabs and links: with the mod installed they open the mod's tab
+// (`replaces` in its manifest); without it, a "moved:<key>" tab shows the
+// "This feature is now a mod" card (modLinks.js), never a blank tab.
+{
+  const at = TOOLS.findIndex(t => t.key === 'agents');
+  const moved = Object.entries(LEGACY_PAGES).map(([k, label]) => ({
+    key: 'moved:' + k, moved: k, label,
+    icon: (TOOLS.find(t => t.key === k) || {}).icon || 'mod',
+    sel: `.bg-panel-backdrop[data-moved-key="${k}"]`, win: '.bg-panel',
+    run: () => ModLinks.openFallback(k), close: async () => ModLinks.closeFallback(k),
+  }));
+  TOOLS.splice(at < 0 ? TOOLS.length : at, 0, ...moved);
+}
 const TOOL_BY_KEY = Object.fromEntries(TOOLS.map(t => [t.key, t]));
+// Is the built-in tab tool for this key there (for an old page key: and its button)?
+function _builtin(key) {
+  const tool = TOOL_BY_KEY[key];
+  if (!tool || tool.mod || tool.moved) return false;
+  if (!Object.prototype.hasOwnProperty.call(LEGACY_PAGES, key)) return true;
+  return ModLinks.builtinAvailable(key);
+}
 // An opened email is its own window (#email-reader-<n>) and its own tab.
 const READER_PREFIX = 'email-reader-';
 // The outer elements of every tool, for telling which DOM changes may have
@@ -132,7 +155,7 @@ const _els = new Map();     // tool tab id -> its element while open
 function _save() {
   try {
     const tabs = S.tabs.filter(t => t.kind !== 'tool' || !t.id.startsWith('tool:' + READER_PREFIX))
-      .map(({ id, kind, sid, view, key, title }) => ({ id, kind, sid, view, key, title }));
+      .map(({ id, kind, sid, view, key, title, legacy }) => ({ id, kind, sid, view, key, title, legacy }));
     const ok = (id) => tabs.some(t => t.id === id);
     localStorage.setItem(LS_KEY, JSON.stringify({
       tabs, left: ok(S.left) ? S.left : 'home', right: ok(S.right) ? S.right : null,
@@ -145,11 +168,23 @@ function _load() {
   try {
     const v = JSON.parse(localStorage.getItem(LS_KEY));
     if (!v || !Array.isArray(v.tabs)) return;
-    const tabs = v.tabs.filter(t => t && t.id && (t.kind === 'chat' || (t.kind === 'tool' && (TOOL_BY_KEY[t.key] || String(t.key).startsWith('mod:')))));
+    // Old page keys become the mod tab that replaces them, stay built-in, or
+    // become the "moved" card; unknown tools are dropped (modLinksCore.js).
+    const ids = new Map();
+    const tabs = [];
+    for (const t of v.tabs) {
+      if (!t || !t.id || (t.kind !== 'chat' && t.kind !== 'tool')) continue;
+      const n = t.kind === 'tool' ? mapSavedTab(t, ModPanel.replacements(), _builtin) : t;
+      if (!n || tabs.some(x => x.id === n.id)) { ids.set(t.id, n ? n.id : null); continue; }
+      ids.set(t.id, n.id);
+      tabs.push(n);
+    }
     S.tabs = [{ id: 'home', kind: 'home' }, ...tabs];
     const ok = (id) => S.tabs.some(t => t.id === id);
-    S.left = ok(v.left) ? v.left : 'home';
-    S.right = ok(v.right) && v.right !== S.left ? v.right : null;
+    const left = ids.get(v.left) || v.left;
+    const right = ids.get(v.right) || v.right;
+    S.left = ok(left) ? left : 'home';
+    S.right = ok(right) && right !== S.left ? right : null;
     S.focus = v.focus === 'right' && S.right ? 'right' : 'left';
     S.ratio = Math.min(0.75, Math.max(0.25, +v.ratio || 0.5));
   } catch {}
@@ -690,7 +725,34 @@ function _syncModTools(mods) {
   }
   TOOLS.splice(at < 0 ? TOOLS.length : at, 0, ...add);
   add.forEach(t => { TOOL_BY_KEY[t.key] = t; });
+  if (_mounted && ModPanel.loaded()) _remapTabs();
   if (_mounted) renderTabs();
+}
+
+// The mod list changed: an old page's tab (the built-in page, or its "moved"
+// card) whose replacing mod is now installed becomes that mod's tab, and a
+// replacing mod's tab whose mod went away becomes the card again (or the
+// built-in page, while it exists).
+function _remapTabs() {
+  let changed = false;
+  for (const t of [...S.tabs]) {
+    if (t.kind !== 'tool') continue;
+    const key = String(t.key || '');
+    // Only tabs an old page key is behind: the key itself, its card, or a mod tab that replaced it.
+    if (!t.legacy && !key.startsWith('moved:') && !Object.prototype.hasOwnProperty.call(LEGACY_PAGES, key)) continue;
+    const n = mapSavedTab(t, ModPanel.replacements(), _builtin, (k) => !!TOOL_BY_KEY[k]);
+    if (!n || n.id === t.id) continue;
+    const pane = paneOf(t.id);
+    if (_els.has(t.id)) _closeTool(t.id);
+    if (tab(n.id)) { S.tabs = S.tabs.filter(x => x.id !== t.id); }
+    else S.tabs = S.tabs.map(x => (x.id === t.id ? n : x));
+    if (S.left === t.id) S.left = n.id;
+    if (S.right === t.id) S.right = n.id === S.left ? null : n.id;
+    _mru = _mru.map(x => (x === t.id ? n.id : x));
+    changed = true;
+    if (pane) setTimeout(() => activate(n.id), 0);
+  }
+  if (changed) { _save(); apply(); }
 }
 
 export function newChat() {
@@ -889,6 +951,8 @@ export function activate(id) {
     if (tool && tool.run) { show(id); _openingTool = id; tool.run(); return; }
     if (String(t.key).startsWith('mod:')) {
       // The mod list may not have arrived yet.
+      // A tab that replaced an old page and whose mod is gone is turned back
+      // into the "moved" card by _remapTabs (then tab(id) is gone and this closes nothing).
       ModPanel.list().then((mods) => { _syncModTools(mods); TOOL_BY_KEY[t.key] ? activate(id) : closeTab(id); });
       return;
     }

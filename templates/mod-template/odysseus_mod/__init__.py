@@ -213,6 +213,24 @@ class CoreClient:
             return
         self.call("DELETE", f"kv/{key}")
 
+    def refresh_tools(self, wait: bool = False) -> Dict[str, Any]:
+        """Tell the core the mod's tools changed (it was configured, a device
+        showed up), so it reads GET /mod/tools again. By default the core
+        does that in the background; wait=True waits for it and answers the
+        new tool names (only from a server that handles requests in
+        parallel, like ModApp's)."""
+        if self.standalone:
+            return {"ok": True, "standalone": True}
+        return self.call("POST", "tools/refresh", {"wait": bool(wait)})
+
+    @staticmethod
+    def link(mod_id: str, tab: str, path: str = "") -> str:
+        """A link that opens one of a mod's tabs inside Odysseus, optionally at
+        a page under it: for a notification's `url`, a tool's output, or
+        parent.postMessage({type: 'odysseus:open', link}) from a page."""
+        from urllib.parse import quote
+        return f"/#mod/{mod_id}/{tab}" + (f"?path={quote(path, safe='/')}" if path else "")
+
     def llm_chat(self, messages: List[Dict[str, str]], max_tokens: int = 1024, temperature: float = 0.3,
                  model_role: str = "utility", user: str = "") -> str:
         """Ask the user's configured model (their routing, their usage)."""

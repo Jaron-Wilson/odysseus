@@ -2,7 +2,7 @@
   "manifest_version": 1,
   "id": "hello-mod",
   "name": "Hello Mod",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The example mod: a page, a home card, one tool, a notification and an event.",
   "author": "Jaron Wilson",
   "license": "AGPL-3.0",
@@ -22,5 +22,18 @@
     "settings_path": "/settings"
   },
   "tools": { "endpoint": "/mod/tools", "keywords": ["hello mod", "greet", "greeting", "wave"] },
-  "events": { "emits": ["hello.waved"], "subscribes": ["*/hello.*", "*/*.finished"] }
+  "events": { "emits": ["hello.waved"], "subscribes": ["*/hello.*", "*/*.finished"] },
+  "tutorial": {
+    "version": 1,
+    "steps": [
+      { "title": "Wave",
+        "body": "Press **Wave** on the Hello page. Hello Mod sends you a notification and publishes a `hello.waved` event that other mods can react to.",
+        "image": "docs/tutorial-wave.png" },
+      { "title": "Pick a greeting",
+        "body": "Choose the word Hello Mod greets people with. Odysseus keeps it as this mod's settings.",
+        "action": { "label": "Open settings", "settings": true } },
+      { "title": "Ask the agent",
+        "body": "In a chat, say *greet Ada with the hello mod*: the agent calls the `hello_greet` tool.\n\nThe **Hello Mod** card on Home counts the waves and greetings." }
+    ]
+  }
 }

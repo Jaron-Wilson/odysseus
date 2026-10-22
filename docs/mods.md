@@ -35,7 +35,8 @@ Settings > Mods (admins only) has two views: **Installed** (below) and **Browse*
    it (admins or all users) and **Mute notifications**. A mod with a newer version out has an
    **Update available** badge, and its Update button offers that version's tag. A mod with tabs also has **Show in** (the
    sidebar group its tabs go in; the default is the group its manifest names) and **Hide from
-   sidebar** (see [Where tabs go](#where-tabs-go)).
+   sidebar** (see [Where tabs go](#where-tabs-go)). A mod with a tutorial has **Replay tutorial**
+   (see [Tutorials](#tutorials)); one without shows the "no `tutorial`" warning.
 4. **Where mod notifications go**: push to browsers and the phone, the notification list in
    Odysseus, Discord (the webhook in Integrations), ntfy, and text messages at or above a level.
 5. **New mod**: copies the mod template into a folder with your id and name filled in.
@@ -73,8 +74,9 @@ Each result shows its badges, version, stars, last update, tags and what it asks
 
 | Badge | Means |
 |---|---|
-| **Verified** | Listed by an index you added (with `verified` true). Its notes are on the details. |
+| **Verified** | Listed by an index you added (with `verified` true), and its manifest has a `tutorial`. Its notes are on the details. |
 | **Community, not reviewed** | Found only by its topic, or listed by an index with `verified` false. Nobody has checked it. |
+| **No tutorial** | Its manifest has no `tutorial`. It is never Verified, even when an index says so: the badge is dropped and its tooltip says why (`verified_dropped`). |
 | **Yours** | A repository the token's account owns. |
 | **Private** | A private repository. It installs over SSH (`git@github.com:...`), so the server needs a GitHub SSH key that can read it; the token is never put in a clone URL. |
 | **Installed**, **Update available** | Already installed; a newer version is out (see below). |
@@ -139,7 +141,7 @@ The API (admins only):
 
 | Call | Answers |
 |---|---|
-| `GET /api/mods/catalog?q=&tag=&verified=&compatible=&refresh=` | `{results, tags, updates, warnings, stale, fetched_at, token_source, viewer, index_count, settings}`. `verified` and `compatible` are `1` or `0`; each result has its install state (`installed`, `installed_version`, `update_available`, `latest_version`, `latest_ref`) |
+| `GET /api/mods/catalog?q=&tag=&verified=&compatible=&refresh=` | `{results, tags, updates, warnings, stale, fetched_at, token_source, viewer, index_count, settings}`. `verified` and `compatible` are `1` or `0`; each result has its install state (`installed`, `installed_version`, `update_available`, `latest_version`, `latest_ref`), `has_tutorial` and, when an index said Verified but the mod cannot be, `verified_dropped` (the reason) |
 | `GET /api/mods/catalog/<owner>/<repo>?ref=` | `{repo, manifest, permissions, tabs, runtime, versions, readme_html, install, version_blocked}` |
 | `GET` / `PUT /api/mods/catalog/settings` | `{index_urls, include_private, token_set, token_source}`; `PUT` takes those plus `github_token` or `clear_token` |
 | `GET /api/mods/catalog/image?u=` | An allowed image, proxied |
@@ -150,7 +152,8 @@ The API (admins only):
 Start from the template, either the **New mod** button, `python -m src.mods new`, or the
 `templates/mod-template` folder (to be published as its own GitHub template repository). It holds:
 
-- `odysseus-mod.json`, the manifest.
+- `odysseus-mod.json`, the manifest, with a three-step `tutorial` for the starter mod (rewrite it
+  for your mod's real features; the `new-mod` skill does).
 - `my_mod/app.py`, a starter mod with a page, a card, settings, a tool, a notification and events.
 - `odysseus_mod/`, a small standard-library SDK:
   - `ModApp` (routes, tools, event handlers, the identity check, standalone login)
@@ -164,7 +167,10 @@ Start from the template, either the **New mod** button, `python -m src.mods new`
   description.
 
 `examples/hello-mod` is a complete small mod with tests (standard library only, no SDK, to show
-the raw contract).
+the raw contract), including a three-step tutorial with an image (`docs/tutorial-wave.png`).
+
+Every mod needs a **tutorial** (see [Tutorials](#tutorials)): without one it installs with a
+warning and is never listed as Verified.
 
 A mod must work **standalone and under the core**, and decides by whether `ODYSSEUS_URL` is set.
 Standalone, it has its own login and its own notification channels; under the core it never has a
@@ -203,7 +209,8 @@ uvicorn app:app --host 127.0.0.1 --port 7314
 ## Publishing a mod
 
 1. Push the mod to its own GitHub repository, with `odysseus-mod.json` at the top.
-2. Give the manifest `tags` (see [Tags](#tags)) and, optionally, `icon_url` and `screenshots`
+2. Give the manifest a `tutorial` (see [Tutorials](#tutorials)), required for Verified.
+   Give it `tags` (see [Tags](#tags)) and, optionally, `icon_url` and `screenshots`
    (https images in the repository, like
    `https://raw.githubusercontent.com/you/garage-door/main/docs/icon.png`; other hosts are not
    shown).
@@ -220,7 +227,7 @@ uvicorn app:app --host 127.0.0.1 --port 7314
 5. **Getting verified**: open a pull request adding your mod to an index (like
    `Jaron-Wilson/odysseus-mods-index`), following its README. Its maintainers read the code and
    the permissions before merging; after that, Odysseus installs that use the index list the mod
-   as Verified.
+   as Verified (as long as its manifest has a tutorial).
 
 ### Tags
 
@@ -283,13 +290,24 @@ filters (`SUGGESTED_TAGS` in `src/mods/manifest.py`):
     "emits": ["print.started", "print.finished", "print.failed", "detector.failure"],
     "subscribes": [],
     "webhook": "/mod/events"
+  },
+  "tutorial": {
+    "version": 1,
+    "steps": [
+      { "title": "Watch the printer", "body": "The **Printer** tab shows the live camera and the job's progress.",
+        "image": "docs/tutorial-live.png" },
+      { "title": "Connect your printer", "body": "Enter the printer's IP address and access code.",
+        "action": { "label": "Open settings", "settings": true } },
+      { "title": "Ask the agent", "body": "In a chat, ask *how's my print doing?*" }
+    ]
   }
 }
 ```
 
 Every problem in a manifest is reported at once. A few things are warnings rather than errors (a
-`section` or `after` this Odysseus does not have): the mod still installs, and the warning is shown
-when you review it, on its card in Settings > Mods and by `python -m src.mods validate`.
+`section` or `after` this Odysseus does not have, a `replaces` key it does not know, a missing
+`tutorial` or tutorial image): the mod still installs, and the warning is shown when you review
+it, on its card in Settings > Mods and by `python -m src.mods validate`.
 
 | Field | Rules |
 |---|---|
@@ -316,6 +334,7 @@ when you review it, on its card in Settings > Mods and by `python -m src.mods va
 | `ui.tabs[].section` | The nav group the tab goes in: a group id from the table under [Where tabs go](#where-tabs-go), like `create`. Missing: `mods`. An id this Odysseus does not have is a warning, and the tab goes in Mods. |
 | `ui.tabs[].after` | The key of a built-in page in that group (like `print`): the tab goes right after it. Missing, or a page that is not in the group (a warning): the end of the group. |
 | `ui.tabs[].order` | A whole number from -1000 to 1000, default 0. Tabs in the same spot (after the same page, or at the end) are sorted by `order`, then by title. |
+| `ui.tabs[].replaces` | Optional: the key of a built-in page this tab takes over (`adsb`, `games`, `print`, `devops`, `company`, ...; see [Pages that moved to mods](#pages-that-moved-to-mods)). Its old links and saved Workspace tabs open this tab. A key not in the list is a warning and ignored; two tabs of one mod cannot replace the same key. |
 | `ui.home_cards[]` | `id`, `title` (optional), `path`, `height` (60 to 600 pixels, default 180). |
 | `ui.settings_path` | The mod's settings page, opened from its tab. |
 | `tools.endpoint` | Default `/mod/tools`. |
@@ -323,6 +342,10 @@ when you review it, on its card in Settings > Mods and by `python -m src.mods va
 | `events.emits` | Event types it may publish (`print.finished`). Needs `events.emit`. |
 | `events.subscribes` | Patterns it wants (`print-hub/print.*`, `*.failed`, `*/*.finished`). Needs `events.subscribe`. |
 | `events.webhook` | Where events are delivered. Default `/mod/events`. |
+| `tutorial` | Expected of every mod; missing is a warning, and such a mod is never Verified. `{"version", "steps"}` (recommended) or `{"version", "path"}`; see [Tutorials](#tutorials). |
+| `tutorial.version` | A whole number from 1, default 1. Raise it to show the tutorial again to everyone who saw it. |
+| `tutorial.steps[]` | 1 to 8 steps: `title` (up to 80 characters), `body` (short Markdown, up to 1200), optionally `image` (a PNG, JPEG, GIF or WebP file in the mod, a relative path, under 2 MB; a file that is not there is a warning) and `action` (`{"label", "path"}` to open a page of the mod, or `{"label", "settings": true}`, which needs `ui.settings_path`). |
+| `tutorial.path` | Optional: a page of the mod with a richer tutorial. Alone, it is the tutorial (shown in a sandboxed frame); with `steps`, it is offered as "Full tutorial" after the last step. |
 
 ### Permissions
 
@@ -384,9 +407,11 @@ The health check is sent without identity headers.
 
 Responses: a `Location` inside the mod is rewritten to the proxied path, and cookies the mod sets
 are scoped to its path (cookie names starting `odysseus` are dropped). Every response gets a CSP
-`sandbox` (scripts, forms, popups, downloads and modals allowed, no same origin; the iframe's
-`sandbox` attribute allows the same, so `confirm()` and `alert()` work), so mod pages run with an
-**opaque origin**. They cannot read Odysseus's pages, cookies or storage, and their own requests
+`sandbox` (scripts, forms, popups, popups that escape the sandbox, downloads and modals allowed, no
+same origin), and the iframe's `sandbox` attribute lists exactly the same flags (a browser applies
+both, so a flag in only one is lost; `tests/test_mods_proxy.py` keeps them equal). So `confirm()`
+and `alert()` work, and a page a mod opens in a new tab (`target="_blank"`, `window.open`) gets its
+own origin and storage. Mod pages run with an **opaque origin**. They cannot read Odysseus's pages, cookies or storage, and their own requests
 carry no Odysseus session. So pages load under a **frame URL**,
 `/mods/<id>/~<frame token>/<path>`, where the token (HMAC of mod, user and expiry, 12 hours) is
 what authenticates the page's requests. A signed-in browser that opens `/mods/<id>/...` directly
@@ -406,7 +431,7 @@ signed-in user. A disabled mod answers 404, and a lazy one is started on first u
 | Call | Permission | Body / answer |
 |---|---|---|
 | `GET me` | | `{id, name, version, permissions, core_api, base_path}` |
-| `POST notify` | `notify` | `{title, body, level, url, tag, image_url, user}`. `level` is `info` (default), `success`, `warning`, `error` or `critical`. `url` must be a relative path in Odysseus (`/mods/<id>/...`). `user` picks who gets it (default: the admins). Answers `{ok, channels}` |
+| `POST notify` | `notify` | `{title, body, level, url, tag, image_url, user}`. `level` is `info` (default), `success`, `warning`, `error` or `critical`. `url` must be a relative path in Odysseus; a tab link (`/#mod/<id>/<tab>?path=/jobs/42`, see [Links into a mod](#links-into-a-mod)) opens the mod's tab inside Odysseus. `user` picks who gets it (default: the admins). Answers `{ok, channels}` |
 | `POST events` | `events.emit` | `{type, data}`; `type` must be in `events.emits`; `data` up to 64 KB. Answers `{ok, id, delivered_to}` |
 | `GET events/subscriptions` | `events.subscribe` | The mod's subscriptions |
 | `POST events/subscriptions` | `events.subscribe` | `{pattern, path}` adds one at runtime |
@@ -416,9 +441,10 @@ signed-in user. A disabled mod answers 404, and a lazy one is started on first u
 | `GET settings` / `PUT settings` | | Its settings object (up to 64 KB), shown on its settings page |
 | `GET kv`, `GET/PUT/DELETE kv/<key>` | `storage` | Up to 256 keys of 64 KB each |
 | `POST llm/chat` | `llm.call` | `{messages, max_tokens, temperature, model_role}` (`model_role` `utility` or `default`). Answers `{content, model}` |
+| `POST tools/refresh` | | The mod's tools changed: the core reads `GET <tools.endpoint>` again. Answers `{ok, queued}` at once and refreshes in the background; `{"wait": true}` waits and answers `{ok, tools: [names]}` (only from a server that serves requests in parallel). 400 for a mod without `tools` |
 
-Calls are rate limited per mod: notify 30 a minute, llm 20, events 240, device commands 30. A
-missing permission answers 403, a bad token 401.
+Calls are rate limited per mod: notify 30 a minute, llm 20, events 240, device commands 30, tool
+refreshes 6. A missing permission answers 403, a bad token 401.
 
 ### Events
 
@@ -448,7 +474,9 @@ object:
 } ] }
 ```
 
-The core reads the list when the mod starts, as `odysseus-core` (up to 24 tools; names
+The core reads the list when the mod starts and whenever the mod calls `POST tools/refresh` (a
+mod whose tools depend on its setup calls it after saving its settings, so they appear without
+a restart), as `odysseus-core` (up to 24 tools; names
 `[A-Za-z0-9_-]`, up to 40 characters) and shows them to the model as `mod__<id>__<name>`. A call is
 `POST <tools.endpoint>/<name>` with the arguments as the JSON body, the identity of the user the
 agent works for (`local` with sign-in off, `odysseus-core` if there is none), `X-Odysseus-Session`
@@ -470,8 +498,9 @@ for a `controls_devices` tool to run at all.
 
 - Each `ui.tabs` entry is a Workspace tab. It is listed in the sidebar and in the Workspace "+"
   menu, in the group its `section` names (see below), with its icon and a small "mod" badge. The
-  page is shown in a sandboxed frame, with **Settings** (the `settings_path`) and **Reload** in its
-  header. Studio and Classic have no tabs, so there the sidebar item opens it as a window.
+  page is shown in a sandboxed frame, with **Tutorial** (when it has one), **Settings** (the
+  `settings_path`) and **Reload** in its header. Studio and Classic have no tabs, so there the
+  sidebar item opens it as a window.
 - Each `ui.home_cards` entry is a small framed page under the Home dashboard, `height` pixels
   tall, with **Open** going to the mod's first tab.
 - Pages should match Odysseus: dark, system font, 13 to 14 px text, quiet borders.
@@ -519,6 +548,86 @@ The choice is kept in the registry entry as `"placement": {"section": "build", "
 `GET /api/mods/ui` gives each tab its resolved `section`, `after`, `order` and `hidden`, and `nav`,
 the shown tabs in order (`src/mods/placement.py`).
 
+#### Tutorials
+
+Every mod has a tutorial: a few short steps that show a new user what the mod does and what to
+set up. The core shows it the first time a user opens any of the mod's tabs (each user once),
+over the tab, with **Skip**, **Back**, **Next** and **Done**. Closing it in any way, Skip
+included, counts as seen; reloading the page in the middle shows it again next time. Every user
+sees it at least once.
+
+- **Replay**: **Tutorial** in the tab's header, and **Replay tutorial** on the mod's card in
+  Settings > Mods.
+- **Again after a change**: raise `tutorial.version`. A user who saw an older version sees it
+  again on their next open.
+- **Steps** (the recommended form, so every mod's tutorial looks the same): a title, a short
+  Markdown body, an optional image and an optional action button that opens a page of the mod or
+  its settings. The body is rendered by the core with everything escaped first: paragraphs, line
+  breaks, `-` and `1.` lists, `code`, **bold**, *italic*, https links (opened in a new tab without a
+  referrer) and `#mod/<id>/<tab>` links. Any HTML, images or other links show as text.
+- **Images** are files in the mod's folder, served by the core at
+  `/api/mods/<id>/tutorial/image/<step>` (PNG, JPEG, GIF or WebP, under 2 MB, inside the mod's
+  folder only, with `nosniff` and a `sandbox` CSP), so they show even while a lazy mod is stopped.
+- **A tutorial page** (`path`) is shown in the same sandboxed frame as the mod's pages.
+- **No tutorial**: a warning at install review, on the mod's card and from
+  `python -m src.mods validate`; the catalog shows **No tutorial** and never shows the mod as
+  Verified (`src/mods/catalog.py`, `verified_status`); the index validator fails a `verified`
+  entry without one.
+
+Who saw which version is kept in the mod's registry entry, `tutorial_seen: {"<user>": <version>}`,
+so it survives updates and is removed with the mod.
+
+| Call (a user who may use the mod) | Answers |
+|---|---|
+| `GET /api/mods/ui` | Each mod's `tutorial`: `{version, steps, has_page, seen}` (a summary), or `null` |
+| `GET /api/mods/<id>/tutorial` | `{tutorial: {mod, name, version, seen, steps: [{title, body_html, image_url, action}], url}}` |
+| `POST /api/mods/<id>/tutorial/seen` | Marks the current version seen for this user: `{ok, version}` |
+| `GET /api/mods/<id>/tutorial/image/<step>` | The step's image |
+
+#### Links into a mod
+
+A link of the form `/#mod/<id>/<tab>` opens the mod's tab inside Odysseus (in the Workspace, as a
+tab), and `/#mod/<id>/<tab>?path=/jobs/42` opens it at a page under it (a path of the mod: one
+leading `/`, no `..`, no scheme; anything else is ignored). Without a tab (`/#mod/<id>`) it opens
+the first one. A link to a mod that is not installed, or that the user may not use, shows a card
+saying so.
+
+Use them anywhere a URL goes: a notification's `url`, a tool's output, a chat message, a
+bookmark, another mod. A mod's page or home card is a sandboxed frame and cannot navigate the
+Odysseus page itself, so it asks:
+
+```js
+parent.postMessage({ type: 'odysseus:open', link: '#mod/print-hub/printer?path=/jobs/42' }, '*');
+```
+
+The core accepts this only from its own mod frames (tabs, home cards, tutorial pages; their
+origin is `null`), only for `#mod/` links, and at most one every half second. The template's SDK
+has `CoreClient.link(mod_id, tab, path)` to build one. `static/js/modLinks.js` routes them; it
+loads before the built-in pages so a hash it takes is removed from the address bar before anything
+else reads it.
+
+#### Pages that moved to mods
+
+Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
+receiver), `games`, `print` (3D print helper), `devops`, `company`, and later `code`, `terminal`,
+`browser`, `claude-sessions`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
+`src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,
+`/#games?play=...`) and saved Workspace tabs keep working:
+
+1. A mod tab that declares `"replaces": "adsb"` (and that the user may use) takes them over:
+   `#adsb` opens that tab, and a saved `adsb` Workspace tab becomes it. When two mods claim the
+   same key, the first by mod id wins.
+2. Otherwise, while the built-in page still exists, they open the built-in page as before.
+3. Otherwise they show a **This feature is now a mod** card (in the Workspace, as its tab), with
+   **Find it in Browse** (Settings > Mods > Browse, searching for the key) for admins, and "ask an
+   admin" for everyone else. Never a blank or broken tab.
+
+The tab remembers the old key, so it moves between these as mods are installed and removed: a
+card becomes the mod's tab once the mod is installed, and the mod's tab becomes the card again
+when it is removed. `GET /api/mods/ui` gives `replaces` (`{key: {mod, tab, title}}`) and
+`legacy_pages`; the browser keeps the last `replaces` so links on page load are routed before the
+list arrives.
+
 ### Runtime
 
 - A process mod runs in its folder with the environment above; its output goes to its log.
@@ -564,9 +673,14 @@ Mods are **untrusted code**. What protects you:
 - **Identity is signed.** The proxy strips any client-supplied `X-Odysseus-*` and `X-Forwarded-*`
   headers and signs its own with the mod's token; a mod can check who is asking without ever
   seeing a password or session.
-- **Mod pages are sandboxed** (CSP `sandbox` and a sandboxed iframe, opaque origin): a mod's page
-  cannot read Odysseus's pages, cookies, local storage or API with the user's session. Odysseus's
-  cookies and `Authorization` headers are never forwarded to a mod.
+- **Mod pages are sandboxed** (CSP `sandbox` and a sandboxed iframe with the same flags, opaque
+  origin): a mod's page cannot read Odysseus's pages, cookies, local storage or API with the
+  user's session, and cannot navigate the Odysseus page (it may only ask for a `#mod/` link by
+  `postMessage`). Popups it opens escape the sandbox, so they run as an ordinary page of that
+  address, with no access to Odysseus either. Odysseus's cookies and `Authorization` headers are
+  never forwarded to a mod.
+- **Tutorials are rendered by the core**: their Markdown is escaped before the few allowed
+  formats are applied, and their images are served only from the mod's own folder.
 - **Device actions need the user.** Mod tools that control devices go through the chat's approval
   flow, each call.
 - **Mods are reachable only through the core** (they listen on loopback), and only by the users
@@ -594,8 +708,8 @@ An index is a JSON file listing reviewed mods, usually `index.json` in its own r
 `templates/mods-index/` is a ready-to-use one: `index.json`, `index.schema.json` (the format as
 JSON Schema), a README on submitting a mod by pull request, `scripts/validate_index.py` (standard
 library only) and `.github/workflows/validate.yml`, which runs the validator on every pull
-request (the format, duplicate repos and ids, and that each repository's `odysseus-mod.json` has
-the same id).
+request (the format, duplicate repos and ids, that each repository's `odysseus-mod.json` has
+the same id, and that every `verified` entry's manifest has a `tutorial`).
 
 ```json
 {
@@ -613,7 +727,7 @@ the same id).
 |---|---|
 | `repo` | The GitHub repository (required) |
 | `id` | The mod's id (required by the validator) |
-| `verified` | Default `true`: shown as Verified. `false` lists it as Community |
+| `verified` | Default `true`: shown as Verified, but only if the mod's manifest has a `tutorial` (otherwise it shows as Community with the reason). `false` lists it as Community |
 | `notes` | Shown on the details, up to 500 characters |
 | `blocked_versions` | Exact versions (`1.2.0` or `v1.2.0`) refused without an explicit override |
 | `min_core` | Raises the mod's `min_core`: older cores show it as not compatible |
@@ -639,7 +753,8 @@ The core side is `src/mods/` with small hooks elsewhere:
 | File | Does |
 |---|---|
 | `src/mods/manifest.py` | Validates `odysseus-mod.json` |
-| `src/mods/placement.py` | Where tabs go: `section`, `after`, `order` and the admin's override |
+| `src/mods/tutorial.py` | The `tutorial` field, its Markdown, who has seen it, its images |
+| `src/mods/placement.py` | Where tabs go: `section`, `after`, `order` and the admin's override; `replaces` and the pages that moved to mods |
 | `src/mods/catalog.py` | Finding mods: GitHub topic search, indexes, the cache, details, update checks |
 | `src/mods/registry.py` | Install (prepare, confirm), update, enable, remove, tokens |
 | `src/mods/runtime.py` | Start, stop, health checks, restart with backoff, logs, idle stop |
@@ -651,8 +766,9 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |
 | `static/js/modsSettings.js` | Settings > Mods |
 | `static/js/modsBrowse.js` | Settings > Mods > Browse |
-| `static/js/modPanel.js` | Mod tabs and home cards (used by `workspace/shell.js` and `home.js`) |
+| `static/js/modPanel.js` | Mod tabs, home cards and tutorials (used by `workspace/shell.js` and `home.js`) |
 | `static/js/modNav.js` | Mod tabs in the sidebar groups |
+| `static/js/modLinks.js`, `modLinksCore.js` | `#mod/` links, old page keys, the "now a mod" card, links from mod frames |
 
 Hooks in the core: the router and the auth exemptions for `/api/mods/v1/` (the token checks
 itself) and frame URLs in `app.py`; the mod CSP and `ModAwareCORSMiddleware` in `core/middleware.py`; tool selection and the

@@ -26,6 +26,9 @@ mods you want to see); Odysseus sends it only to api.github.com.
    - has `odysseus-mod.json` at the top (or in a folder, then give `subdir`), with `tags`;
    - has the GitHub topic `odysseus-mod`: `gh repo edit OWNER/REPO --add-topic odysseus-mod`;
    - has a README that says what it does and why it needs each permission;
+   - has a `tutorial` in its manifest, written for its real features (Odysseus shows it the first
+     time someone opens the mod). **A mod without one is never shown as Verified**: Odysseus drops
+     the badge and says why, and the check below fails for a `verified` entry without one;
    - tags releases `vX.Y.Z` matching the manifest's `version`.
 2. Fork this repository and add an entry to `mods` in `index.json`:
 
@@ -50,7 +53,7 @@ mods you want to see); Odysseus sends it only to api.github.com.
 |---|---|---|
 | `repo` | yes | `https://github.com/owner/repo`, no `.git` |
 | `id` | yes | The mod's id, as in its manifest (the check compares them) |
-| `verified` | no, default `true` | `false` lists it without the Verified badge |
+| `verified` | no, default `true` | `false` lists it without the Verified badge. `true` needs a `tutorial` in the mod's manifest |
 | `notes` | no | Shown on the mod's details: what was reviewed, caveats (up to 500 characters) |
 | `blocked_versions` | no | Exact versions (`1.2.0` or `v1.2.0`) Odysseus refuses to install unless the admin explicitly overrides it. Use it for a release with a security or data-loss bug |
 | `min_core` | no | Raises the mod's `min_core`, for a release that turned out to need a newer Odysseus |
@@ -65,3 +68,4 @@ mods you want to see); Odysseus sends it only to api.github.com.
 - Block a bad release by adding its version to `blocked_versions` (Odysseus picks it up within an
   hour, or at once with Refresh); remove an entry to stop vouching for a mod.
 - Re-review when a listed mod asks for new permissions.
+- Review the tutorial too: it should match what the mod really does.

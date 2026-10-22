@@ -423,7 +423,24 @@ def summarize(raw: Optional[Dict[str, Any]], min_core_override: Optional[str] = 
         "home_cards": ui.get("home_cards") or [],
         "tools": (man or {}).get("tools"),
         "events": (man or {}).get("events"),
+        # A mod with no tutorial is never Verified (see verified_status).
+        "has_tutorial": bool((man or {}).get("tutorial")),
+        "tutorial_steps": len(((man or {}).get("tutorial") or {}).get("steps") or []),
     }
+
+
+NO_TUTORIAL_REASON = "Not shown as Verified: its manifest has no tutorial (every verified mod needs one)."
+
+
+def verified_status(listed_verified: bool, summary: Dict[str, Any]) -> Tuple[bool, str]:
+    """Whether a catalog entry shows as Verified, and if an index said so but
+    it is not, why. An index can vouch for a mod, but a mod without a
+    tutorial (or with a broken manifest) cannot be Verified."""
+    if not listed_verified:
+        return False, ""
+    if not summary.get("has_tutorial"):
+        return False, NO_TUTORIAL_REASON
+    return True, ""
 
 
 IMAGE_PROXY = "/api/mods/catalog/image?u="
@@ -800,8 +817,9 @@ def _refresh(old: Optional[Dict[str, Any]], fp: str) -> Dict[str, Any]:
         summary = summarize(raw, (ix or {}).get("min_core"))
         tags = list(dict.fromkeys((summary.get("tags") or []) + ((ix or {}).get("tags") or [])))[:mf.MAX_TAGS]
         listed = bool(ix) or "topic" in r["found_by"] or "yours" in r["found_by"]
+        verified, dropped = verified_status(bool(ix and ix.get("verified")), summary)
         entries[k] = dict(r, raw_manifest=raw, manifest_error=err, manifest=summary, tags=tags,
-                          verified=bool(ix and ix.get("verified")), indexed=bool(ix),
+                          verified=verified, verified_dropped=dropped, indexed=bool(ix),
                           index=({f: ix[f] for f in ("index", "notes", "blocked_versions", "min_core", "verified")}
                                  if ix else None),
                           subdir=(ix or {}).get("subdir"), listed=listed, yours="yours" in r["found_by"])
@@ -921,12 +939,15 @@ def _public_entry(e: Dict[str, Any], installed_by_repo, installed_by_id) -> Dict
         "permissions": man.get("permissions") or [],
         "tab_count": len(man.get("tabs") or []), "card_count": len(man.get("home_cards") or []),
         "has_tools": bool(man.get("tools")), "icon_url": man.get("icon_url") or image_url(e.get("avatar_url") or ""),
-        "badge": "verified" if e.get("verified") else "community",
         "notes": ix.get("notes") or "",
         "blocked_versions": ix.get("blocked_versions") or [],
         "version_blocked": bool(version) and _norm_version(version) in (ix.get("blocked_versions") or []),
         "install_source": install_source(e),
+        "has_tutorial": bool(man.get("has_tutorial")),
     })
+    # Judged again from this manifest (details may be of another version).
+    verified, dropped = verified_status(bool(ix.get("verified")) if ix else bool(e.get("verified")), man)
+    out.update({"verified": verified, "verified_dropped": dropped, "badge": "verified" if verified else "community"})
     out.update(_install_state(e, installed_by_repo, installed_by_id))
     return out
 
@@ -1126,7 +1147,8 @@ def details(owner: str, repo: str, ref: Optional[str] = None) -> Dict[str, Any]:
         "repo": entry, "ref": ref, "readme_html": d.get("readme_html") or "", "readme_missing": d.get("readme_missing"),
         "manifest": {k2: man.get(k2) for k2 in ("id", "name", "version", "description", "author", "license",
                                                  "min_core", "tags", "valid", "compatible", "errors", "warnings",
-                                                 "icon_url", "screenshots", "home_cards", "tools", "events")},
+                                                 "icon_url", "screenshots", "home_cards", "tools", "events",
+                                                 "has_tutorial", "tutorial_steps")},
         "manifest_error": d.get("manifest_error"),
         "runtime": {"type": (man.get("runtime") or {}).get("type"), "command": (man.get("runtime") or {}).get("command"),
                     "setup": (man.get("runtime") or {}).get("setup") or [],

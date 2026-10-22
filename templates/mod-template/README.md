@@ -13,6 +13,8 @@ Odysseus mod template: a tiny standard-library web server, the `odysseus-mod.jso
 - A settings page (the greeting the tool uses).
 - One agent tool, `my_mod_count`, offered when a message mentions "my mod".
 - Listens for any `*.finished` event from other mods.
+- A three-step tutorial, shown the first time you open its tab (**Tutorial** in the tab's header
+  shows it again).
 
 ## Permissions
 
