@@ -7,7 +7,6 @@ Consolidates the 4+ copies of normalize_base / resolve_endpoint logic into one p
 import json
 import logging
 import socket
-import subprocess
 from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
@@ -167,12 +166,14 @@ def request_scoped_headers(url: str, headers: Optional[Dict], owner: Optional[st
     return out
 
 
-# Cache for Tailscale hostname → IP resolution
+# Host name -> tailnet IP, for names DNS does not know (a MagicDNS name on a
+# server without MagicDNS). The peers come from the network add-on
+# (src/machines.py, `network.peers`); without it a name only resolves by DNS.
 _tailscale_cache: Dict[str, Optional[str]] = {}
 
 
 def _resolve_tailscale_host(hostname: str) -> Optional[str]:
-    """Try to resolve a hostname via 'tailscale status' if DNS fails."""
+    """A tailnet IP for `hostname` when DNS cannot resolve it, else None."""
     if hostname in _tailscale_cache:
         return _tailscale_cache[hostname]
 
@@ -184,30 +185,18 @@ def _resolve_tailscale_host(hostname: str) -> Optional[str]:
     except socket.gaierror:
         pass
 
-    # DNS failed — try tailscale
     try:
-        result = subprocess.run(
-            ["tailscale", "status", "--json"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            import json as _json
-            data = _json.loads(result.stdout)
-            peers = data.get("Peer", {})
-            for _id, peer in peers.items():
-                peer_name = (peer.get("HostName") or "").lower()
-                dns_name = (peer.get("DNSName") or "").split(".")[0].lower()
-                if peer_name == hostname.lower() or dns_name == hostname.lower():
-                    addrs = peer.get("TailscaleIPs", [])
-                    if addrs:
-                        ip = addrs[0]
-                        logger.info(f"Resolved '{hostname}' via Tailscale → {ip}")
-                        _tailscale_cache[hostname] = ip
-                        return ip
+        from src import machines
+        peer = machines.find_peer(machines.peers(), hostname)
     except Exception as e:
-        logger.debug(f"Tailscale resolution failed for '{hostname}': {e}")
-
-    _tailscale_cache[hostname] = None
+        logger.debug(f"Peer lookup failed for '{hostname}': {e}")
+        peer = None
+    ips = [i for i in (peer or {}).get("ips") or [] if "." in i] or (peer or {}).get("ips") or []
+    if ips:
+        logger.info(f"Resolved '{hostname}' via the tailnet → {ips[0]}")
+        _tailscale_cache[hostname] = ips[0]
+        return ips[0]
+    # Not cached: the network add-on may be installed or come up later.
     return None
 
 
