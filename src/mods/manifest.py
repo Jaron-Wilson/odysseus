@@ -25,11 +25,12 @@ RESERVED_IDS = {"v1", "v2", "install", "settings", "events", "scaffold", "ui", "
 # Paths the core requests on the mod's server: absolute, no "..", no scheme.
 PATH_RE = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 SUB_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
-# `ui.embeds`: a same-origin directory like /play/, and the browser features its frame may use.
-EMBED_PATH_RE = re.compile(r"^/(?:[A-Za-z0-9._~-]+/)+$")
+# `ui.embeds`: a same-origin page like /play/stream.html (or a directory like /play/), and the
+# browser features its frame may use. (Pointer lock is not one of them: it needs no permission
+# policy, only a frame that is not sandboxed.)
+EMBED_PATH_RE = re.compile(r"^/(?:[A-Za-z0-9._~-]+/)+(?:[A-Za-z0-9._~-]+)?$")
 EMBED_DENIED = ("/mods/", "/api/", "/static/", "/auth/", "/login/", "/ws/", "/ide/")
-EMBED_ALLOW = ("fullscreen", "gamepad", "autoplay", "keyboard-map", "pointer-lock", "clipboard-read",
-               "clipboard-write")
+EMBED_ALLOW = ("fullscreen", "gamepad", "autoplay", "keyboard-map", "clipboard-read", "clipboard-write")
 EVENT_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 # A subscription pattern: "<mod id or *>/<event type glob>" or a bare type glob.
 EVENT_PATTERN_RE = re.compile(r"^(?:[a-z0-9*][a-z0-9*-]{0,31}/)?[a-z0-9*][a-z0-9_.*-]{0,63}$")
@@ -169,7 +170,7 @@ def _embeds(raw: Any, errors: List[str]) -> List[Dict[str, Any]]:
             continue
         path = e.get("path")
         if not isinstance(path, str) or not EMBED_PATH_RE.match(path) or ".." in path.split("/"):
-            errors.append(f"{where}.path must be a directory path on this server like /play/ (letters, digits, . _ ~ -)")
+            errors.append(f"{where}.path must be a path on this server like /play/stream.html (letters, digits, . _ ~ -; no query)")
             continue
         if path.startswith(EMBED_DENIED):
             errors.append(f"{where}.path can't be under {', '.join(EMBED_DENIED)}")

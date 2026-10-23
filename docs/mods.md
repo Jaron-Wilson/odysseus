@@ -337,7 +337,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `ui.tabs[].order` | A whole number from -1000 to 1000, default 0. Tabs in the same spot (after the same page, or at the end) are sorted by `order`, then by title. |
 | `ui.tabs[].replaces` | Optional: the key of a built-in page this tab takes over (`adsb`, `games`, `print`, `devops`, `company`, ...; see [Pages that moved to mods](#pages-that-moved-to-mods)). Its old links and saved Workspace tabs open this tab. A key not in the list is a warning and ignored; two tabs of one mod cannot replace the same key. |
 | `ui.home_cards[]` | `id`, `title` (optional), `path`, `height` (60 to 600 pixels, default 180). |
-| `ui.embeds[]` | `id`, `path` (a page of this server like `/play/`), `title` (optional), `allow` (browser features). Needs the `embed` permission; see [Embedding a page of this server](#embedding-a-page-of-this-server). |
+| `ui.embeds[]` | `id`, `path` (a page of this server like `/play/stream.html`), `title` (optional), `allow` (browser features). Needs the `embed` permission; see [Embedding a page of this server](#embedding-a-page-of-this-server). |
 | `ui.settings_path` | The mod's settings page, opened from its tab. |
 | `tools.endpoint` | Default `/mod/tools`. |
 | `tools.keywords` | Words that make the agent offer the mod's tools. |
@@ -933,14 +933,15 @@ manifest:
 
 ```json
 "permissions": ["embed"],
-"ui": { "embeds": [{ "id": "stream", "path": "/play/", "title": "Stream",
-                     "allow": ["fullscreen", "gamepad", "autoplay", "keyboard-map", "pointer-lock"] }] }
+"ui": { "embeds": [{ "id": "stream", "path": "/play/stream.html", "title": "Stream",
+                     "allow": ["fullscreen", "gamepad", "autoplay", "keyboard-map"] }] }
 ```
 
-`path` is a directory path on this server (letters, digits, `. _ ~ -`, a trailing `/`; not under
-`/mods/`, `/api/`, `/static/`, `/auth/`, `/login/`, `/ws/` or `/ide/`). `allow` lists browser features
-the frame may use (`fullscreen`, `gamepad`, `autoplay`, `keyboard-map`, `pointer-lock`,
-`clipboard-read`, `clipboard-write`; default `fullscreen`). At most four. The path is fixed here, in
+`path` is a page on this server (letters, digits, `. _ ~ -`, at least one directory, no query; not
+under `/mods/`, `/api/`, `/static/`, `/auth/`, `/login/`, `/ws/` or `/ide/`). `allow` lists browser
+features the frame may use (`fullscreen`, `gamepad`, `autoplay`, `keyboard-map`, `clipboard-read`,
+`clipboard-write`; default `fullscreen`). Pointer lock needs no entry: the frame is not sandboxed.
+At most four. The path is fixed here, in
 the manifest the user approved: the page can only add a query to it.
 
 The mod page asks with `postMessage`, and the core replaces the mod's page in its window with the
@@ -954,7 +955,8 @@ parent.postMessage({ type: 'odysseus:embed', action: 'close' }, '*');
 ```
 
 The core answers the mod page with `{type: 'odysseus:embed-event', id, data}` for each message the
-embedded page posts to its parent (same origin only), and `{..., closed: true}` when the user
+embedded page posts to its parent (same origin only), `{..., opened: true}` once it shows (an older core
+says nothing, so a mod can fall back to a link), and `{..., closed: true}` when the user
 presses Back. `send` passes on only `moonlight-web:*` messages, and `query` is limited to
 `?` and URL-safe characters. Only the mod's own tab window can do this (not home cards), and only for
 an embed its manifest lists and the user granted. The embedded page runs with the user's cookies, so

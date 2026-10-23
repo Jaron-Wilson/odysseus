@@ -183,11 +183,11 @@ def test_ui_list_gives_frame_urls_only_for_mods_the_user_may_use(client):
 
 
 def test_ui_list_gives_embeds_only_with_the_permission(client):
-    ui = {"tabs": [{"id": "main", "path": "/"}], "embeds": [{"id": "stream", "path": "/play/", "allow": ["fullscreen"]}]}
+    ui = {"tabs": [{"id": "main", "path": "/"}], "embeds": [{"id": "stream", "path": "/play/stream.html", "allow": ["fullscreen"]}]}
     add_mod({"ui": ui}, permissions=["embed"])
     add_mod({"ui": {"tabs": ui["tabs"]}}, mod_id="plain-mod")
     mods = {m["id"]: m for m in client.get("/api/mods/ui", headers={"x-test-user": "alice"}).json()["mods"]}
-    assert mods["test-mod"]["embeds"] == [{"id": "stream", "path": "/play/", "title": "", "allow": ["fullscreen"]}]
+    assert mods["test-mod"]["embeds"] == [{"id": "stream", "path": "/play/stream.html", "title": "", "allow": ["fullscreen"]}]
     assert mods["plain-mod"]["embeds"] == []
 
 

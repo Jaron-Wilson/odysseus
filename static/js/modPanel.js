@@ -346,7 +346,8 @@ export async function showTutorial(modId, opts = {}) {
 //                     {type: 'odysseus:embed', action: 'send', data: {type: 'moonlight-web:...'}}
 //                     {type: 'odysseus:embed', action: 'fullscreen', mode: 'enter' | 'exit' | 'toggle'}
 //   core -> mod page  {type: 'odysseus:embed-event', id, data: {...}}   (what the embedded page posts)
-//                     {type: 'odysseus:embed-event', id, closed: true}
+//                     {type: 'odysseus:embed-event', id, opened: true}   (the embed is showing)
+//                     {type: 'odysseus:embed-event', id, closed: true}   (the user pressed Back)
 
 const EMBED_QUERY_RE = /^\?[A-Za-z0-9._~%=&+,:-]{0,2000}$/;
 const EMBED_FS_WAIT_MS = 700;
@@ -402,7 +403,7 @@ function _embedOpen(el, m, d) {
       <button type="button" class="mod-btn mod-embed-fs" title="Fullscreen: the stream takes the whole screen. Hold Esc to leave it">Fullscreen</button>
       <button type="button" class="mod-btn mod-embed-back" title="Back to the page">Back</button></div>
     <iframe class="mod-embed-frame" title="${esc(title)}" referrerpolicy="no-referrer"
-      allow="${esc((spec.allow || []).join('; '))}" allowfullscreen></iframe>`;
+      allow="${esc((spec.allow || []).join('; '))}"></iframe>`;
   const frame = box.querySelector('iframe');
   frame.src = spec.path + query;
   box.addEventListener('click', (ev) => {
@@ -412,6 +413,8 @@ function _embedOpen(el, m, d) {
   el.querySelector('.mod-panel').appendChild(box);
   el.classList.add('mod-embedding');
   frame.focus();
+  // Tells the mod page its request was understood (an older core says nothing, and a mod falls back).
+  _toModFrame(el, { type: 'odysseus:embed-event', id: spec.id, opened: true });
 }
 
 window.addEventListener('message', (ev) => {

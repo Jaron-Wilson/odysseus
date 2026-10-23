@@ -130,14 +130,14 @@ def test_scaffold_makes_a_working_mod(tmp_path):
 # ── ui.embeds: a same-origin page shown outside the sandbox (permission `embed`) ──
 
 def _embed(**kw):
-    e = {"id": "stream", "path": "/play/", "allow": ["fullscreen", "gamepad"]}
+    e = {"id": "stream", "path": "/play/stream.html", "allow": ["fullscreen", "gamepad"]}
     e.update(kw)
     return _base(permissions=["embed"], ui={"embeds": [e]})
 
 
 def test_an_embed_is_validated_and_normalized():
     m = mf.validate(_embed(title="Stream"))
-    assert m["ui"]["embeds"] == [{"id": "stream", "path": "/play/", "title": "Stream",
+    assert m["ui"]["embeds"] == [{"id": "stream", "path": "/play/stream.html", "title": "Stream",
                                   "allow": ["fullscreen", "gamepad"]}]
     assert mf.validate(_base())["ui"]["embeds"] == []
     assert "embed" in mf.PERMISSIONS
@@ -146,6 +146,7 @@ def test_an_embed_is_validated_and_normalized():
 def test_an_embed_defaults_to_fullscreen_only():
     raw = _base(permissions=["embed"], ui={"embeds": [{"id": "stream", "path": "/play/"}]})
     assert mf.validate(raw)["ui"]["embeds"][0]["allow"] == ["fullscreen"]
+    assert mf.validate(raw)["ui"]["embeds"][0]["path"] == "/play/"           # a directory works too
 
 
 def test_an_embed_needs_the_permission():
@@ -157,7 +158,8 @@ def test_an_embed_needs_the_permission():
 
 
 @pytest.mark.parametrize("bad", [
-    {"path": "/"}, {"path": "/play"}, {"path": "//evil.example/"}, {"path": "/play/../"},
+    {"path": "/"}, {"path": "/play"}, {"path": "/stream.html"}, {"path": "//evil.example/"}, {"path": "/play/../"},
+    {"path": "/play/%2e%2e/"}, {"path": "/play/a b.html"}, {"allow": ["pointer-lock"]},
     {"path": "https://evil.example/"}, {"path": "/mods/print-hub/"}, {"path": "/api/mods/"},
     {"path": "/play/?x=1"}, {"path": "/pl ay/"}, {"allow": ["camera"]}, {"allow": "fullscreen"},
     {"id": "Bad Id"},
