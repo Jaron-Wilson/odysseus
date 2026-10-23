@@ -51,13 +51,13 @@ function render() {
   const batch = needs.filter((m) => !m.needs_review);
   const review = needs.length - batch.length;
   const checked = s.checked_at ? `Last checked ${ago(s.checked_at)}.` : 'Not checked yet.';
-  const names = needs.map((m) => `${esc(m.name)} ${esc((m.latest || {}).version || '')}${m.needs_review ? ' (review needed)' : ''}`.trim());
+  const names = needs.map((m) => `${esc(m.name)} ${esc((m.latest || {}).version || '')}${m.needs_review ? ' (review needed)' : (m.trusted && (m.new_permissions || []).length ? ` (auto-approved: trusted publisher ${m.trusted})` : '')}`.trim());
   const head = `
   <div class="admin-card mi-strip" id="mods-updates-head" data-state="${needs.length ? 'needs' : 'clear'}">
     <div class="mi-strip-row">
       <h2>${needs.length ? `Needs update (${needs.length})` : 'Everything is up to date'}</h2>
       ${needs.length ? '<button class="settings-btn" type="button" data-mods-filter="update" id="mods-updates-show" title="Show only the mods that need an update">Show them</button>' : ''}
-      <button class="settings-btn" type="button" id="mods-updates-all"${batch.length && !_busy ? '' : ' disabled'} title="Updates one after another and stops at the first failure. Mods that ask for new permissions are left for you to review.">Update all${batch.length ? ` (${batch.length})` : ''}</button>
+      <button class="settings-btn" type="button" id="mods-updates-all"${batch.length && !_busy ? '' : ' disabled'} title="Updates one after another and stops at the first failure. Mods that ask for new permissions are left for you to review, unless they are from a trusted publisher (Trusted publishers, below); ui.style and high-risk permissions are always left for you.">Update all${batch.length ? ` (${batch.length})` : ''}</button>
       <button class="settings-btn" type="button" id="mods-updates-check"${_busy || s.checking ? ' disabled' : ''}>${s.checking ? 'Checking…' : 'Check now'}</button>
     </div>
     ${needs.length ? `<div class="mi-strip-names" data-upd-names>${names.join(', ')}.${review ? ` ${review} need${review === 1 ? 's' : ''} your review first, so ${review === 1 ? 'it is' : 'they are'} not part of Update all.` : ''}</div>` : ''}
@@ -108,7 +108,8 @@ async function checkNow() {
 async function updateAll() {
   const ids = ((_state || {}).needs_update || []).filter((m) => !m.needs_review).map((m) => m.id);
   if (!ids.length) return;
-  const names = ((_state || {}).needs_update || []).filter((m) => !m.needs_review).map((m) => m.name);
+  const names = ((_state || {}).needs_update || []).filter((m) => !m.needs_review)
+    .map((m) => (m.trusted && (m.new_permissions || []).length ? `${m.name} (new permissions: ${m.new_permissions.join(', ')}, approved because it's from ${m.trusted}, a trusted publisher)` : m.name));
   if (!confirm(`Update ${names.join(', ')}?\n\nThey are updated one after another, and it stops at the first one that fails. Running mods restart.`)) return;
   _busy = true;
   _lastRun = { ok: true, lines: [`Updating ${ids.length} mod${ids.length === 1 ? '' : 's'}…`] };

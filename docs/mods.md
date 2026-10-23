@@ -50,7 +50,9 @@ how long ago the new commit was published, a collapsed list of the commits in be
 **Update** button, which is the normal review and approve step. Warnings:
 
 - **Asks for new permissions**: the new manifest wants permissions you never approved. They must be
-  approved again, so the mod is not part of **Update all**.
+  approved again, so the mod is not part of **Update all**, unless it is from a
+  [trusted publisher](#trusted-publishers) (then only `ui.style` and the high-risk permissions wait
+  for you).
 - **Needs a newer Odysseus**: its `min_core` is above this Odysseus's mod API; updating is refused.
 - A Docker mod says its images rebuild the next time it starts.
 
@@ -92,11 +94,79 @@ mods/registry.json         the registry (0600; tokens encrypted)
 mods/.frame_secret         signs the frame tokens of mod pages
 mods/.staging/             fetched, not yet approved installs (removed after an hour)
 mods/updates.json          the last update check of every mod
+mods/trust-log.jsonl       auto-approvals and approvals of installs and updates (a mod's History)
 mods/<id>/src/             the mod's code
 mods/<id>/data/            MOD_DATA_DIR, kept across updates
 mods/<id>/logs/mod.log     its output (rotated at 1 MB), shown under Logs
 mods/<id>/tools.json       its tool list, read when it starts
 ```
+
+### Trusted publishers
+
+Your own mods do not need a manual permission review every time. **Settings > Mods > Trusted
+publishers** (admins only) is a list of GitHub owners, one per line. The default, until you save a
+list, is the GitHub login of the catalog token (`GET /user`, so `Jaron-Wilson` for a token of that
+account), or nobody without a token. It is stored in the registry settings
+(`settings.trust.publishers` in `mods/registry.json`).
+
+A mod is **from a trusted publisher** only when all three hold:
+
+1. it was installed from a `https://github.com/<owner>/<repo>` URL (a folder install, an `ssh://` or
+   `git@` URL, `http://` and every other host never count);
+2. `<owner>` is in the list; and
+3. GitHub's API says the repository really belongs to a listed owner (`owner.login` of
+   `GET /repos/<owner>/<repo>`, redirects followed). A lookalike URL (`Jaron-Wi1son`), a fork under
+   someone else's account and a repository that was transferred away do not count. If GitHub cannot
+   be asked (rate limit, outage, a private repository without a token), the mod is not trusted and
+   the normal review applies. Verified owners are remembered for an hour in memory, and per installed
+   mod in the registry (`trust_verified`, refreshed by each update check) so **Update all** can decide
+   without the network; apply asks GitHub again.
+
+For a trusted mod:
+
+- **Install and update approve for you**: the permissions it asks for, the legacy settings it imports
+  ([Importing settings](#importing-settings-from-before-a-mod-existed)) and the capabilities it uses.
+  The review shows "Auto-approved because it's from Jaron-Wilson, a trusted publisher" and goes ahead
+  after a moment; **Review anyway** shows the normal review instead, and **Cancel** throws it away. The
+  server decides, not the page: `POST /api/mods/install/confirm` with `{"auto": true}` is refused (409)
+  unless the rule holds.
+- **Update all includes it**, even when the update asks for new permissions.
+- **Every auto-approval writes one line** to `mods/trust-log.jsonl`: the mod, the version and commit,
+  the permissions granted, the imports and capabilities, and `trusted publisher <owner>`. The mod's
+  details page lists them under **History** (`GET /api/mods/<id>/history`, newest first). Approvals you
+  click by hand are listed there too ("approved by <you>").
+- Cards in Installed and Browse carry a **Yours** badge (the owner is the catalog token's account) or
+  **Trusted: <owner>**.
+
+**What always still asks for a click**, even for a trusted publisher. The list is `trust.ALWAYS_ASK`
+in `src/mods/trust.py`, returned by `GET /api/mods/trust` as `always_ask`:
+
+| Always asks | Why |
+|---|---|
+| `ui.style` | changes the look of the whole UI |
+| `devices.control` | sends commands to your linked devices |
+| `public.http` | lets anyone, without a sign-in, reach the mod |
+| `agent.run` | runs the agent (shell, files, web) with your account's rights |
+| `chats` | sends messages to the agent as if you typed them |
+| `browser` | drives the server's cloud browser and the accounts signed in there |
+| `embed` | shows a server page outside the mod sandbox, with your sign-in |
+| `stats.read` | server-wide activity: the admin powers an `admin_only` mod asks for |
+| `google.calendar` | creates events and emails invites from your Google account |
+
+The rule looks at what is **new**: an update only asks again for a permission it did not have, so a
+mod you approved `devices.control` for by hand keeps updating without a prompt until it asks for
+another one on the list. In **Update all** such a mod is listed as `needs_review` with the reason.
+Removing an owner from the list takes effect at once.
+
+**Always ask me** (in a mod's settings in its details page) turns auto-approval off for that one mod,
+whoever published it.
+
+| Route (admin only) | |
+|---|---|
+| `GET /api/mods/trust` | `{publishers, is_default, viewer, always_ask, high_risk, ui_style}` |
+| `PUT /api/mods/trust` | `{publishers: [...]}`: owner names or `github.com/<owner>` URLs; saves the list |
+| `GET /api/mods/<id>/history` | The audit lines of a mod's installs and updates |
+| `POST /api/mods/<id>/trust` | `{always_ask: true\|false}`: the per-mod override |
 
 ## Finding mods
 
@@ -178,7 +248,7 @@ The API (admins only):
 
 | Call | Answers |
 |---|---|
-| `GET /api/mods/catalog?q=&tag=&verified=&compatible=&refresh=` | `{results, tags, updates, warnings, stale, fetched_at, token_source, viewer, index_count, settings}`. `verified` and `compatible` are `1` or `0`; each result has its install state (`installed`, `installed_version`, `update_available`, `latest_version`, `latest_ref`), `has_tutorial` and, when an index said Verified but the mod cannot be, `verified_dropped` (the reason) |
+| `GET /api/mods/catalog?q=&tag=&verified=&compatible=&refresh=` | `{results, tags, updates, warnings, stale, fetched_at, token_source, viewer, index_count, settings}`. `verified` and `compatible` are `1` or `0`; each result has its install state (`installed`, `installed_version`, `update_available`, `latest_version`, `latest_ref`), `has_tutorial` and, when an index said Verified but the mod cannot be, `verified_dropped` (the reason); `trusted_publisher` is the owner when it is on your [trusted publishers](#trusted-publishers) list |
 | `GET /api/mods/catalog/<owner>/<repo>?ref=` | `{repo, manifest, permissions, tabs, runtime, versions, readme_html, install, version_blocked}` |
 | `GET` / `PUT /api/mods/catalog/settings` | `{index_urls, include_private, token_set, token_source}`; `PUT` takes those plus `github_token` or `clear_token` |
 | `GET /api/mods/catalog/image?u=` | An allowed image, proxied |
@@ -1121,7 +1191,8 @@ you (`MOD_PASSWORD` for the login).
 Mods are **untrusted code**. What protects you:
 
 - **You approve the permissions at install**, and again for every new permission an update asks
-  for. Nothing from the mod runs (not even its setup commands) before approval. The mod API
+  for (mods from a [trusted publisher](#trusted-publishers) you listed are approved for you, except
+  for `ui.style` and the high-risk permissions, and every approval is logged). Nothing from the mod runs (not even its setup commands) before approval. The mod API
   enforces the permissions on every call and rate limits them.
 - **Each mod has its own token** (`odm_...`), stored encrypted, sent only to that mod. **New token**
   in Settings > Mods replaces it at once (the mod is restarted with the new one); the old one stops
@@ -1220,6 +1291,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/capabilities.py` | `provides`, `requires`, `optional`; the capability broker, its rules and log; the built-in `messaging.sms` |
 | `src/mods/catalog.py` | Finding mods: GitHub topic search, indexes, the cache, details, update checks |
 | `src/mods/registry.py` | Install (prepare, confirm), update, enable, remove, tokens |
+| `src/mods/trust.py` | Trusted publishers: the list, owner verification, the auto-approval rule and its exceptions, the audit log, `/api/mods/trust` |
 | `src/mods/updates.py` | Update checks (GitHub API or `git ls-remote`), the saved `updates.json`, the 6 hour timer, Update all |
 | `src/mods/runtime.py` | Start, stop, health checks, restart with backoff, logs, idle stop |
 | `src/mods/proxy.py` | `/mods/<id>/` HTTP and WebSocket proxy |

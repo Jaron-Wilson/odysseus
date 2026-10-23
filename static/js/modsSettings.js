@@ -21,6 +21,7 @@
 import { initBrowse, loadBrowse, setBrowseCapability } from './modsBrowse.js';
 import { initUpdates, load as loadUpdates, summary as updateSummary } from './modsUpdates.js';
 import * as Installed from './modsInstalled.js';
+import * as Trust from './modsTrust.js';
 
 const $ = (id) => document.getElementById(id);
 const API = '/api/mods';
@@ -98,6 +99,9 @@ let _groups = [];      // nav groups a mod tab can go in: [{id, label}]
 let _staged = null;     // the install or update waiting for approval
 let _view = 'installed';  // or 'browse'
 let _origin = null;     // where the staged install came from in Browse: {verified, origin}
+let _autoTimer = null;  // a trusted publisher's install waiting a moment before it goes ahead
+let _reviewAnyway = false;   // the admin chose to review a mod that would have been auto-approved
+const AUTO_DELAY_MS = 2500;
 
 function sourceText(src) {
   if (!src) return '';
@@ -149,6 +153,32 @@ function importLines(list, update) {
   return `<div class="admin-toggle-sub" style="margin-top:6px"><strong>Imports your old built-in settings, once:</strong></div><ul class="admin-toggle-sub" style="margin:2px 0 0 18px;padding:0">${li}</ul>`;
 }
 
+// A prepared install or update the trusted publisher rule approves (the server
+// says so in `trust.auto_approve`), unless the admin chose to review it, or a
+// required capability is missing (that is a decision for a person).
+function autoPending(s) {
+  return !!(s && (s.trust || {}).auto_approve && !_reviewAnyway && !((s.capabilities || {}).missing || []).length);
+}
+
+// Show a prepared install or update; a trusted one goes ahead after a moment
+// unless "Review anyway" or Cancel is pressed first.
+function showStaged() {
+  clearTimeout(_autoTimer);
+  _reviewAnyway = false;
+  renderStaged();
+  $('mods-approve')?.scrollIntoView({ block: 'nearest' });
+  if (autoPending(_staged)) {
+    const id = _staged.install_id;
+    _autoTimer = setTimeout(() => { if (_staged && _staged.install_id === id && autoPending(_staged)) confirmStaged(true, true); }, AUTO_DELAY_MS);
+  }
+}
+
+function reviewAnyway() {
+  clearTimeout(_autoTimer);
+  _reviewAnyway = true;
+  renderStaged();
+}
+
 function renderStaged() {
   const box = $('mods-approve');
   if (!box) return;
@@ -156,13 +186,16 @@ function renderStaged() {
   if (!s) { box.innerHTML = ''; box.style.display = 'none'; return; }
   const fresh = new Set(s.new_permissions || []);
   const perms = (s.permissions || []).map((p) => `<li><code>${esc(p.id)}</code> ${esc(p.description)}${
-    s.previous_version && fresh.has(p.id) ? ' <strong>(new)</strong>' : ''}</li>`).join('') || '<li>None</li>';
+    s.previous_version && fresh.has(p.id) ? ' <strong>(new)</strong>' : ''}${
+    (s.trust || {}).trusted && Trust.alwaysAsk().has(p.id) ? ' <strong data-always-ask>(always needs your click)</strong>' : ''}</li>`).join('') || '<li>None</li>';
+  const waiting = autoPending(s);
   const ui = s.ui || {};
   const setup = (s.setup || []).map((c) => `<code>${esc(c.join(' '))}</code>`).join('<br>');
   box.style.display = '';
   box.innerHTML = `
     <h2>${s.previous_version ? `Update ${esc(s.name)} ${esc(s.previous_version)} to ${esc(s.version)}` : `Install ${esc(s.name)} ${esc(s.version)}`}</h2>
     <div class="admin-toggle-sub">${esc(s.description || '')}${s.author ? ` · by ${esc(s.author)}` : ''}</div>
+    ${Trust.noticeHtml(s, { waiting })}
     ${_origin && !_origin.verified ? `<div class="admin-toggle-sub mods-unverified" style="margin:4px 0;padding:6px 8px;border-left:3px solid var(--yellow, #d29922)"><strong>Community, not reviewed.</strong> Mods run code on your server. Nobody has checked ${esc(_origin.origin || 'this one')}: read its code before you approve.</div>` : ''}
     ${s.blocked ? `<div class="admin-toggle-sub" style="margin:4px 0;padding:6px 8px;border-left:3px solid var(--red, #e5534b)"><strong>Blocked version.</strong> ${esc(s.blocked)}</div>` : ''}
     <div class="admin-toggle-sub">From ${esc(sourceText(s.source))}${s.commit ? ` (${esc(String(s.commit).slice(0, 10))})` : ''}. Runs as a ${esc(s.runtime)}${(s.command || []).length ? `: <code>${esc(s.command.join(' '))}</code>` : ''}.</div>
@@ -177,7 +210,8 @@ function renderStaged() {
       ${s.tutorial ? `It has a tutorial${s.tutorial.steps ? ` (${s.tutorial.steps} step${s.tutorial.steps > 1 ? 's' : ''})` : ''}, shown the first time someone opens it.` : '<strong>It has no tutorial.</strong>'}
       ${s.runtime === 'docker' ? '' : 'A process mod runs as the same user as Odysseus and can read what that user can; only approve code you trust.'}</div>
     <div class="settings-row" style="gap:6px;margin-top:8px">
-      <button class="settings-btn" type="button" id="mods-approve-yes">Approve and ${s.previous_version ? 'update' : 'install'}</button>
+      ${waiting ? `<button class="settings-btn" type="button" id="mods-approve-review">Review anyway</button>`
+        : `<button class="settings-btn" type="button" id="mods-approve-yes">Approve and ${s.previous_version ? 'update' : 'install'}</button>`}
       <button class="settings-btn" type="button" id="mods-approve-no">Cancel</button>
     </div>`;
 }
@@ -185,6 +219,7 @@ function renderStaged() {
 async function load() {
   if (!$('mods-settings')) return;
   loadUpdates();
+  Trust.loadTrust();
   try {
     const d = await api('GET', API);
     _mods = d.mods || [];
@@ -216,8 +251,7 @@ async function prepareInstall(opts) {
       allow_blocked: !!o.allow_blocked,
     });
     say('');
-    renderStaged();
-    $('mods-approve')?.scrollIntoView({ block: 'nearest' });
+    showStaged();
   } catch (e) { say(e.message, true); }
 }
 
@@ -239,8 +273,7 @@ async function startUpdate(id, ref, allowBlocked) {
       ref: ref || (m.source || {}).ref || null, allow_blocked: !!allowBlocked,
     });
     say('');
-    renderStaged();
-    $('mods-approve')?.scrollIntoView({ block: 'nearest' });
+    showStaged();
   } catch (e) { say(e.message, true); }
 }
 
@@ -273,9 +306,10 @@ function setView(v) {
   if (_view === 'browse') loadBrowse();
 }
 
-async function confirmStaged(yes) {
+async function confirmStaged(yes, auto) {
   const s = _staged;
   if (!s) return;
+  clearTimeout(_autoTimer);
   // A hard requirement nobody provides: the mod will not work yet.
   const missing = (s.capabilities || {}).missing || [];
   let allowMissing = false;
@@ -295,10 +329,11 @@ async function confirmStaged(yes) {
   try {
     const d = await api('POST', `${API}/install/confirm`, {
       install_id: s.install_id, permissions: (s.permissions || []).map((p) => p.id), allow_missing: allowMissing,
+      auto: !!auto,
     });
     replaceMod(d.mod);
     $('mods-install-source').value = '';
-    say(`${d.mod.name} ${s.previous_version ? 'updated' : 'installed'}.`);
+    say(`${d.mod.name} ${s.previous_version ? 'updated' : 'installed'}${auto ? `, auto-approved because it's from ${(s.trust || {}).publisher}, a trusted publisher (see its History)` : ''}.`);
   } catch (e) { say(e.message, true); }
 }
 
@@ -370,8 +405,7 @@ async function onAction(btn) {
     try {
       _staged = await api('POST', `${API}/${encodeURIComponent(id)}/update`, ref.trim() ? { ref: ref.trim() } : { ref: (m.source || {}).ref || null });
       say('');
-      renderStaged();
-      $('mods-approve')?.scrollIntoView({ block: 'nearest' });
+      showStaged();
     } catch (e) { say(e.message, true); }
     return;
   }
@@ -427,6 +461,7 @@ async function onClick(ev) {
   else if (t.closest('#mods-view-browse')) setView('browse');
   else if (t.closest('#mods-install-go')) prepareInstall();
   else if (t.closest('#mods-approve-yes')) confirmStaged(true);
+  else if (t.closest('#mods-approve-review')) reviewAnyway();
   else if (t.closest('#mods-approve-no')) confirmStaged(false);
   else if (t.closest('#mods-refresh')) { load(); if (_view === 'browse') loadBrowse(true); }
   else if (t.closest('#mods-notify-save')) saveNotify();
@@ -446,6 +481,9 @@ async function onChange(ev) {
       const hidden = !!card?.querySelector('[data-mod-hide]')?.checked;
       replaceMod((await api('POST', `${API}/${encodeURIComponent(id)}/placement`, { section, hidden })).mod);
       say(hidden ? 'Hidden from the sidebar.' : `Its tabs show in ${section ? groupLabel(section) : 'the group the mod asks for'}.`);
+    } else if (t.dataset.modTrust) {
+      replaceMod((await api('POST', `${API}/${encodeURIComponent(t.dataset.modTrust)}/trust`, { always_ask: t.checked })).mod);
+      say(t.checked ? 'Updates of this mod will always ask you.' : 'Its trusted publisher may approve its updates again.');
     } else if (t.dataset.modMute) {
       replaceMod((await api('POST', `${API}/${encodeURIComponent(t.dataset.modMute)}/mute`, { muted: t.checked })).mod);
       say(t.checked ? 'Muted.' : 'Unmuted.');
@@ -460,6 +498,7 @@ function init() {
     panel.addEventListener('change', onChange);
     panel.dataset.ready = '1';
     initBrowse({ api, esc, say, prefillInstall, startUpdate });
+    Trust.initTrust({ api, esc, say });
     Installed.initInstalled({
       api, esc, mods: () => _mods, groups: () => _groups, updates: updateSummary, openMod,
       browse: () => setView('browse'), parts: { placementRow, grantRow },

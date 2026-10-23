@@ -18,7 +18,9 @@ that cannot be reached is recorded as an error, never as "up to date".
 
 Applying an update is the registry's own prepare and confirm. "Update all"
 (`apply`) only confirms an update that asks for no new permission, because new
-permissions must be approved by a person; it stops at the first failure.
+permissions must be approved by a person, unless the mod is from a trusted publisher
+(src/mods/trust.py): its new permissions are approved by that rule, except `ui.style` and
+the high-risk ones, which still wait for a click. It stops at the first failure.
 """
 from __future__ import annotations
 
@@ -31,7 +33,7 @@ import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
-from src.mods import catalog, paths, registry
+from src.mods import catalog, paths, registry, trust
 from src.mods import manifest as mf
 
 logger = logging.getLogger(__name__)
@@ -305,6 +307,9 @@ def check_all(force: bool = False) -> Dict[str, Any]:
         gh_ok = True
         for entry in sorted(registry.list_mods(), key=lambda m: m["id"]):
             try:
+                uo = trust.url_owner(entry.get("source")) if gh_ok else None
+                if uo and trust.is_listed(uo[0]):
+                    trust.refresh(entry)      # keeps "from a trusted publisher" current for Update all
                 rec = check_mod(entry, gh_ok)
             except Exception as e:   # one mod must not stop the others
                 logger.warning("[mods] update check of %s failed: %s", entry.get("id"), e)
@@ -386,7 +391,11 @@ def view() -> Dict[str, Any]:
                 "min_core": review.get("min_core"),
                 "min_core_ok": review.get("min_core_ok", True),
                 "note": rec.get("manifest_note"),
-                "needs_review": bool(new_perms) or review.get("min_core_ok") is False,
+                # A mod from a trusted publisher (src/mods/trust.py) needs no review for
+                # new permissions, except the ones that always ask (ui.style, high risk).
+                "needs_review": (bool(new_perms) and not trust.would_auto_update(entry, new_perms))
+                                or review.get("min_core_ok") is False,
+                "trusted": trust.saved_publisher(entry),
             })
             needs.append(item)
         else:
@@ -451,11 +460,13 @@ async def apply_one(mod_id: str) -> Dict[str, Any]:
     if why:
         drop()
         return {"id": mod_id, "name": name, "status": "failed", "message": f"Blocked by an index: {why}"}
-    if staged.get("new_permissions"):
+    decision = await asyncio.to_thread(trust.assess_staged, staged)
+    if staged.get("new_permissions") and not decision["auto_approve"]:
         drop()
+        why = f" {decision['reason']}" if decision["trusted"] or decision["override"] else ""
         return {"id": mod_id, "name": name, "status": "needs_review",
                 "message": "It asks for new permissions (" + ", ".join(staged["new_permissions"])
-                           + "): update it on its own to review and approve them."}
+                           + "): update it on its own to review and approve them." + why}
     if (staged.get("capabilities") or {}).get("missing"):
         drop()
         return {"id": mod_id, "name": name, "status": "failed",
@@ -476,8 +487,16 @@ async def apply_one(mod_id: str) -> Dict[str, Any]:
         except Exception as e:
             logger.warning("[mods] %s updated but did not start: %s", mod_id, e)
     mark_updated(mod_id)
+    auto = decision["auto_approve"]
+    try:
+        await asyncio.to_thread(trust.remember, mod_id, decision.get("publisher"))
+        await asyncio.to_thread(trust.audit_confirmed, done, {"update_of": mod_id}, decision, auto=auto,
+                                by="" if auto else "Update all")
+    except Exception as e:      # the update is done; a missing history line must not fail it
+        logger.warning("[mods] %s updated but its history line was not written: %s", mod_id, e)
+    note = f" Auto-approved: {decision['reason'].split('because ', 1)[-1]}" if auto and staged.get("new_permissions") else ""
     return {"id": mod_id, "name": name, "status": "updated", "version": done.get("version"),
-            "message": f"Updated to {done.get('version')}."}
+            "message": f"Updated to {done.get('version')}.{note}"}
 
 
 async def apply(ids: List[str]) -> Dict[str, Any]:
