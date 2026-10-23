@@ -76,7 +76,7 @@ MAX_CAP_LEN = 64
 KINDS = ("provides", "requires", "optional")
 PROVIDER_PATH = "/mod/cap"
 CALL_TIMEOUT_S = 30
-MAX_BODY_BYTES = 64 * 1024
+MAX_BODY_BYTES = 4 * 1024 * 1024     # arguments of one capability call (a provider may take files, base64)
 LOG_MAX_BYTES = 1024 * 1024
 BUILTIN = "core"          # the provider id shown for the core's own providers (and the source of its events)
 

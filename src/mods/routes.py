@@ -480,7 +480,7 @@ def _setup_v1(router: APIRouter) -> None:
         e = _mod(request)
         raw = await request.body()
         if len(raw) > capabilities.MAX_BODY_BYTES:
-            raise HTTPException(413, "the arguments are larger than 64 KB")
+            raise HTTPException(413, "the arguments are larger than 4 MB")
         body = await _json(request) if raw.strip() else {}
         user = _owner_for(e, body)
         args = {k: v for k, v in body.items() if k != "user"}
