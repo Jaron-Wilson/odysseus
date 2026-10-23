@@ -1055,6 +1055,8 @@ html.ui-studio .bg-dot { width: 8px; height: 8px; flex-basis: 8px; background: v
 html.ui-studio .bg-dot.ok { background: var(--stb-ok); }
 html.ui-studio .bg-dot.running { background: var(--stb-warn); }
 html.ui-studio .bg-dot.bad { background: var(--stb-err); }
+html.ui-studio .bg-dot.warn { background: var(--stb-warn); }
+html.ui-studio .bg-job-early { color: var(--stb-warn); }
 html.ui-studio .bg-dot.waiting { background: var(--stb-info); }
 html.ui-studio .bg-tasks-count { background: var(--st-accent); color: var(--st-accent-fg); font-weight: 600; }
 html.ui-studio #bg-tasks-count.bg-count-approvals { background: var(--stb-info); }
