@@ -576,18 +576,11 @@ from src import tool_pages as _tool_pages  # noqa: E402
 _DOMAIN_RULES["ui"] = (_DOMAIN_RULES["ui"].replace("{pages}", _tool_pages.names_for_prompt())
                        .replace("{aliases}", _tool_pages.aliases_for_prompt()))
 TOOL_SECTIONS["ui_control"] = TOOL_SECTIONS["ui_control"].replace("{pages}", _tool_pages.names_for_prompt())
-# Company agents' tools (src/company_tools.py), for models that use fenced blocks.
-from src import company_tools as _company_tools  # noqa: E402
-TOOL_SECTIONS.update(_company_tools.PROMPT_SECTIONS)
 
 # Ask before Google writes (src/google_write_gate.py): Gmail, Google
 # Calendar and Meet. Drive, Docs, Sheets, Slides, Tasks and Contacts are the
 # Google add-on's tools (mod `google`), which ask first themselves.
 from src import google_write_gate as _google_gate  # noqa: E402
-
-# The user's Company from a chat (src/agent_tools/company_chat_tools.py).
-from src.agent_tools.company_chat_tools import TOOL_SECTIONS as _COMPANY_CHAT_SECTIONS  # noqa: E402
-TOOL_SECTIONS.update(_COMPANY_CHAT_SECTIONS)
 
 def get_builtin_overrides() -> dict:
     """User overrides for built-in tool descriptions (TOOL_SECTIONS).
@@ -2288,7 +2281,7 @@ async def stream_agent_loop(
     ``auto_input_budget``: treat an ``agent_input_token_budget`` that equals
     the default as unset, so the input budget scales to ``context_length``.
     The settings file stores every key once it has been saved, which makes
-    the default look like an explicit choice. Company runs pass it: their
+    the default look like an explicit choice. Agent runs pass it: their
     system prompt alone is larger than the 6000-token default.
 
     Yields SSE events:
@@ -2314,20 +2307,13 @@ async def stream_agent_loop(
         disabled_tools.update(tool_policy.all_disabled_names())
         if tool_policy.disable_mcp:
             mcp_mgr = None
-    # Company tools exist only inside a Company agent's run (src/company_tools.py).
-    _company_run = _company_tools.active()
     # A mod's agent run (src/mods/runs.py): its own tools are forced in below.
     try:
         from src.mods import runs as _mod_runs
         _mod_run = _mod_runs.current()
     except Exception:
         _mod_run = None
-    _agent_run = bool(_company_run or _mod_run)
-    if not _company_run:
-        disabled_tools.update(_company_tools.TOOL_NAMES)
-    else:
-        # A Company agent asks for a plan's approval with company_request_approval.
-        disabled_tools.add("propose_plan")
+    _agent_run = bool(_mod_run)
     guide_only = bool(tool_policy and tool_policy.mode == "guide_only")
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
@@ -2335,18 +2321,6 @@ async def stream_agent_loop(
         # MCP tools are namespaced dynamically, so hide all MCP schemas for
         # public/non-admin users rather than trying to enumerate every tool.
         mcp_mgr = None
-    # The user's Company chat tools (src/agent_tools/company_chat_tools.py):
-    # only for an owner with a company, and never inside a Company agent's
-    # run, where an agent must act as itself, not as the user.
-    try:
-        from src.agent_tools import company_chat_tools as _company_chat_tools
-        if _agent_run:
-            disabled_tools.update(_company_chat_tools.ALL_TOOLS)
-        else:
-            disabled_tools.update(_company_chat_tools.hidden_tools(owner))
-    except Exception as _e:
-        logger.debug("company chat tool gating skipped: %s", _e)
-
     if plan_mode:
         # Plan mode: investigate read-only, propose a plan, don't execute. The
         # route also unions the read-only-disabled set, but enforce here too so
@@ -2469,9 +2443,6 @@ async def stream_agent_loop(
     # tool names. It prevents obvious requests like "last 5 emails" from
     # collapsing to only ask_user/manage_memory when vector retrieval misses or
     # times out.
-    if not guide_only and _relevant_tools and _company_run:
-        # A Company run always has its Company tools, whatever retrieval picked.
-        _relevant_tools = set(_relevant_tools) | set(_company_tools.TOOL_NAMES)
     if not guide_only and _relevant_tools is not None and not (_agent_run and _caller_tools):
         for _domain in (_intent.get("domains") or set()):
             _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))
@@ -2497,14 +2468,6 @@ async def stream_agent_loop(
         # has the coding tool: "carry on" names no tool at all.
         if session_id and "claude_code" not in disabled_tools and _attached_claude_note(session_id):
             _relevant_tools.add("claude_code")
-        # A chat message about the Company (a mention, an issue like JAR-1):
-        # the user's Company tools. Not in a Company agent's run.
-        if not _agent_run:
-            try:
-                from src.agent_tools import company_chat_tools as _company_chat_tools
-                _relevant_tools.update(_company_chat_tools.relevant_tools(owner, _last_user) - disabled_tools)
-            except Exception as _e:
-                logger.debug("company chat tool selection skipped: %s", _e)
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
@@ -2532,7 +2495,7 @@ async def stream_agent_loop(
             logger.info("[tool-rag] mod run %s tools: %s", str(_mod_run.get("run_id"))[:8], _mod_names)
         except Exception as _e:
             logger.debug("mod run tool selection skipped: %s", _e)
-    elif _relevant_tools is not None and not guide_only and not _company_run:
+    elif _relevant_tools is not None and not guide_only:
         try:
             from src.mods import tools as _mod_tools
             _mod_names = [n for n in _mod_tools.select(_retrieval_query, owner, set(_relevant_tools))
@@ -2616,9 +2579,8 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    # Tools a trimmed or reordered list keeps first: a Company run's own
-    # tools and the coding agent.
-    _tool_priority = sorted(_company_tools.TOOL_NAMES) + ["claude_code"] if _company_run else ["claude_code"]
+    # Tools a trimmed or reordered list keeps first: the coding agent.
+    _tool_priority = ["claude_code"]
     if _mod_forced:
         _tool_priority = sorted(_mod_forced) + _tool_priority
     _cap_tool_count = _tool_cap.needs_tool_cap(endpoint_url)

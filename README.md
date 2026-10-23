@@ -25,7 +25,7 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
   - **Calendar** -- Local-first calendar that syncs your Google calendars through your connected Google account, and CalDAV (Radicale / Nextcloud / Apple / Fastmail).<br>　<sub>Google Calendar sync · CalDAV pull · .ics import/export · per-calendar colors · agent-aware</sub>
   - **Workspace** -- browser-style tabs for chats, tools and emails, split view, and a Home dashboard.<br>　<sub>Workspace · Studio · Classic interfaces · Ctrl+K searches everything · grouped sidebar</sub>
   - **Coding agents** -- hand a coding task to a real agent with a filesystem, behind a plan you approve.<br>　<sub>OpenCode · Claude Code · Google Antigravity · native Markdown plans · live console · background runs</sub>
-  - **Company** -- an organization of AI agents (CEO, managers, reports) working an issue board, on any model.<br>　<sub>org chart · issues · approvals · budgets · @mentions in chat</sub>
+  - **Company** (a mod) -- an organization of AI agents (CEO, managers, reports) working an issue board, on any model.<br>　<sub>[odysseus-company](https://github.com/Jaron-Wilson/odysseus-company) · org chart · issues · approvals · budgets · @mentions in chat</sub>
   - **Voice & phone** -- talk with the agent in a chat, over a phone line, by text message, or in a Google Meet.<br>　<sub>/call · local Whisper / Parakeet / Kokoro · ElevenLabs (add-on) · Twilio · tailnet SIP · SMS gateway</sub>
   - **Devices** -- link your computers and phone, and the agent can act on them.<br>　<sub>one-command enroll · desktop MCP · music bar + overlay · sound streaming · game streaming</sub>
   - **Mods** -- install add-ons from a git URL: their own pages, home cards, agent tools and notifications, with permissions you approve.<br>　<sub>Settings > Mods · sandboxed pages · signed identity · process or Docker · template + SDK · [docs/mods.md](docs/mods.md)</sub>
@@ -408,20 +408,18 @@ and lets you open a chat to ask about one.
 </details>
 
 <details>
-<summary>Company: an organization of AI agents</summary>
+<summary>Company: an organization of AI agents (a mod)</summary>
 
-- **Build > Company** (`#company`): companies with goals, projects, an org chart (one CEO, managers and reports), an issue board, an activity feed and approvals. Every agent runs on any model Odysseus can reach, set per agent.
-- Assigning an issue, an `@mention` or **Wake now** starts a run. Agents check out issues, comment, open sub-issues and ask for approval of plans, strategies and hires. Approving a plan lets you pick the model, the max steps and the max cost.
-- Monthly **budgets** per agent and per company warn, then pause the agent and ask for an override. Local and free models are never blocked.
-- In any chat, `@` mentions a company, an agent or an issue (`JAR-1` style), and the chat model gets a fresh snapshot of it. Chat tools can list, create and update issues, wake agents and decide approvals.
-- See [docs/company.md](docs/company.md).
+- Company is the Company mod (`Jaron-Wilson/odysseus-company`), installed from Settings > Mods > Browse. Its tab replaces the old `#company` page; without it, `#company` and "take me to Company" show the "This feature is now a mod" card with an install button.
+- It keeps companies with goals, projects, an org chart, an issue board, an activity feed, approvals and monthly budgets in its own database. Every agent runs on any model Odysseus can reach, as a core agent run. See the mod's README, including how it imports what the built-in Company kept in `app.db`.
+- The old Company tables stay in `app.db` untouched (nothing drops them), so going back to an older Odysseus still finds the data.
 
 </details>
 
 <details>
 <summary>Usage and costs</summary>
 
-- **System > Usage**: this month's tokens and spend by model, provider and source (chat, tasks, subagents, Company, text to speech). Costs are priced on the server. Local endpoints count as free, subscription providers (ChatGPT plan, Copilot) count tokens at $0, and admins can override the price per endpoint.
+- **System > Usage**: this month's tokens and spend by model, provider and source (chat, tasks, subagents, mods, text to speech). Costs are priced on the server. Local endpoints count as free, subscription providers (ChatGPT plan, Copilot) count tokens at $0, and admins can override the price per endpoint.
 - **DevOps** (the DevOps mod, `Jaron-Wilson/odysseus-devops`): what is running now, model speed (tok/s, first-token wait), coder reliability, and read-only transcripts of each coder run. Install it from Settings > Mods > Browse; its tab replaces the old `#devops` page, and without it `#devops` shows the "This feature is now a mod" card. The numbers stay in the core, for mods with the `stats.read` permission.
 
 </details>

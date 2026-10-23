@@ -12,7 +12,7 @@ chat." What matters:
     approved native plan for the chat, runs once, and skips the coding agent's
     own plan phase;
   * while a plan waits, delegation tools are refused;
-  * plan mode keeps propose_plan; Company plans land in Plans too.
+  * plan mode keeps propose_plan.
 No real model or coding agent runs: the LLM stream and the CLI are fakes.
 """
 import asyncio
@@ -404,19 +404,3 @@ def test_plan_mode_keeps_the_plan_tool(data_dir, monkeypatch):
     out = [e for e in events if e.get("type") == "tool_output" and e.get("tool") == "propose_plan"]
     assert out and out[0]["exit_code"] == 0
     assert native_plans.pending_for_chat(CHAT)
-
-
-# ── Company agents' plans are Plans documents too ───────────────────────
-
-def test_a_company_plan_is_mirrored_and_follows_the_decision(data_dir):
-    e = native_plans.mirror_company_plan("ann", approval_id="ap1", title="Plan for JAR-1",
-                                         plan="1. Do it", agent_name="Builder", issue="JAR-1")
-    assert e["source"] == "company" and e["chat_session_id"] == ""
-    doc = plans.get_plan("ann", e["name"])
-    assert "Company plan from Builder for JAR-1" in doc["content"] and "1. Do it" in doc["content"]
-    # Answered in Company, not here.
-    with pytest.raises(native_plans.Refused):
-        native_plans.approve(e["id"], "ann")
-    native_plans.company_decided("ap1", "rejected", "not now")
-    assert native_plans.get(e["id"])["status"] == "denied"
-    assert native_plans.by_name("ann")[e["name"]]["source"] == "company"

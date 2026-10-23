@@ -76,9 +76,6 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "background", "label": "Background", "group": "build", "open": "#tool-bg-btn", "tab": "agents",
       "desc": "Claude Code runs working in the background",
       "aliases": ["background tasks", "background jobs", "agents", "claude code", "coding agents", "jobs"] },
-    { "key": "company", "label": "Company", "group": "build", "open": "#tool-company-btn", "tab": "company",
-      "desc": "An org of AI agents on any model: goals, issues, approvals",
-      "aliases": ["companies", "org chart", "organization", "agent company", "agent org", "paperclip", "issues board"] },
     { "key": "odysseus-dev", "label": "Odysseus dev", "group": "build", "open": "#tool-odysseus-dev-btn", "tab": null, "adminOnly": true,
       "desc": "A chat for changing Odysseus itself",
       "aliases": ["odysseus development", "odysseus dev chat", "dev chat", "odysseusdev"] },
@@ -141,7 +138,10 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "phone", "label": "Phone & Messages", "group": "organize",
       "desc": "Text the agent, call it (the SIP line or a phone number) and bring it into a Google Meet: the Phone & Messages mod",
       "aliases": ["phone", "phone calls", "calls", "calls and meetings", "sms", "text messages", "texting", "sip",
-                  "sip line", "softphone", "linphone", "twilio", "google meet", "meet", "meetings", "join a meeting"] }
+                  "sip line", "softphone", "linphone", "twilio", "google meet", "meet", "meetings", "join a meeting"] },
+    { "key": "company", "label": "Company", "group": "build",
+      "desc": "The Company mod: an organization of AI agents on any model (goals, issues, approvals)",
+      "aliases": ["companies", "org chart", "organization", "agent company", "agent org", "paperclip", "issues board"] }
   ]
 } /* tool-pages:end */;
 

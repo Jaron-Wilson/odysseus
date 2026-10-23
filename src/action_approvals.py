@@ -19,7 +19,7 @@ States:
   pending     waiting for the user's answer
   running     approved; the pinned call is running right now
   approved    approved, and the call ran once (result kept)
-  queued      approved in Company > Approvals; runs when the agent wakes
+  queued      (old built-in Company approvals) approved elsewhere; not run by the core
   denied      the user said no (with an optional note)
   expired     nobody answered within EXPIRY_S, so it can no longer run
   superseded  a newer request in the same chat replaced it unanswered
@@ -61,8 +61,8 @@ _approved_call: contextvars.ContextVar[Optional[Tuple[str, str, str]]] = context
 
 
 # Where agent work comes from when it is not an interactive chat turn: "mail"
-# for the mail listener (src/mail_listener.py). Scheduled tasks and Company
-# runs are told apart by their own context (usage_scope, company_tools).
+# for the mail listener (src/mail_listener.py). Scheduled tasks are told
+# apart by their own context (usage_scope).
 run_context: contextvars.ContextVar[str] = contextvars.ContextVar("odysseus_run_context", default="")
 
 
@@ -265,7 +265,7 @@ def _answerable(data: dict, aid: str, user: Optional[str]) -> dict:
     if not e or _owner(e.get("owner")) != _owner(user):
         raise Refused(404, "No such approval")
     if e.get("source") == "company":
-        raise Refused(409, "This change is answered in Company > Approvals")
+        raise Refused(409, "This change belonged to the old built-in Company and is answered there")
     st = e.get("status")
     if st == "superseded":
         raise Refused(409, "A newer request in this chat replaced this one.")
@@ -384,60 +384,6 @@ async def approve_and_run(aid: str, user: Optional[str]) -> dict:
     return finish(aid, result)
 
 
-# ── Company agents: answered in Company > Approvals ──────────────────────
-
-def company_decided(company_approval_id: str, decision: str, note: str = "", by: str = "") -> None:
-    """Mirror a Company > Approvals decision. Approved: queued, and it runs
-    once when the agent wakes (run_company_queued). Anything else: denied."""
-    if not company_approval_id:
-        return
-    now = time.time()
-    changed = []
-    with _lock:
-        data = _load()
-        _expire_in(data, now)
-        for e in data.values():
-            if e.get("company_approval_id") != company_approval_id:
-                continue
-            if e.get("status") != "pending":
-                continue
-            e["answered_at"] = now
-            e["answered_by"] = by
-            if decision == "approved":
-                e["status"] = "queued"
-            else:
-                e["status"] = "denied"
-                e["deny_note"] = str(note or "")[:MAX_NOTE]
-                changed.append(dict(e))
-        _save(data)
-    for e in changed:
-        audit(e, "denied")
-
-
-async def run_company_queued(company_approval_id: str) -> Optional[dict]:
-    """Run a Company-approved change once, as the agent wakes for it."""
-    with _lock:
-        data = _load()
-        hit = next((e for e in data.values() if e.get("company_approval_id") == company_approval_id), None)
-        if not hit:
-            return None
-        if hit.get("status") != "queued":
-            return dict(hit)
-        hit["status"] = "running"
-        _save(data)
-        e = dict(hit)
-    result = await run_pinned(e)
-    return finish(e["id"], result)
-
-
-def for_company_approval(company_approval_id: str) -> Optional[dict]:
-    with _lock:
-        for e in _load().values():
-            if e.get("company_approval_id") == company_approval_id:
-                return dict(e)
-    return None
-
-
 # ── Audit log ────────────────────────────────────────────────────────────
 
 def audit(e: dict, outcome: str) -> None:
@@ -499,8 +445,7 @@ def recent_audit(owner: Optional[str], limit: int = 50, all_owners: bool = False
 # ── What the model is told ───────────────────────────────────────────────
 
 def held_output(e: dict) -> str:
-    where = ("in Company > Approvals" if e.get("source") == "company"
-             else "in the chat with Approve and Deny")
+    where = "in the chat with Approve and Deny"
     return (f"Not run yet: \"{e.get('title')}\" writes to the user's Google account, so it needs their "
             f"approval first (approval id {e['id']}). It is shown {where}. Your turn ends here: do not "
             "call it again, do not try another way to make the change, and do not say it is done. If they "

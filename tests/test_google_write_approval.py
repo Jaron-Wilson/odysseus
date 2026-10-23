@@ -12,7 +12,7 @@ make it ask me". What matters:
     result; a second Approve does nothing; Deny tells the model; it expires;
   * the state is on disk, so a reload shows the same card;
   * fenced blocks are held too, and the agent loop ends the turn;
-  * Company runs go to Company > Approvals; scheduled tasks notify;
+  * scheduled tasks notify;
   * only an admin can turn it off; every answer is logged.
 Nothing leaves the machine: Google, IMAP/SMTP, CalDAV and Meet are fakes.
 """
@@ -495,49 +495,7 @@ def test_two_writes_in_one_turn_show_one_card(env, monkeypatch):
     assert len(AA.for_chat(CHAT)) == 1 and env["writeback"] == []
 
 
-# ── Company runs, scheduled tasks ───────────────────────────────────────
-
-def test_a_company_run_goes_to_company_approvals(env, client, monkeypatch):
-    from src import company as co
-    from src import company_tools as ct
-    made = []
-
-    def fake_create(db, owner, actor, company_id, data):
-        made.append({"owner": owner, "actor": actor, "company": company_id, **data})
-        return {"id": "cap1", **data}
-    monkeypatch.setattr(co, "create_approval", fake_create)
-    with ct.agent_context(owner="ann", company_id="c1", agent_id="a1", run_id="r1"):
-        _, out = _call(W_TOOL, W_ARGS, chat="run-thread", owner="ann")
-    assert _held(out) and out["action_approval"]["source"] == "company"
-    (ap,) = made
-    assert ap["type"] == "google_write" and ap["company"] == "c1" and ap["actor"].id == "a1"
-    assert ap["payload"]["tool"] == W_TOOL
-    aid = out["action_approval"]["id"]
-    # Not answerable in a chat.
-    assert client.post(f"/api/action_approvals/{aid}/approve", headers=ANN).status_code == 409
-    # Approved in Company > Approvals: runs once when the agent wakes.
-    AA.company_decided("cap1", "approved", by="ann")
-    assert AA.get(aid)["status"] == "queued" and env["writeback"] == []
-    asyncio.run(AA.run_company_queued("cap1"))
-    asyncio.run(AA.run_company_queued("cap1"))
-    assert len(env["writeback"]) == 1 and AA.get(aid)["status"] == "approved"
-
-
-def test_a_company_rejection_never_runs(env):
-    e = AA.create("ann", "", W_TOOL, json.dumps(W_ARGS), {"title": "x"}, source="company",
-                  extra={"company_approval_id": "cap2"})
-    AA.company_decided("cap2", "rejected", "no")
-    asyncio.run(AA.run_company_queued("cap2"))
-    assert AA.get(e["id"])["status"] == "denied" and env["writeback"] == []
-
-
-def test_google_write_is_a_company_approval_type_and_models_cannot_decide_it():
-    from src import company as co
-    assert "google_write" in co.APPROVAL_TYPES
-    import inspect
-    from src.agent_tools import company_chat_tools as cct
-    assert "google_write" in inspect.getsource(cct._approval_decide)
-
+# ── Scheduled tasks, the mail listener ──────────────────────────────────
 
 def test_a_scheduled_task_holds_and_notifies(env):
     from src.usage import usage_scope
@@ -609,50 +567,3 @@ def test_every_answer_is_logged_and_listed(env, client):
     assert [p["id"] for p in s["pending"]] == [c["action_approval"]["id"]]
     # Someone else's log is not shown.
     assert client.get("/api/google/write-approval", headers=BOB).json()["recent"] == []
-
-
-def test_company_flow_end_to_end(env):
-    """A real Company approval: held, decided by the person, run once when the
-    agent wakes, and the wake message carries the result. A model cannot
-    decide it through the Company chat tools."""
-    import types
-    import core.database as cdb
-    from src import company as co
-    from src import company_tools as ct
-    from src import company_executor as cx
-    from src.agent_tools import company_chat_tools as cct
-    db = cdb.SessionLocal()
-    try:
-        me = co.user_actor("ann")
-        c = co.create_company(db, "ann", me, {"name": "Acme"})
-        ag = co.create_agent(db, "ann", me, c["id"], {"name": "Writer", "role": "ceo"})
-    finally:
-        db.close()
-    with ct.agent_context(owner="ann", company_id=c["id"], agent_id=ag["id"], run_id="r1"):
-        _, out = _call(W_TOOL, W_ARGS, chat="run-thread", owner="ann")
-    assert _held(out) and env["writeback"] == []
-    held = AA.get(out["action_approval"]["id"])
-    db = cdb.SessionLocal()
-    try:
-        ap = db.query(co.CompanyApproval).filter(co.CompanyApproval.id == held["company_approval_id"]).one()
-        assert ap.type == "google_write" and ap.status == "pending"
-        assert ap.payload["action_approval_id"] == held["id"]
-        with pytest.raises(cct._Miss):
-            cct._approval_decide(db, "ann", me, {"approval": ap.id, "decision": "approved"})
-        co.decide_approval(db, "ann", me, ap.id, "approved")
-    finally:
-        db.close()
-    assert AA.get(held["id"])["status"] == "queued" and env["writeback"] == []
-    asyncio.run(AA.run_company_queued(held["company_approval_id"]))
-    assert len(env["writeback"]) == 1
-    db = cdb.SessionLocal()
-    try:
-        agent = db.query(cdb.CompanyAgent).filter(cdb.CompanyAgent.id == ag["id"]).one()
-        company = db.query(cdb.CompanyCompany).filter(cdb.CompanyCompany.id == c["id"]).one()
-        run = types.SimpleNamespace(model=None, issue_id=None, invocation_source="approval", id="r2")
-        wake = types.SimpleNamespace(source="approval", approval_id=held["company_approval_id"], issue_id=None,
-                                     comment_id=None, created_at=datetime.now())
-        _system, user, _plan, _limits = cx.build_prompt(db, "ann", agent, company, run, [wake])
-    finally:
-        db.close()
-    assert "APPROVED and ran once" in user and "Created event" in user
