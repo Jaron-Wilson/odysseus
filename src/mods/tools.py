@@ -259,6 +259,10 @@ async def execute(tool: str, content: str, owner: Optional[str], session_id: Opt
     if not isinstance(args, dict):
         return f"{tool}: bad arguments", {"error": "Arguments must be a JSON object.", "exit_code": 1}
     args = {k: v for k, v in args.items() if not str(k).startswith("_")}
+    from src.tool_arg_coercion import coerce_args, format_problems
+    args, _problems = coerce_args(args, t.get("parameters"))
+    if _problems:
+        return f"{tool}: bad arguments", {"error": format_problems(name, _problems), "exit_code": 1}
 
     if _needs_approval(entry, t):
         from src import action_approvals as AA

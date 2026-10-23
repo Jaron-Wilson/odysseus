@@ -67,7 +67,8 @@ ALWAYS_AVAILABLE = frozenset({
 # Tools that the Personal Assistant always has access to during scheduled
 # check-ins and proactive tasks, in addition to RAG-selected tools.
 ASSISTANT_ALWAYS_AVAILABLE = frozenset({
-    "list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email",
+    "list_email_accounts", "list_emails", "search_gmail", "find_subscriptions",
+    "read_email", "send_email", "reply_to_email",
     "bulk_email", "archive_email", "delete_email", "mark_email_read",
     "manage_calendar", "manage_notes", "manage_tasks",
     "manage_memory", "web_search", "read_file",
@@ -126,7 +127,9 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "update_plan": "Write back to the ACTIVE PLAN while executing an approved plan: mark steps done or revise them. After finishing a step call this with the full checklist and that step marked done; when the user asks to change the plan call it with the revised checklist. Always pass the COMPLETE markdown checklist (`- [ ]` / `- [x]`), not a diff. The user's docked plan window updates live. No effect when there is no active plan.",
     "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Navigate: open any page or tool, take me to / go to / show me a page (devices, terminal, code, browser, calendar, tasks, notes, brain, library, gallery, deep research, compare, cookbook, devops, background, odysseus dev, theme, what's new, email, chats, skills, settings) via `open_panel <page>`; take the user to one setting with `open_panel settings <what>` ('take me to the voice settings'). Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
     "list_email_accounts": "List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.",
-    "list_emails": "List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
+    "search_gmail": "Search Gmail with a real Gmail query (from:, subject:, newer_than:, OR, quotes) across ALL mail incl. Promotions/Updates, up to 200 results with paging. Use this instead of list_emails whenever the user wants to find, check or look for something in their mail.",
+    "find_subscriptions": "Find subscriptions, recurring charges, renewals, free trials, billing and receipts in Gmail over the last 12 months, grouped by merchant with last charge, frequency and upcoming renewal/trial-end warnings. Read-only.",
+    "list_emails": "List the most recent emails for a folder/account (not a search; use search_gmail to find things), newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
     "read_email": "Read the full content of a specific email by UID or Message-ID. View email body, check details. Supports account from list_email_accounts when the UID belongs to a non-default mailbox.",
     "send_email": "Send a new email via SMTP. Provide recipient, subject, body, and optional account from list_email_accounts. For replying to a thread use reply_to_email instead.",
     "reply_to_email": "SEND a reply email immediately by UID. Do not use for open/start reply draft requests; use ui_control open_email_reply for those. For follow-up 'reply ...' send requests, use the exact UID and account from latest read_email/list_emails output; never invent UID 1. Threads automatically with In-Reply-To/References, prefixes Re:, marks original as Answered.",
@@ -409,7 +412,15 @@ class ToolIndex:
         # whole email toolset and crowding out the relevant tools — the model then
         # believed it had only email tools and refused web/other tasks (#1707).
         frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
-            {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
+            {"list_email_accounts", "list_emails", "search_gmail", "find_subscriptions", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
+        # Subscriptions, recurring charges, renewals, free trials: these
+        # questions rarely say "email", but the answer is in the user's mail.
+        frozenset({"subscription", "subscriptions", "subscribed", "recurring charge",
+                   "recurring charges", "recurring payment", "recurring payments",
+                   "renewal", "renewals", "renew", "renews", "free trial", "free trials",
+                   "trial", "trials", "auto-renew", "autorenew", "billing", "billed",
+                   "charge me", "charged", "receipts", "what am i paying for"}):
+            {"find_subscriptions", "search_gmail", "read_email", "list_email_accounts"},
         # Working on a machine: this server, or another device reached over
         # SSH/Tailscale. "Whitelist my SSH key" matched no hint and no topic,
         # so the turn went out with no shell at all, and the model told the
