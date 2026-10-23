@@ -448,7 +448,7 @@ async def run_installer(m: dict, base: str, code: str, job: dict = None, timeout
     user = machines.load_prefs().get(peer.get("host") or "", {}).get("ssh_user") or getpass.getuser()
     if m["os"] == "windows":
         remote = ["powershell", "-NoProfile", "-Command",
-                  f"iwr -useb {base}/enroll/{code}/install.ps1 | iex"]
+                  f"$env:ODYSSEUS_INSTALL_QUIET='1'; iwr -useb {base}/enroll/{code}/install.ps1 | iex"]
     else:
         remote = ["bash", "-lc", f"curl -fsSL {base}/enroll/{code}/install.sh | bash"]
     job = job if job is not None else {}
@@ -457,11 +457,11 @@ async def run_installer(m: dict, base: str, code: str, job: dict = None, timeout
         r = await _run_streamed(machines._ssh_argv(user, host, key, remote, m["os"]), job, timeout)
         if r["rc"] == 0:
             return {"ok": True, "machine": m["name"], "output": r["out"][-3000:]}
-        last = r["err"] or r["out"]
+        last = machines.clean_powershell_error(r["err"] or r["out"])
         if "Permission denied" not in last:
             break
     return {"ok": False, "error": last[-800:] or "SSH failed", "machine": m["name"],
-            "output": job.get("output", "")}
+            "output": machines.clean_powershell_error(job.get("output", ""))}
 
 
 async def _run_streamed(argv: list, job: dict, timeout: float) -> dict:

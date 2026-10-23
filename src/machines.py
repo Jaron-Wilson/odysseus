@@ -309,13 +309,49 @@ def _ssh_argv(user: str, host: str, key: str, remote: List[str], os_name: str) -
             "-o", "StrictHostKeyChecking=accept-new", f"{user}@{host}", cmd]
 
 
+_CLIXML_BLOCK = re.compile(r"(?:#<\s*CLIXML\s*)?<Objs\b.*?</Objs>|#<\s*CLIXML\s*", re.S)
+_CLIXML_ERR = re.compile(r'<S S="Error">(.*?)</S>', re.S)
+_CLIXML_ESC = re.compile(r"_x([0-9A-Fa-f]{4})_")
+_PS_NOISE = re.compile(r"^(At line:|\+\s|\+$|CategoryInfo|FullyQualifiedErrorId)")
+
+
+def clean_powershell_error(text: str) -> str:
+    """Make stderr from PowerShell over SSH readable. With -EncodedCommand it
+    comes back as CLIXML ("#< CLIXML" then <Objs>...<S S="Error">msg_x000D__x000A_</S>
+    ...</Objs>); keep the error messages, decode the _xHHHH_ escapes and drop
+    the position / CategoryInfo / FullyQualifiedErrorId lines. Tolerates a
+    truncated block; plain text is returned trimmed and otherwise unchanged."""
+    import html
+    text = text or ""
+    if "CLIXML" not in text and "<Objs" not in text and 'S S="Error"' not in text:
+        return text.strip()
+
+    def decode(chunk):
+        msgs = []
+        for raw in _CLIXML_ERR.findall(chunk):
+            raw = _CLIXML_ESC.sub(lambda e: chr(int(e.group(1), 16)), html.unescape(raw))
+            for line in raw.replace("\r", "").split("\n"):
+                line = line.strip()
+                if line and not _PS_NOISE.match(line) and line not in msgs:
+                    msgs.append(line)
+        return "\n".join(msgs)
+
+    if "<Objs" not in text:
+        # A truncated block: the start is gone, the error strings may remain.
+        out = decode(text)
+    else:
+        out = _CLIXML_BLOCK.sub(lambda m: decode(m.group(0)) + "\n", text)
+    out = re.sub(r"\n{2,}", "\n", out).strip()
+    return out or text.strip()
+
+
 async def _run(argv: List[str], timeout: float) -> Dict:
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return {"rc": proc.returncode, "out": out.decode(errors="replace").strip(),
-                "err": err.decode(errors="replace").strip()}
+                "err": clean_powershell_error(err.decode(errors="replace"))}
     except asyncio.TimeoutError:
         return {"rc": -1, "out": "", "err": f"timed out after {timeout:.0f}s"}
     except FileNotFoundError as e:
