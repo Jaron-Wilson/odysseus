@@ -114,7 +114,7 @@ function init() {
     });
   }
   document.addEventListener('click', (e) => {
-    if (e.target && e.target.closest && e.target.closest('[data-settings-nav="mods"], #mods-refresh')) {
+    if (e.target && e.target.closest && e.target.closest('[data-settings-tab="mods"], #mods-refresh')) {
       setTimeout(renderSettings, 50);
     }
   });
