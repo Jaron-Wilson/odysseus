@@ -428,7 +428,7 @@ function _start() {
     try { history.replaceState(history.state, '', location.pathname + (q ? '?' + q : '') + location.hash); } catch (_) { /* fine */ }
     _openFromLink(linked);
   }
-  // The link a texted "call" answers with (routes/sms_routes.py).
+  // The link a texted "call" answers with (the Phone & Messages mod).
   const callLink = params.get('call');
   if (callLink) {
     params.delete('call');

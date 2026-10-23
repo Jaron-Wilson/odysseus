@@ -78,6 +78,7 @@ _PASSIVE_PREFIXES = (
     "/api/chat/stream_status",
     "/api/health",
     "/api/prefs",
+    "/api/mods/v1/",      # mods calling the core (src/mods/routes.py), never a person
 )
 
 # Company page polls (static/js/company.js): live run status and a running
@@ -95,6 +96,10 @@ def should_track_interactive_request(path: str, method: str = "GET") -> bool:
     if any(path.startswith(prefix) for prefix in _PASSIVE_PREFIXES):
         return False
     if path.startswith("/api/company/") and path.endswith(_PASSIVE_COMPANY_SUFFIXES) and (method or "GET").upper() == "GET":
+        return False
+    # A mod page's own polls, by the same convention (e.g. the Company mod's
+    # /mods/company/api/companies/<id>/live).
+    if path.startswith("/mods/") and path.endswith(_PASSIVE_COMPANY_SUFFIXES) and (method or "GET").upper() == "GET":
         return False
     return True
 

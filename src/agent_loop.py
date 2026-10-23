@@ -274,12 +274,6 @@ _DOMAIN_RULES = {
 - On Windows, anything started over SSH (Start-Process, explorer, start) runs in a hidden session and never appears on the user's screen. To show something on their PC, use the desktop tools (after approval), or an interactive scheduled task (`schtasks /create ... /it`, then `/run`). Do not claim a window opened because an SSH command succeeded.
 - Never click taskbar icons or press Win+number to switch windows: those open whatever app is pinned in that slot, and the order is not what you think. Do not fight overlapping windows either; if what you need is hidden, say so and ask the user.
 - Never take screenshots back to back without acting in between. If two tries have not got you there, stop and tell the user what you see, rather than trying again.""",
-    "meet": """\
-## Google Meet rules
-- Joining or making a Google Meet is `google_meet` (action join, start, schedule or status). It never needs the user's desktop, their Chrome, or the screen tools (launch_app, focus_app, click). "Join again", "rejoin", "try joining through my browser" in a meeting chat all mean `google_meet` join with that meeting's link.
-- The preferred join method is **by phone** (dial-in number + PIN from the meeting invite). If the user provides a bare Meet link with no dial-in info, tell them their options: (1) share the dial-in number and PIN from the invite, (2) open the link with their own Google account and admit Odysseus (AI) from the lobby, or (3) if the meeting has no dial-in (free personal plans often do not), the cloud browser can try as a signed-in bot account (not as a guest, which Google blocks).
-- After a join or a new meeting, tell the user to open the link with their own Google account and admit Odysseus (AI).
-- NEVER claim that Odysseus has joined the meeting immediately after calling `google_meet`. Joining is an asynchronous attempt; tell the user that the dial-in call or browser join attempt has been initiated, and provide honest guidance if blocked by Google.""",
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
@@ -297,7 +291,6 @@ _DOMAIN_TOOL_MAP = {
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "manage_bg_jobs"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
-    "meet": {"google_meet"},
 }
 
 # Tools that act on the user's own devices, or the invisible browser that
@@ -309,20 +302,6 @@ _SCREEN_TOOL_SUFFIXES = ("__launch_app", "__focus_app", "__screenshot", "__click
 def _touches_devices(names: set) -> bool:
     return bool(names & {"manage_devices", "notify_device"}) or any(
         n.endswith(_SCREEN_TOOL_SUFFIXES) or n.startswith("mcp__builtin_browser__") for n in names)
-
-
-def _is_meet_chat(session_id: str, owner: Optional[str]) -> bool:
-    """Whether this chat was made for a Google Meet (src/meet/session.py)."""
-    try:
-        from src.meet import config as meet_config
-        if meet_config.is_meet_chat(owner, session_id):
-            return True
-        from src.ai_interaction import get_session_manager
-        sess = get_session_manager().sessions.get(session_id)
-        name = str(getattr(sess, "name", "") or "")
-        return name.startswith(("Google Meet ", "Meet: "))
-    except Exception:
-        return False
 
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -544,7 +523,6 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <page>` (any page or tool: {pages}), `open_panel settings <what>` (opens Settings scrolled to that setting, e.g. `open_panel settings speech to text engine`), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open library\" / \"show gallery\" / \"open inbox\" / \"take me to devices\" / \"open the terminal\" all map to `open_panel <page>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
     "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
-    "google_meet": "- ```google_meet```: The way to join or make a Google Meet. The preferred join method is by phone (dial-in number + PIN from the invite); if the meeting has a dial-in, pass dial_in and pin. Calling join initiates the connection; it has NOT joined yet — never claim it has joined. {\"action\": \"start\", \"attendees\": [\"bob@x.com\"], \"title\": \"Quick sync\"} makes a meeting now, invites people, and the agent joins it; {\"action\": \"schedule\", \"title\": \"Planning\", \"start\": \"tomorrow at 3pm\", \"minutes\": 30, \"attendees\": [\"amy@y.com\"]} puts one in their Google Calendar and Google emails the invites; {\"action\": \"join\", \"url\": \"https://meet.google.com/abc-defg-hij\", \"dial_in\": \"+16505550123\", \"pin\": \"123456789\"} joins by phone; {\"action\": \"join\", \"url\": \"https://meet.google.com/abc-defg-hij\"} joins through the browser if no dial-in is given; {\"action\": \"status\"}. Give the user the link from the result. If joining a bare link with no dial-in, tell the user their options.",
     "whats_new": "- ```whats_new```: The pull requests merged into Odysseus (this app), newest first, read-only. {\"action\": \"list\", \"query\": \"voice call\"} finds the PRs about something (omit query for the latest); {\"action\": \"get\", \"pr\": 127} gives one PR's description, files and whether the running server has it. Use for 'what changed with X', 'what's new', 'what was in PR #N', 'is that fix live yet'.",
     "chat_memory": "- ```chat_memory``` — This chat's \"Needs to know\": a short list of facts kept for this chat, which you see on every turn (like memory, but per chat). {\"action\": \"suggest\", \"text\": \"Waiting on Will to merge PR #3\"} proposes an item: the user is asked to add it or not, and it is kept only if they accept, so do not ask again in your reply. Suggest when something worth keeping comes up (the task, a decision, who or what you are waiting on, a branch or folder that matters), one fact per item. {\"action\": \"add\", \"text\": \"...\"} only when the user asked you to put something in Needs to know. {\"action\": \"remove\", \"id\": \"...\"} when an item is done or wrong. {\"action\": \"list\"}.",
     "branch_thread": "- ```branch_thread```: Branch this chat: the conversation so far is copied into a new thread of this chat that the user carries on separately; this chat stays as it is. Args (JSON): {\"title\": \"Try Postgres instead\"}. Use when the user says \"branch this out\", \"branch off\" or wants to try another direction without losing this one. Give the user the returned link and do not carry on the branched work here.",
@@ -1052,13 +1030,6 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("web")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
-    # Making or joining a Google Meet (google_meet): "start a meet with bob",
-    # "set up a meeting tomorrow at 3".
-    if has(r"\b(google meet|meet link|meets?|video (?:call|meeting)|meeting link|start a meeting|"
-           r"set up a meeting|schedule a meeting|invite|rejoin(?:ing)?|join(?:ing)? (?:it |back )?again|"
-           r"try joining|join(?:ing)? (?:the |this |that |my )?(?:meeting|call|meet)|"
-           r"through (?:my|the) browser)\b"):
-        domains.add("meet")
     # What changed in Odysseus itself: the merged PRs (whats_new). "what
     # changed with the voice call?" otherwise reads as a plain chat message.
     if has(r"\b(what'?s new|what is new|what (?:has )?changed|changelog|change log|release notes|merged|"
@@ -2345,6 +2316,13 @@ async def stream_agent_loop(
             mcp_mgr = None
     # Company tools exist only inside a Company agent's run (src/company_tools.py).
     _company_run = _company_tools.active()
+    # A mod's agent run (src/mods/runs.py): its own tools are forced in below.
+    try:
+        from src.mods import runs as _mod_runs
+        _mod_run = _mod_runs.current()
+    except Exception:
+        _mod_run = None
+    _agent_run = bool(_company_run or _mod_run)
     if not _company_run:
         disabled_tools.update(_company_tools.TOOL_NAMES)
     else:
@@ -2362,7 +2340,7 @@ async def stream_agent_loop(
     # run, where an agent must act as itself, not as the user.
     try:
         from src.agent_tools import company_chat_tools as _company_chat_tools
-        if _company_run:
+        if _agent_run:
             disabled_tools.update(_company_chat_tools.ALL_TOOLS)
         else:
             disabled_tools.update(_company_chat_tools.hidden_tools(owner))
@@ -2494,7 +2472,7 @@ async def stream_agent_loop(
     if not guide_only and _relevant_tools and _company_run:
         # A Company run always has its Company tools, whatever retrieval picked.
         _relevant_tools = set(_relevant_tools) | set(_company_tools.TOOL_NAMES)
-    if not guide_only and _relevant_tools is not None and not (_company_run and _caller_tools):
+    if not guide_only and _relevant_tools is not None and not (_agent_run and _caller_tools):
         for _domain in (_intent.get("domains") or set()):
             _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))
         if "cookbook" in (_intent.get("domains") or set()):
@@ -2515,18 +2493,13 @@ async def stream_agent_loop(
             _relevant_tools.add("whats_new")
         if "threads" in (_intent.get("domains") or set()):
             _relevant_tools.update({"branch_thread", "spawn_subagent"})
-        # A chat made for a meeting always has the Meet tool: its follow-ups
-        # ("join again", "try through my browser") name no meeting at all,
-        # and without it the model reached for the desktop tools instead.
-        if session_id and _is_meet_chat(session_id, owner):
-            _relevant_tools.add("google_meet")
         # A chat with a Claude Code session attached (/claude attach) always
         # has the coding tool: "carry on" names no tool at all.
         if session_id and "claude_code" not in disabled_tools and _attached_claude_note(session_id):
             _relevant_tools.add("claude_code")
         # A chat message about the Company (a mention, an issue like JAR-1):
         # the user's Company tools. Not in a Company agent's run.
-        if not _company_run:
+        if not _agent_run:
             try:
                 from src.agent_tools import company_chat_tools as _company_chat_tools
                 _relevant_tools.update(_company_chat_tools.relevant_tools(owner, _last_user) - disabled_tools)
@@ -2542,7 +2515,24 @@ async def stream_agent_loop(
     # Tools of installed mods (src/mods/tools.py): only the ones this message
     # is about (the mod's keywords, a tool's own, or retrieval), never all.
     _mod_tool_schemas: List[Dict] = []
-    if _relevant_tools is not None and not guide_only and not _company_run:
+    _mod_forced: List[str] = []
+    if _mod_run and not guide_only:
+        # A mod's agent run: that mod's tools whatever the words, plus other
+        # mods' only when the run asked for them.
+        try:
+            from src.mods import tools as _mod_tools
+            _mod_forced = [n for n in _mod_runs.forced_tools(owner) if n not in disabled_tools]
+            _mod_names = list(_mod_forced)
+            if _mod_run.get("other_mods") and _relevant_tools is not None:
+                _mod_names += [n for n in _mod_tools.select(_retrieval_query, owner, set(_relevant_tools))
+                               if n not in disabled_tools and n not in _mod_names]
+            if _relevant_tools is not None:
+                _relevant_tools = set(_relevant_tools) | set(_mod_names)
+            _mod_tool_schemas = _mod_tools.schemas(_mod_names, owner)
+            logger.info("[tool-rag] mod run %s tools: %s", str(_mod_run.get("run_id"))[:8], _mod_names)
+        except Exception as _e:
+            logger.debug("mod run tool selection skipped: %s", _e)
+    elif _relevant_tools is not None and not guide_only and not _company_run:
         try:
             from src.mods import tools as _mod_tools
             _mod_names = [n for n in _mod_tools.select(_retrieval_query, owner, set(_relevant_tools))
@@ -2629,6 +2619,8 @@ async def stream_agent_loop(
     # Tools a trimmed or reordered list keeps first: a Company run's own
     # tools and the coding agent.
     _tool_priority = sorted(_company_tools.TOOL_NAMES) + ["claude_code"] if _company_run else ["claude_code"]
+    if _mod_forced:
+        _tool_priority = sorted(_mod_forced) + _tool_priority
     _cap_tool_count = _tool_cap.needs_tool_cap(endpoint_url)
     if client_device and client_device.get("registered") and _relevant_tools:
         # Chatting from a registered device: "open it here" needs the tools
@@ -2641,7 +2633,7 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
         suppress_local_context=guide_only,
-        include_skills=not _company_run,
+        include_skills=not _agent_run,
     )
     # Derived once per turn: the connected servers cannot change mid-turn, and
     # the local-model gate below is re-evaluated every round.
@@ -2930,7 +2922,8 @@ async def stream_agent_loop(
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES
                 ]
-                all_tool_schemas = base_schemas + mcp_schemas
+                # Empty unless a mod's agent run forced its tools in.
+                all_tool_schemas = base_schemas + mcp_schemas + _mod_tool_schemas
             if disabled_tools:
                 all_tool_schemas = [
                     t for t in all_tool_schemas
@@ -2962,7 +2955,7 @@ async def stream_agent_loop(
                     if t.get("function", {}).get("name") not in disabled_tools
                 ]
         if all_tool_schemas:
-            if _company_run:
+            if _agent_run:
                 all_tool_schemas = _tool_cap.order_tools(all_tool_schemas, _tool_priority)
             if _cap_tool_count:
                 all_tool_schemas = _tool_cap.cap_tools(

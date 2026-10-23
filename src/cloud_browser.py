@@ -32,7 +32,7 @@ or step in to log in or get past a CAPTCHA.
   warning; the same input replayed through Playwright's page.mouse/keyboard
   does trigger it). The headless fallback has no real X11 display to inject
   into and falls back to the old CDP input path (routes/cloud_browser_routes.py,
-  static/js/cloudBrowser.js). This and the Meet bot (src/meet/browser.py)
+  static/js/cloudBrowser.js). This and the Meet bot (the Phone & Messages mod)
   still connect over CDP the same way whichever
   browser is actually running underneath.
 """

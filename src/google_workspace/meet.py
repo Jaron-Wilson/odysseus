@@ -1,5 +1,11 @@
 """Making Google Meet meetings from the user's own Google account.
 
+Moved here from src/meet/ when Google Meet joining moved to the Phone &
+Messages mod (Jaron-Wilson/odysseus-phone): making the meeting is a write to
+the user's Google Calendar, so it stays with the Google connection, and the
+mod asks for it through the mod API (POST /api/mods/v1/google/meet,
+src/mods/host_api.py, permission google.calendar).
+
 CalDAV cannot ask for a Meet link, and the Calendar page's own Google writes
 (src/google_calendar_sync.py) do not ask for one. This goes through the
 Google Calendar API with a conference request instead: an event
@@ -8,7 +14,7 @@ conferenceDataVersion=1) comes back with its hangoutLink, and Google sends
 the invites from the user's account (sendUpdates=all).
 
 Each user connects their own Google account once (Settings > Google >
-Google Calendar, or Connect Google Calendar on the Google Meet card). The
+Google Calendar). The
 connection, its encrypted refresh token and the access tokens are shared with
 the other Google products: src/google_workspace/connection.py.
 
@@ -47,6 +53,11 @@ MAX_MINUTES = 24 * 60
 MAX_ATTENDEES = 50
 MAX_TITLE = 200
 RECONNECT = "Connect Google Calendar again in Settings > Google."
+MEET_HOST = "meet.google.com"
+_CODE = r"[a-z]{3}-[a-z]{4}-[a-z]{3}"
+_MEET_URL_RE = re.compile(
+    rf"(?:https?://)?(?:www\.)?meet\.google\.com/(?P<path>{_CODE}|lookup/[A-Za-z0-9_-]{{4,64}})(?![A-Za-z0-9-])",
+    re.I)
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
 _sleep = asyncio.sleep
@@ -129,10 +140,26 @@ def parse_start(text: str) -> datetime:
     return dt
 
 
+def meeting_code(url: str) -> str:
+    m = re.search(_CODE, url or "")
+    return m.group(0) if m else ""
+
+
+def meet_url(text: str) -> str:
+    """The canonical https://meet.google.com/... link, or "" if it is not one."""
+    t = str(text or "").strip()
+    if re.fullmatch(_CODE, t.lower()):
+        return f"https://{MEET_HOST}/{t.lower()}"
+    m = _MEET_URL_RE.search(t)
+    if not m or t[: m.start()].strip():
+        return ""
+    path = m.group("path")
+    return f"https://{MEET_HOST}/{path.lower() if re.fullmatch(_CODE, path.lower()) else path}"
+
+
 def _space_code(event: Dict) -> str:
-    from src.meet import links
     conf = event.get("conferenceData") or {}
-    return str(conf.get("conferenceId") or "") or links.meeting_code(str(event.get("hangoutLink") or ""))
+    return str(conf.get("conferenceId") or "") or meeting_code(str(event.get("hangoutLink") or ""))
 
 
 async def _open_access(client: httpx.AsyncClient, user: Optional[str], code: str) -> Tuple[bool, str]:
@@ -235,10 +262,9 @@ async def create_meeting(user: Optional[str], title: str = "", start: Optional[d
                 opened, access_note = await _open_access(client, user, code)
             except GoogleError as e:
                 opened, access_note = False, str(e)
-    from src.meet import links
     logger.info("[meet] made a meeting for %s (%d invited)", user or "-", len(people))
     return {
-        "url": links.meet_url(url) or url,
+        "url": meet_url(url) or url,
         "title": title,
         "start": start.isoformat(),
         "end": end.isoformat(),

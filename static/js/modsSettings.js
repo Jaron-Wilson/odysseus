@@ -75,7 +75,7 @@ function grantRow(m) {
   const nums = (((m.grants || {})['messaging.sms'] || {}).numbers || []).join(', ');
   return `
     <div class="settings-row" style="flex-wrap:wrap;gap:6px;margin-top:6px">
-      <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px;flex:1;min-width:260px" title="It can always text your own number (Settings > Calls & Meetings > Phone SMS). Add other numbers it may text for you, separated by commas.">Text messages: it may also text
+      <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px;flex:1;min-width:260px" title="It can always text your own number (Settings > Calls & Meetings > Text messages). Add other numbers it may text for you, separated by commas.">Text messages: it may also text
         <input type="text" class="settings-input" data-mod-grant-input="${esc(m.id)}" value="${esc(nums)}" placeholder="only your own number" style="flex:1;min-width:140px"></label>
       <button class="settings-btn" type="button" data-mod-grant="${esc(m.id)}">Save</button>
     </div>`;

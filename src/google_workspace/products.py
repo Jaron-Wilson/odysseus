@@ -27,9 +27,8 @@ PRODUCTS: Dict[str, Dict] = {
         "scopes": [CALENDAR_SCOPE],
         "extra": [CALENDAR_LIST_SCOPE, MEET_SETTINGS_SCOPE],
         "api": "Google Calendar API (and Google Meet REST API)",
-        "tools": ["google_meet"],
         "about": "Your Google calendars in Organize > Calendar (pick which ones, see and edit their events), "
-                 "and Google Meet meetings with invites from your calendar (the google_meet tool).",
+                 "and Google Meet meetings with invites from your calendar (with the Phone & Messages mod).",
     },
 }
 
@@ -61,5 +60,5 @@ def all_scopes() -> List[str]:
 
 def tools_for(product: str) -> List[str]:
     """Agent tools a product unlocks besides those on its card (none in the
-    core: Calendar's google_meet lives in src/meet/ and is listed on the card)."""
+    core: Google Meet is the Phone & Messages mod's and is listed on the card)."""
     return []

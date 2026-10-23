@@ -2,6 +2,7 @@
 # Shared middleware, decorators, and request helpers
 
 import os
+import re
 import secrets
 
 from fastapi import HTTPException, Request
@@ -198,17 +199,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 # Paths a request from the public internet may reach when it arrives through
-# Tailscale Funnel: only the phone call webhooks (routes/telephony_routes.py).
-FUNNEL_ALLOWED_PREFIXES = ("/api/telephony/twilio/",)
+# Tailscale Funnel: only a mod's public paths (/mods/<id>/public/..., like the
+# Phone & Messages mod's Twilio webhooks), which src/mods/proxy.py serves only
+# for a mod granted public.http.
+FUNNEL_ALLOWED = re.compile(r"^/mods/[a-z][a-z0-9-]{1,31}/public/")
 
 
 class FunnelGuardMiddleware:
-    """Keep everything but the phone call webhooks off the public internet.
+    """Keep everything but mods' public paths off the public internet.
 
     Tailscale Funnel marks each request it forwards with
     "Tailscale-Funnel-Request: ?1" (tailscale ipn/ipnlocal/serve.go). The
-    setup in docs/phone-calls.md funnels only /api/telephony on its own port,
-    so this should never fire; it is here so that a wider Funnel (all of port
+    Phone & Messages mod's setup funnels only /mods/phone/public/twilio on
+    its own port, so this should never fire; it is here so that a wider Funnel (all of port
     443, say) still exposes nothing else. Plain ASGI, so it covers WebSocket
     upgrades too, which BaseHTTPMiddleware does not see."""
 
@@ -219,7 +222,7 @@ class FunnelGuardMiddleware:
         if scope.get("type") in ("http", "websocket"):
             funneled = any(k == b"tailscale-funnel-request" for k, _ in scope.get("headers") or ())
             path = scope.get("path") or ""
-            if funneled and not path.startswith(FUNNEL_ALLOWED_PREFIXES):
+            if funneled and not FUNNEL_ALLOWED.match(path):
                 if scope["type"] == "websocket":
                     await send({"type": "websocket.close", "code": 1008})
                     return
