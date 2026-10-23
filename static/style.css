@@ -37003,6 +37003,8 @@ body.theme-frosted .modal {
 .bg-dot.running { background: #e0b341; animation: bg-pulse 1.4s ease-in-out infinite; }
 .bg-dot.ok { background: #5fb36b; }
 .bg-dot.bad { background: #d9644f; }
+.bg-dot.warn { background: #e0a030; }
+.bg-job-early { color: #e0a030; }
 .bg-dot.waiting { background: #6fa3e0; }
 /* Plans waiting for Approve / Deny (bgTasks.js). */
 .bg-section-approvals { color: #6fa3e0; }

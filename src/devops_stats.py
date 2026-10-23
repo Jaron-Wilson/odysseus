@@ -324,7 +324,7 @@ def coder_stats(hours: float, owner: str = "", now: Optional[float] = None) -> D
         coders.append({
             "engine": eng, "name": ENGINE_NAMES.get(eng, eng or "?"), "model": model,
             "runs": len(rs), "running": len(rs) - len(ended), "done": len(ok),
-            "failed": sum(1 for r in ended if r["status"] in ("failed", "timed_out")),
+            "failed": sum(1 for r in ended if r["status"] in ("failed", "timed_out", "incomplete")),
             "cut_off": sum(1 for r in ended if r["status"] in ("stopped", "cut off")),
             "success_rate": round(len(ok) / len(ended), 3) if ended else None,
             "avg_minutes": round(busy / len(ended) / 60, 1) if ended else None,

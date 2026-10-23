@@ -101,11 +101,11 @@ export async function watchInChat(jobId, chatId, { into = null, reloadWhenDone =
     if (atBottom) log.scrollTop = log.scrollHeight;
     card.querySelector('.bg-watch-title').textContent =
       `${engineName(j.engine)} ${j.action} · ${j.model}`;
-    card.querySelector('.bg-watch-meta').textContent = `${j.status} · ${_dur(j.elapsed_s)}`;
+    card.querySelector('.bg-watch-meta').textContent = `${_statusLabel(j.status)} · ${_dur(j.elapsed_s)}`;
     if (j.status !== 'running') {
       clearInterval(_watching.get(jobId)); _watching.delete(jobId);
       refreshCount();
-      card.querySelector('.bg-dot').className = `bg-dot ${j.status === 'done' ? 'ok' : 'bad'}`;
+      card.querySelector('.bg-dot').className = `bg-dot ${_dotClass(j.status)}`;
       const stop = card.querySelector('.bg-watch-stop'); if (stop) stop.remove();
       // The server posts the result into the chat; show it.
       if (reloadWhenDone) setTimeout(() => {
@@ -341,16 +341,24 @@ function _editorLink(cwd) {
   return `<a href="#" data-open-editor="${_esc(cwd)}" title="Open ${_esc(cwd)} in the Code tool">Open in editor</a>`;
 }
 
+// Unknown status strings from a newer server still render: shown as-is, red dot.
+const _STATUS_LABELS = { incomplete: 'ended early', timed_out: 'timed out' };
+function _statusLabel(st) { return _STATUS_LABELS[st] || st; }
+function _dotClass(st) {
+  return st === 'running' ? 'running' : st === 'done' ? 'ok' : st === 'incomplete' ? 'warn' : 'bad';
+}
+
 function _jobRow(j) {
-  const cls = j.status === 'running' ? 'running' : (j.status === 'done' ? 'ok' : 'bad');
+  const cls = _dotClass(j.status);
   const where = j.background ? 'background' : 'in chat';
   return `
     <div class="bg-job ${j.id === _open ? 'open' : ''}" data-job="${_esc(j.id)}">
       <div class="bg-job-head" data-toggle="${_esc(j.id)}">
         <span class="bg-dot ${cls}"></span>
         <span class="bg-job-title">${_esc(j.prompt || j.action)}</span>
-        <span class="bg-job-meta">${_esc(j.status)} · ${_esc(where)} · ${_dur(j.elapsed_s)}</span>
+        <span class="bg-job-meta">${_esc(_statusLabel(j.status))} · ${_esc(where)} · ${_dur(j.elapsed_s)}</span>
       </div>
+      ${j.ended_early ? `<div class="bg-job-status bg-job-early" title="${_esc((j.outcome && j.outcome.last_text) || '')}">${_esc(j.ended_early)}${j.outcome && j.outcome.refused && j.outcome.refused.length ? ` · OpenCode refused access outside the project: ${_esc(j.outcome.refused.join(', '))}` : ''}</div>` : ''}
       ${j.agent_status ? `<div class="bg-job-status">${_statusHtml(j.agent_status)}</div>` : ''}
       <div class="bg-job-sub">${engineName(j.engine)} ${_esc(j.action)} · <b>${_esc(j.model)}</b> · <code>${_esc(j.cwd)}</code> · job ${_esc(j.id)}</div>
       ${j.id === _open ? `<pre class="bg-job-log" data-log="${_esc(j.id)}">Loading…</pre>` : ''}
