@@ -1,10 +1,11 @@
 // Settings > Mods > "Needs update" (src/mods/updates.py, docs/mods.md, "Updates").
 //
-// The top of the Installed view: the mods with a newer commit on the branch
-// they track, with what changed, warnings for new permissions or a higher
-// min_core, an Update button each (the normal review and approve step) and an
-// Update all. Below it, mods that cannot be checked (with why) and the ones
-// that are up to date, collapsed. The count also goes on the Mods item of the
+// The strip at the top of the Installed view: how many mods have a newer commit
+// on the branch they track, Update all (the normal review and approve step, one
+// after another), Check now, and "Show them", which filters the grid. Mods that
+// cannot be checked are listed under it with why. Each mod's "What changed" and
+// warnings (new permissions, a higher min_core) are on its details page
+// (modsInstalled.js, via summary()). The count also goes on the Mods item of the
 // Settings menu. The server checks on its own (start, every 6 hours); this only
 // reads the saved result and asks for a fresh check when "Check now" is pressed.
 
@@ -35,43 +36,12 @@ export function ago(when, now) {
 }
 
 const ver = (v, c) => `${v ? esc(v) : 'unknown version'}${c ? ` <code>${esc(String(c).slice(0, 7))}</code>` : ''}`;
-const WARN = 'color:#d29922';
-const RED = 'color:#e5534b';
+const RED = 'border-left:3px solid #e5534b;padding-left:6px';
 
-function needsCard(m) {
-  const lat = m.latest || {};
-  const cmts = m.commits || [];
-  const published = ago(lat.date);
-  const lines = [];
-  if ((m.new_permissions || []).length) {
-    lines.push(`<div class="admin-toggle-sub" data-upd-warn="permissions" style="${WARN}"><strong>Asks for new permissions:</strong> ${
-      m.new_permissions.map((p) => `<code>${esc(p)}</code>`).join(', ')}. You will be asked to approve them, so it is not part of Update all.</div>`);
-  }
-  if (m.min_core_ok === false) {
-    lines.push(`<div class="admin-toggle-sub" data-upd-warn="min_core" style="${RED}"><strong>Needs a newer Odysseus:</strong> it asks for mod API ${esc(m.min_core)}, which this one does not have yet. Updating will be refused until Odysseus is updated.</div>`);
-  }
-  if (!m.permissions_known && !m.new_permissions.length) {
-    lines.push(`<div class="admin-toggle-sub">${esc(m.note || 'Its new permissions are shown when you review the update.')}</div>`);
-  }
-  if (m.docker) {
-    lines.push('<div class="admin-toggle-sub" data-upd-docker>A Docker mod: its images rebuild the next time it starts.</div>');
-  }
-  const list = cmts.length ? `<details style="margin-top:4px"><summary class="admin-toggle-sub" style="cursor:pointer">What changed (${
-    lat.total_commits && lat.total_commits > cmts.length ? `${cmts.length} of ${lat.total_commits}` : cmts.length} commit${cmts.length === 1 ? '' : 's'})</summary>
-    <ul class="admin-toggle-sub" style="margin:4px 0 0 18px;padding:0">${cmts.map((c) => `<li>${esc(c.message || '(no message)')} <span style="opacity:.7">${
-      esc(c.sha)}${c.date ? `, ${esc(ago(c.date))}` : ''}</span></li>`).join('')}</ul></details>`
-    : (lat.message ? `<div class="admin-toggle-sub">Latest commit: ${esc(lat.message)}</div>` : '');
-  return `
-  <div class="admin-card" data-upd-card="${esc(m.id)}" style="border-left:3px solid ${m.needs_review ? '#d29922' : 'var(--accent, #58a6ff)'}">
-    <h2>${esc(m.name)}${m.needs_review ? ' <span class="mods-badge" data-badge="review" style="display:inline-block;font-size:11px;font-weight:500;line-height:16px;padding:0 6px;border-radius:9px;border:1px solid #d29922;color:#d29922;margin-left:6px;vertical-align:middle">Review needed</span>' : ''}</h2>
-    <div class="admin-toggle-sub" data-upd-versions>${ver(m.installed.version, m.installed.commit)} &rarr; ${ver(lat.version, lat.commit)}${published ? ` &middot; published ${esc(published)}` : ''}</div>
-    ${lines.join('')}${list}
-    <div class="settings-row" style="gap:6px;margin-top:8px">
-      <button class="settings-btn" type="button" data-upd-update="${esc(m.id)}">Update</button>
-    </div>
-  </div>`;
-}
-
+// The strip above the grid (modsInstalled.js): how many mods can be updated,
+// with Update all, Check now and "Show them" (filters the grid). Mods that
+// cannot be checked are listed under it with why. Each mod's own "What
+// changed" and warnings are on its details page, from `summary()`.
 function render() {
   const box = document.getElementById('mods-updates');
   const s = _state;
@@ -79,31 +49,33 @@ function render() {
   if (!s) { box.innerHTML = ''; return; }
   const needs = s.needs_update || [];
   const batch = needs.filter((m) => !m.needs_review);
+  const review = needs.length - batch.length;
   const checked = s.checked_at ? `Last checked ${ago(s.checked_at)}.` : 'Not checked yet.';
+  const names = needs.map((m) => `${esc(m.name)} ${esc((m.latest || {}).version || '')}${m.needs_review ? ' (review needed)' : ''}`.trim());
   const head = `
-  <div class="admin-card" id="mods-updates-head">
-    <h2>Needs update (${needs.length})<span style="flex:1"></span>
-      <span style="float:right;display:inline-flex;gap:6px">
-        <button class="settings-btn" style="padding:2px 10px;font-size:12px" type="button" id="mods-updates-all"${batch.length && !_busy ? '' : ' disabled'} title="Updates one after another and stops at the first failure. Mods that ask for new permissions are left for you to review.">Update all${batch.length ? ` (${batch.length})` : ''}</button>
-        <button class="settings-btn" style="padding:2px 10px;font-size:12px" type="button" id="mods-updates-check"${_busy || s.checking ? ' disabled' : ''}>${s.checking ? 'Checking…' : 'Check now'}</button>
-      </span></h2>
+  <div class="admin-card mi-strip" id="mods-updates-head" data-state="${needs.length ? 'needs' : 'clear'}">
+    <div class="mi-strip-row">
+      <h2>${needs.length ? `Needs update (${needs.length})` : 'Everything is up to date'}</h2>
+      ${needs.length ? '<button class="settings-btn" type="button" data-mods-filter="update" id="mods-updates-show" title="Show only the mods that need an update">Show them</button>' : ''}
+      <button class="settings-btn" type="button" id="mods-updates-all"${batch.length && !_busy ? '' : ' disabled'} title="Updates one after another and stops at the first failure. Mods that ask for new permissions are left for you to review.">Update all${batch.length ? ` (${batch.length})` : ''}</button>
+      <button class="settings-btn" type="button" id="mods-updates-check"${_busy || s.checking ? ' disabled' : ''}>${s.checking ? 'Checking…' : 'Check now'}</button>
+    </div>
+    ${needs.length ? `<div class="mi-strip-names" data-upd-names>${names.join(', ')}.${review ? ` ${review} need${review === 1 ? 's' : ''} your review first, so ${review === 1 ? 'it is' : 'they are'} not part of Update all.` : ''}</div>` : ''}
     <div class="admin-toggle-sub" id="mods-updates-status">${esc(checked)} Odysseus checks on its own every ${Math.round((s.interval_s || 21600) / 3600)} hours.${
-      (s.unchecked || []).length ? ` Not checked yet: ${s.unchecked.map(esc).join(', ')}.` : ''}</div>
-    ${needs.length ? '' : `<div class="admin-toggle-sub" data-upd-none>${(s.current || []).length || (s.errors || []).length ? 'Every mod that could be checked is up to date.' : 'Nothing to check yet.'}</div>`}
+      (s.unchecked || []).length ? ` Not checked yet: ${s.unchecked.map(esc).join(', ')}.` : ''}${
+      !needs.length && !(s.current || []).length && !(s.errors || []).length ? ' Nothing to check yet.' : ''}</div>
     ${_lastRun ? `<div class="admin-toggle-sub" id="mods-updates-run" style="${_lastRun.ok ? '' : RED}">${_lastRun.lines.map(esc).join('<br>')}</div>` : ''}
+    ${(s.errors || []).length ? `<div class="mi-note" data-tone="bad" data-upd-errors><strong>Can't check (${s.errors.length}):</strong>
+      ${s.errors.map((m) => `<div data-upd-error="${esc(m.id)}"><button type="button" class="mi-link" data-mi-open="${esc(m.id)}">${esc(m.name)}</button> (${ver(m.installed.version, m.installed.commit)}): ${esc(m.error)}</div>`).join('')}</div>` : ''}
   </div>`;
-  const errs = (s.errors || []).length ? `
-  <div class="admin-card" data-upd-errors style="border-left:3px solid #e5534b">
-    <h2>Can't check (${s.errors.length})</h2>
-    ${s.errors.map((m) => `<div class="admin-toggle-sub" data-upd-error="${esc(m.id)}"><strong>${esc(m.name)}</strong> (${ver(m.installed.version, m.installed.commit)}): <span style="${RED}">${esc(m.error)}</span></div>`).join('')}
-  </div>` : '';
-  const cur = (s.current || []).length ? `
-  <details class="admin-card" data-upd-current>
-    <summary style="cursor:pointer;font-weight:600">Up to date (${s.current.length})</summary>
-    ${s.current.map((m) => `<div class="admin-toggle-sub" data-upd-ok="${esc(m.id)}"><strong>${esc(m.name)}</strong> ${ver(m.installed.version, m.installed.commit)} &middot; last checked ${esc(ago(m.checked_at) || 'never')}</div>`).join('')}
-  </details>` : '';
-  box.innerHTML = head + needs.map(needsCard).join('') + errs + cur;
+  box.innerHTML = head;
   badge(needs.length);
+  window.dispatchEvent(new CustomEvent('odysseus:mods-updates-state'));
+}
+
+/** The saved check, for the cards and details: {needs: [...], errors: [...]}. */
+export function summary() {
+  return { needs: (_state || {}).needs_update || [], errors: (_state || {}).errors || [] };
 }
 
 function badge(n) {
