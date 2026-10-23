@@ -23,22 +23,22 @@ def _iso(days_ago):
     return datetime.fromtimestamp(NOW - days_ago * 86400, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-TS = {
-    "Self": {"HostName": "jaron-dev-server", "DNSName": "jaron-dev-server.tail90b62a.ts.net.",
-             "TailscaleIPs": ["100.121.62.9"], "OS": "linux"},
-    "Peer": {
-        "a": {"HostName": "DESKTOP-JARON", "DNSName": "desktop-jaron.tail90b62a.ts.net.",
-              "TailscaleIPs": ["100.102.86.125"], "OS": "windows", "Online": True, "LastSeen": _iso(0)},
-        "b": {"HostName": "jaron-laptop", "DNSName": "jaron-laptop.tail90b62a.ts.net.",
-              "TailscaleIPs": ["100.103.158.40"], "OS": "linux", "Online": False, "LastSeen": _iso(0.1)},
-        "c": {"HostName": "Pixel 8a", "DNSName": "pixel-8a.tail90b62a.ts.net.",
-              "TailscaleIPs": ["100.96.131.64"], "OS": "android", "Online": True, "LastSeen": _iso(0)},
-        "d": {"HostName": "pikvm", "DNSName": "pikvm.tail90b62a.ts.net.",
-              "TailscaleIPs": ["100.69.4.11"], "OS": "linux", "Online": False, "LastSeen": _iso(40)},
-        "e": {"HostName": "ubuntu-club-3090", "DNSName": "ubuntu-club-3090.tail361357.ts.net.",
-              "TailscaleIPs": ["100.109.202.13"], "OS": "linux", "Online": True, "LastSeen": _iso(0)},
-    },
-}
+def _p(host, name, ips, os, online=True, age=0.0, is_self=False, shared=False, suffix="tail90b62a"):
+    return {"host": host, "name": name, "dns": f"{host}.{suffix}.ts.net", "ips": ips, "os": os,
+            "online": online, "last_seen": "" if is_self else _iso(age), "age_days": age,
+            "is_self": is_self, "shared": shared}
+
+
+# What the Tailscale add-on's `peers` answers (Jaron-Wilson/odysseus-tailscale
+# parses `tailscale status --json` into these).
+PEERS = [
+    _p("jaron-dev-server", "jaron-dev-server", ["100.121.62.9"], "linux", is_self=True),
+    _p("desktop-jaron", "DESKTOP-JARON", ["100.102.86.125"], "windows"),
+    _p("jaron-laptop", "jaron-laptop", ["100.103.158.40"], "linux", online=False, age=0.1),
+    _p("pixel-8a", "Pixel 8a", ["100.96.131.64"], "android"),
+    _p("pikvm", "pikvm", ["100.69.4.11"], "linux", online=False, age=40),
+    _p("ubuntu-club-3090", "ubuntu-club-3090", ["100.109.202.13"], "linux", shared=True, suffix="tail361357"),
+]
 
 SERVERS = [
     {"id": "res", "name": "davinci-resolve", "url": "http://100.102.86.125:8930/sse", "transport": "sse", "enabled": True},
@@ -57,28 +57,55 @@ def prefs_file(tmp_path, monkeypatch):
     monkeypatch.setattr(machines, "DATA_DIR", str(tmp_path))
 
 
-def test_parse_peers_marks_self_shared_and_age():
-    ps = {p["host"]: p for p in machines.parse_peers(TS, now=NOW)}
-    assert ps["jaron-dev-server"]["is_self"] and ps["jaron-dev-server"]["online"]
-    assert ps["desktop-jaron"]["os"] == "windows" and not ps["desktop-jaron"]["shared"]
-    assert ps["ubuntu-club-3090"]["shared"]                 # another tailnet's machine
-    assert ps["pikvm"]["age_days"] > 30
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._body = status, body
+
+    def json(self):
+        return self._body
 
 
-def test_recent_handshake_counts_as_online_when_the_flag_blinks():
-    from datetime import datetime, timezone
-    hs = datetime.fromtimestamp(NOW - 30, tz=timezone.utc).astimezone().isoformat(timespec="microseconds")
-    hs = hs.replace(".", ".", 1)[:-6] + "123" + hs[-6:]      # nanosecond digits, as tailscale prints
-    data = {"Self": TS["Self"], "Peer": {"b": dict(TS["Peer"]["b"], Online=False, LastHandshake=hs)}}
-    lap = [p for p in machines.parse_peers(data, now=NOW) if p["host"] == "jaron-laptop"][0]
-    assert lap["online"]
-    old = {"Self": TS["Self"], "Peer": {"b": dict(TS["Peer"]["b"], Online=False,
-                                                    LastHandshake="0001-01-01T00:00:00Z")}}
-    assert not [p for p in machines.parse_peers(old, now=NOW) if p["host"] == "jaron-laptop"][0]["online"]
+def test_peers_come_from_the_network_add_on_and_are_cleaned(monkeypatch):
+    from src.mods import providers
+    calls = []
+
+    def fake(cap, action, payload=None, **kw):
+        calls.append((cap, action))
+        return _Resp(200, {"peers": PEERS + [{"host": ""}, "junk",
+                                             dict(PEERS[1], host="PC2", online="yes", ips="x")]})
+
+    monkeypatch.setattr(providers, "call_sync", fake)
+    machines._status_cache.update(at=0.0, data=None)
+    got = {p["host"]: p for p in machines.peers(refresh=True)}
+    assert calls == [("network.peers", "peers")]
+    assert got["jaron-dev-server"]["is_self"] and got["ubuntu-club-3090"]["shared"]
+    assert got["pc2"]["online"] is True and got["pc2"]["ips"] == []
+    assert len(got) == len(PEERS) + 1
+    machines.peers()                                          # cached
+    assert len(calls) == 1
+
+
+def test_no_network_add_on_means_no_peers(monkeypatch):
+    from src.mods import providers
+
+    def none(*a, **k):
+        raise providers.ProviderUnavailable("No add-on provides network.peers.", 404)
+
+    monkeypatch.setattr(providers, "call_sync", none)
+    monkeypatch.setattr(providers, "describe",
+                        lambda cap: {"capability": cap, "providers": [], "installed_off": False})
+    machines._status_cache.update(at=0.0, data=None)
+    assert machines.peers(refresh=True) == []
+    ov = machines.overview(SERVERS, {}, {}, [], [], {})
+    assert ov["machines"] == [] and not ov["tailscale"]
+    assert ov["network"] == {"provider": None, "installed_off": False, "error": ""}
+    # Every MCP server with a URL is a service then; nothing is lost.
+    assert {s["name"] for s in ov["services"]} >= {"davinci-resolve", "cloudflare"}
+    assert asyncio.run(machines.tailscale_ping(PEERS[1])) is False
 
 
 def test_overview_groups_servers_and_phones_under_machines():
-    peers = machines.parse_peers(TS, now=NOW)
+    peers = list(PEERS)
     statuses = {"res": {"status": "connected", "tool_count": 7}, "win": {"status": "connected"},
                 "lap": {"status": "error", "error": "x"}, "cf": {"status": "connected"}}
     tools = {"win": {"list_apps", "launch_app", "screenshot"}}
@@ -99,7 +126,7 @@ def test_overview_groups_servers_and_phones_under_machines():
 def test_a_computer_registered_for_notifications_sits_under_its_machine():
     """No listener address, so it is matched by name, not dropped into
     Services (linking the PC's browser to the PC registers it this way)."""
-    peers = machines.parse_peers(TS, now=NOW)
+    peers = list(PEERS)
     pc = {"name": "desktop-jaron", "kind": "desktop", "endpoint": "", "commands": ["notify"],
           "has_token": True, "token_hint": "x", "aliases": ["windows-desktop"]}
     ov = machines.overview([], {}, {}, [pc], peers, {})
@@ -129,7 +156,7 @@ def test_start_commands_are_fixed_per_os():
 
 
 def test_agent_summary_names_the_preferred_machine():
-    peers = machines.parse_peers(TS, now=NOW)
+    peers = list(PEERS)
     ov = machines.overview(SERVERS, {"res": {"status": "connected"}}, {}, [PHONE], peers,
                            {"desktop-jaron": {"preferred": True, "gpu": True}})
     text = machines.summary_for_agent(ov)
@@ -155,7 +182,7 @@ class _Mgr:
 def test_health_check_reconnects_online_machines_and_skips_offline(monkeypatch):
     monkeypatch.setattr(asyncio, "sleep", _nosleep)
     mcp_health._last_start.clear()
-    peers = machines.parse_peers(TS, now=NOW)
+    peers = list(PEERS)
     mgr = _Mgr({"res": {"status": "error"}, "win": {"status": "connected"},
                 "lap": {"status": "error"}, "cf": {"status": "error"}}, lambda sid, n: True)
     done = asyncio.run(mcp_health.check_once(mgr, SERVERS, peers, {}, _never_start))
@@ -166,7 +193,7 @@ def test_health_check_reconnects_online_machines_and_skips_offline(monkeypatch):
 def test_health_check_starts_services_once_then_backs_off(monkeypatch):
     monkeypatch.setattr(asyncio, "sleep", _nosleep)
     mcp_health._last_start.clear()
-    peers = machines.parse_peers(TS, now=NOW)
+    peers = list(PEERS)
     starts = []
 
     async def start(peer, user):
@@ -193,7 +220,7 @@ async def _nosleep(*_a, **_k):
 
 def test_routes_overview_prefs_and_ping(prefs_file, monkeypatch):
     from routes import device_routes
-    peers = machines.parse_peers(TS, now=NOW)
+    peers = list(PEERS)
     monkeypatch.setattr(device_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(device_routes, "_configured_servers", lambda: SERVERS)
     monkeypatch.setattr(machines, "peers", lambda refresh=False: peers)
@@ -243,7 +270,7 @@ def test_a_connected_server_that_restarted_is_reconnected():
     # Odysseus stayed "connected" to the old process, with the old tool list,
     # until Reconnect was pressed by hand.
     mcp_health._last_start.clear()
-    peers = machines.parse_peers(TS, now=NOW)
+    peers = list(PEERS)
     servers = SERVERS[:2]                                    # both on the PC, which is online
     mgr = _ProbingMgr({"res": {"status": "connected"}, "win": {"status": "connected"}},
                       {"res": {"alive": True, "changed": False}, "win": {"alive": True, "changed": True}})
@@ -277,3 +304,11 @@ def test_probe_compares_tools_and_notices_a_dead_session():
     m._sessions["win"] = _Session(dead=True)
     assert asyncio.run(m.probe("win"))["alive"] is False
     assert asyncio.run(m.probe("nope")) == {"alive": False, "changed": False}
+
+
+def test_devices_page_points_to_the_add_on_without_one():
+    import os
+    js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "static", "js", "devicesSettings.js")).read()
+    assert "Install the Tailscale add-on" in js and "modLinks.browse('tailscale')" in js
+    assert "Tailscale is not running on this server" not in js

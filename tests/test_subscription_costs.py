@@ -12,14 +12,24 @@ from sqlalchemy.pool import StaticPool
 
 from core.database import Base, CompanyAgent, CompanyCompany, ModelEndpoint
 from src import budgets, pricing, subscriptions, usage
+from tests.mod_llm_helpers import install_fake_mod, mods_dir  # noqa: F401  (mods_dir is a fixture)
 
-PLAN_URL = "https://api.openai.com/v1/chatgpt-plan"
+# The ChatGPT plan is an add-on now: its endpoint is mod://chatgpt/v1, and its
+# manifest keeps the "chatgpt-plan" provider name and subscription billing.
+PLAN_URL = "mod://chatgpt/v1"
 OPENAI = "https://api.openai.com/v1"
 LOCAL = "http://localhost:8000/v1"
 
 # Mid-month, so the current month is about half elapsed.
 NOW = datetime(2026, 10, 16, 12, 0, 0)
 START, END = usage.month_window(now=NOW)
+
+
+@pytest.fixture(autouse=True)
+def _chatgpt_add_on(mods_dir):
+    from src.mods import providers
+    providers._raw_cache.clear()
+    install_fake_mod()
 
 
 @pytest.fixture

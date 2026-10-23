@@ -93,17 +93,14 @@ const TOOLS = [
   { key: 'settings', label: 'Settings', icon: 'settings', id: 'settings-modal', open: '#user-bar-settings' },
   { key: 'devices', label: 'Devices', icon: 'devices', sel: '.dp-backdrop', win: '.bg-panel', open: '#tool-devices-btn' },
   { key: 'browser', label: 'Browser', icon: 'browser', sel: '.cb-backdrop', win: '.bg-panel', open: '#tool-browser-btn' },
-  { key: 'terminal', label: 'Terminal', icon: 'terminal', sel: '.term-backdrop', win: '.bg-panel', open: '#tool-terminal-btn' },
   { key: 'usage', label: 'Usage', icon: 'devops', sel: '.bg-panel-backdrop:has(> .us-panel)', win: '.bg-panel', open: '#tool-usage-btn' },
-  { key: 'claude-sessions', label: 'Claude sessions', icon: 'sessions', sel: '.bg-panel-backdrop:has(> .cs-panel)', win: '.bg-panel', open: '#tool-claude-sessions-btn' },
-  { key: 'adsb', label: 'ADS-B receiver', icon: 'adsb', sel: '.bg-panel-backdrop:has(> .adsb-panel)', win: '.bg-panel', open: '#tool-adsb-btn' },
   { key: 'company', label: 'Company', icon: 'company', sel: '.bg-panel-backdrop:has(> .company-panel)', win: '.bg-panel', open: '#tool-company-btn' },
   { key: 'whats-new', label: "What's new", icon: 'news', sel: '.wn-backdrop', win: '.bg-panel', open: '#tool-whats-new-btn' },
   // VS Code (codePanel.js). One tab; its project picker switches the folder.
   { key: 'code', label: 'Code', icon: 'code', sel: '.ide-backdrop', win: '.bg-panel', open: '#tool-code-btn',
     title: (el) => { const n = el.querySelector('.ide-project-name')?.textContent.trim();
       return n && n !== 'Pick a project' ? 'Code: ' + n : 'Code'; } },
-  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not([data-mod-tab]):not([data-moved-key]):not(:has(> .dv-panel)):not(:has(> .cs-panel)):not(:has(> .adsb-panel)):not(:has(> .plans-panel)):not(:has(> .company-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
+  { key: 'agents', label: 'Agents', icon: 'agents', sel: '.bg-panel-backdrop:not(.dp-backdrop):not(.ide-backdrop):not(.wn-backdrop):not([data-mod-tab]):not([data-moved-key]):not(:has(> .dv-panel)):not(:has(> .plans-panel)):not(:has(> .company-panel))', win: '.bg-panel', open: '#tool-bg-btn' },
 ];
 // A built-in page that is now a mod (modLinksCore.js LEGACY_PAGES) keeps its
 // saved tabs and links: with the mod installed they open the mod's tab
@@ -113,7 +110,7 @@ const TOOLS = [
   const at = TOOLS.findIndex(t => t.key === 'agents');
   const moved = Object.entries(LEGACY_PAGES).map(([k, label]) => ({
     key: 'moved:' + k, moved: k, label,
-    icon: (TOOLS.find(t => t.key === k) || {}).icon || 'mod',
+    icon: (TOOLS.find(t => t.key === k) || {}).icon || (ICONS[k] ? k : 'mod'),
     sel: `.bg-panel-backdrop[data-moved-key="${k}"]`, win: '.bg-panel',
     run: () => ModLinks.openFallback(k), close: async () => ModLinks.closeFallback(k),
   }));

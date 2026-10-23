@@ -6,7 +6,7 @@ import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
-import chatgptPlan from './chatgptPlan.js';
+import chatgptPlan from './chatgptAddon.js';
 
 let initialized = false;
 let modalEl = null;

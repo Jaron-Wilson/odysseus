@@ -724,15 +724,10 @@ app.include_router(setup_whats_new_routes(session_manager))
 # The integrated IDE: /ide/ proxies code-server, /api/ide/* backs the Code panel.
 from routes.ide_routes import setup_ide_routes
 app.include_router(setup_ide_routes())
-# The Terminal: a live shell over a WebSocket, admin only (routes/terminal_routes.py).
-from routes.terminal_routes import setup_terminal_routes
-app.include_router(setup_terminal_routes())
-# Claude Code sessions on this host, read-only, admin only (routes/claude_sessions_routes.py).
+# /claude attach and Claude direct: a chat carries on a Claude Code session, admin only
+# (routes/claude_sessions_routes.py). The Claude sessions page is the Programming mod now.
 from routes.claude_sessions_routes import setup_claude_sessions_routes
 app.include_router(setup_claude_sessions_routes())
-# The ADS-B receiver (a Pi on the tailnet): status and its live map, admin only (routes/adsb_routes.py).
-from routes.adsb_routes import setup_adsb_routes
-app.include_router(setup_adsb_routes())
 # PC game streaming is the Games mod now (github.com/Jaron-Wilson/odysseus-games): its tab replaces
 # the `games` page, and it finds the PC through GET /api/mods/v1/machines (machines.read).
 
@@ -791,9 +786,8 @@ app.include_router(setup_copilot_routes())
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
 app.include_router(setup_chatgpt_subscription_routes())
 
-# Sign in with ChatGPT (official ChatGPT plan usage, Responses API)
-from routes.chatgpt_plan_routes import setup_chatgpt_plan_routes
-app.include_router(setup_chatgpt_plan_routes())
+# Sign in with ChatGPT is the ChatGPT add-on now (Jaron-Wilson/odysseus-chatgpt):
+# its models are an endpoint mod://chatgpt/v1 (src/mods/llm_endpoints.py).
 
 # TTS
 from routes.tts_routes import setup_tts_routes
@@ -1433,12 +1427,6 @@ async def _shutdown_event():
         await asyncio.wait_for(_sip_line.LINE.shutdown(), 5)
     except Exception as e:
         logger.warning(f"SIP line shutdown error: {e}")
-    # Hang up any open Terminal sessions (src/terminal.py).
-    try:
-        from src import terminal as _terminal
-        _terminal.manager.close_all()
-    except Exception as e:
-        logger.warning(f"Terminal shutdown error: {e}")
     # Stop running mods (src/mods).
     try:
         from src.mods import runtime as _mods_runtime

@@ -26,7 +26,7 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
   - **Workspace** -- browser-style tabs for chats, tools and emails, split view, and a Home dashboard.<br>　<sub>Workspace · Studio · Classic interfaces · Ctrl+K searches everything · grouped sidebar</sub>
   - **Coding agents** -- hand a coding task to a real agent with a filesystem, behind a plan you approve.<br>　<sub>OpenCode · Claude Code · Google Antigravity · native Markdown plans · live console · background runs</sub>
   - **Company** -- an organization of AI agents (CEO, managers, reports) working an issue board, on any model.<br>　<sub>org chart · issues · approvals · budgets · @mentions in chat</sub>
-  - **Voice & phone** -- talk with the agent in a chat, over a phone line, by text message, or in a Google Meet.<br>　<sub>/call · local Whisper / Parakeet / Kokoro · ElevenLabs · Twilio · tailnet SIP · SMS gateway</sub>
+  - **Voice & phone** -- talk with the agent in a chat, over a phone line, by text message, or in a Google Meet.<br>　<sub>/call · local Whisper / Parakeet / Kokoro · ElevenLabs (add-on) · Twilio · tailnet SIP · SMS gateway</sub>
   - **Devices** -- link your computers and phone, and the agent can act on them.<br>　<sub>one-command enroll · desktop MCP · music bar + overlay · sound streaming · game streaming</sub>
   - **Mods** -- install add-ons from a git URL: their own pages, home cards, agent tools and notifications, with permissions you approve.<br>　<sub>Settings > Mods · sandboxed pages · signed identity · process or Docker · template + SDK · [docs/mods.md](docs/mods.md)</sub>
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
@@ -388,7 +388,7 @@ and lets you open a chat to ask about one.
 - **Needs to know** notes per chat, **Tidy** (notes first, then prune), and **Use as reference** for pulling another chat in.
 - **Voice call**: the phone button by the composer, or `/call`. Talk hands-free with the agent in the open chat, cut in while it speaks, minimize the call to a pill, or move it to another device. Engines are picked in **Settings > AI Defaults > Voice call**:
   - speech to text: the browser, **Local: Whisper** (faster-whisper) or **Local: Parakeet** (onnx-asr);
-  - text to speech: the browser, **Local: Kokoro** (kokoro-onnx, no torch), any OpenAI-compatible endpoint, or **ElevenLabs** (API key stored encrypted, with a credit guard that falls back to a local or browser voice).
+  - text to speech: the browser, **Local: Kokoro** (kokoro-onnx, no torch), any OpenAI-compatible endpoint, or an add-on voice like **ElevenLabs** (the [ElevenLabs voice](https://github.com/Jaron-Wilson/odysseus-elevenlabs) add-on, with a credit reserve that falls back to Kokoro or the browser voice).
   - Local models download from that page into the data directory. The packages are in `requirements-optional.txt` (see [Optional Dependencies](#optional-dependencies)).
 - **Music and video in the chat**: YouTube links, audio and video links get a player under the message.
 
@@ -400,10 +400,10 @@ and lets you open a chat to ask about one.
 - The agent's `claude_code` tool hands a coding task to an agent with a real filesystem. Engines: **OpenCode** (the default, works with local models on any Odysseus server), **Claude Code**, and **Google Antigravity** (the `agy` CLI). Each engine can be switched on or off per chat.
 - Writing code always goes through an approved plan. Runs are detached: they show a live console, can be sent to the background (**Build > Background**) or brought back into the chat, survive a server restart, and ping their chat when they finish. Run limits (turns, budget, or no limit) can be set per run.
 - Each chat's Claude Code session is kept as a real background agent, so it shows up in `claude agents` (turn off with `ODYSSEUS_CLAUDE_AGENTS=0`).
-- **Build > Claude sessions** (admin): read the Claude Code sessions on this host, live ones first, with a chat-style transcript and a copyable resume command.
+- **Claude sessions** (admin) is now part of the **Programming** mod (Jaron-Wilson/odysseus-programming): read the Claude Code sessions on this host, live ones first, with a chat-style transcript and a copyable resume command. Install it from Settings > Mods > Browse; its tab takes over the old `#claude-sessions` links, and without it they show the "This feature is now a mod" card.
 - **`/claude attach <id>`** links one of those sessions to a chat so the agent carries it on. **`/claude direct`** then sends every message in that chat straight to the attached session, so the chat becomes a remote control for it (`/claude direct off` or `/claude detach` to end).
 - **Building Odysseus from Odysseus**: feature requests are made in a separate copy of the repo, on a branch from `origin/dev`, and opened as a pull request. Nothing is merged or pushed to `dev` by the agent.
-- **Sign in with ChatGPT** (**Settings > Add Models**) uses OpenAI models on a ChatGPT plan with no API key. Each model endpoint in Settings also has a tool-calling override (Auto, On, Off) for local models whose support is guessed wrong.
+- **Sign in with ChatGPT** is the [ChatGPT add-on](https://github.com/Jaron-Wilson/odysseus-chatgpt) (Settings > Mods > Browse): it uses OpenAI models on a ChatGPT plan with no API key, each user signing in on its tab. Each model endpoint in Settings also has a tool-calling override (Auto, On, Off) for local models whose support is guessed wrong.
 
 </details>
 
@@ -429,7 +429,7 @@ and lets you open a chat to ask about one.
 <details>
 <summary>Build tools: Terminal, VS Code and the cloud browser</summary>
 
-- **Build > Terminal** (admin): a real login shell on a PTY over an admin-only WebSocket, with several sessions per user that survive a reload. Copy and paste work like Windows Terminal: **Ctrl+C** copies the highlighted text (and still interrupts when nothing is selected), **Ctrl+V** / **Shift+Insert** paste as a bracketed paste, and right-click (or a long press) opens a Copy / Paste / Select all menu. Copy on select is an option in **Settings > System > Terminal**.
+- **Terminal** (admin) moved into the **Programming** mod (Jaron-Wilson/odysseus-programming), which is admin only: a real login shell on a PTY, with several sessions per user that survive a reload. Copy and paste work like Windows Terminal: **Ctrl+C** copies the highlighted text (and still interrupts when nothing is selected), **Ctrl+V** / **Shift+Insert** paste as a bracketed paste, and right-click (or a long press) opens a Copy / Paste / Select all menu. Its limits and copy on select are the mod's settings. Its tab takes over the old `#terminal` links and saved Workspace tabs.
 - **Build > Code** (admin): VS Code in the browser at `/ide/`. Odysseus reverse-proxies a [code-server](https://github.com/coder/code-server) you already run on the host; set its address in Settings or with `ODYSSEUS_IDE_URL`.
 - **Build > Browser**: the agent's browser, which you can watch live and take over. It runs a real Chrome on a virtual display (Xvfb) when one is installed so site sign-ins work, and logins persist. `ODYSSEUS_BROWSER_EXECUTABLE` picks the browser, and `ODYSSEUS_CLOUD_BROWSER_HEADFUL=0` forces the old headless Chromium.
 
@@ -438,12 +438,12 @@ and lets you open a chat to ask about one.
 <details>
 <summary>Devices, music and games</summary>
 
-- **Settings > Devices** lists your computers and phones by machine, with Ping and push notifications (web push, no third-party app). **Add a device** makes a one-time code: one PowerShell or shell command (or a QR scan on a phone) installs the desktop MCP server and registers the machine. The scripts are in `tools/enroll/`.
+- **Settings > Devices** lists your computers and phones by machine, with Ping and push notifications (web push, no third-party app). The machines on your tailnet come from the [Tailscale add-on](https://github.com/Jaron-Wilson/odysseus-tailscale) (Settings > Mods > Browse); without it, MCP servers and devices you add by hand still work. **Add a device** makes a one-time code: one PowerShell or shell command (or a QR scan on a phone) installs the desktop MCP server and registers the machine. The scripts are in `tools/enroll/`.
 - Linked computers get **every Odysseus tool** (desktop MCP, music overlay, sound streaming). Settings > Devices says what each computer is missing and offers **Install** / **Update**.
 - The agent knows which device a message came from, works in the background by default, and only uses your screen when you ask. **Screen control** needs your approval, which is limited by time and by a number of actions, and Stop revokes it.
 - **Music bar**: control the music playing on one of your machines (art, controls, volume, lyrics) from the chat, listen in the browser, or pop it out as a frameless desktop overlay (`tools/music_overlay/`) that stays on top of games and shows the agent's messages with a reply box. A computer's sound can also be streamed to another over the tailnet.
 - **Games** (the Games mod, `Jaron-Wilson/odysseus-games`, admin): play PC games in the browser through [Sunshine](https://github.com/LizardByte/Sunshine) on the PC and Moonlight Web served at `/play/`, with covers, what is running, Stop, **Sync Steam games** and game tools for the agent. Install it from Settings > Mods > Browse; its tab replaces the old `#games` page (without it, `#games` shows the "This feature is now a mod" card), and its settings replace Settings > Devices > Game streaming. It finds the PC on the tailnet through the mod API (`machines.read`).
-- **System > ADS-B receiver** (admin): the status, aircraft list and live tar1090 map of an ADS-B feeder on your network. Set the receiver address on the page (or `ODYSSEUS_ADSB_URL`).
+- **ADS-B receiver**: now the [ADS-B Receiver mod](https://github.com/Jaron-Wilson/odysseus-adsb) (`odysseus-adsb`): the status, aircraft list and live tar1090 map of an ADS-B feeder on your network, links to the feeder, the aggregators and Flys Down, and agent tools. Install it from Settings > Mods > Browse; its tab replaces the old `#adsb` page, and without it `#adsb` shows the "This feature is now a mod" card. Its settings page imports the old `adsb.json`.
 
 </details>
 
@@ -462,7 +462,7 @@ These cards live in **Settings > Calls & Meetings**.
 <details>
 <summary>Google, calendar and email</summary>
 
-- **Settings > Google**: one Google connection (your own OAuth client) for Calendar, Drive, Docs, Sheets, Slides, Tasks and Contacts, switched on per product. The assistant asks in the chat before any write to your Google account or Gmail (see [Gmail and Google account changes](#gmail-and-google-account-changes) and [docs/google.md](docs/google.md)).
+- **Settings > Google**: the Google connection (your own OAuth client) for Calendar and Meet. Drive, Docs, Sheets, Slides, Tasks and Contacts are the Google add-on (mod `google`). The assistant asks in the chat before any write to your Google account or Gmail (see [Gmail and Google account changes](#gmail-and-google-account-changes) and [docs/google.md](docs/google.md)).
 - **Organize > Calendar** syncs Google Calendar both ways through that connection, including shared and family calendars (Calendar gear > Google Calendar).
 - **Inbound mail**: a Cloudflare Email Worker (`tools/mail-worker/`) keeps a copy of mail sent to your routed addresses and forwards it on, and Odysseus shows it in an **Inbound** inbox with **Ask AI about this**. Email windows can be sized to the chat column, and HTML emails show as designed.
 

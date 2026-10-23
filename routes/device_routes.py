@@ -126,6 +126,8 @@ async def ping_machine(host: str) -> dict:
     if m is None:
         peer = machines.find_peer(machines.peers(), host)
         if peer is None:
+            if not machines.network_status()["provider"]:
+                return {"ok": False, "error": "Install the Tailscale add-on to find and ping your machines."}
             return {"ok": False, "error": f"{host} is not on your tailnet."}
         m = dict(peer, servers=[])
     mgr = _mcp()

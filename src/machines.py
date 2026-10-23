@@ -6,8 +6,9 @@ Cloudflare servers looked like computers too. What the user has is machines
 -- a PC, a laptop, a phone -- each running zero or more MCP servers, plus
 some services that are not on any machine at all.
 
-Tailscale already knows the machines: `tailscale status --json` gives every
-peer's name, OS, addresses and whether it is online. An MCP server belongs
+The tailnet already knows the machines: the Tailscale add-on (it provides
+`network.peers`) gives every peer's name, OS, addresses and whether it is
+online. An MCP server belongs
 to the peer its URL points at (by Tailscale IP or MagicDNS name); anything
 else with a URL is a service; a stdio server runs here, on this server.
 
@@ -21,7 +22,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 import tempfile
 import time
 from typing import Dict, List, Optional
@@ -37,88 +37,68 @@ _STATUS_TTL = 15.0
 _status_cache: Dict = {"at": 0.0, "data": None}
 
 
-# ── Tailnet ────────────────────────────────────────────────────────────────
+# ── Peers, from the network add-on ─────────────────────────────────────────
+#
+# Which machines exist comes from an add-on that provides `network.peers`
+# (src/mods/providers.py), the Tailscale add-on (Jaron-Wilson/odysseus-tailscale)
+# today. It answers `peers` with records in the shape below, already parsed;
+# the core only cleans them. Without one there are no peers: Settings >
+# Devices lists MCP servers as services and says to install the add-on.
 
-def _tailscale_json() -> Optional[dict]:
-    try:
-        p = subprocess.run(["tailscale", "status", "--json"], capture_output=True,
-                           text=True, timeout=10)
-        if p.returncode != 0:
-            return None
-        return json.loads(p.stdout)
-    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+PEERS_CAP = "network.peers"
+_last_error: Dict = {"error": ""}
+
+_PEER_FIELDS = {"host": str, "name": str, "dns": str, "os": str, "last_seen": str}
+
+
+def _clean_peer(raw) -> Optional[Dict]:
+    if not isinstance(raw, dict):
         return None
-
-
-def _short(dns: str) -> str:
-    return (dns or "").rstrip(".").split(".")[0].lower()
-
-
-def _suffix(dns: str) -> str:
-    return ".".join((dns or "").rstrip(".").split(".")[1:]).lower()
-
-
-def parse_peers(data: Optional[dict], now: Optional[float] = None) -> List[Dict]:
-    """Tailnet peers (and this server) from `tailscale status --json`.
-
-    Peers shared in from another tailnet are marked `shared`: they are
-    someone else's machines, not the user's.
-    """
-    if not data:
-        return []
-    now = now or time.time()
-    me = data.get("Self") or {}
-    my_suffix = _suffix(me.get("DNSName", ""))
-    out = []
-
-    def rec(p: dict, is_self: bool) -> Dict:
-        dns = (p.get("DNSName") or "").rstrip(".")
-        last = p.get("LastSeen") or ""
-        age_days = None
-        if last and not last.startswith("0001"):
-            try:
-                from datetime import datetime
-                ts = datetime.fromisoformat(last.replace("Z", "+00:00")).timestamp()
-                age_days = max(0.0, (now - ts) / 86400)
-            except ValueError:
-                age_days = None
-        # Tailscale's Online flag comes from its control server and can blink
-        # off for a machine that is plainly reachable (seen: the laptop
-        # "offline" while an SSH session to it was open). A direct handshake
-        # in the last few minutes counts as online too.
-        online = bool(p.get("Online"))
-        hs = p.get("LastHandshake") or ""
-        if not online and hs and not hs.startswith("0001"):
-            try:
-                from datetime import datetime
-                online = now - datetime.fromisoformat(
-                    re.sub(r"(\.\d{6})\d+", r"\1", hs).replace("Z", "+00:00")).timestamp() < 180
-            except ValueError:
-                pass
-        return {
-            "host": _short(dns) or (p.get("HostName") or "").lower(),
-            "name": p.get("HostName") or _short(dns),
-            "dns": dns,
-            "ips": list(p.get("TailscaleIPs") or []),
-            "os": (p.get("OS") or "").lower(),
-            "online": True if is_self else online,
-            "last_seen": "" if is_self else last,
-            "age_days": 0.0 if is_self else age_days,
-            "is_self": is_self,
-            "shared": bool(my_suffix) and _suffix(dns) != my_suffix,
-        }
-
-    if me:
-        out.append(rec(me, True))
-    for p in (data.get("Peer") or {}).values():
-        out.append(rec(p, False))
+    out = {k: str(raw.get(k) or "")[:200] for k in _PEER_FIELDS}
+    out["host"] = out["host"].lower()
+    out["os"] = out["os"].lower()
+    if not out["host"]:
+        return None
+    ips = raw.get("ips") if isinstance(raw.get("ips"), list) else []
+    out["ips"] = [i[:64] for i in ips if isinstance(i, str)][:8]
+    age = raw.get("age_days")
+    out["age_days"] = float(age) if isinstance(age, (int, float)) and not isinstance(age, bool) else None
+    for k in ("online", "is_self", "shared"):
+        out[k] = bool(raw.get(k))
     return out
+
+
+def _fetch_peers() -> Optional[List[Dict]]:
+    """The provider's peers, or None when there is no provider (or it failed)."""
+    from src.mods import providers
+    try:
+        r = providers.call_sync(PEERS_CAP, "peers", None, method="GET", timeout=12)
+    except providers.ProviderUnavailable as e:
+        _last_error["error"] = e.message
+        return None
+    if r.status_code != 200:
+        _last_error["error"] = f"The network add-on answered {r.status_code}."
+        return None
+    try:
+        raw = r.json().get("peers") or []
+    except (ValueError, AttributeError):
+        raw = []
+    _last_error["error"] = ""
+    return [p for p in (_clean_peer(x) for x in raw[:500]) if p]
 
 
 def peers(refresh: bool = False) -> List[Dict]:
     if refresh or time.time() - _status_cache["at"] > _STATUS_TTL:
-        _status_cache.update(at=time.time(), data=_tailscale_json())
-    return parse_peers(_status_cache["data"])
+        _status_cache.update(at=time.time(), data=_fetch_peers())
+    return list(_status_cache["data"] or [])
+
+
+def network_status() -> Dict:
+    """For the Devices page: is there a network add-on, and did it answer."""
+    from src.mods import providers
+    d = providers.describe(PEERS_CAP)
+    return {"provider": (d["providers"] or [None])[0], "installed_off": d["installed_off"],
+            "error": _last_error["error"] if d["providers"] else ""}
 
 
 def find_peer(all_peers: List[Dict], host_or_ip: str) -> Optional[Dict]:
@@ -262,7 +242,7 @@ def overview(servers: List[Dict], statuses: Dict[str, Dict], tools: Dict[str, se
     others = [p for p in all_peers if p["host"] not in machines]
     others.sort(key=lambda p: (p["shared"], not p["online"], p["name"].lower()))
     return {"machines": order, "services": services, "others": others,
-            "tailscale": bool(all_peers)}
+            "tailscale": bool(all_peers), "network": network_status()}
 
 
 def summary_for_agent(ov: Dict) -> str:
@@ -397,9 +377,15 @@ async def run_user_task(peer: Dict, user: str, task: str) -> Dict:
 
 
 async def tailscale_ping(peer: Dict) -> bool:
-    target = peer["ips"][0] if peer["ips"] else peer["host"]
-    r = await _run(["tailscale", "ping", "-c", "1", "--timeout", "5s", target], timeout=12)
-    return r["rc"] == 0 and "pong" in r["out"].lower()
+    """Whether the machine answers over the private network (the add-on's
+    `ping`). False without the add-on."""
+    from src.mods import providers
+    target = peer["ips"][0] if peer.get("ips") else peer.get("host", "")
+    try:
+        r = await providers.call(PEERS_CAP, "ping", {"target": target}, timeout=15)
+        return r.status_code == 200 and bool(r.json().get("ok"))
+    except (providers.ProviderUnavailable, ValueError, AttributeError):
+        return False
 
 
 # ── Which device the user is chatting from ─────────────────────────────────

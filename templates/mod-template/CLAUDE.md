@@ -68,6 +68,8 @@ The core runs `python` in `runtime.command` with the mod's `.venv` when one exis
   when a message matches a keyword (or tool retrieval picks one), so choose words people will say.
 - `events`: `emits` (types like `my-mod.clicked`), `subscribes` (patterns like `print-hub/print.*`
   or `*.failed`), `webhook` (default `/mod/events`).
+- `provides`, `requires`, `optional`: capabilities it serves, needs and works better with (see
+  "Capabilities" below). Leave them out when the mod uses no other mod.
 - `tutorial`: **required** (see below).
 - `ui.tabs[].replaces`: only for a mod that takes over a page Odysseus used to have built in
   (`adsb`, `games`, `print`, `devops`, `company`, ...): that page's old links and saved tabs then
@@ -140,6 +142,8 @@ deliveries come as `odysseus-core` (`CORE_USER`), as does a tool call with no us
 | `GET stats?scope=devops&hours=24` | stats.read | `stats(scope, hours)` |
 | `GET stats/transcripts/<run>` | stats.read | `stats_transcript(run_id)` |
 | `POST tools/refresh {wait}` | none | `refresh_tools(wait=False)` |
+| `GET cap` | none | `capabilities()` |
+| `POST cap/<capability>/<action>` | in `requires` or `optional` | `cap(capability, action, args, user, provider)`, `send_text(text, to)` |
 
 `level` is `info`, `success`, `warning`, `error` or `critical`; the user decides which channels a
 level reaches. `url` must be a path in Odysseus; use a tab link, `CoreClient.link("my-mod",
@@ -149,6 +153,25 @@ Odysseus. Calls are rate limited.
 The core reads the tool list when the mod starts. When the mod's tools change while it runs
 (it was just configured, a device appeared), call `app.core.refresh_tools()` and the core reads
 `GET /mod/tools` again (at most 6 times a minute).
+
+## Capabilities: using other mods, and serving them
+
+Mods never call each other directly; the core brokers it (docs/mods.md, "Capabilities").
+
+- **Using one.** List it in the manifest: `"requires": ["home.lights"]` when the mod does not work
+  without it (installing then asks for a provider), `"optional": ["messaging.sms"]` when it only
+  works better with it (the usual case). Call it with `app.core.cap("home.lights", "toggle",
+  {"room": "garage"})`. A `CoreError` 424 means nothing provides it: for an `optional` one, skip
+  the feature quietly. `app.core.capabilities()` says what is available now.
+- **Texting the user** is `messaging.sms`: `app.core.send_text("Garage left open")` (their own
+  number; another number only if they granted it in Settings > Mods). Texts they send to Odysseus
+  arrive as the event `messaging.sms.received` (`{from, text}`): add `"messaging.sms.received"` to
+  `events.subscribes`, the `events.subscribe` permission, and `@app.on_event(...)`.
+- **Serving one.** List it in `"provides"` and handle each action with
+  `@app.provide("garage-door.state", "get")`; `req.user` is who it is for, `req.caller` the mod
+  that asked. A capability named after this mod's id (`garage-door.<name>`) is this mod's own API:
+  only this mod can serve it.
+- Capability ids are namespaced lowercase names, `<namespace>.<name>`.
 
 ## Links into the mod
 

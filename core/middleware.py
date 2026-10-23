@@ -61,19 +61,6 @@ class ModAwareCORSMiddleware:
         await self.cors(scope, receive, send)
 
 
-def _adsb_frame_src() -> str:
-    """" <origin>" for the configured ADS-B receiver, or "" (src/adsb.py)."""
-    try:
-        from src.adsb import frame_origin
-        origin = frame_origin()
-    except Exception:
-        return ""
-    # An origin is scheme://host[:port]; anything else must not reach the header.
-    if not origin or any(c in origin for c in " ;,'\"\r\n"):
-        return ""
-    return f" {origin}"
-
-
 def require_admin(request: Request):
     """Raise 403 if the current user isn't an admin.
     Allows access when auth is explicitly disabled, or when the request carries
@@ -201,10 +188,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "img-src 'self' data: blob: https://i.ytimg.com; "
                 "media-src 'self' blob: https:; "
                 "connect-src 'self'; "
-                # YouTube's privacy-enhanced player, loaded on click, and the
-                # ADS-B receiver's own map (src/adsb.py): only the origin set
-                # on that page, never a wildcard.
-                f"frame-src 'self' https://www.youtube-nocookie.com{_adsb_frame_src()}; "
+                # YouTube's privacy-enhanced player, loaded on click. (The ADS-B
+                # receiver's map is framed inside its mod's page, whose own CSP is
+                # the mod sandbox; Games is a mod too.)
+                "frame-src 'self' https://www.youtube-nocookie.com; "
                 + ("frame-ancestors 'self'" if is_thread_pane else "frame-ancestors 'none'")
             )
         return response
