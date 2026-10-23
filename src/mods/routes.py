@@ -519,6 +519,8 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
     _setup_v1(router)
     from src.mods.host_api import setup_host_routes
     setup_host_routes(router)
+    from src.mods.legacy import setup_legacy_routes
+    setup_legacy_routes(router)
 
     @router.get("/api/mods")
     async def list_mods(request: Request):

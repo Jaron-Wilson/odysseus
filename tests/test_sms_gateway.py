@@ -124,7 +124,8 @@ def test_the_inbound_gateway_is_gone_from_the_core(env):
     assert c.post("/api/sms/inbound/" + "a" * 43, json={"from": ALICE_NUM, "text": "help"}).status_code in (404, 405)
     assert c.post("/api/sms/secret", headers={"x-test-user": "alice"}).status_code in (404, 405)
     src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
-    assert "/api/sms/inbound" not in src
+    # The old address is only forwarded to the mod (src/mods/legacy_urls.py), never handled here.
+    assert "legacy_urls" in src and not hasattr(sms_routes, "match_secret")
     # Mods' public paths are the only webhook pattern of that kind now.
     pat = re.compile(re.search(r'_re\.compile\(r"(\^/mods/\[a-z\][^"]+/public/[^"]*)"\)', src).group(1))
     assert pat.match("/mods/phone/public/sms/inbound/" + "a" * 43)

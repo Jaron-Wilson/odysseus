@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 from src.mods import manifest as mf
 from src.mods import paths
 from src.mods import signing
+from src.mods import legacy as _legacy
 
 logger = logging.getLogger(__name__)
 
@@ -335,6 +336,8 @@ def prepare(source: str, ref: Optional[str] = None, subdir: Optional[str] = None
         # What it provides, needs (`missing`: nobody provides it yet) and may
         # use (src/mods/capabilities.py); for an update, what it newly uses.
         "capabilities": _capabilities_review(manifest, existing),
+        # The built-in settings it will import once (src/mods/legacy.py), for the review.
+        "imports": _legacy.review(manifest, existing),
     }
 
 
@@ -435,6 +438,7 @@ def confirm(install_id: str, approved: List[str]) -> Dict[str, Any]:
             "source": meta["source"],
             "commit": meta.get("commit"),
             "granted_permissions": list(manifest["permissions"]),
+            "granted_imports": list(manifest.get("imports") or []),   # shown in the review (src/mods/legacy.py)
             "updated_at": now,
         })
         if not existing:
