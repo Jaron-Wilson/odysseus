@@ -79,9 +79,6 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "company", "label": "Company", "group": "build", "open": "#tool-company-btn", "tab": "company",
       "desc": "An org of AI agents on any model: goals, issues, approvals",
       "aliases": ["companies", "org chart", "organization", "agent company", "agent org", "paperclip", "issues board"] },
-    { "key": "devops", "label": "DevOps", "group": "build", "open": "#tool-devops-btn", "tab": "devops", "adminOnly": true,
-      "desc": "What is running, model speed and coder stats",
-      "aliases": ["dev ops", "stats", "statistics", "metrics", "monitoring", "what is running", "tokens per second"] },
     { "key": "odysseus-dev", "label": "Odysseus dev", "group": "build", "open": "#tool-odysseus-dev-btn", "tab": null, "adminOnly": true,
       "desc": "A chat for changing Odysseus itself",
       "aliases": ["odysseus development", "odysseus dev chat", "dev chat", "odysseusdev"] },
@@ -136,7 +133,11 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "adsb", "label": "ADS-B receiver", "group": "system",
       "desc": "Your ADS-B receiver: the ADS-B Receiver mod (what it hears, its live map)",
       "aliases": ["ads-b", "adsb", "ads-b receiver", "receiver", "pi", "raspberry pi", "planes", "aircraft", "flights",
-                  "tar1090", "feeder", "adsb.im"] }
+                  "tar1090", "feeder", "adsb.im"] },
+    { "key": "devops", "label": "DevOps", "group": "build",
+      "desc": "The DevOps mod: what is running, tokens per second and per hour, which coder does best",
+      "aliases": ["dev ops", "stats", "statistics", "metrics", "monitoring", "what is running",
+                  "tokens per second", "model speed", "coder stats"] }
   ]
 } /* tool-pages:end */;
 

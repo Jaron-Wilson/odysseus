@@ -66,9 +66,9 @@ def test_unknown_names_are_not_guessed():
 def test_the_prompt_lists_every_page_in_its_group():
     names = tool_pages.names_for_prompt()
     assert names.startswith("Organize: calendar, tasks, notes, plans, brain;")
-    # Terminal and Claude sessions moved to the Programming mod: still pages
-    # the agent can open, listed after the built-in ones.
-    assert "Build: code, browser, background, company, devops, odysseus-dev, terminal, claude-sessions" in names
+    # Terminal, Claude sessions and DevOps moved to mods: still pages the agent
+    # can open, listed after the built-in ones.
+    assert "Build: code, browser, background, company, odysseus-dev, terminal, claude-sessions, devops" in names
     assert "command line/shell/console->terminal" in tool_pages.aliases_for_prompt()
 
 

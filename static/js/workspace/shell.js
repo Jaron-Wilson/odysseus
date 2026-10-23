@@ -93,7 +93,6 @@ const TOOLS = [
   { key: 'settings', label: 'Settings', icon: 'settings', id: 'settings-modal', open: '#user-bar-settings' },
   { key: 'devices', label: 'Devices', icon: 'devices', sel: '.dp-backdrop', win: '.bg-panel', open: '#tool-devices-btn' },
   { key: 'browser', label: 'Browser', icon: 'browser', sel: '.cb-backdrop', win: '.bg-panel', open: '#tool-browser-btn' },
-  { key: 'devops', label: 'DevOps', icon: 'devops', sel: '.bg-panel-backdrop:has(> .dv-panel:not(.us-panel))', win: '.bg-panel', open: '#tool-devops-btn' },
   { key: 'usage', label: 'Usage', icon: 'devops', sel: '.bg-panel-backdrop:has(> .us-panel)', win: '.bg-panel', open: '#tool-usage-btn' },
   { key: 'games', label: 'Games', icon: 'games', sel: '.bg-panel-backdrop:has(> .games-panel)', win: '.bg-panel', open: '#tool-games-btn' },
   { key: 'company', label: 'Company', icon: 'company', sel: '.bg-panel-backdrop:has(> .company-panel)', win: '.bg-panel', open: '#tool-company-btn' },

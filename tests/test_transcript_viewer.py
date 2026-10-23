@@ -278,7 +278,9 @@ def test_app_registers_the_routes_and_the_ui_is_present():
     ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     app = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
     assert "setup_transcript_routes()" in app
+    # The viewer was part of the DevOps page, which is the DevOps mod now: it reads the
+    # same detail through GET /api/mods/v1/stats/transcripts/<run> (stats.read).
     html = open(os.path.join(ROOT, "static", "index.html"), encoding="utf-8").read()
-    assert "/static/js/devopsPage.js" in html          # the viewer mounts in the DevOps page
-    js = open(os.path.join(ROOT, "static", "js", "devopsPage.js"), encoding="utf-8").read()
-    assert "/api/transcript/runs/" in js and "dv-transcript" in js and "data-resume" in js
+    assert "devopsPage.js" not in html
+    mods = open(os.path.join(ROOT, "src", "mods", "routes.py"), encoding="utf-8").read()
+    assert "/api/mods/v1/stats/transcripts/{run_id}" in mods and "detail_for" in mods
