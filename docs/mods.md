@@ -662,7 +662,7 @@ list, in this order), and the built-in pages in each, which are what `after` may
 |---|---|---|
 | `organize` | Organize | `calendar`, `tasks`, `notes`, `plans`, `brain` |
 | `create` | Create & research | `library`, `gallery`, `research`, `compare` |
-| `build` | Build | `code`, `terminal`, `browser`, `background`, `company`, `claude-sessions`, `devops`, `odysseus-dev` |
+| `build` | Build | `code`, `browser`, `background`, `company`, `devops`, `odysseus-dev` |
 | `system` | System | `devices`, `games`, `cookbook`, `theme`, `usage`, `whats-new` |
 | `mods` | Mods | None. The default; the group only appears when a tab is in it. |
 
@@ -760,14 +760,17 @@ else reads it.
 #### Pages that moved to mods
 
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
-receiver, now the ADS-B Receiver mod, `Jaron-Wilson/odysseus-adsb`), `games`, `print` (3D print helper, now part of Print Hub), `devops`, `company`, and later `code`, `terminal`,
-`browser`, `claude-sessions`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
+receiver, now the ADS-B Receiver mod, `Jaron-Wilson/odysseus-adsb`), `games`, `print` (3D print helper, now part of Print Hub), `terminal` and `claude-sessions`
+(now the Programming mod), `devops`, `company`, and later `code`,
+`browser`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
 `src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,
 `/#games?play=...`) and saved Workspace tabs keep working:
 
 1. A mod tab that declares `"replaces": "adsb"` (and that the user may use) takes them over:
    `#adsb` opens that tab, and a saved `adsb` Workspace tab becomes it. When two mods claim the
-   same key, the first by mod id wins.
+   same key, the first by mod id wins. A query on the old link goes to the tab's page:
+   `#claude-sessions?project=p&id=x` opens the replacing tab at its own path plus
+   `?project=p&id=x`. (A `#key/more` link from before the move opens the tab.)
 2. Otherwise, while the built-in page still exists, they open the built-in page as before.
 3. Otherwise they show a **This feature is now a mod** card (in the Workspace, as its tab), with
    **Find it in Browse** (Settings > Mods > Browse, searching for the key) for admins, and "ask an

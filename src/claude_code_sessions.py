@@ -3,9 +3,10 @@
 Claude Code writes each session as JSONL under ~/.claude/projects/<cwd with
 "/" as "-">/<session uuid>.jsonl, one event per line: user and assistant
 messages (with tool_use and tool_result blocks), titles, summaries and
-bookkeeping. This module lists them and turns one into readable turns for
-the Claude sessions page (static/js/claudeSessions.js,
-routes/claude_sessions_routes.py). Read-only: nothing here writes there.
+bookkeeping. This module lists them and turns one into readable turns. In
+the core it backs /claude attach (src/claude_attach.py); the Claude sessions
+page that read them moved to the Programming mod, which has its own copy.
+Read-only: nothing here writes there.
 
 Some transcripts are hundreds of MB, so nothing reads a whole file per
 request. The list reads a little of each file's head and tail and counts

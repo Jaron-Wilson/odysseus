@@ -44,7 +44,7 @@ _PAGE = """<!doctype html><html class="ui-workspace ui-studio"><head>
   </div>
   <button id="tool-calendar-btn">Calendar</button>
   <button id="tool-notes-btn">Notes</button>
-  <button id="tool-terminal-btn">Terminal</button>
+  <button id="tool-code-btn">Code</button>
   <span id="user-bar-name">Jaron Wilson</span>
 </nav>
 <button id="rail-new-session">+</button>
@@ -98,11 +98,11 @@ _PAGE = """<!doctype html><html class="ui-workspace ui-studio"><head>
     p.querySelector('.notes-close-btn').addEventListener('click', () => p.remove());
     document.body.appendChild(p);
   });
-  // Terminal: a backdrop with a panel in it, appended on open, like bgPanel.js.
-  document.getElementById('tool-terminal-btn').addEventListener('click', () => {
+  // Code: a backdrop with a panel in it, appended on open, like bgPanel.js.
+  document.getElementById('tool-code-btn').addEventListener('click', () => {
     const b = document.createElement('div');
-    b.className = 'bg-panel-backdrop term-backdrop';
-    b.innerHTML = '<div class="bg-panel"><div class="bg-panel-head">Terminal' +
+    b.className = 'bg-panel-backdrop ide-backdrop';
+    b.innerHTML = '<div class="bg-panel"><div class="bg-panel-head">Code' +
                   '<button class="bg-close">x</button></div></div>';
     b.querySelector('.bg-close').addEventListener('click', () => b.remove());
     document.body.appendChild(b);
@@ -383,7 +383,7 @@ _FRAME_RECORDER = """() => {
 }"""
 
 
-@pytest.mark.parametrize("how", ["calendar", "notes", "terminal", "open-tool", "split", "back-from-home"])
+@pytest.mark.parametrize("how", ["calendar", "notes", "code", "open-tool", "split", "back-from-home"])
 def test_a_tool_never_paints_as_a_floating_window_on_its_way_into_a_tab(page, how):
     # Reported 2026-10-01: "when i click a new tab or get routed to one, it
     # Flickers tries to do the old way where it opens up in a new windows
@@ -404,7 +404,7 @@ def test_a_tool_never_paints_as_a_floating_window_on_its_way_into_a_tab(page, ho
     elif how == "back-from-home":
         page.evaluate("document.querySelector(\".ws-tab[data-tab='tool:calendar']\").click()")
     else:
-        btn = {"calendar": "#tool-calendar-btn", "notes": "#tool-notes-btn"}.get(how, "#tool-terminal-btn")
+        btn = {"calendar": "#tool-calendar-btn", "notes": "#tool-notes-btn"}.get(how, "#tool-code-btn")
         page.evaluate(f"document.querySelector('{btn}').click()")
     page.wait_for_timeout(500)
     frames = page.evaluate("window.wsRec = false, wsFrames")
@@ -412,4 +412,4 @@ def test_a_tool_never_paints_as_a_floating_window_on_its_way_into_a_tab(page, ho
     flashes = [f for f in frames if f]
     assert not flashes, f"{len(flashes)} of {len(frames)} frames: {flashes[0]}"
     if how == "split":
-        assert page.get_attribute(".term-backdrop", "data-ws-pane") == "right"
+        assert page.get_attribute(".ide-backdrop", "data-ws-pane") == "right"

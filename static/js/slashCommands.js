@@ -1781,8 +1781,10 @@ function _ccAgo(t) {
 
 const _ccShortCwd = (cwd) => String(cwd || '').replace(/^\/home\/[^/]+/, '~');
 
+// The Claude sessions page is the Programming mod's tab now; the old page key
+// with a query opens that session there (modLinks.js), or the "now a mod" card.
 function _ccSessionsHref(a) {
-  return `#claude-sessions/${encodeURIComponent(a.project || '')}/${encodeURIComponent(a.id || a.session_id || '')}`;
+  return `#claude-sessions?project=${encodeURIComponent(a.project || '')}&id=${encodeURIComponent(a.id || a.session_id || '')}`;
 }
 
 async function _ccApi(method, url, body) {
@@ -1849,11 +1851,10 @@ function _ccPersistText(a, { heading, warning } = {}) {
 
 function _ccWireCard(el, ctx, cardId) {
   el.querySelector('.cc-attach-open')?.addEventListener('click', (ev) => {
-    const card = ev.currentTarget.closest('.cc-attach-card');
-    const m = (ev.currentTarget.getAttribute('href') || '').match(/^#claude-sessions\/([^/]+)\/([^/]+)$/);
-    if (m && window.claudeSessions && card) {
+    const href = ev.currentTarget.getAttribute('href') || '';
+    if (window.modLinks && href.startsWith('#claude-sessions')) {
       ev.preventDefault();
-      window.claudeSessions.open(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+      window.modLinks.route(href);
     }
   });
   el.querySelector('.cc-attach-detach')?.addEventListener('click', async (ev) => {
