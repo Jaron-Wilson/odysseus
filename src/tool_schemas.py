@@ -1283,7 +1283,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_emails",
-            "description": "List emails from an account/folder, newest first. Returns subject, sender, date, UID, and account for each email. Use list_email_accounts first when the user mentions Gmail/work/a custom mailbox. For last/latest/newest email requests, use max_results=1 and unread_only=false.",
+            "description": "List the most RECENT emails from one folder, newest first (INBOX only by default; no search, skips Promotions/Updates). To find or check anything (subscriptions, receipts, a sender, a topic) use search_gmail instead. Returns subject, sender, date, UID, and account for each email. Use list_email_accounts first when the user mentions Gmail/work/a custom mailbox. For last/latest/newest email requests, use max_results=1 and unread_only=false.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1293,6 +1293,36 @@ FUNCTION_TOOL_SCHEMAS = [
                     "unread_only": {"type": "boolean", "description": "Only show unread emails. Default false; set true only when the user asks for unread emails."},
                     "unresponded_only": {"type": "boolean", "description": "Only show unanswered emails. Default false."},
                     "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts, e.g. Gmail or user@example.com"},
+                },
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_gmail",
+            "description": "Search Gmail with a real Gmail query (same syntax as the Gmail search box) across ALL mail, including Promotions/Updates, not just INBOX. USE THIS, not list_emails, to find or check anything in mail. Returns date, sender, subject, snippet and id, newest first, up to 200 per call; page with offset. Examples: query='subscription renew'; 'from:netflix.com newer_than:1y'; 'receipt OR invoice after:2026/01/01'; '\"free trial\"'. Operators: from: to: subject: after: before: newer_than:30d older_than:1y label: category: has:attachment is:unread OR -exclude. Read-only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Gmail search query, e.g. 'from:spotify newer_than:1y'"},
+                    "max_results": {"type": "integer", "description": "How many to return (default 50, max 200)"},
+                    "offset": {"type": "integer", "description": "Skip this many newest matches to get the next page (default 0)"},
+                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts"},
+                },
+                "required": ["query"],
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_subscriptions",
+            "description": "Find subscriptions, recurring charges, renewals and free trials in Gmail (read-only). Searches the last 12 months of receipts, invoices, renewal and trial notices, App Store/Google Play/PayPal/Stripe receipts across all mail, groups by merchant, and returns last charge date and amount, frequency (monthly/yearly), any upcoming renewal or trial-end warning with date, and message ids for read_email. Use for 'check my gmail for subscriptions', 'what am I paying for', 'trials about to charge me', 'upcoming renewals'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts"},
                 },
             }
         }
@@ -1421,6 +1451,19 @@ FUNCTION_TOOL_SCHEMAS = [
 # Converter: native function call -> ToolBlock
 # ---------------------------------------------------------------------------
 
+_PARAMS_BY_NAME: dict = {}
+
+
+def _function_params(name: str) -> Optional[dict]:
+    """The JSON-schema `parameters` of a core function tool, by name."""
+    if not _PARAMS_BY_NAME:
+        for t in FUNCTION_TOOL_SCHEMAS:
+            fn = t.get("function") or {}
+            if fn.get("name"):
+                _PARAMS_BY_NAME[fn["name"]] = fn.get("parameters") or {}
+    return _PARAMS_BY_NAME.get(name)
+
+
 def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock]:
     """Convert a native function call into a ToolBlock for the existing execution pipeline."""
     try:
@@ -1442,13 +1485,24 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
 
     tool_type = _TOOL_NAME_MAP.get(name, name)
 
+    # Text-mode tool calls (XML invoke, tool_code, Gemma) arrive with every
+    # value a string. Coerce to the schema's declared types here, the one
+    # place all of those parsers and native calls converge. MCP and mod
+    # tools are coerced where their schemas live (mcp_manager, mods.tools).
+    _schema = _function_params(tool_type) or _function_params(name)
+    if _schema:
+        from src.tool_arg_coercion import coerce_args
+        args, _problems = coerce_args(args, _schema)
+        if _problems:
+            logger.warning("Uncoercible arguments for %s: %s", name, _problems)
+
     # Allow MCP tools through (namespaced as mcp__serverid__toolname), and
     # mod tools (mod__modid__toolname, src/mods/tools.py).
     if tool_type.startswith(("mcp__", "mod__")):
         content = json.dumps(args) if args else "{}"
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email
-    _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
+    _BUILTIN_EMAIL_TOOLS = {"search_gmail", "find_subscriptions", "list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
                             "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
     if name in _BUILTIN_EMAIL_TOOLS:
         return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")

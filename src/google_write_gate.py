@@ -60,7 +60,7 @@ EMAIL_WRITE_TOOLS = ("send_email", "reply_to_email", "archive_email", "delete_em
                      "mark_email_read", "bulk_email")
 BARE_EMAIL_TOOLS = ("list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
                     "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment",
-                    "search_emails", "draft_email", "draft_email_reply", "ai_draft_email_reply")
+                    "search_emails", "search_gmail", "find_subscriptions", "draft_email", "draft_email_reply", "ai_draft_email_reply")
 CAL_WRITE_ACTIONS = ("create_event", "update_event", "delete_event")
 APP_API_GUARDED = ("/api/email", "/api/calendar", "/api/caldav", "/api/google")
 

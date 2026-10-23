@@ -1521,10 +1521,12 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="list_emails",
             description=(
-                "List unread or unresponded emails from the inbox. "
+                "List the most RECENT emails from one folder (default INBOX), newest first. "
                 "Returns subject, sender, date, and cached AI summary for each. "
-                "Use this to check what emails need attention. "
-                "Pass `account` to scan a non-default mailbox."
+                "Use this only to see what just arrived. It cannot look back through "
+                "older mail and skips Promotions/Updates and every other label. To find "
+                "anything (subscriptions, receipts, a sender, a topic), use search_gmail "
+                "with a query instead. Pass `account` to scan a non-default mailbox."
             ),
             inputSchema={
                 "type": "object",
@@ -1762,7 +1764,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_emails",
             description=(
-                "Search emails by free-text query (sender, subject, or body). "
+                "Search emails by free-text query (sender, subject, or body) over plain IMAP. "
+                "For Gmail accounts prefer search_gmail, which takes real Gmail queries over all mail. "
                 "Walks INBOX + Sent + Archive by default so older threads are findable, "
                 "not just recent unread. Use this whenever the user names a person or "
                 "topic that isn't in the most recent inbox slice — e.g. 'Sara Sotheby's', "
@@ -1789,6 +1792,51 @@ async def list_tools() -> list[Tool]:
                     **ACCOUNT_PROP,
                 },
                 "required": ["query"],
+            },
+        ),
+        Tool(
+            name="search_gmail",
+            description=(
+                "Search a Gmail account with a real Gmail query (the same syntax as the Gmail search box) "
+                "across ALL mail: every label plus the Promotions, Updates and Social categories, not just "
+                "INBOX. USE THIS, not list_emails, whenever the user wants to find, check, or look for "
+                "something in their mail. Returns date, sender, subject, a text snippet and an id per message, "
+                "newest first, up to 200 per call; page with `offset`. Query examples: "
+                "'subscription renew' ; 'from:netflix.com newer_than:1y' ; "
+                "'receipt OR invoice after:2026/01/01' ; '\"free trial\" has:attachment' ; "
+                "'is:unread category:promotions'. Operators: from: to: subject: after: before: newer_than:30d "
+                "older_than:1y label: category: has:attachment is:unread OR, quotes for phrases, -term to exclude. "
+                "Read-only. Gmail accounts only; pass `account` if several mailboxes are configured. "
+                "For questions about subscriptions or recurring charges, use find_subscriptions instead."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Gmail search query, e.g. 'from:spotify newer_than:1y'."},
+                    "max_results": {"type": "integer", "description": "How many to return (default 50, max 200).", "default": 50},
+                    "offset": {"type": "integer", "description": "Skip this many of the newest matches, to get the next page (default 0).", "default": 0},
+                    **ACCOUNT_PROP,
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="find_subscriptions",
+            description=(
+                "Find subscriptions, recurring charges, renewals and free trials in a Gmail account. "
+                "Read-only. Runs several Gmail queries over the last 12 months (receipts, invoices, "
+                "'your subscription', renewal, 'will be charged', free trial ending, payment method, billing, "
+                "App Store, Google Play, PayPal, Stripe) across all mail including Promotions, groups the "
+                "messages by merchant, and returns per merchant the last charge date and amount, apparent "
+                "frequency (monthly/yearly), any upcoming renewal or trial-end warning with its date, and "
+                "message ids to follow up with read_email. Use for: 'check my gmail for subscriptions', "
+                "'what am I paying for', 'any trials about to charge me', 'upcoming renewals'. "
+                "Does not modify mail."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {**ACCOUNT_PROP},
+                "required": [],
             },
         ),
         Tool(
@@ -1932,6 +1980,35 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 f"You can now read this file using the read_file tool."
             )
             return [TextContent(type="text", text=text)]
+
+        elif name in ("search_gmail", "find_subscriptions"):
+            from src import gmail_search as _gs
+            gacct = acct
+            if not gacct:
+                for a in _list_accounts_raw():
+                    if any(h in (a.get("imap_host") or "").lower() for h in ("gmail", "google")):
+                        gacct = a.get("id") or a.get("name")
+                        break
+            conn = None
+            try:
+                conn = _imap_connect(gacct)
+                if name == "search_gmail":
+                    q = str(arguments.get("query") or "")
+                    try:
+                        off = max(0, int(arguments.get("offset") or 0))
+                    except (TypeError, ValueError):
+                        off = 0
+                    res = _gs.gmail_search(conn, q, max_results=arguments.get("max_results", 50), offset=off)
+                    return [TextContent(type="text", text=_gs.format_search(res, q, off))]
+                msgs = _gs.run_subscription_queries(conn)
+                rows = _gs.analyze_subscriptions(msgs)
+                return [TextContent(type="text", text=_gs.format_subscriptions(rows, len(msgs)))]
+            except Exception as e:
+                return [TextContent(type="text", text=f"Error: {e}")]
+            finally:
+                if conn:
+                    try: conn.logout()
+                    except Exception: pass
 
         elif name == "search_emails":
             q = arguments.get("query", "")

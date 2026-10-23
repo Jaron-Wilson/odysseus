@@ -560,6 +560,17 @@ class McpManager:
             arguments.pop("_owner", None)
             arguments.pop("_session_id", None)
 
+        if isinstance(arguments, dict):
+            # Models send "30" for an integer, "true" for a boolean, a JSON
+            # string for a list. Convert to the schema's types, or say what
+            # was expected (src/tool_arg_coercion.py).
+            from src.tool_arg_coercion import coerce_args, format_problems
+            schema = next((t.get("input_schema") for t in self._tools.get(server_id, [])
+                           if t.get("name") == tool_name), None)
+            arguments, _problems = coerce_args(arguments, schema)
+            if _problems:
+                return {"error": format_problems(tool_name, _problems), "exit_code": 1}
+
         session = self._sessions.get(server_id)
         if not session and not self.is_builtin(server_id):
             # No session at all, rather than a stale one: the server was down
