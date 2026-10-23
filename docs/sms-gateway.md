@@ -35,6 +35,11 @@ The body sent to the phone is SMS Gate's `{"textMessage": {"text": ...},
 
 ## With the mod
 
+**Moving from the built-in texting.** The mod imports the old settings by itself the first time it
+starts (docs/mods.md, "Importing settings from before a mod existed"), and the phone does not change:
+SMS Forwarder's old address, `https://<server>/api/sms/inbound/<secret>`, is still accepted here and handed
+to the mod (`src/mods/legacy_urls.py`), which checks the same secret. The reply URL is copied as it was.
+
 An installed and enabled Phone & Messages mod provides `messaging.sms` itself,
 with its own settings (its tab > Settings > Texting), so texts follow its reply
 URL. The broker still applies the same number rules before the mod sees a
