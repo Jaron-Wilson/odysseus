@@ -256,6 +256,7 @@
   <link rel="stylesheet" href="/static/css/codePanel.css">
   <link rel="stylesheet" href="/static/css/claudeAttach.css">
   <link rel="stylesheet" href="/static/css/mods.css">
+  <link rel="stylesheet" href="/static/css/modsInstalled.css">
   <link rel="stylesheet" href="/static/css/plans.css">
   <link rel="stylesheet" href="/static/css/nativePlans.css">
   <link rel="stylesheet" href="/static/css/actionApprovals.css">
@@ -2945,7 +2946,24 @@
           <div id="mods-installed-view">
           <!-- Needs update: modsUpdates.js, src/mods/updates.py (docs/mods.md, "Updates"). -->
           <div id="mods-updates"></div>
-          <div id="mods-list"><div class="admin-card"><div class="admin-toggle-sub">Loading…</div></div></div>
+          <!-- Installed: modsInstalled.js (a search bar, filter chips and sort over a card grid, like Browse; a card opens its details). -->
+          <div class="admin-card" id="mods-inst-search">
+            <h2>Installed mods</h2>
+            <div class="mi-top">
+              <input id="mods-inst-q" class="settings-select mi-search" type="search" spellcheck="false" placeholder="Search installed mods by name, description or source" aria-label="Search installed mods" />
+              <label class="mi-sort" for="mods-inst-sort">Sort
+                <select id="mods-inst-sort" class="settings-select" style="width:auto">
+                  <option value="name">Name</option>
+                  <option value="updated">Recently updated</option>
+                  <option value="status">Status</option>
+                </select></label>
+            </div>
+            <div class="mi-chips" id="mods-inst-chips" role="group" aria-label="Filter installed mods"></div>
+            <div id="mods-inst-status" class="admin-toggle-sub" style="margin-top:6px" aria-live="polite"></div>
+          </div>
+          <div id="mods-list" class="mi-grid"><div class="admin-card"><div class="admin-toggle-sub">Loading…</div></div></div>
+          <div class="admin-card" id="mods-inst-details" style="display:none"></div>
+          <div id="mods-installed-extra">
           <div class="admin-card">
             <h2>Install a mod</h2>
             <div class="settings-col">
@@ -3008,6 +3026,7 @@
               </div>
               <div class="settings-row"><span id="mods-new-out" class="admin-toggle-sub" style="flex:1"></span><button class="settings-btn" id="mods-new-go" type="button">Create</button></div>
             </div>
+          </div>
           </div>
           </div>
         </div>

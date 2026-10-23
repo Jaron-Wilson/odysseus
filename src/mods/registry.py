@@ -529,6 +529,23 @@ def remove(mod_id: str, keep_data: bool = False) -> None:
     logger.info("[mods] removed %s", mod_id)
 
 
+def _icon_url(entry: Dict[str, Any]) -> str:
+    """A URL the page may show for the mod: its manifest's icon, else the
+    picture of the GitHub owner it came from, both through the core's image
+    proxy (the page's CSP allows no outside images). "" when there is none."""
+    from src.mods import catalog
+    try:
+        icon = (entry.get("manifest") or {}).get("icon_url") or ""
+        url = catalog.image_url(icon) if icon else ""
+        if not url:
+            key = catalog.repo_key(((entry.get("source") or {}).get("url")) or "")
+            if key:
+                url = catalog.image_url("https://github.com/%s.png?size=96" % key.split("/")[0])
+        return url
+    except Exception:
+        return ""
+
+
 def public(entry: Dict[str, Any]) -> Dict[str, Any]:
     """What the UI may see of a registry entry (never the token)."""
     man = entry.get("manifest") or {}
@@ -539,6 +556,10 @@ def public(entry: Dict[str, Any]) -> Dict[str, Any]:
         "description": man.get("description", ""),
         "author": man.get("author", ""),
         "homepage": man.get("homepage", ""),
+        # Read-only, for the Installed cards (static/js/modsInstalled.js).
+        "icon_url": _icon_url(entry),
+        "tags": man.get("tags") or [],
+        "imports": man.get("imports") or [],
         "enabled": bool(entry.get("enabled")),
         "access": "admins" if man.get("admin_only") else entry.get("access", "admins"),
         "admin_only": bool(man.get("admin_only")),

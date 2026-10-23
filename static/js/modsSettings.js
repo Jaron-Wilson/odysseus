@@ -1,7 +1,9 @@
 // Settings > Mods (src/mods, routes in src/mods/routes.py, docs/mods.md).
 //
-// Installed mods with their status, permissions and logs; enable, disable,
-// start, stop, restart, update, remove and token rotation; install from a git
+// Installed mods as a card grid with search, filters and sort, and a details
+// page per mod (modsInstalled.js, in the look of Browse); this file holds the
+// actions behind the buttons: enable, disable, start, stop, restart, update,
+// remove and token rotation; install from a git
 // URL or a folder on this server (fetched first, then the permissions are
 // shown and must be approved); the notification channels mods may use; and
 // "New mod", which copies the mod template into a folder. Per mod, "Show in"
@@ -17,7 +19,8 @@
 // settings.js calls load() whenever the Mods tab is opened.
 
 import { initBrowse, loadBrowse, setBrowseCapability } from './modsBrowse.js';
-import { initUpdates, load as loadUpdates } from './modsUpdates.js';
+import { initUpdates, load as loadUpdates, summary as updateSummary } from './modsUpdates.js';
+import * as Installed from './modsInstalled.js';
 
 const $ = (id) => document.getElementById(id);
 const API = '/api/mods';
@@ -90,14 +93,9 @@ function say(text, isError) {
   el.style.color = isError ? 'var(--red, #d33)' : '';
 }
 
-const STATUS_COLOR = { running: '#3fb950', starting: '#d29922', backoff: '#e5534b', failed: '#e5534b', stopped: '#8b949e' };
-const dot = (status) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${
-  STATUS_COLOR[status] || '#8b949e'}"></span>`;
-
 let _mods = [];
 let _groups = [];      // nav groups a mod tab can go in: [{id, label}]
 let _staged = null;     // the install or update waiting for approval
-let _openLogs = new Set();
 let _view = 'installed';  // or 'browse'
 let _origin = null;     // where the staged install came from in Browse: {verified, origin}
 
@@ -130,56 +128,8 @@ function placementRow(m) {
     </div>`;
 }
 
-function renderMod(m) {
-  const st = m.state || {};
-  const status = m.enabled ? (st.status || 'stopped') : 'disabled';
-  const perms = (m.permissions || []).map((p) => `<li><code>${esc(p.id)}</code> ${esc(p.description)}</li>`).join('')
-    || '<li>None</li>';
-  const ui = m.ui || {};
-  const bits = [];
-  if ((ui.tabs || []).length) bits.push(`${ui.tabs.length} tab${ui.tabs.length > 1 ? 's' : ''}`);
-  if ((ui.home_cards || []).length) bits.push(`${ui.home_cards.length} home card${ui.home_cards.length > 1 ? 's' : ''}`);
-  if ((m.tool_names || []).length) bits.push(`tools: ${m.tool_names.map(esc).join(', ')}`);
-  const err = m.setup_error || st.last_error;
-  const btn = (action, label, title) => `<button class="settings-btn" type="button" data-mod-action="${action}" data-mod="${esc(m.id)}"${title ? ` title="${esc(title)}"` : ''}>${label}</button>`;
-  return `
-  <div class="admin-card" data-mod-card="${esc(m.id)}">
-    <h2>${dot(status)}${esc(m.name || m.id)}${m.update ? ` <span class="mods-badge" data-badge="update" title="${esc(`Version ${m.update.latest_version || ''} is out`)}" style="display:inline-block;font-size:11px;font-weight:500;line-height:16px;padding:0 6px;border-radius:9px;border:1px solid #d29922;color:#d29922;margin-left:6px;vertical-align:middle">Update available${m.update.latest_version ? `: ${esc(m.update.latest_version)}` : ''}</span>` : ''} <span class="admin-toggle-sub" style="margin-left:6px">${esc(m.version || '')} · ${esc(status)}${st.port && status === 'running' ? ` on port ${st.port}` : ''}${st.restarts ? ` · ${st.restarts} restarts` : ''}</span></h2>
-    <div class="admin-toggle-sub">${esc(m.description || '')}</div>
-    <div class="admin-toggle-sub">From ${esc(sourceText(m.source))}${m.commit ? ` (${esc(String(m.commit).slice(0, 10))})` : ''} · ${esc((m.runtime || {}).type || 'process')}, starts ${esc((m.runtime || {}).start || 'lazy')}${bits.length ? ` · ${bits.join(' · ')}` : ''}</div>
-    ${err ? `<div class="admin-toggle-sub" style="color:var(--red, #d33)">${esc(err)}</div>` : ''}
-    ${(m.warnings || []).map((w) => `<div class="admin-toggle-sub" style="color:var(--yellow, #d29922)">${esc(w)}</div>`).join('')}
-    ${((m.capabilities || {}).missing || []).length ? `<div class="admin-toggle-sub" data-mod-missing="${esc(m.id)}" style="color:var(--red, #e5534b)">Needs ${m.capabilities.missing.map((c) => `<code>${esc(c)}</code>`).join(', ')}, which nothing installed provides.</div>` : ''}
-    ${(m.dependents || []).length ? `<div class="admin-toggle-sub" data-mod-dependents="${esc(m.id)}">Other mods use what it provides: ${[...new Set(m.dependents.map((d) => d.name))].map(esc).join(', ')}.</div>` : ''}
-    <details style="margin-top:4px"><summary class="admin-toggle-sub" style="cursor:pointer">Permissions</summary>
-      <ul class="admin-toggle-sub" style="margin:4px 0 0 18px;padding:0">${perms}</ul></details>
-    ${capabilityLines(m.capabilities) ? `<details style="margin-top:4px"><summary class="admin-toggle-sub" style="cursor:pointer">Capabilities</summary>${capabilityLines(m.capabilities)}</details>` : ''}
-    <div class="settings-row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
-      ${m.enabled ? btn('disable', 'Disable') : btn('enable', 'Enable')}
-      ${m.enabled ? (status === 'running' ? btn('restart', 'Restart') + btn('stop', 'Stop') : btn('start', 'Start')) : ''}
-      ${btn('logs', _openLogs.has(m.id) ? 'Hide logs' : 'Logs')}
-      ${m.tutorial && m.enabled ? btn('tutorial', 'Replay tutorial', 'Show this mod\'s tutorial again') : ''}
-      ${btn('update', 'Update', 'Fetch the newest code from where it was installed (or another branch or tag)')}
-      ${btn('rotate-token', 'New token', 'Give the mod a new API token; the old one stops working')}
-      ${btn('remove', 'Remove')}
-      ${m.admin_only ? '<span class="admin-toggle-sub" data-mod-admin-only title="Its manifest says admin_only: it gives admin powers, like a shell on this server">Admins only</span>' : `<label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">Who can use it
-        <select class="settings-select" data-mod-access="${esc(m.id)}" style="width:auto">
-          <option value="admins"${m.access !== 'users' ? ' selected' : ''}>Admins</option>
-          <option value="users"${m.access === 'users' ? ' selected' : ''}>All users</option>
-        </select></label>`}
-      <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">
-        <input type="checkbox" data-mod-mute="${esc(m.id)}"${m.notify_muted ? ' checked' : ''}> Mute notifications</label>
-    </div>${placementRow(m)}${grantRow(m)}
-    <pre class="mods-log" data-mod-log="${esc(m.id)}" style="display:${_openLogs.has(m.id) ? 'block' : 'none'};max-height:260px;overflow:auto;font-size:11px;background:var(--bg-tertiary, rgba(0,0,0,.25));padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:8px"></pre>
-  </div>`;
-}
-
 function renderList() {
-  const box = $('mods-list');
-  if (!box) return;
-  box.innerHTML = _mods.length ? _mods.map(renderMod).join('')
-    : '<div class="admin-card"><div class="admin-toggle-sub">No mods installed yet. Install one below, or make one with New mod.</div></div>';
-  _openLogs.forEach((id) => loadLog(id));
+  Installed.render();
 }
 
 function renderNotify(n) {
@@ -230,16 +180,6 @@ function renderStaged() {
       <button class="settings-btn" type="button" id="mods-approve-yes">Approve and ${s.previous_version ? 'update' : 'install'}</button>
       <button class="settings-btn" type="button" id="mods-approve-no">Cancel</button>
     </div>`;
-}
-
-async function loadLog(id) {
-  const pre = document.querySelector(`[data-mod-log="${CSS.escape(id)}"]`);
-  if (!pre) return;
-  try {
-    const d = await api('GET', `${API}/${encodeURIComponent(id)}/logs?lines=300`);
-    pre.textContent = d.log || '(no output yet)';
-    pre.scrollTop = pre.scrollHeight;
-  } catch (e) { pre.textContent = e.message; }
 }
 
 async function load() {
@@ -302,6 +242,19 @@ async function startUpdate(id, ref, allowBlocked) {
     renderStaged();
     $('mods-approve')?.scrollIntoView({ block: 'nearest' });
   } catch (e) { say(e.message, true); }
+}
+
+// "Open" and "Settings": close this window and show the mod's tab (modLinks.js).
+async function openMod(id, settings) {
+  const m = _mods.find((x) => x.id === id);
+  const tab = (((m || {}).ui || {}).tabs || [])[0];
+  if (!tab) return;
+  try {
+    const st = await import('./settings.js');
+    (st.close || (st.default && st.default.close))();
+  } catch (_) { /* stay open */ }
+  if (settings && window.modPanel && window.modPanel.want) window.modPanel.want(id, tab.id, { settings: true });
+  if (window.modLinks) window.modLinks.route(`#mod/${encodeURIComponent(id)}/${encodeURIComponent(tab.id)}`);
 }
 
 function setView(v) {
@@ -382,11 +335,7 @@ async function onAction(btn) {
   const id = btn.dataset.mod;
   const action = btn.dataset.modAction;
   const m = _mods.find((x) => x.id === id) || { id };
-  if (action === 'logs') {
-    if (_openLogs.has(id)) _openLogs.delete(id); else _openLogs.add(id);
-    renderList();
-    return;
-  }
+  if (action === 'logs') { Installed.refreshLog(id); return; }
   if (action === 'tutorial') {
     const ok = window.modPanel && await window.modPanel.showTutorial(id);
     if (!ok) say('Could not load its tutorial.', true);
@@ -404,6 +353,7 @@ async function onAction(btn) {
       const done = await withDependents(m, 'Remove', () => api('DELETE', path), () => api('DELETE', `${path}&force=true`));
       if (!done) { say('Canceled.'); return; }
       _mods = _mods.filter((x) => x.id !== id);
+      Installed.forget(id);
       renderList();
       if (((m.capabilities || {}).provides || []).length) load();
       window.dispatchEvent(new CustomEvent('odysseus:mods-changed'));
@@ -491,7 +441,7 @@ async function onChange(ev) {
       say('Saved.');
     } else if (t.dataset.modSection || t.dataset.modHide) {
       const id = t.dataset.modSection || t.dataset.modHide;
-      const card = t.closest('[data-mod-card]');
+      const card = t.closest('#mods-inst-details, [data-mod-card]');
       const section = card?.querySelector('[data-mod-section]')?.value || null;
       const hidden = !!card?.querySelector('[data-mod-hide]')?.checked;
       replaceMod((await api('POST', `${API}/${encodeURIComponent(id)}/placement`, { section, hidden })).mod);
@@ -510,6 +460,10 @@ function init() {
     panel.addEventListener('change', onChange);
     panel.dataset.ready = '1';
     initBrowse({ api, esc, say, prefillInstall, startUpdate });
+    Installed.initInstalled({
+      api, esc, mods: () => _mods, groups: () => _groups, updates: updateSummary, openMod,
+      browse: () => setView('browse'), parts: { placementRow, grantRow },
+    });
     // "Needs update" at the top of Installed (modsUpdates.js).
     initUpdates({ api, say, startUpdate: (id) => startUpdate(id), reload: () => load() });
     // Browse found newer versions: badge the installed mods.
