@@ -76,6 +76,9 @@ PERMISSIONS: Dict[str, str] = {
     "stats.read": "Read server-wide activity: model speed, coder runs and their transcripts, what is running "
                   "(only for a mod that only admins may use)",
     "machines.read": "See the machines on your tailnet: names, addresses, operating system, online or not",
+    "ui.style": ("Change how Odysseus looks: add one stylesheet (CSS only, no scripts) to the whole app, so it can "
+                 "recolor it, round its corners or change its text size. You can turn all mod styles off with "
+                 "?safe=1 or in Settings > Mods"),
     "chat.mention": ("Appear in the @ picker of your chats: when you @-mention it, its tools are used for "
                      "that message, and it may add a short note about what you pointed at to the message "
                      "(the model sees that note)"),
@@ -408,7 +411,11 @@ def validate(raw: Any) -> Dict[str, Any]:
     embeds = _embeds(ui.get("embeds"), errors)
     if embeds and "embed" not in out["permissions"]:
         errors.append("`ui.embeds` needs the embed permission")
-    out["ui"] = {"tabs": tabs[:8], "home_cards": cards[:8], "embeds": embeds,
+    from src.mods import style as mod_style
+    style_cfg = mod_style.check_manifest(ui.get("style"), errors)
+    if style_cfg and "ui.style" not in out["permissions"]:
+        errors.append("`ui.style` needs the ui.style permission")
+    out["ui"] = {"tabs": tabs[:8], "home_cards": cards[:8], "embeds": embeds, "style": style_cfg,
                  "settings_path": _path(ui.get("settings_path"), "`ui.settings_path`", errors, None)}
 
     # ── tools ──

@@ -57,6 +57,8 @@ function _init() {
   let t = null;
   new MutationObserver(() => { clearTimeout(t); t = setTimeout(_all, 60); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-theme-mode'] });
+  // A mod stylesheet (ui.style) changed the tokens: frames get the values the page now shows.
+  document.addEventListener('odysseus:mod-style-applied', () => { clearTimeout(t); t = setTimeout(_all, 60); });
 }
 
 if (document.body) _init(); else document.addEventListener('DOMContentLoaded', _init, { once: true });

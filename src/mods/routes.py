@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from src.mods import (access, capabilities, catalog, events, manifest as mf, notify, placement, proxy, registry, runtime,
-                      runs, tools, tutorial, updates, usage_api)
+                      runs, style, tools, tutorial, updates, usage_api)
 from src.mods import llm as mod_llm
 
 logger = logging.getLogger(__name__)
@@ -519,6 +519,8 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
     _setup_v1(router)
     from src.mods.host_api import setup_host_routes
     setup_host_routes(router)
+    from src.mods.style_routes import setup_style_routes
+    setup_style_routes(router)
     from src.mods.legacy import setup_legacy_routes
     setup_legacy_routes(router)
 
@@ -818,6 +820,7 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
             if action == "enable":
                 registry.set_enabled(mod_id, True)
                 await _after_enable(mod_id)
+                await style.refresh(mod_id)   # a mod with ui.style: its stylesheet goes on the page
             elif action == "disable":
                 refused = _dependents_refusal(mod_id, "Disabling", force)
                 if refused:
@@ -892,6 +895,7 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
             await asyncio.to_thread(registry.remove, mod_id, keep_data)
         except registry.RegistryError as e:
             return _err(e)
+        style.clear(mod_id)
         return {"ok": True}
 
     @router.get("/api/mods/{mod_id}/logs")

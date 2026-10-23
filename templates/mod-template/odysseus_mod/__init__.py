@@ -245,6 +245,15 @@ class CoreClient:
             return {"ok": True, "standalone": True}
         return self.call("POST", "tools/refresh", {"wait": bool(wait)})
 
+    def refresh_style(self) -> Dict[str, Any]:
+        """Tell the core this mod's stylesheet (manifest `ui.style`, permission `ui.style`) changed, so it
+        fetches it again, checks it and re-links it in the page, which repaints at once. The core
+        rejects a sheet with @import, an off-origin url() or more than 64 KB; the answer's `style.error`
+        says why. Standalone there is no page to restyle."""
+        if self.standalone:
+            return {"ok": True, "standalone": True}
+        return self.call("POST", "ui/style/refresh", {})
+
     def capabilities(self) -> Dict[str, Any]:
         """The capabilities this mod declared (`requires`, `optional`) and
         whether each is available now: {"requires": [{id, available, provider}],

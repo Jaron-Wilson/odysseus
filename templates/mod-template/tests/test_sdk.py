@@ -219,3 +219,25 @@ def test_using_a_capability_standalone(capsys):
     assert c.capabilities()["missing"] == []
     with pytest.raises(Exception):
         c.cap("print-hub.jobs", "list")
+
+
+def test_refresh_style_standalone_and_its_permission_under_devcore(tmp_path):
+    from odysseus_mod import CoreError
+    from odysseus_mod.devcore import DevCore
+    assert CoreClient(url="", token="", mod_id="my-mod").refresh_style()["standalone"]
+    (tmp_path / "odysseus-mod.json").write_text(json.dumps({
+        "id": "probe", "name": "Probe", "version": "0.1.0", "permissions": [],
+        "runtime": {"type": "process", "command": ["python", "-m", "nothing"]}}))
+    core = DevCore(str(tmp_path), state_dir=str(tmp_path / ".devcore"))
+    threading.Thread(target=core.server.serve_forever, daemon=True).start()
+    try:
+        c = CoreClient(url=core.url, token=core.token, mod_id="probe")
+        with pytest.raises(CoreError) as e:
+            c.refresh_style()
+        assert e.value.status == 403 and "ui.style" in e.value.detail
+        core.perms.add("ui.style")
+        with pytest.raises(CoreError) as e:                     # granted, but the manifest names no stylesheet
+            c.refresh_style()
+        assert e.value.status == 400 and "ui.style" in e.value.detail
+    finally:
+        core.server.shutdown()

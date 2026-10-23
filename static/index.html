@@ -2889,6 +2889,14 @@
             </div>
             <div id="mods-msg" class="admin-toggle-sub" style="margin-top:6px"></div>
           </div>
+          <!-- Mod styles: modStyles.js, src/mods/style.py (docs/mods.md, "Changing how Odysseus looks"). -->
+          <div class="admin-card" id="mods-styles-card">
+            <h2>Mod styles</h2>
+            <div class="admin-toggle-sub">A mod you approved for <code>ui.style</code> can change how Odysseus looks (colors, corners, text size). It is CSS only: no script from a mod runs in this page.</div>
+            <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:6px;margin-top:8px"><input type="checkbox" id="mods-styles-off"> Safe mode: ignore all mod styles on this browser</label>
+            <div class="admin-toggle-sub" style="margin-top:4px">If a style ever makes the app hard to use, open Odysseus with <code>?safe=1</code> on the end of the address (for example <code>/?safe=1</code>) to load it without any mod style, then turn the mod off here.</div>
+            <div id="mods-styles-list" class="admin-toggle-sub" style="margin-top:8px"></div>
+          </div>
           <div class="admin-card" id="mods-approve" style="display:none;border-left:3px solid var(--accent, var(--red))"></div>
           <!-- Browse: modsBrowse.js, src/mods/catalog.py (docs/mods.md, "Finding mods"). -->
           <div id="mods-browse-view" style="display:none">
@@ -3182,6 +3190,7 @@
 <script type="module" src="/static/js/inboundMail.js"></script>
 <script type="module" src="/static/js/usagePage.js"></script>
 <script type="module" src="/static/js/modsSettings.js"></script>
+<script type="module" src="/static/js/modStyles.js"></script>
 <script type="module" src="/static/js/modMentions.js"></script>
 <script type="module" src="/static/js/plans.js"></script>
 <script type="module" src="/static/js/googleSettings.js"></script>
