@@ -362,7 +362,9 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `devices.control` | `POST devices/<name>/command`, and makes every one of its tools ask for approval unless the tool is `read_only` |
 | `network.lan` | Talking to machines on the local network. Shown to the user; only enforceable for docker mods |
 | `storage` | The key-value store the core keeps for it (`kv`) |
-| `llm.call` | `POST llm/chat` through the user's model routing |
+| `llm.call` | `POST llm/chat` through the user's model routing, and `GET llm/models` |
+| `agent.run` | `agent/runs`: running the agent loop on the user's models in chats the core creates, with the core tools the mod names (see [Agent runs](#agent-runs)) |
+| `budgets` | `GET usage` and `budgets`: what its own calls and runs cost, and monthly budgets for them (see [Usage scopes and budgets](#usage-scopes-and-budgets)) |
 | `chats` | The user's chats: list them, start one, switch its model, send a message and get (or stream) the agent's answer, stop it, add a note; the models they can pick; what is running for them (see [The agent, speech and Google](#the-agent-speech-and-google)) |
 | `speech` | The server's speech to text and text to speech engines |
 | `browser` | The cloud browser's CDP address and X11 display |
@@ -467,7 +469,15 @@ signed-in user. A mod whose manifest says `admin_only` is for admins whatever it
 | `POST devices/<name>/command` | `devices.control` | `{command, params}`: runs through the core's device control |
 | `GET settings` / `PUT settings` | | Its settings object (up to 64 KB), shown on its settings page |
 | `GET kv`, `GET/PUT/DELETE kv/<key>` | `storage` | Up to 256 keys of 64 KB each |
-| `POST llm/chat` | `llm.call` | `{messages, max_tokens, temperature, model_role}` (`model_role` `utility` or `default`). Answers `{content, model}` |
+| `GET llm/models?user=&local_only=` | `llm.call` | `{models: [{spec, model, name, endpoint, local, offline}]}`: every chat model the user can pick, named by spec (`model@Endpoint Name`). Endpoint URLs are not shown |
+| `POST llm/chat` | `llm.call` | `{messages, max_tokens, temperature, model, model_role, local_only, scope, user}`. `model` is a spec from `llm/models`; without one the call goes to the user's `model_role` model (`utility` or `default`). `local_only: true` refuses (403) a model whose endpoint is not on this machine, the LAN or the tailnet, and never falls back to a cloud model. `scope` is a usage scope path. Answers `{content, model, local}`; 402 when a budget of the scope is at hard stop |
+| `POST agent/runs` | `agent.run` | Start an agent run, see [Agent runs](#agent-runs). Answers `{id, session_id, workspace_id, status, model, local}` |
+| `GET agent/runs`, `GET agent/runs/<id>` | `agent.run` | The mod's runs (live and the last few hours), or one with its reply text, tool calls and usage |
+| `GET agent/runs/<id>/events` | `agent.run` | The run's chat events as server-sent events, replayed from the start, then an `event: run` with its final view |
+| `DELETE agent/runs/<id>` | `agent.run` | Stop a run |
+| `GET usage?scope=&user=&month=` | `budgets` | What a scope (and everything under it) cost this month: `{cost_usd, input_tokens, output_tokens, ...}` |
+| `GET budgets`, `PUT budgets`, `DELETE budgets?scope=` | `budgets` | The mod's monthly budgets: `{scope, monthly_limit_cents, caps}`. Listed with a check each |
+| `GET budgets/check?scope=&limit_cents=` | `budgets` | Where a scope stands: `state` (`ok`, `warn`, `hard_stop`), `spent_cents`, `limit_cents`, subscription allocation and caps |
 | `GET stats?scope=devops&hours=24` | `stats.read` | `{scope, now, hours, windows, live, chat, coders}`: `src/devops_stats.py`'s snapshot (`hours` is 1, 24, 168 or 720). `live` is what is running (replies, coder runs, shell jobs, queued messages), `chat` the model speed per model with a series for a chart, `coders` each coder's runs, success rate and the recent runs. Another `scope` is a 400 |
 | `GET stats/transcripts/<run>` | `stats.read` | One coder run's parsed transcript, as `/api/transcript/runs/<run>` answers its owner: `{id, engine, model, status, counts, blocks, final_text, resume_command, ...}`; 404 when it has none |
 | `GET machines?refresh=1` | `machines.read` | `{machines: [{host, name, dns, ips, os, online, last_seen, is_self, shared, ssh_user}]}` (`refresh` asks Tailscale again instead of the 15 second cache) |
@@ -476,7 +486,81 @@ signed-in user. A mod whose manifest says `admin_only` is for admins whatever it
 | `POST tools/refresh` | | The mod's tools changed: the core reads `GET <tools.endpoint>` again. Answers `{ok, queued}` at once and refreshes in the background; `{"wait": true}` waits and answers `{ok, tools: [names]}` (only from a server that serves requests in parallel). 400 for a mod without `tools` |
 
 Calls are rate limited per mod: notify 30 a minute, llm 20, events 240, device commands 30, tool
-refreshes 6, stats 120. A missing permission answers 403, a bad token 401.
+refreshes 6, stats 120, agent run calls 120, budget calls 120. A missing permission answers 403, a bad token
+401.
+
+Mod API calls never count as the user being active, so they do not hold back runs that wait for
+Odysseus to be quiet. Neither do a mod page's own `GET` polls whose path ends in `/live` or `/log`
+(for example `/mods/company/api/companies/<id>/live`).
+
+### Agent runs
+
+A mod with `agent.run` asks the core to run the ordinary agent loop on a model, in a chat the
+core creates for the user, with the tools the mod picks. Company runs its agents this way.
+
+```json
+POST /api/mods/v1/agent/runs
+{ "user": "alice",
+  "model": "qwen3.8:27b@totoro", "local_only": true,
+  "title": "Run Oct 22 10:15 · assignment", "folder": "Company",
+  "workspace": { "session_id": "<the agent's chat, if it has one>", "title": "Ada · Acme" },
+  "system": "You are Ada, the CEO of Acme...",
+  "messages": [ { "role": "user", "content": "You were assigned ACME-3 ..." } ],
+  "tools": { "mod": true, "core": ["bash", "read_file", "web_search"], "deny": ["claude_code"],
+             "other_mods": false },
+  "coding_agent": null, "max_rounds": 20, "max_cost_usd": 0.5,
+  "scope": "c/3f2a/a/91bc", "approved_plan": null, "gate": "auto",
+  "checkpoint": "/mod/runs/checkpoint", "metadata": { "agent": "91bc" } }
+```
+
+- **Chats.** The run is a new chat (`session_id`) in `folder` (default: the mod's name), in agent
+  mode. With `workspace` it is a thread of that parent chat; a missing or gone `session_id` makes
+  a new parent, named in the answer (`workspace_id`), so the mod keeps it for the next run. The
+  messages are saved in the chat, then the reply and its tool calls. A mod page can open a chat
+  with a link to `/#<session_id>` and `target="_blank"`.
+- **Tools.** `tools.mod`: the mod's own tools, `true` (all), a list of names or `false`. They are
+  forced into the run whatever the words and lead the tool list. `tools.core`: the core tools to
+  offer; omitted, the core picks them per message as in a chat. `tools.deny`: never offered;
+  `ask_user` never is, nobody is there to answer. Other mods' tools only with `other_mods: true`.
+  The run has the user's rights: admin-only tools need an admin user, and tools that ask for
+  approval ask in the run's chat.
+- **The run header.** The mod's tools are called with `X-Odysseus-Run: <run id>` during its
+  runs, so a tool knows which run (and so which of the mod's agents) is calling.
+- **Model.** `model` is a spec (required). `local_only` as for `llm/chat`. The loop gets the
+  model's context length.
+- **Quiet first.** `gate: "auto"` (default): a run on a local model waits for Odysseus to be quiet
+  before it starts, and between rounds when the user came back, at most 60 seconds each time
+  (`ODYSSEUS_MOD_GATE_MAX_WAIT_S`), so agents do not compete with the user for a GPU. `always` and
+  `never` override.
+- **Stopping.** Between rounds the run stops when the mod called `DELETE`, when the run cost
+  `max_cost_usd`, when a budget at or above its `scope` is at hard stop, or when the `checkpoint`
+  path answers `{"stop": "<reason>"}`. The core POSTs the checkpoint `{run_id, round, cost_usd,
+  metadata}` as `odysseus-core` with `X-Odysseus-Run`, and waits at most 10 seconds (no answer: it
+  goes on). This is where a mod applies its own rules (an agent was paused, an issue closed).
+- **The end.** The run's view is POSTed to the mod's events webhook as an `agent.run.finished`
+  event (source `odysseus`), whatever it subscribes to: `{id, status, error, stop_reason,
+  session_id, workspace_id, model, rounds, tool_calls, usage, metadata, text, tools}`. `status` is
+  `succeeded`, `failed`, `cancelled` or `interrupted` (Odysseus restarted).
+- **Limits.** 4 live runs per mod, 8 in all (`ODYSSEUS_MOD_RUNS_PER_MOD`,
+  `ODYSSEUS_MOD_RUNS_TOTAL`); 1-200 rounds (default 20); a request up to 200 KB.
+- **Memory.** Runs are kept in memory for 6 hours after they end. After a restart the core no
+  longer knows them: `GET` answers 404, and a mod treats such a run as interrupted.
+
+### Usage scopes and budgets
+
+Every model call of a mod (`llm/chat`, and every call of its agent runs) is recorded in Usage
+with source `mod` and a **source scope**: `mod:<id>`, plus the `scope` path the mod gave, plus
+`run-<run id>` for an agent run. A path is up to 8 segments of letters, digits, `.`, `_` and `-`,
+joined by `/`. Scopes nest: `c/3f2a` covers `c/3f2a/a/91bc` and every run under it, so one path
+keeps per-company, per-agent and per-run spend apart. The Usage summary has a `by_mod` breakdown.
+
+`PUT budgets {scope, monthly_limit_cents, caps}` keeps a monthly budget in the core
+(`mods/<id>/budgets.json`, not the mod's own data). The checks are the core's budgets
+(`src/budgets.py`): metered cost, the allocated share of subscription plans, and optional usage
+caps (`requests_per_day`, `requests_per_month`, `tokens_per_day`, `tokens_per_month`), with the
+warn and hard stop thresholds of Settings. The core enforces them itself: `llm/chat` answers 402
+and an agent run stops between rounds (or does not start) once any budget at or above its scope is
+at hard stop.
 
 ### The agent, speech and Google
 
@@ -633,14 +717,15 @@ a restart), as `odysseus-core` (up to 24 tools; names
 `[A-Za-z0-9_-]`, up to 40 characters) and shows them to the model as `mod__<id>__<name>`. A call is
 `POST <tools.endpoint>/<name>` with the arguments as the JSON body, the identity of the user the
 agent works for (`local` with sign-in off, `odysseus-core` if there is none), `X-Odysseus-Session`
-when it runs in a chat, and a 120 second timeout. The answer is `{"output": "text for the model", "data": {...}}` or
+when it runs in a chat, `X-Odysseus-Run` in the mod's own [agent runs](#agent-runs), and a 120
+second timeout. The answer is `{"output": "text for the model", "data": {...}}` or
 `{"error": "..."}`. Output is cut at 12,000 characters.
 
 **Which tools the agent gets.** Only those of enabled mods the user may use, and only when the
 message is about them: a mod's tools are offered when the message matches one of its
 `tools.keywords` or a tool's own keywords (whole words), or when tool retrieval ranks one of them
 for the message. At most 12 per mod. A trivial message ("thanks", "ok") gets none. No message
-gets every mod's tools.
+gets every mod's tools. In the mod's own agent runs its tools are always there.
 
 **Approval.** A tool marked `controls_devices`, and every tool of a mod with `devices.control`
 unless it is marked `read_only`, goes through the chat's approval flow: the user sees the mod,
@@ -980,6 +1065,9 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/host_api.py` | The mod API for the agent (chats), speech, the cloud browser, Google Meet and the calendar |
 | `src/mods/events.py`, `notify.py` | The event bus and notification fan-out |
 | `src/mods/tools.py` | Tool lists, selection per message and calls |
+| `src/mods/llm.py` | `llm/models`, model specs and `local_only` |
+| `src/mods/runs.py` | Agent runs: chats, forced tools, the run header, stops between rounds, `agent.run.finished` |
+| `src/mods/usage_api.py` | Usage scope paths and the budgets the core keeps and enforces for mods |
 | `src/mods/providers.py` | Capability providers: mods the core calls for a feature (`provides`) |
 | `src/mods/llm_endpoints.py` | Model endpoints served by a mod (`mod://<id>/v1`) |
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |
@@ -991,8 +1079,11 @@ The core side is `src/mods/` with small hooks elsewhere:
 
 Hooks in the core: the router and the auth exemptions for `/api/mods/v1/` (the token checks
 itself) and frame URLs in `app.py`; the mod CSP and `ModAwareCORSMiddleware` in `core/middleware.py`; tool selection and the
-research gate in `src/agent_loop.py`; `mod__` tools in `src/tool_execution.py` and
-`src/tool_schemas.py`; mod tools in the tool index (`src/tool_index.py`).
+research gate in `src/agent_loop.py` (and, in a mod's agent run, its forced tools); `mod__` tools in
+`src/tool_execution.py` and `src/tool_schemas.py`; mod tools in the tool index (`src/tool_index.py`);
+the `usage_events.source_scope` column (`core/database.py`), the `mod` usage source
+(`src/usage.py`) and prefix scopes in `src/budgets.py` and `src/subscriptions.py`; mod API calls
+and mod page polls as passive requests in `src/interactive_gate.py`.
 
 ### Agent loop changes that came with mods
 

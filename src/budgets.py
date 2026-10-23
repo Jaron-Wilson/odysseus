@@ -57,7 +57,25 @@ SCOPE_COLUMNS = {
     "company_run": "company_run_id",
     "session": "session_id",
     "task_run": "task_run_id",
+    # A mod's scope path, "mod:<id>/<path>": matches the path and everything
+    # under it (src/mods/usage_api.py).
+    "mod_scope": "source_scope",
 }
+PREFIX_SCOPES = ("mod_scope",)
+
+
+def scope_filter(scope_type: str, scope_id: Optional[str]):
+    """The UsageEvent filter for a scope, or None for the owner's whole spend."""
+    from core.database import UsageEvent
+    col_name = SCOPE_COLUMNS[scope_type]
+    if not col_name:
+        return None
+    col = getattr(UsageEvent, col_name)
+    if scope_type in PREFIX_SCOPES:
+        from sqlalchemy import or_
+        sid = str(scope_id or "").rstrip("/")
+        return or_(col == sid, col.startswith(sid + "/", autoescape=True))
+    return col == scope_id
 
 
 def _setting_pct(key: str, default: float) -> float:
@@ -98,7 +116,7 @@ def spent(scope_type: str, scope_id: Optional[str], owner: Optional[str], *,
     from src import usage
     if scope_type not in SCOPE_COLUMNS:
         raise ValueError(f"unknown budget scope_type {scope_type!r}")
-    col_name = SCOPE_COLUMNS[scope_type]
+    flt = scope_filter(scope_type, scope_id)
     db = usage._session_factory()
     try:
         q = db.query(
@@ -108,8 +126,8 @@ def spent(scope_type: str, scope_id: Optional[str], owner: Optional[str], *,
             func.coalesce(func.sum(UsageEvent.output_tokens), 0),
             func.coalesce(func.sum(case((UsageEvent.cost_status == "unpriced", 1), else_=0)), 0),
         ).filter(UsageEvent.occurred_at >= start, UsageEvent.occurred_at < end)
-        if col_name:
-            q = q.filter(getattr(UsageEvent, col_name) == scope_id)
+        if flt is not None:
+            q = q.filter(flt)
         if owner:
             q = q.filter(UsageEvent.owner == owner)
         cost, inp, cached, out, unpriced = q.one()
@@ -136,7 +154,8 @@ def subscription_usage(scope_type: str, scope_id: Optional[str], owner: Optional
     db = usage._session_factory()
     try:
         return subscriptions.scope_usage(db, column=SCOPE_COLUMNS[scope_type], scope_id=scope_id,
-                                         owner=owner, start=start, end=end, now=now)
+                                         owner=owner, start=start, end=end, now=now,
+                                         scope_filter=scope_filter(scope_type, scope_id))
     finally:
         db.close()
 

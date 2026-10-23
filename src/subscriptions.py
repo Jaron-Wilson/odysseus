@@ -270,16 +270,20 @@ def _agent_names(db, ids: List[str]) -> Dict[str, str]:
 
 def scope_usage(db, *, column: Optional[str], scope_id: Optional[str], owner: Optional[str],
                 start: datetime, end: datetime, now: Optional[datetime] = None,
-                plans: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                plans: Optional[Dict[str, Any]] = None, scope_filter=None) -> Dict[str, Any]:
     """A budget scope's subscription use this month: requests, tokens, its
-    allocated share of every plan, and today's (UTC) requests and tokens."""
+    allocated share of every plan, and today's (UTC) requests and tokens.
+    ``scope_filter`` (src/budgets.py::scope_filter) replaces the
+    ``column == scope_id`` match, for prefix scopes."""
     from src import usage
     from core.database import UsageEvent
     plans = get_plans() if plans is None else plans
     now = now or usage.utcnow()
     bases = _endpoint_bases(db)
     filters = []
-    if column:
+    if scope_filter is not None:
+        filters.append(scope_filter)
+    elif column:
         filters.append(getattr(UsageEvent, column) == scope_id)
     if owner:
         filters.append(UsageEvent.owner == owner)

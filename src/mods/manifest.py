@@ -63,6 +63,9 @@ PERMISSIONS: Dict[str, str] = {
     "network.lan": "Talk to machines on your local network (informational for process mods)",
     "storage": "Keep data in a key-value store the core holds for it",
     "llm.call": "Ask your configured AI models questions (uses your model routing and your usage)",
+    "agent.run": ("Run the agent on your models in chats it creates for you, with the core tools it picks "
+                  "(this can include the shell, files and the web, with your account's rights)"),
+    "budgets": "See what its own model calls and agent runs cost, and set monthly budgets for them",
     "stats.read": "Read server-wide activity: model speed, coder runs and their transcripts, what is running "
                   "(only for a mod that only admins may use)",
     "machines.read": "See the machines on your tailnet: names, addresses, operating system, online or not",

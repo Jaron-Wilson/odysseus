@@ -157,6 +157,26 @@ def publish(source: str, etype: str, data: Any, owner: Optional[str] = None) -> 
     return event_view
 
 
+def send_to(mod_id: str, etype: str, data: Any) -> Optional[Dict[str, Any]]:
+    """Deliver a core event to one mod's events webhook, whatever it
+    subscribes to: news about its own work (an agent run it started,
+    src/mods/runs.py). Source "odysseus". None when the mod is gone."""
+    entry = registry.get(mod_id)
+    if not entry or not entry.get("enabled"):
+        return None
+    raw = json.dumps(data if data is not None else {}, default=str)
+    if len(raw) > MAX_DATA_BYTES:
+        raw = json.dumps({"truncated": True})
+    event = {"id": uuid.uuid4().hex[:16], "source": "odysseus", "type": etype, "data": json.loads(raw),
+             "ts": time.time()}
+    hook = ((entry.get("manifest") or {}).get("events") or {}).get("webhook") or "/mod/events"
+    _history.append(dict(event, delivered_to=[mod_id]))
+    task = asyncio.get_running_loop().create_task(_deliver(mod_id, hook, event))
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
+    return event
+
+
 def recent(limit: int = 50, source: Optional[str] = None) -> List[Dict[str, Any]]:
     items = [e for e in _history if not source or e["source"] == source or source in e.get("delivered_to", [])]
     return list(reversed(items))[:limit]
