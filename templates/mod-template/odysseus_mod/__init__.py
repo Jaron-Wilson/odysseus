@@ -271,6 +271,29 @@ class CoreClient:
         q = f"?provider={urllib.request.quote(provider)}" if provider else ""
         return self.call("POST", f"cap/{capability}/{action}{q}", body)
 
+    def consumers(self, capability: str) -> List[Dict[str, Any]]:
+        """For a mod that `provides` a capability: the enabled mods that
+        declared it, as [{id, name, version, scopes, requires, admin_only,
+        access}]. `scopes` are the names each claimed in its manifest (for
+        example the slash command groups it owns)."""
+        if self.standalone:
+            return []
+        return self.call("GET", f"cap/{capability}/consumers").get("consumers") or []
+
+    def callback(self, capability: str, action: str, to: str, args: Optional[Dict[str, Any]] = None,
+                 user: str = "") -> Dict[str, Any]:
+        """For a mod that `provides` a capability: call one of the mods that
+        declared it, like callback("discord.commands", "interaction",
+        "print-hub", {...}, user="alice"). The core checks both sides and
+        routes it to that mod's `@app.provide(capability, action)` handler,
+        with `req.caller` set to this mod's id."""
+        if self.standalone:
+            raise CoreError(503, f"no {capability} callbacks without Odysseus")
+        body = dict(args or {})
+        if user:
+            body["user"] = user
+        return self.call("POST", f"cap/{capability}/{action}?to={urllib.request.quote(to)}", body)
+
     def send_text(self, text: str, to: str = "", user: str = "") -> Dict[str, Any]:
         """messaging.sms send: a text to the user's own phone (or `to`, a
         number the user granted this mod). Standalone it is printed."""

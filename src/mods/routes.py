@@ -462,10 +462,21 @@ def _setup_v1(router: APIRouter) -> None:
         e = _mod(request)
         return capabilities.availability(e.get("manifest") or {})
 
+    @router.get("/api/mods/v1/cap/{capability}/consumers")
+    async def v1_cap_consumers(request: Request, capability: str):
+        """For a provider: the enabled mods that declare the capability, with
+        their `scopes` (src/mods/capabilities.py)."""
+        e = _mod(request)
+        try:
+            return {"capability": capability, "consumers": capabilities.consumers(e, capability)}
+        except capabilities.CapError as ex:
+            return JSONResponse({"detail": ex.message, **ex.extra}, status_code=ex.status)
+
     @router.post("/api/mods/v1/cap/{capability}/{action}")
-    async def v1_cap_call(request: Request, capability: str, action: str, provider: str = ""):
+    async def v1_cap_call(request: Request, capability: str, action: str, provider: str = "", to: str = ""):
         """`?provider=<mod id>` calls that mod by name (it must provide the
-        capability); otherwise the first provider answers."""
+        capability); otherwise the first provider answers. `?to=<mod id>` is a
+        provider calling one of its consumers back."""
         e = _mod(request)
         raw = await request.body()
         if len(raw) > capabilities.MAX_BODY_BYTES:
@@ -474,6 +485,8 @@ def _setup_v1(router: APIRouter) -> None:
         user = _owner_for(e, body)
         args = {k: v for k, v in body.items() if k != "user"}
         try:
+            if to:
+                return await capabilities.callback(e, user or None, capability, action, args, to[:32])
             return await capabilities.call(e, user or None, capability, action, args, provider[:32] or None)
         except capabilities.CapError as ex:
             return JSONResponse({"detail": ex.message, **ex.extra}, status_code=ex.status)

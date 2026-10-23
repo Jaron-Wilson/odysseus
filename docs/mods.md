@@ -524,6 +524,32 @@ whether this Odysseus has a provider), searches `provides` with the words typed,
 `GET /api/mods/catalog?capability=<id>` keeps only mods that provide it. An index entry may list
 `provides`, `requires` and `optional` too (added to the manifest's).
 
+#### Providers reaching their consumers: callbacks and scopes
+
+A provider sometimes has to talk back to the mods that use it: a Discord mod hands a slash command to
+the mod that owns it, a scheduler tells a mod its job is due. That goes through the same broker, so
+the user's approval at install time still decides who may talk to whom.
+
+- **Callback.** `POST /api/mods/v1/cap/<capability>/<action>?to=<mod id>`. Allowed only when the caller
+  lists `<capability>` in `provides` and the mod `to` lists it in `requires` or `optional` and is
+  enabled; the user the call is for must be allowed to use both. The core routes it to `POST
+  /mod/cap/<capability>/<action>` on the mod `to`, with the signed identity of that user,
+  `X-Odysseus-Caller: <provider id>` and `X-Odysseus-Callback: 1`, and answers the consumer's JSON
+  object plus `ok`, `capability`, `action`, `provider` (the caller) and `to`. A consumer error comes
+  back with its status. Rate limited per provider and action (120 a minute), and logged in
+  `mods/capability-log.jsonl` with `callback: true`. In the template SDK:
+  `app.core.callback("discord.commands", "interaction", "print-hub", args, user="alice")`, answered
+  by `@app.provide("discord.commands", "interaction")` in the consumer.
+- **Consumers.** `GET /api/mods/v1/cap/<capability>/consumers`, only for a provider of it: the
+  enabled mods that declared it, `{id, name, version, scopes, requires, admin_only, access}`. In the
+  SDK: `app.core.consumers("discord.commands")`.
+- **Scopes.** A manifest may add `"scopes": {"<capability>": ["name", ...]}`: names the mod claims
+  inside a capability it `requires` or `optional`s (lowercase letters, digits, `-` and `_`, at most 16
+  per capability). The core only checks the shape and shows them in the install review; the provider
+  decides what they mean and enforces them, because it learns who claimed what from `consumers`, never
+  from the caller. Example: `"optional": ["discord.commands"], "scopes": {"discord.commands":
+  ["print"]}` claims the `/print` command group.
+
 #### messaging.sms
 
 The core's built-in provider is the [SMS gateway](sms-gateway.md) (SMS Forwarder inbound, the SMS
