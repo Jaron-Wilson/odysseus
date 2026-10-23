@@ -86,10 +86,6 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "devices", "label": "Devices", "group": "system", "open": "#tool-devices-btn", "tab": "devices", "adminOnly": true,
       "desc": "Your computers, phones and MCP servers",
       "aliases": ["device", "computers", "computer", "phones", "phone", "machines", "machine", "mcp", "mcp servers", "laptop", "desktop"] },
-    { "key": "games", "label": "Games", "group": "system", "open": "#tool-games-btn", "tab": "games", "adminOnly": true,
-      "desc": "Stream your PC games in the browser",
-      "aliases": ["game", "play", "play games", "steam", "sunshine", "moonlight", "game streaming", "gaming",
-                  "stream games", "my games", "pc games"] },
     { "key": "cookbook", "label": "Cookbook", "group": "system", "open": "#tool-cookbook-btn", "tab": "cookbook",
       "desc": "Download and serve models on your GPUs",
       "aliases": ["models", "model serving", "serve", "serving", "downloads", "vllm", "llm", "gpus"] },
@@ -137,7 +133,11 @@ export const TAXONOMY = /* tool-pages:begin */ {
     { "key": "devops", "label": "DevOps", "group": "build",
       "desc": "The DevOps mod: what is running, tokens per second and per hour, which coder does best",
       "aliases": ["dev ops", "stats", "statistics", "metrics", "monitoring", "what is running",
-                  "tokens per second", "model speed", "coder stats"] }
+                  "tokens per second", "model speed", "coder stats"] },
+    { "key": "games", "label": "Games", "group": "system",
+      "desc": "The Games mod: stream your PC games in the browser (Sunshine and Moonlight Web)",
+      "aliases": ["game", "play", "play games", "steam", "sunshine", "moonlight", "game streaming", "gaming",
+                  "stream games", "my games", "pc games"] }
   ]
 } /* tool-pages:end */;
 

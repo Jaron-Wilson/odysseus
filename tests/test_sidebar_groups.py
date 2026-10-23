@@ -41,7 +41,6 @@ _TAXONOMY = json.loads(re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-p
 _TOOL_IDS = ["tool-memory-btn", "tool-calendar-btn", "tool-compare-btn", "tool-cookbook-btn", "tool-research-btn",
              "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-plans-btn", "tool-tasks-btn", "tool-bg-btn", "tool-company-btn",
              "tool-code-btn", "tool-browser-btn", "tool-devices-btn",
-             "tool-games-btn",
              "tool-odysseus-dev-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]
 
 
@@ -225,7 +224,7 @@ def test_the_groups_render_in_every_design(make_page, design):
         ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn"],
         ["tool-code-btn", "tool-browser-btn", "tool-bg-btn", "tool-company-btn",
          "tool-odysseus-dev-btn"],
-        ["tool-devices-btn", "tool-games-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]]
+        ["tool-devices-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]]
     assert all(not g["folded"] and g["expanded"] == "true" and g["shown"] == g["items"] for g in gs)
     # Headers are on screen, in order, each above its own rows.
     tops = pg.evaluate("""() => [...document.querySelectorAll('.tool-group')].map(g => {
@@ -244,7 +243,7 @@ def test_a_group_folds_says_whats_inside_and_stays_folded(make_page, browser):
     pg.click('.tool-group[data-tool-group="system"] .tool-group-head')
     g = {x["id"]: x for x in _groups(pg)}["system"]
     assert g["folded"] and g["expanded"] == "false" and g["shown"] == []
-    assert g["summary"] == "Devices, Games, Cookbook, Theme, Usage, What's new"
+    assert g["summary"] == "Devices, Cookbook, Theme, Usage, What's new"
     assert pg.is_visible('.tool-group[data-tool-group="system"] .tool-group-summary')
     assert json.loads(pg.evaluate("localStorage.getItem('odysseus-tool-groups')")) == {"system": "closed"}
     pg.reload()
@@ -318,7 +317,7 @@ def test_the_new_tab_menu_lists_the_tools_in_the_same_groups(make_page):
         ["Organize", ["Calendar", "Tasks", "Notes", "Plans", "Brain"]],
         ["Create & research", ["Library", "Gallery", "Deep Research", "Compare"]],
         ["Build", ["Code", "Browser", "Background", "Company", "Odysseus dev"]],
-        ["System", ["Devices", "Games", "Cookbook", "Theme", "Usage", "What's new"]]]
+        ["System", ["Devices", "Cookbook", "Theme", "Usage", "What's new"]]]
     pg.click(".ws-menu-group button:has-text('Devices')")
     pg.wait_for_function("() => [...document.querySelectorAll('.ws-tab')].some(t => t.dataset.tab === 'tool:devices')")
     assert "tool-devices-btn" in pg.evaluate("calls")
@@ -410,12 +409,14 @@ def test_the_agents_open_panel_opens_any_page(make_page, panel, clicked):
                                         ("adsb", "adsb"), ("ads-b receiver", "adsb"), ("tar1090", "adsb"),
                                         ("terminal", "terminal"), ("command line", "terminal"),
                                         ("claude sessions", "claude-sessions"),
-                                        ("devops", "devops"), ("tokens per second", "devops")])
+                                        ("devops", "devops"), ("tokens per second", "devops"),
+                                        ("games", "games"), ("play games", "games"), ("steam", "games")])
 def test_open_panel_for_a_page_that_moved_to_a_mod_shows_the_moved_card(make_page, panel, key):
     # The 3D print helper is now the Print Hub mod, the ADS-B receiver the
     # ADS-B Receiver mod, the Terminal and Claude sessions the Programming mod,
-    # DevOps the DevOps mod. With no mod that `replaces` the key, "take me to
-    # 3D print" opens the "now a mod" card (modLinks.openLegacy), never nothing.
+    # DevOps and Games their own mods. With no mod that `replaces` the key,
+    # "take me to 3D print" opens the "now a mod" card (modLinks.openLegacy),
+    # never nothing.
     pg = make_page("classic")
     pg.evaluate(f"""() => import('/static/js/chatStream.js').then(m =>
         m.handleUIControl({{ ui_event: 'open_panel', panel: {json.dumps(panel)} }}))""")

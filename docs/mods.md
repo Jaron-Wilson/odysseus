@@ -663,7 +663,7 @@ list, in this order), and the built-in pages in each, which are what `after` may
 | `organize` | Organize | `calendar`, `tasks`, `notes`, `plans`, `brain` |
 | `create` | Create & research | `library`, `gallery`, `research`, `compare` |
 | `build` | Build | `code`, `browser`, `background`, `company`, `odysseus-dev` |
-| `system` | System | `devices`, `games`, `cookbook`, `theme`, `usage`, `whats-new` |
+| `system` | System | `devices`, `cookbook`, `theme`, `usage`, `whats-new` |
 | `mods` | Mods | None. The default; the group only appears when a tab is in it. |
 
 For example, Print Hub's Printer tab, which also takes over the old 3D print helper page
@@ -760,7 +760,7 @@ else reads it.
 #### Pages that moved to mods
 
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
-receiver, now the ADS-B Receiver mod, `Jaron-Wilson/odysseus-adsb`), `games`, `print` (3D print helper, now part of Print Hub), `terminal` and `claude-sessions`
+receiver, now the ADS-B Receiver mod, `Jaron-Wilson/odysseus-adsb`), `games` (now the Games mod), `print` (3D print helper, now part of Print Hub), `terminal` and `claude-sessions`
 (now the Programming mod), `devops` (now the DevOps mod), `company`, and later `code`,
 `browser`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
 `src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,

@@ -106,6 +106,37 @@ def test_a_page_that_moved_to_a_mod_still_opens():
     assert "if (p.moved)" in _JS and "openLegacy(p.key)" in _JS
 
 
+def test_games_is_the_games_mod_and_nothing_of_it_is_left_in_the_core():
+    """Games (the page, its Settings > Devices card, the five game tools, the
+    nightly Steam sync, the /play redirect and the frame-src hook) moved into
+    the Games mod (github.com/Jaron-Wilson/odysseus-games)."""
+    import os
+    from src import tool_index, tool_schemas, tool_security
+    from src.agent_loop import TOOL_SECTIONS
+    from src.mods import placement
+    import src.agent_tools as at
+    assert "games" not in [p["key"] for p in tool_pages.PAGES] and "games" in placement.LEGACY_PAGES
+    assert "games" not in placement.page_keys("system")
+    for name in ("games", "play games", "steam", "sunshine", "moonlight"):
+        assert tool_pages.page(name)["key"] == "games", name
+    assert _ui("open_panel games")["panel"] == "games"
+    names = {t["function"]["name"] for t in tool_schemas.FUNCTION_TOOL_SCHEMAS}
+    game_tools = {"games_list", "game_status", "game_launch", "game_stop", "game_sync_steam"}
+    assert not game_tools & names and not game_tools & at.TOOL_TAGS
+    assert not game_tools & set(tool_index.BUILTIN_TOOL_DESCRIPTIONS) and not game_tools & set(TOOL_SECTIONS)
+    assert not game_tools & tool_security.plan_mode_disabled_tools()
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for gone in ("src/games.py", "routes/games_routes.py", "src/agent_tools/game_tools.py", "static/js/gamesPanel.js",
+                 "static/js/gamesSettings.js", "static/css/gamesPanel.css", "docs/games.md"):
+        assert not os.path.exists(os.path.join(root, gone)), gone
+    app = open(os.path.join(root, "app.py"), encoding="utf-8").read()
+    assert "setup_games_routes" not in app and "play_redirect" not in app and "_games.nightly_loop" not in app
+    mw = open(os.path.join(root, "core", "middleware.py"), encoding="utf-8").read()
+    assert "_games_frame_src" not in mw
+    html = open(os.path.join(root, "static", "index.html"), encoding="utf-8").read()
+    assert 'id="tool-games-btn"' not in html and 'id="games-settings-card"' not in html and "gamesPanel" not in html
+
+
 def test_the_adsb_receiver_moved_to_a_mod_and_still_opens():
     """The ADS-B receiver page is now the ADS-B Receiver mod (odysseus-adsb):
     no route, panel or sidebar button in the core, and "take me to ADS-B"
@@ -119,7 +150,7 @@ def test_the_adsb_receiver_moved_to_a_mod_and_still_opens():
         assert tool_pages.page(name)["key"] == "adsb", name
     out = _ui("open_panel ads-b receiver")
     assert out["ui_event"] == "open_panel" and out["panel"] == "adsb", out
-    assert "System: devices, games, cookbook, theme, usage, whats-new, adsb" in tool_pages.names_for_prompt()
+    assert "System: devices, cookbook, theme, usage, whats-new, adsb" in tool_pages.names_for_prompt()
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     for gone in ("routes/adsb_routes.py", "src/adsb.py", "static/js/adsbPanel.js", "static/css/adsbPanel.css"):
         assert not os.path.exists(os.path.join(root, gone)), gone
