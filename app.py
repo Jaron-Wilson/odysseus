@@ -906,12 +906,6 @@ app.include_router(setup_native_plans_routes())
 from routes.action_approvals_routes import setup_action_approvals_routes
 app.include_router(setup_action_approvals_routes())
 
-# Company: an organization of AI agents on any Odysseus model (routes/company_routes.py, docs/company.md)
-from routes.company_routes import setup_company_routes
-app.include_router(setup_company_routes())
-# Company mentions in chats: the composer's @ autocomplete (routes/company_chat_routes.py)
-from routes.company_chat_routes import setup_company_chat_routes
-app.include_router(setup_company_chat_routes())
 
 # Email
 from routes.email_routes import setup_email_routes
@@ -1300,12 +1294,6 @@ async def _startup_event():
             "In-process task scheduler disabled (ODYSSEUS_INPROCESS_TASKS=0); "
             "drive task firing externally (e.g. cron)."
         )
-    # Company agents: wake-ups, heartbeats and runs (src/company_executor.py).
-    try:
-        from src.company_executor import start_executor
-        await start_executor(session_manager)
-    except Exception as e:
-        logger.warning(f"Company executor did not start: {e}")
     # Periodic null-owner sweep — re-runs the legacy-owner assignment hourly
     # so any data created while auth was disabled / localhost-bypassed gets
     # claimed by the admin instead of staying world-visible (M19).
@@ -1379,13 +1367,6 @@ async def _startup_event():
 
 async def _shutdown_event():
     logger.info("Application shutting down...")
-    # Company agent runs first: each is closed as interrupted and its issues released.
-    try:
-        from src.company_executor import get_executor
-        if get_executor() is not None:
-            await get_executor().stop()
-    except Exception as e:
-        logger.warning(f"Company executor shutdown error: {e}")
     # Replies still being written (a restart that did not come from Deploy,
     # which does this itself): note them to carry on after the restart, then
     # stop them so each is saved as far as it got.

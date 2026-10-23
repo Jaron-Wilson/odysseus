@@ -81,8 +81,8 @@ _PASSIVE_PREFIXES = (
     "/api/mods/v1/",      # mods calling the core (src/mods/routes.py), never a person
 )
 
-# Company page polls (static/js/company.js): live run status and a running
-# agent's log. They tick while the page is merely open.
+# A mod page's live status and log polls (e.g. the Company mod's run status
+# and a running agent's log). They tick while the page is merely open.
 _PASSIVE_COMPANY_SUFFIXES = ("/live", "/log")
 
 
@@ -94,8 +94,6 @@ def should_track_interactive_request(path: str, method: str = "GET") -> bool:
     if path in _PASSIVE_EXACT_PATHS:
         return False
     if any(path.startswith(prefix) for prefix in _PASSIVE_PREFIXES):
-        return False
-    if path.startswith("/api/company/") and path.endswith(_PASSIVE_COMPANY_SUFFIXES) and (method or "GET").upper() == "GET":
         return False
     # A mod page's own polls, by the same convention (e.g. the Company mod's
     # /mods/company/api/companies/<id>/live).

@@ -924,7 +924,7 @@ list, in this order), and the built-in pages in each, which are what `after` may
 |---|---|---|
 | `organize` | Organize | `calendar`, `tasks`, `notes`, `plans`, `brain` |
 | `create` | Create & research | `library`, `gallery`, `research`, `compare` |
-| `build` | Build | `code`, `browser`, `background`, `company`, `odysseus-dev` |
+| `build` | Build | `code`, `browser`, `background`, `odysseus-dev` |
 | `system` | System | `devices`, `cookbook`, `theme`, `usage`, `whats-new` |
 | `mods` | Mods | None. The default; the group only appears when a tab is in it. |
 
@@ -1063,7 +1063,7 @@ not parent and child).
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
 receiver, now the ADS-B Receiver mod, `Jaron-Wilson/odysseus-adsb`), `games` (now the Games mod), `print` (3D print helper, now part of Print Hub), `terminal` and `claude-sessions`
 (now the Programming mod), `devops` (now the DevOps mod), `phone` (texting the agent, phone calls, the SIP line and
-Google Meet, which were Settings > Calls & Meetings; now the Phone & Messages mod, `/meet` opens it), `company`, and later `code`,
+Google Meet, which were Settings > Calls & Meetings; now the Phone & Messages mod, `/meet` opens it), `company` (now the Company mod, `Jaron-Wilson/odysseus-company`: its routes, agent tools, wake-up scheduler and `@` mentions left the core, and the old tables stay in `app.db`), and later `code`,
 `browser`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
 `src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,
 `/#games?play=...`) and saved Workspace tabs keep working:

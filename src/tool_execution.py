@@ -571,11 +571,6 @@ def _propose_plan(content: str, session_id: Optional[str], owner: Optional[str])
     return desc, result
 
 
-def _is_company_chat_tool(tool: str) -> bool:
-    from src.agent_tools.company_chat_tools import ALL_TOOLS
-    return tool in ALL_TOOLS
-
-
 async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
@@ -872,24 +867,10 @@ async def execute_tool_block(
         except Exception as e:
             logger.warning("whats_new failed: %s", e, exc_info=True)
             result = {"error": f"whats_new: {type(e).__name__}: {e}"[:400], "exit_code": 1}
-    elif tool.startswith("company_") and _is_company_chat_tool(tool):
-        # The user's Company, acting as the user (src/agent_tools/company_chat_tools.py).
-        from src.agent_tools import company_chat_tools
-        desc = f"{tool}: {content.split(chr(10))[0][:60]}"
-        result = await asyncio.to_thread(company_chat_tools.run_tool, tool, content, owner)
     elif tool == "chat_memory":
         desc = "chat_memory"
         from src import chat_memory
         result = chat_memory.run_tool(content, session_id=session_id, owner=owner)
-    elif tool.startswith("company_"):
-        # A Company agent working its issues (src/company_tools.py).
-        from src import company_tools
-        if tool in company_tools.TOOL_NAMES:
-            result = await asyncio.to_thread(company_tools.run_tool, tool, content)
-        else:
-            result = {"error": f"Unknown tool {tool}", "exit_code": 1}
-        first = (result.get("output") or result.get("error") or "").splitlines()
-        desc = f"{tool}: {first[0][:80] if first else ''}"
     elif tool in ("branch_thread", "spawn_subagent"):
         # Threads of this chat (src/chat_subagents.py).
         from src import chat_subagents

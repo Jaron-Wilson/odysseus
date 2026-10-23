@@ -83,11 +83,6 @@ PLAN_MODE_READONLY_TOOLS = {
     "resolve_contact",
     "chat_with_model",
     "ask_teacher",
-    # The user's Company, read-only (src/agent_tools/company_chat_tools.py READ_TOOLS).
-    "company_overview",
-    "company_issue_list",
-    "company_issue_get",
-    "company_agent_status",
     # Writing the plan itself is how plan mode ends: it only saves a Plans
     # document and waits for the user's answer (src/native_plans.py).
     "propose_plan",
@@ -112,9 +107,6 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "suggest_document", "manage_documents", "create_session", "manage_session",
     "send_to_session", "pipeline", "manage_memory", "manage_skills",
     "branch_thread", "spawn_subagent",
-    # Company agents' tools that change issues (src/company_tools.py).
-    "company_checkout_issue", "company_update_issue", "company_comment",
-    "company_create_issue", "company_request_approval", "company_release_issue",
     "manage_tasks", "manage_notes", "manage_endpoints", "manage_mcp",
     "manage_webhooks", "manage_tokens", "manage_settings", "manage_contact",
     "manage_calendar", "api_call", "app_api", "ui_control",
@@ -127,9 +119,6 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "bash", "python",
     # Controls shell processes (kill); plan mode can't run bash anyway.
     "manage_bg_jobs",
-    # The user's Company (src/agent_tools/company_chat_tools.py WRITE_TOOLS).
-    "company_issue_create", "company_issue_update", "company_issue_comment",
-    "company_agent_wake", "company_approval_decide",
 }
 
 

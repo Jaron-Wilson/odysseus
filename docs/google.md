@@ -168,9 +168,6 @@ How an answer works:
 Where the request comes from:
 
 - **A chat** (any model, native function calls or fenced tool blocks): the card in the chat.
-- **Company agents** (Build > Company): the request goes to Company > Approvals as a "Google
-  write" approval instead. Approving it there runs it once when the agent wakes, and the agent
-  is told the result. A model cannot answer it, including through the Company chat tools.
 - **Scheduled tasks and the mail listener**: the change is held the same way and you get a
   notification (push and the Modes listener). It never runs unseen.
 - **Coding agents** (`claude_code`, `/claude direct`) run their own tools outside Odysseus's

@@ -68,7 +68,7 @@ def test_the_prompt_lists_every_page_in_its_group():
     assert names.startswith("Organize: calendar, tasks, notes, plans, brain, phone;")
     # Terminal, Claude sessions and DevOps moved to mods: still pages the agent
     # can open, listed after the built-in ones.
-    assert "Build: code, browser, background, company, odysseus-dev, terminal, claude-sessions, devops" in names
+    assert "Build: code, browser, background, odysseus-dev, terminal, claude-sessions, devops" in names
     assert "command line/shell/console->terminal" in tool_pages.aliases_for_prompt()
 
 
