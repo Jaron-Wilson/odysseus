@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from src.mods import (access, capabilities, catalog, events, manifest as mf, notify, placement, proxy, registry, runtime,
-                      runs, style, tools, tutorial, updates, usage_api)
+                      runs, style, tools, trust, tutorial, updates, usage_api)
 from src.mods import llm as mod_llm
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,8 @@ def _view(entry: Dict[str, Any], user: Optional[str] = None) -> Dict[str, Any]:
     out["subscriptions"] = events.subscriptions(entry["id"])
     # From the cached catalog only (src/mods/catalog.py); never fetches.
     out["update"] = catalog.updates().get(entry["id"])
+    # From the last verification (src/mods/trust.py); the list route verifies first.
+    out["trust"] = trust.mod_view(entry)
     return out
 
 
@@ -102,6 +104,30 @@ def _check_blocked(staged: Dict[str, Any], allow_blocked: bool) -> Optional[JSON
         pass
     return JSONResponse({"detail": f"Blocked: {why}. Install it anyway only if you know why it was blocked.",
                          "blocked": True, "errors": []}, status_code=409)
+
+
+def _verify_trust() -> None:
+    """Verify (GitHub, cached) the installed mods whose URL names a trusted owner."""
+    listed = trust.publishers()
+    if not listed:
+        return
+    for m in registry.list_mods():
+        uo = trust.url_owner(m.get("source"))
+        if uo and trust.is_listed(uo[0], listed):
+            trust.refresh(m)
+
+
+def _with_trust(staged: Dict[str, Any]) -> Dict[str, Any]:
+    """Add what the trusted publisher rule decides to a prepared install or update."""
+    if isinstance(staged, dict) and staged.get("install_id"):
+        staged["trust"] = trust.assess_staged(staged)
+    return staged
+
+
+def _after_confirm(entry: Dict[str, Any], meta: Dict[str, Any], decision: Dict[str, Any], auto: bool, by: str) -> None:
+    """Keep what was verified, and write the history line for the approval."""
+    trust.remember(entry["id"], decision.get("publisher"))
+    trust.audit_confirmed(entry, meta, decision, auto=auto, by=by)
 
 
 def _dependents_refusal(mod_id: str, doing: str, force: bool) -> Optional[JSONResponse]:
@@ -523,14 +549,17 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
     setup_style_routes(router)
     from src.mods.legacy import setup_legacy_routes
     setup_legacy_routes(router)
+    trust.setup_routes(router)
 
     @router.get("/api/mods")
     async def list_mods(request: Request):
         user = _require_admin(request)
+        # Ask GitHub (cached) who owns the mods from trusted owners, so the badges are true.
+        await asyncio.to_thread(_verify_trust)
         return {"mods": [_view(m, user or "") for m in sorted(registry.list_mods(), key=lambda m: m["id"])],
                 "core_api": mf.CORE_API_VERSION, "permissions": mf.PERMISSIONS,
                 "notify": notify.channel_settings(), "nav_groups": placement.groups(),
-                "capabilities": capabilities.known_view()}
+                "capabilities": capabilities.known_view(), "always_ask": trust.always_ask_list()}
 
     @router.post("/api/mods/install/prepare")
     async def install_prepare(request: Request):
@@ -542,17 +571,28 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         except registry.RegistryError as e:
             return _err(e)
         refused = await asyncio.to_thread(_check_blocked, staged, body.get("allow_blocked") is True)
-        return refused or staged
+        return refused or await asyncio.to_thread(_with_trust, staged)
 
     @router.post("/api/mods/install/confirm")
     async def install_confirm(request: Request):
-        _require_admin(request)
+        by = _require_admin(request)
         body = await _json(request)
         iid = str(body.get("install_id") or "")
+        decision: Dict[str, Any] = {}
+        auto = False
         try:
             approved = registry.approved_list(body.get("permissions"))
             meta = registry._staged(iid)
             update_of = meta.get("update_of")
+            # A trusted publisher's mod: the server approves for the admin, but only
+            # when the rule says so (src/mods/trust.py); the exceptions need a click.
+            decision = await asyncio.to_thread(trust.assess_meta, meta)
+            if body.get("auto") is True:
+                if not decision["auto_approve"]:
+                    return JSONResponse({"detail": "This needs your review: " + decision["reason"], "trust": decision,
+                                         "errors": []}, status_code=409)
+                auto = True
+                approved = list((meta.get("manifest") or {}).get("permissions") or [])
             # A hard requirement nobody provides: say so, and install only when told to.
             missing = capabilities.availability(meta.get("manifest") or {})["missing"]
             if missing and body.get("allow_missing") is not True:
@@ -565,6 +605,7 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         except registry.RegistryError as e:
             return _err(e)
         mod_id = entry["id"]
+        await asyncio.to_thread(_after_confirm, entry, meta, decision, auto, by or "")
         if update_of:
             updates.mark_updated(mod_id)
             if entry.get("enabled"):
@@ -745,8 +786,13 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
                            compatible: str = "", refresh: bool = False, capability: str = ""):
         _require_admin(request)
         try:
-            return await asyncio.to_thread(catalog.query, q[:200], tag[:40], verified or None, compatible or None,
+            data = await asyncio.to_thread(catalog.query, q[:200], tag[:40], verified or None, compatible or None,
                                            refresh, capability[:capabilities.MAX_CAP_LEN])
+            listed = await asyncio.to_thread(trust.publishers)
+            for r in data.get("results") or []:     # the owner is the one GitHub's API gave
+                if trust.is_listed(str(r.get("owner") or ""), listed):
+                    r["trusted_publisher"] = r["owner"]
+            return data
         except catalog.CatalogError as e:
             return _cat_err(e)
 
@@ -849,7 +895,11 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
                 ref = body.get("ref") if body.get("ref") is not None else src.get("ref")
                 staged = await asyncio.to_thread(registry.prepare, source, ref, src.get("subdir"), mod_id)
                 refused = await asyncio.to_thread(_check_blocked, staged, body.get("allow_blocked") is True)
-                return refused or staged
+                return refused or await asyncio.to_thread(_with_trust, staged)
+            elif action == "trust":
+                # "Always ask me": no auto-approval for this mod, whoever published it.
+                body = await _json(request)
+                trust.set_always_ask(mod_id, body.get("always_ask") is True)
             elif action == "access":
                 body = await _json(request)
                 registry.set_access(mod_id, str(body.get("access") or ""))

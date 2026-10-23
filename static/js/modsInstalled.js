@@ -10,6 +10,7 @@
 // clicks to them through `data-mod-action` buttons, so they behave as before.
 
 import { ago } from './modsUpdates.js';
+import { trustBadgeParts, alwaysAskRow, detailNote, historyHtml } from './modsTrust.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -21,6 +22,7 @@ let _open = null;      // the mod id whose details are showing
 let _legacy = {};      // id -> /legacy answer
 const _readme = {};    // id -> html ('' when none)
 const _logs = {};      // id -> text
+const _history = {};   // id -> the audit lines of its installs and updates (src/mods/trust.py)
 let _timer = null;
 
 const STATUS = { running: 'Running', starting: 'Starting', stopped: 'Stopped', error: 'Error', disabled: 'Disabled' };
@@ -147,6 +149,8 @@ function badges(m) {
   const u = updateOf(m);
   if (u) out.push(badge('update', u.version ? `Needs update: ${ctx.esc(u.version)}` : 'Needs update', 'warn', `Version ${u.version || 'newer'} is out (you have ${m.version || '?'})`));
   if (u && u.review) out.push(badge('review', 'Review needed', 'warn', 'The update asks for new permissions or a newer Odysseus: you review it before it installs'));
+  const tb = trustBadgeParts(m.trust);
+  if (tb) out.push(badge('trusted', ctx.esc(tb.label), 'ok', tb.title));
   if (m.admin_only) out.push(badge('admin', 'Admin only', 'info', 'Its manifest says admin_only: it gives admin powers, so only admins can use it'));
   if (isDocker(m)) out.push(badge('docker', 'Docker', 'info', 'Runs in Docker'));
   if (importedAny(m)) out.push(badge('imported', 'Imported settings', 'ok', 'Took over your old built-in settings'));
@@ -364,6 +368,7 @@ function renderDetails() {
       <div><div class="mi-sec-title">Where it shows up</div><ul class="admin-toggle-sub">${whereHtml(m)}</ul></div>
       ${legacyHtml(m)}
     </div>
+    ${detailNote(m)}
     <div class="mi-sec-title" style="margin-top:14px">Settings</div>
     <div class="settings-row" style="flex-wrap:wrap;gap:10px;margin-top:4px">
       ${m.admin_only ? '<span class="admin-toggle-sub" data-mod-admin-only title="Its manifest says admin_only: it gives admin powers, like a shell on this server">Admins only</span>' : `<label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">Who can use it
@@ -372,7 +377,10 @@ function renderDetails() {
           <option value="users"${m.access === 'users' ? ' selected' : ''}>All users</option>
         </select></label>`}
       <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px"><input type="checkbox" data-mod-mute="${e(m.id)}"${m.notify_muted ? ' checked' : ''}> Mute notifications</label>
+      ${alwaysAskRow(m)}
     </div>${ctx.parts.placementRow(m)}${ctx.parts.grantRow(m)}
+    <div class="mi-sec-title" style="margin-top:14px">History</div>
+    <div data-mi-history-box="${e(m.id)}">${historyHtml(_history[m.id])}</div>
     <div class="settings-row" style="margin-top:14px"><div class="mi-sec-title" style="flex:1;margin:0">Logs</div>${btn('logs', 'Refresh logs')}</div>
     <pre class="mi-log" data-mod-log="${e(m.id)}" tabindex="0" aria-label="Log of ${e(m.name || m.id)}">${e(_logs[m.id] ?? 'Loading…')}</pre>
     ${gh ? `<div class="mi-sec-title" style="margin-top:14px">README</div>
@@ -387,6 +395,7 @@ async function loadExtras(id) {
   if ((m.imports || []).length && !_legacy[id]) {
     jobs.push(ctx.api('GET', `/api/mods/${encodeURIComponent(id)}/legacy`).then((d) => { _legacy[id] = d; }).catch(() => { _legacy[id] = { slices: [] }; }));
   }
+  jobs.push(ctx.api('GET', `/api/mods/${encodeURIComponent(id)}/history`).then((d) => { _history[id] = d.history || []; }).catch(() => { _history[id] = []; }));
   jobs.push(ctx.api('GET', `/api/mods/${encodeURIComponent(id)}/logs?lines=200`).then((d) => { _logs[id] = d.log || '(no output yet)'; }).catch((err) => { _logs[id] = err.message; }));
   const gh = githubKey(m.source);
   if (gh && _readme[id] === undefined) {
@@ -398,6 +407,8 @@ async function loadExtras(id) {
     // Fill the three places in without redrawing the page under the reader's cursor.
     const pre = document.querySelector(`[data-mod-log="${CSS.escape(id)}"]`);
     if (pre && _logs[id] !== undefined) { pre.textContent = _logs[id]; pre.scrollTop = pre.scrollHeight; }
+    const hb = document.querySelector(`[data-mi-history-box="${CSS.escape(id)}"]`);
+    if (hb && _history[id] !== undefined) hb.innerHTML = historyHtml(_history[id]);
     const rd = document.querySelector(`[data-mi-readme="${CSS.escape(id)}"]`);
     if (rd && _readme[id] !== undefined) {
       rd.innerHTML = _readme[id] || '<span class="admin-toggle-sub">No README.</span>';
@@ -446,7 +457,7 @@ export function refreshLog(id) {
   return loadExtras(id);
 }
 
-export function forget(id) { delete _legacy[id]; delete _logs[id]; delete _readme[id]; if (_open === id) closeDetail(); }
+export function forget(id) { delete _legacy[id]; delete _logs[id]; delete _readme[id]; delete _history[id]; if (_open === id) closeDetail(); }
 
 export function setFilter(f) {
   _filter = FILTERS.some(([k]) => k === f) ? f : 'all';

@@ -23,6 +23,7 @@ const BADGE = {
   verified: ['Verified', '#3fb950', 'Listed in a curated index you added'],
   community: ['Community, not reviewed', '#8b949e', 'Found by its GitHub topic. Nobody has reviewed it'],
   yours: ['Yours', '#58a6ff', 'One of your own repositories'],
+  trusted: ['Trusted publisher', '#3fb950', 'From a publisher you trust (Settings > Mods > Trusted publishers): installs and updates are approved for you, except ui.style and high-risk permissions'],
   private: ['Private', '#a371f7', 'A private repository; installs over SSH with the server\'s GitHub key'],
   installed: ['Installed', '#3fb950', ''],
   update: ['Update available', '#d29922', ''],
@@ -33,8 +34,9 @@ const BADGE = {
   archived: ['Archived', '#8b949e', 'The repository is archived'],
 };
 
-function badge(kind, extraTitle) {
-  const [label, color, title] = BADGE[kind];
+function badge(kind, extraTitle, labelOverride) {
+  const [dflt, color, title] = BADGE[kind];
+  const label = labelOverride || dflt;
   const t = extraTitle || title;
   return `<span class="mods-badge" data-badge="${kind}"${t ? ` title="${ctx.esc(t)}"` : ''} style="display:inline-block;font-size:11px;font-weight:500;line-height:16px;padding:0 6px;border-radius:9px;border:1px solid ${color};color:${color};margin-left:6px;white-space:nowrap;vertical-align:middle">${label}</span>`;
 }
@@ -43,6 +45,7 @@ function badges(r) {
   const out = [badge(r.verified ? 'verified' : 'community', !r.verified && r.verified_dropped ? r.verified_dropped : '')];
   if (r.valid && !r.has_tutorial) out.push(badge('no-tutorial', r.verified_dropped || ''));
   if (r.yours) out.push(badge('yours'));
+  else if (r.trusted_publisher) out.push(badge('trusted', '', `Trusted: ${ctx.esc(r.trusted_publisher)}`));
   if (r.private) out.push(badge('private'));
   if (r.installed) out.push(badge('installed', r.same_source ? `Installed as ${r.installed_id} ${r.installed_version || ''}` : `A mod with id ${r.installed_id} is installed from somewhere else`));
   if (r.update_available) out.push(badge('update', `Version ${r.latest_version || ''} is out (you have ${r.installed_version || '?'})`));
