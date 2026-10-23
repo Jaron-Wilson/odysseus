@@ -192,7 +192,7 @@ def test_hear_the_phone_on_a_computer(env, monkeypatch):
     pc = device_routing.device_map(None)["100.102.86.125"]
     body = {"from": "device:pixel-8a", "to": "19d772b0", "on": True}
     r = c.post("/api/media/receive", json=body)
-    assert r.status_code == 409 and "updated desktop MCP" in r.json()["detail"]    # old MCP: no tool
+    assert r.status_code == 409 and "Settings > Devices" in r.json()["detail"]    # old helper: no tool, and where to fix it
     pc["tools"] = pc["tools"] + ["bluetooth_audio_receive"]
     r = c.post("/api/media/receive", json=body).json()
     assert r["ok"] and r["to"] == "windows-desktop" and r["from"] == "pixel-8a"

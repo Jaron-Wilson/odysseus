@@ -116,6 +116,29 @@ template's:
 Check it with `python -m src.mods validate <folder>` from an Odysseus checkout, or just run the
 tests: devcore reads the same file.
 
+## Setup steps (only if the mod needs the person to do something first)
+
+Odysseus has a guided checklist, Settings > Setup. If this mod is not useful until the person does
+something (connect a device, pick a folder, paste a key), add it as a step so they are told what
+to do, in plain words, and sent to the right page:
+
+```json
+"setup": { "steps": [
+  { "id": "connect-printer", "title": "Connect your printer",
+    "description": "Lets the agent watch your prints and tell you when one finishes.",
+    "status_path": "/setup/printer", "optional": true,
+    "action": { "label": "Open the printer page", "path": "/printers" } } ] }
+```
+
+- `status_path` (optional) is a page of the mod answering `GET` with `{"done": true|false, "detail":
+  "short note"}`; the core asks it with the signed identity headers (so `app.core` knows the user),
+  only while the mod is running. Without it the step stays open until the person presses "Not for me".
+- `optional` defaults to `true`; `false` counts the step as needed ("Setup: N steps left").
+- `action` is `{"label", "path"}` for a page of the mod or `{"label", "settings": true}`; at most
+  6 steps, no permission needed. Plain words, American English, one action per step.
+- Skip the field when the mod works the moment it is installed. Full details: docs/mods.md,
+  "Setup steps" in an Odysseus checkout.
+
 ## What the core gives the mod
 
 Environment: `ODYSSEUS_URL`, `ODYSSEUS_MOD_TOKEN`, `ODYSSEUS_MOD_ID`, `ODYSSEUS_MOD_BASE`

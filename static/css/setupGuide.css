@@ -1,0 +1,86 @@
+/* Settings > Setup (the guided checklist), its Home card and the Devices
+   explainer. static/js/setupGuide.js draws them. */
+
+.setup-hero h2 { font-size: 16px; }
+.setup-bar {
+  height: 6px; border-radius: 999px; margin: 10px 0 6px; overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.setup-bar > span {
+  display: block; height: 100%; border-radius: inherit;
+  background: var(--accent, var(--red)); transition: width .3s ease;
+}
+.setup-next {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 12px; padding: 10px 12px;
+  border-radius: 8px; border-left: 3px solid var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+.setup-next .admin-toggle-sub { flex: 1 1 240px; }
+.setup-next-label {
+  font-size: 10px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700;
+  color: var(--accent, var(--red));
+}
+.setup-tools { margin-top: 10px; }
+
+.setup-intro { margin-bottom: 4px; }
+.setup-list { list-style: none; margin: 0; padding: 0; }
+.setup-step {
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 0;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.setup-step:first-child { border-top: 0; }
+.setup-icon {
+  flex: none; width: 24px; height: 24px; border-radius: 50%; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; background: #8b949e;
+}
+.setup-done .setup-icon { background: #3fb950; }
+.setup-needs_you .setup-icon { background: #d29922; }
+.setup-optional .setup-icon, .setup-not_applicable .setup-icon {
+  background: transparent; color: var(--fg); opacity: .55;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--fg) 40%, transparent);
+}
+.setup-main { flex: 1; min-width: 0; }
+.setup-title { font-size: 13px; font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.setup-state {
+  font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; opacity: .55;
+}
+.setup-needs_you .setup-state { color: #d29922; opacity: 1; }
+.setup-done .setup-state { color: #3fb950; opacity: 1; }
+.setup-chip {
+  font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 9px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.setup-gives { font-size: 12px; opacity: .8; margin-top: 2px; line-height: 1.45; }
+.setup-detail { font-size: 12px; margin-top: 4px; opacity: .65; line-height: 1.45; }
+.setup-done .setup-gives, .setup-not_applicable .setup-gives { opacity: .55; }
+.setup-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.setup-skip {
+  background: none; border: 0; padding: 0; font: inherit; font-size: 11px; cursor: pointer;
+  color: inherit; opacity: .55; text-decoration: underline;
+}
+.setup-skip:hover { opacity: 1; }
+.setup-dismissed { opacity: .6; }
+.setup-hidden { margin-top: 8px; }
+.setup-hidden summary { cursor: pointer; }
+@media (max-width: 640px) {
+  .setup-step { flex-wrap: wrap; }
+  .setup-side { flex-direction: row; align-items: center; width: 100%; padding-left: 36px; }
+}
+
+/* The Home card: a slim strip above the cards. */
+.ws-setup { margin: 18px 0 14px; }
+.setup-card {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px;
+  border-radius: var(--st-r-lg, 12px); border: 1px solid var(--st-line, rgba(127,127,127,.25));
+  border-left: 3px solid var(--accent, var(--red));
+  background: var(--st-surface, color-mix(in srgb, var(--fg) 4%, transparent));
+}
+.setup-card-text { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.setup-card-text strong { font-size: 13px; }
+.setup-card-text span { font-size: 12px; opacity: .75; }
+
+/* Settings > Devices, before any computer is linked. */
+.setup-devices-empty { border-left: 3px solid #d29922; }
+.setup-devices-empty h2 { margin-top: 0; }
+.setup-devices-empty ol { margin: 6px 0 10px 18px; padding: 0; font-size: 12px; line-height: 1.6; }
