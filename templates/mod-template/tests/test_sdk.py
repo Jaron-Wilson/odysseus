@@ -167,6 +167,28 @@ def test_providing_a_capability():
         srv.shutdown()
 
 
+def test_a_provided_capability_can_answer_with_a_status_and_sees_callbacks():
+    app = ModApp(core=CoreClient(url="http://127.0.0.1:9", token="odm_t", mod_id="my-mod"))
+
+    @app.provide("my-mod.jobs", "slow")
+    def slow(req, args):
+        return {"error": "too fast", "status": 429}
+
+    @app.provide("my-mod.jobs", "who")
+    def who(req, args):
+        return {"callback": req.callback, "caller": req.caller}
+
+    srv, base = _serve(app)
+    try:
+        h = dict(sign_identity("odm_t", "my-mod", "alice"), **{"Content-Type": "application/json",
+                                                               "X-Odysseus-Caller": "chat", "X-Odysseus-Callback": "1"})
+        assert _req(base + "/mod/cap/my-mod.jobs/slow", "POST", {}, h)[0] == 429
+        code, body = _req(base + "/mod/cap/my-mod.jobs/who", "POST", {}, h)
+        assert json.loads(body) == {"callback": True, "caller": "chat"}
+    finally:
+        srv.shutdown()
+
+
 def test_devcore_serves_machines_and_stats_with_their_permissions(tmp_path):
     from odysseus_mod import CoreError
     from odysseus_mod.devcore import DevCore

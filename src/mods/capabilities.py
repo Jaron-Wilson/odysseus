@@ -35,6 +35,19 @@ capability's events (KNOWN[...]["events"]) can only be emitted by a provider
 of it, and are delivered only to mods that declare the capability (and that
 the user it is for may use); see src/mods/events.py.
 
+A provider can also reach the mods that use it, through the same broker:
+
+    POST /api/mods/v1/cap/<capability>/<action>?to=<mod id>      (a "callback")
+
+allowed only when the caller lists <capability> in `provides` and the mod
+`to` lists it in `requires` or `optional` (so the user approved that link at
+install time). The core routes it to `POST /mod/cap/<capability>/<action>` on
+the mod `to`, with `X-Odysseus-Caller: <provider id>` and
+`X-Odysseus-Callback: 1`. A manifest's `scopes` ({"discord.commands":
+["print"]}) are names a mod claims inside a provider's namespace; the core
+only validates and shows them, and a provider reads them with
+`GET /api/mods/v1/cap/<capability>/consumers`.
+
 The built-in provider of messaging.sms sends through the phone's reply URL
 (routes/sms_routes.py, SMS Gate for Android); it cannot receive. The Phone &
 Messages mod (Jaron-Wilson/odysseus-phone) lists messaging.sms in `provides`:
@@ -57,12 +70,14 @@ logger = logging.getLogger(__name__)
 
 CAP_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}(?:\.[a-z][a-z0-9-]{0,31}){1,4}$")
 ACTION_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+SCOPE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+MAX_SCOPES = 16
 MAX_PER_LIST = 16
 MAX_CAP_LEN = 64
 KINDS = ("provides", "requires", "optional")
 PROVIDER_PATH = "/mod/cap"
 CALL_TIMEOUT_S = 30
-MAX_BODY_BYTES = 64 * 1024
+MAX_BODY_BYTES = 4 * 1024 * 1024     # arguments of one capability call (a provider may take files, base64)
 LOG_MAX_BYTES = 1024 * 1024
 BUILTIN = "core"          # the provider id shown for the core's own providers (and the source of its events)
 
@@ -132,6 +147,32 @@ def _check_list(raw: Any, key: str, errors: List[str]) -> List[str]:
     return out
 
 
+def _check_scopes(raw: Any, lists: Dict[str, List[str]], errors: List[str]) -> Dict[str, List[str]]:
+    """`scopes`: {capability: [name, ...]}, names a mod claims inside a
+    capability it requires or may use (the groups of slash commands it owns,
+    for discord.commands). The core does not interpret them: the provider does,
+    and reads them with `consumers`. Shown in the install review."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        errors.append("`scopes` must be an object like {\"discord.commands\": [\"print\"]}")
+        return {}
+    out: Dict[str, List[str]] = {}
+    used = set(lists["requires"]) | set(lists["optional"])
+    for cap, names in raw.items():
+        if cap not in used:
+            errors.append(f"`scopes`: {cap!r} is not in `requires` or `optional`")
+            continue
+        if not isinstance(names, list) or not all(isinstance(n, str) and SCOPE_RE.match(n) for n in names):
+            errors.append(f"`scopes.{cap}` must be a list of names (lowercase letters, digits, - and _)")
+            continue
+        if len(names) > MAX_SCOPES:
+            errors.append(f"`scopes.{cap}` can have at most {MAX_SCOPES} names")
+            names = names[:MAX_SCOPES]
+        out[cap] = list(dict.fromkeys(names))
+    return out
+
+
 def check(raw: Dict[str, Any], events_out: Dict[str, Any], errors: List[str],
           warnings: List[str]) -> Dict[str, List[str]]:
     """`provides`, `requires` and `optional` of a manifest (src/mods/manifest.py)."""
@@ -142,6 +183,7 @@ def check(raw: Dict[str, Any], events_out: Dict[str, Any], errors: List[str],
     own = sorted((set(out["requires"]) | set(out["optional"])) & set(out["provides"]))
     if own:
         warnings.append(f"it needs {', '.join(own)}, which it provides itself")
+    out["scopes"] = _check_scopes(raw.get("scopes"), out, errors)
     emits = set((events_out or {}).get("emits") or [])
     for cap in out["provides"]:
         for ev in (KNOWN.get(cap) or {}).get("events") or []:
@@ -220,7 +262,7 @@ def availability(manifest: Dict[str, Any], exclude: Optional[str] = None) -> Dic
     req = [row(c) for c in (manifest or {}).get("requires") or []]
     opt = [row(c) for c in (manifest or {}).get("optional") or []]
     return {"provides": [describe(c) for c in (manifest or {}).get("provides") or []],
-            "requires": req, "optional": opt,
+            "requires": req, "optional": opt, "scopes": dict((manifest or {}).get("scopes") or {}),
             "missing": [r["id"] for r in req if not r["available"]],
             "missing_optional": [r["id"] for r in opt if not r["available"]]}
 
@@ -434,7 +476,7 @@ BUILTIN_HANDLERS: Dict[str, Callable[[str, Dict[str, Any], Optional[str]], Await
 # ── A call ───────────────────────────────────────────────────────────────
 
 async def _call_mod(provider_id: str, cap: str, action: str, args: Dict[str, Any], user: Optional[str],
-                    caller_id: str) -> Dict[str, Any]:
+                    caller_id: str, callback: bool = False) -> Dict[str, Any]:
     from src.mods import runtime
     port = await runtime.ensure_running(provider_id)
     if not port:
@@ -446,6 +488,8 @@ async def _call_mod(provider_id: str, cap: str, action: str, args: Dict[str, Any
     headers["Content-Type"] = "application/json"
     headers["X-Odysseus-Caller"] = caller_id
     headers["X-Odysseus-Capability"] = cap
+    if callback:
+        headers["X-Odysseus-Callback"] = "1"
     url = f"http://127.0.0.1:{port}{PROVIDER_PATH}/{cap}/{action}"
     try:
         r = await runtime._client().post(url, content=json.dumps(args), headers=headers, timeout=CALL_TIMEOUT_S)
@@ -541,6 +585,72 @@ async def call(caller: Dict[str, Any], user: Optional[str], cap: str, action: st
     out = dict(result) if isinstance(result, dict) else {"result": result}
     out.setdefault("ok", True)
     out.update(capability=cap, action=action, provider=record["provider"])
+    return out
+
+
+# ── Providers reaching their consumers ────────────────────────────────────
+
+def _provides(entry: Dict[str, Any], cap: str) -> bool:
+    return cap in ((entry or {}).get("manifest") or {}).get("provides", [])
+
+
+def consumers(provider: Dict[str, Any], cap: str) -> List[Dict[str, Any]]:
+    """The enabled mods that declare `cap` (in `requires` or `optional`), with
+    the `scopes` each claimed for it. Only a mod that provides `cap` may ask:
+    a provider needs to know who its consumers are (which groups of slash
+    commands each may register), and nobody else does."""
+    if not _provides(provider, cap):
+        raise CapError(403, f"This mod does not provide {cap}")
+    out = []
+    for e in sorted(registry.list_mods(), key=lambda m: m["id"]):
+        if e["id"] == provider["id"] or not e.get("enabled") or not declares(e, cap):
+            continue
+        man = e.get("manifest") or {}
+        out.append({"id": e["id"], "name": e.get("name") or e["id"], "version": e.get("version") or "",
+                    "scopes": list((man.get("scopes") or {}).get(cap) or []),
+                    "requires": cap in (man.get("requires") or []), "admin_only": access.admin_only(e),
+                    "access": "admins" if access.admin_only(e) else e.get("access", "admins")})
+    return out
+
+
+async def callback(provider: Dict[str, Any], user: Optional[str], cap: str, action: str, args: Dict[str, Any],
+                   target_id: str) -> Dict[str, Any]:
+    """A provider calls one of its consumers back: `provider` (a mod that
+    lists `cap` in `provides`) -> mod `target_id` (which declared `cap`), on
+    behalf of `user`. Routed to the target's POST /mod/cap/<cap>/<action>
+    with X-Odysseus-Caller and X-Odysseus-Callback. Raises CapError."""
+    from src.mods import runtime
+    pid = provider["id"]
+    if not CAP_RE.match(cap or "") or len(cap) > MAX_CAP_LEN:
+        raise CapError(400, "not a capability id (like discord.commands)")
+    if not ACTION_RE.match(action or ""):
+        raise CapError(400, "not an action name (like interaction)")
+    if not _provides(provider, cap):
+        raise CapError(403, f"This mod does not provide {cap}, so it cannot call its consumers")
+    if target_id == pid:
+        raise CapError(400, "a mod cannot call itself")
+    target = registry.get(target_id)
+    if not target or not target.get("enabled"):
+        raise CapError(404, f"No enabled mod {target_id!r}")
+    if not declares(target, cap):
+        raise CapError(403, f"{target_id} did not declare {cap} in `requires` or `optional`")
+    if not access.may_use(provider, user) or not access.may_use(target, user):
+        raise CapError(403, "That user may not use this mod")
+    record: Dict[str, Any] = {"caller": pid, "user": user or "", "capability": cap, "action": action,
+                              "provider": target_id, "callback": True}
+    try:
+        _rate(pid, cap, "callback:" + action)
+        result = await _call_mod(target_id, cap, action, dict(args), user, pid, callback=True)
+    except CapError as e:
+        record.update(ok=False, error=e.message, status=e.status)
+        log(record)
+        runtime.log_line(pid, f"[odysseus] {cap} {action} callback to {target_id} refused: {e.message}")
+        raise
+    record["ok"] = True
+    log(record)
+    out = dict(result) if isinstance(result, dict) else {"result": result}
+    out.setdefault("ok", True)
+    out.update(capability=cap, action=action, provider=pid, to=target_id)
     return out
 
 

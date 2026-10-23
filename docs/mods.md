@@ -316,7 +316,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `name` | Required, up to 60 characters. |
 | `version` | Required, like `1`, `1.2` or `1.2.3`, with an optional `-suffix`. |
 | `description`, `author`, `license`, `homepage` | Optional text. |
-| `min_core` | The oldest mod API it works with. The core is `0.1`; a mod asking for more is refused. |
+| `min_core` | The oldest mod API it works with. The core is `0.2` (0.2 added provider callbacks, `consumers` and `scopes`; every 0.1 mod still works); a mod asking for more is refused. |
 | `tags` | Optional, up to 10 lowercase slugs like `3d-printing` (see [Tags](#tags)). Unknown tags are allowed. |
 | `admin_only` | Optional, default `false`. `true` for a mod that gives admin powers (a shell on the server, its files, other users' sessions): only admins can ever use it. Its **Who can use it** setting is fixed to Admins (setting it to All users is refused), and the install review says so. |
 | `icon_url` | Optional https URL of a square image, shown in Browse (only from GitHub's hosts). |
@@ -482,7 +482,7 @@ signed-in user. A mod whose manifest says `admin_only` is for admins whatever it
 | `GET stats/transcripts/<run>` | `stats.read` | One coder run's parsed transcript, as `/api/transcript/runs/<run>` answers its owner: `{id, engine, model, status, counts, blocks, final_text, resume_command, ...}`; 404 when it has none |
 | `GET machines?refresh=1` | `machines.read` | `{machines: [{host, name, dns, ips, os, online, last_seen, is_self, shared, ssh_user}]}` (`refresh` asks Tailscale again instead of the 15 second cache) |
 | `GET cap` | | The capabilities it declared and who provides each now: `{provides, requires, optional, missing, missing_optional}` |
-| `POST cap/<capability>/<action>?provider=` | it is in `requires` or `optional` | A capability call, brokered by the core (see [Capabilities](#capabilities)). The body is the arguments, plus `user`. Answers the provider's JSON object with `ok`, `capability`, `action` and `provider` set |
+| `POST cap/<capability>/<action>?provider=` | it is in `requires` or `optional` | A capability call, brokered by the core (see [Capabilities](#capabilities)). The body is the arguments, plus `user` (up to 4 MB, so a provider can take a base64 file). Answers the provider's JSON object with `ok`, `capability`, `action` and `provider` set |
 | `POST tools/refresh` | | The mod's tools changed: the core reads `GET <tools.endpoint>` again. Answers `{ok, queued}` at once and refreshes in the background; `{"wait": true}` waits and answers `{ok, tools: [names]}` (only from a server that serves requests in parallel). 400 for a mod without `tools` |
 
 Calls are rate limited per mod: notify 30 a minute, llm 20, events 240, device commands 30, tool
@@ -661,6 +661,32 @@ installed mod's card lists its capabilities and the mods that use it.
 whether this Odysseus has a provider), searches `provides` with the words typed, and
 `GET /api/mods/catalog?capability=<id>` keeps only mods that provide it. An index entry may list
 `provides`, `requires` and `optional` too (added to the manifest's).
+
+#### Providers reaching their consumers: callbacks and scopes
+
+A provider sometimes has to talk back to the mods that use it: a Discord mod hands a slash command to
+the mod that owns it, a scheduler tells a mod its job is due. That goes through the same broker, so
+the user's approval at install time still decides who may talk to whom.
+
+- **Callback.** `POST /api/mods/v1/cap/<capability>/<action>?to=<mod id>`. Allowed only when the caller
+  lists `<capability>` in `provides` and the mod `to` lists it in `requires` or `optional` and is
+  enabled; the user the call is for must be allowed to use both. The core routes it to `POST
+  /mod/cap/<capability>/<action>` on the mod `to`, with the signed identity of that user,
+  `X-Odysseus-Caller: <provider id>` and `X-Odysseus-Callback: 1`, and answers the consumer's JSON
+  object plus `ok`, `capability`, `action`, `provider` (the caller) and `to`. A consumer error comes
+  back with its status. Rate limited per provider and action (120 a minute), and logged in
+  `mods/capability-log.jsonl` with `callback: true`. In the template SDK:
+  `app.core.callback("discord.commands", "interaction", "print-hub", args, user="alice")`, answered
+  by `@app.provide("discord.commands", "interaction")` in the consumer.
+- **Consumers.** `GET /api/mods/v1/cap/<capability>/consumers`, only for a provider of it: the
+  enabled mods that declared it, `{id, name, version, scopes, requires, admin_only, access}`. In the
+  SDK: `app.core.consumers("discord.commands")`.
+- **Scopes.** A manifest may add `"scopes": {"<capability>": ["name", ...]}`: names the mod claims
+  inside a capability it `requires` or `optional`s (lowercase letters, digits, `-` and `_`, at most 16
+  per capability). The core only checks the shape and shows them in the install review; the provider
+  decides what they mean and enforces them, because it learns who claimed what from `consumers`, never
+  from the caller. Example: `"optional": ["discord.commands"], "scopes": {"discord.commands":
+  ["print"]}` claims the `/print` command group.
 
 #### messaging.sms
 
