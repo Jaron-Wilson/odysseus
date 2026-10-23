@@ -18,12 +18,13 @@ def node_available():
         pytest.skip("node binary not on PATH")
 
 
-def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)"):
+def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", katex: bool = False):
     script = textwrap.dedent(
         r"""
         import fs from 'node:fs';
 
-        globalThis.window = { location: { origin: 'http://localhost' }, katex: null };
+        globalThis.window = { location: { origin: 'http://localhost' }, katex: __KATEX__ };
+        globalThis.katex = globalThis.window.katex;
         globalThis.document = {
           readyState: 'loading',
           addEventListener() {},
@@ -77,7 +78,8 @@ def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)"):
         const input = JSON.parse(process.argv[1]);
         console.log(JSON.stringify({ html: __RENDER_EXPR__ }));
         """
-    ).replace("__RENDER_EXPR__", render_expr)
+    ).replace("__RENDER_EXPR__", render_expr).replace(
+        "__KATEX__", "{ renderToString: (m) => `<math-stub>${m}</math-stub>` }" if katex else "null")
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script, json.dumps(markdown)],
         cwd=_REPO,
@@ -223,3 +225,25 @@ def test_task_items_and_mixed_list_kinds(node_available):
     assert "<ol><li>first step</li><li>second step</li></ol></li>" in html
     assert html.count("<ul>") == 1                        # "* plain item" joins the same list
     assert "<p>" not in html
+
+
+def test_prices_are_not_inline_math(node_available):
+    html = _run_markdown_case(
+        "There are 79 transactions totaling **$5,313.58**; Trove shows the 50 most recent here. "
+        "The biggest single item is a **$639.06** Goodyear Auto Service charge.",
+        katex=True,
+    )
+    assert "math-stub" not in html
+    assert "$5,313.58" in html and "$639.06" in html
+    assert "Trove shows the 50 most recent here" in html
+
+
+def test_price_ranges_and_spaced_dollars_stay_text(node_available):
+    for text in ("It costs $5 to $10 a month.", "Pay $ 20 now and $ 30 later.", "Escaped \\$x\\$ stays."):
+        assert "math-stub" not in _run_markdown_case(text, katex=True), text
+
+
+def test_real_inline_math_still_renders(node_available):
+    html = _run_markdown_case("Area is $\\pi r^2$ and $x$ is a variable.", katex=True)
+    assert "<math-stub>\\pi r^2</math-stub>" in html
+    assert "<math-stub>x</math-stub>" in html

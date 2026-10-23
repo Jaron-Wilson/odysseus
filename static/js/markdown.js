@@ -684,8 +684,10 @@ export function mdToHtml(src, opts) {
         return placeholder;
       } catch (e) { return match; }
     });
-    // Inline math: $...$  (not preceded/followed by $ or digit, not spanning multiple lines)
-    s = s.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (match, math) => {
+    // Inline math: $...$ on one line, by Pandoc's rule so prices stay text: the opening $ has
+    // no space after it, the closing $ has no space before it and no digit after it. Without
+    // this, "$5,313.58 ... a $639.06 charge" rendered as one italic equation.
+    s = s.replace(/(?<![\$\\])\$(?![\$\s])([^\$\n]*?[^\$\s\\])\$(?![\$\d])/g, (match, math) => {
       try {
         const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
