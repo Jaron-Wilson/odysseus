@@ -1,18 +1,12 @@
-"""Google products behind one Google account connection per user.
+"""The Google account connection the core keeps, one per user.
 
     connection.py  the connection: which products are on, the encrypted
                    refresh token, access tokens, incremental consent, revoke
-    products.py    the products, their scopes and their tools (data only, so
-                   the tool lists can import it without pulling in httpx)
-    drive.py       Google Drive: search, read/export, upload, folders
-    docs.py        Google Docs: read as Markdown-ish text, create, edit
-    sheets.py      Google Sheets: tabs, read, write, append, create
-    slides.py      Google Slides: read text, create a deck from an outline
-    tasks.py       Google Tasks: lists, tasks, create
-    contacts.py    Google Contacts: search
-    tools.py       the agent's google_* tools, owner scoped, gated per product
+    products.py    the products the core uses (Calendar, with Meet) and
+                   their scopes (data only)
 
-Settings > Google turns each product on (asking Google for just that
-product's permission) or off. Routes: routes/google_routes.py. Guide,
-including the Google Cloud Console steps: docs/google.md.
+Drive, Docs, Sheets, Slides, Tasks and Contacts moved to the Google add-on
+(mod `google`, repository Jaron-Wilson/odysseus-google). Settings > Google
+turns Calendar on or off and points to the add-on for the rest. Routes:
+routes/google_routes.py. Guide: docs/google.md.
 """

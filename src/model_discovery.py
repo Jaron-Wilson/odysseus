@@ -1,4 +1,3 @@
-import subprocess
 import json
 import time
 import httpx
@@ -16,14 +15,6 @@ _hosts_cache_time: float = 0
 _HOSTS_CACHE_TTL = 60  # seconds
 
 
-def _parse_tailscale_status(raw: str) -> Dict[str, Any]:
-    try:
-        data = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
 def _first_tailscale_ipv4(value: Any) -> Optional[str]:
     if not isinstance(value, list):
         return None
@@ -34,56 +25,39 @@ def _first_tailscale_ipv4(value: Any) -> Optional[str]:
 
 
 def discover_tailscale_hosts() -> List[str]:
-    """Discover online Tailscale peers, returning their IPv4 addresses."""
+    """This server and its online tailnet peers, as IPv4 addresses to scan.
+
+    The peers come from the network add-on (src/machines.py, `network.peers`).
+    Without it the list is empty and discovery scans the default host, Docker's
+    host and the hosts in the environment."""
     global _hosts_cache, _hosts_cache_time
 
     now = time.time()
     if _hosts_cache and (now - _hosts_cache_time) < _HOSTS_CACHE_TTL:
         return list(_hosts_cache)
 
-    hosts = []
+    hosts: List[str] = []
     try:
-        result = subprocess.run(
-            ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=5
-        )
-        if result.returncode != 0:
-            return hosts
-
-        data = _parse_tailscale_status(result.stdout)
-        if not data:
-            return hosts
-
-        # Add self
-        self_data = data.get("Self") if isinstance(data.get("Self"), dict) else {}
-        self_ip = _first_tailscale_ipv4(self_data.get("TailscaleIPs"))
-        if self_ip:
-            hosts.append(self_ip)
-
-        # Add online peers (skip funnel-ingress-nodes and android devices)
-        peers = data.get("Peer") if isinstance(data.get("Peer"), dict) else {}
-        for peer in peers.values():
-            if not isinstance(peer, dict):
+        from src import machines
+        all_peers = machines.peers()
+    except Exception as e:
+        logger.warning(f"Peer discovery failed: {e}")
+        return hosts
+    # Self first, then online peers (skip funnel-ingress-nodes, phones and
+    # machines shared in from someone else's tailnet).
+    for p in sorted(all_peers, key=lambda p: not p.get("is_self")):
+        if not p.get("is_self"):
+            if not p.get("online") or p.get("shared"):
                 continue
-            if not peer.get("Online"):
+            if p.get("name") == "funnel-ingress-node" or p.get("os") in ("android", "ios"):
                 continue
-            hostname = peer.get("HostName", "")
-            if hostname == "funnel-ingress-node":
-                continue
-            os_name = peer.get("OS", "")
-            if os_name == "android":
-                continue
-            peer_ip = _first_tailscale_ipv4(peer.get("TailscaleIPs"))
-            if peer_ip:
-                hosts.append(peer_ip)
-
+        ip = _first_tailscale_ipv4(p.get("ips"))
+        if ip and ip not in hosts:
+            hosts.append(ip)
+    if hosts:
         _hosts_cache = hosts
         _hosts_cache_time = now
-        logger.info(f"Tailscale discovery found {len(hosts)} hosts: {hosts}")
-    except FileNotFoundError:
-        logger.debug("tailscale command not found")
-    except Exception as e:
-        logger.warning(f"Tailscale discovery failed: {e}")
-
+        logger.info(f"Tailnet discovery found {len(hosts)} hosts: {hosts}")
     return hosts
 
 

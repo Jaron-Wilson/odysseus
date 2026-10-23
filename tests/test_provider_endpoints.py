@@ -215,15 +215,12 @@ class TestResolveUrlTailscale:
         def _fail(*a, **k):
             raise socket.gaierror("no DNS")
         monkeypatch.setattr(er.socket, "getaddrinfo", _fail)
-        peers = {"Peer": {"x": {
-            "HostName": "myhost",
-            "DNSName": "myhost.tail.ts.net.",
-            "TailscaleIPs": ["100.64.0.5"],
-        }}}
-        monkeypatch.setattr(
-            er.subprocess, "run",
-            lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=json.dumps(peers)),
-        )
+        # The peers come from the network add-on (src/machines.py).
+        from src import machines
+        monkeypatch.setattr(machines, "peers", lambda refresh=False: [{
+            "host": "myhost", "name": "myhost", "dns": "myhost.tail.ts.net",
+            "ips": ["fd7a:115c:a1e0::5", "100.64.0.5"], "os": "linux", "online": True,
+            "is_self": False, "shared": False, "last_seen": "", "age_days": 0.0}])
         # Port is preserved, host swapped for the Tailscale IP.
         assert er.resolve_url("http://myhost:7000/api") == "http://100.64.0.5:7000/api"
 
@@ -231,10 +228,8 @@ class TestResolveUrlTailscale:
         def _fail(*a, **k):
             raise socket.gaierror("no DNS")
         monkeypatch.setattr(er.socket, "getaddrinfo", _fail)
-        monkeypatch.setattr(
-            er.subprocess, "run",
-            lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=json.dumps({"Peer": {}})),
-        )
+        from src import machines
+        monkeypatch.setattr(machines, "peers", lambda refresh=False: [])
         assert er.resolve_url("http://myhost:7000/api") == "http://myhost:7000/api"
 
     def test_url_without_hostname_is_returned_as_is(self):

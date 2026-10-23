@@ -15,6 +15,10 @@ matched with fnmatch: "print-hub/print.*", "*/print.failed", "*.failed".
 Each event also fires the core's own event bus (src/event_bus.py) as
 "mod:<mod id>:<type>", so a scheduled task can be triggered by it.
 
+A capability's events (messaging.sms.received) are only emitted by its
+providers and only delivered to mods that declare the capability; see
+src/mods/capabilities.py.
+
 A short history (the last HISTORY events) is kept for the Mods page.
 """
 from __future__ import annotations
@@ -81,12 +85,21 @@ def subscriptions(mod_id: str) -> List[Dict[str, str]]:
     return out
 
 
-def _targets(source: str, etype: str) -> List[Tuple[str, str]]:
-    """(mod id, path) for every enabled subscriber with a matching pattern."""
+def _targets(source: str, etype: str, owner: Optional[str] = None) -> List[Tuple[str, str]]:
+    """(mod id, path) for every enabled subscriber with a matching pattern.
+
+    A capability's event (messaging.sms.received, src/mods/capabilities.py)
+    only goes to mods that declare that capability, and that the user it is
+    for may use: a text is never delivered to a mod that did not ask for
+    texts when it was installed."""
+    from src.mods import access, capabilities
+    cap = capabilities.event_capability(etype)
     out = []
     for entry in registry.list_mods():
         mid = entry["id"]
         if not entry.get("enabled") or "events.subscribe" not in (entry.get("granted_permissions") or []):
+            continue
+        if cap and (not capabilities.declares(entry, cap) or (owner and not access.may_use(entry, owner))):
             continue
         seen_paths = set()
         for sub in subscriptions(mid):
@@ -123,8 +136,14 @@ def publish(source: str, etype: str, data: Any, owner: Optional[str] = None) -> 
         raise ValueError("event data is larger than 64 KB")
     event = {"id": uuid.uuid4().hex[:16], "source": source, "type": etype, "data": json.loads(raw),
              "ts": time.time()}
-    targets = [t for t in _targets(source, etype) if t[0] != source]
+    targets = [t for t in _targets(source, etype, owner) if t[0] != source]
     event_view = dict(event, delivered_to=[t[0] for t in targets])
+    from src.mods import capabilities
+    if capabilities.event_capability(etype):
+        # The Mods page's history is for every admin: keep a text's size, not its words.
+        d = event["data"] if isinstance(event["data"], dict) else {}
+        event_view["data"] = {k: (f"({len(v)} characters)" if k == "text" and isinstance(v, str) else v)
+                              for k, v in d.items()}
     _history.append(event_view)
     for mid, path in targets:
         task = asyncio.get_running_loop().create_task(_deliver(mid, path, event))

@@ -63,6 +63,9 @@ PERMISSIONS: Dict[str, str] = {
     "network.lan": "Talk to machines on your local network (informational for process mods)",
     "storage": "Keep data in a key-value store the core holds for it",
     "llm.call": "Ask your configured AI models questions (uses your model routing and your usage)",
+    "stats.read": "Read server-wide activity: model speed, coder runs and their transcripts, what is running "
+                  "(only for a mod that only admins may use)",
+    "machines.read": "See the machines on your tailnet: names, addresses, operating system, online or not",
 }
 
 RUNTIME_TYPES = ("process", "docker")
@@ -195,6 +198,14 @@ def validate(raw: Any) -> Dict[str, Any]:
         errors.append("`min_core` must look like 0.1")
     elif not core_satisfies(out["min_core"]):
         errors.append(f"this mod needs mod API {out['min_core']}; this Odysseus has {CORE_API_VERSION}")
+
+    # Only admins may ever use it (a shell on the server, say): the "Who can
+    # use it" setting is fixed to admins (src/mods/access.py).
+    admin_only = raw.get("admin_only", False)
+    if not isinstance(admin_only, bool):
+        errors.append("`admin_only` must be true or false")
+        admin_only = False
+    out["admin_only"] = admin_only
 
     # ── runtime ──
     rt = raw.get("runtime")
@@ -333,6 +344,10 @@ def validate(raw: Any) -> Dict[str, Any]:
         errors.append("`events.emits` needs the events.emit permission")
     if out["events"]["subscribes"] and "events.subscribe" not in out["permissions"]:
         errors.append("`events.subscribes` needs the events.subscribe permission")
+
+    # ── capabilities (src/mods/capabilities.py) ──
+    from src.mods import capabilities
+    out.update(capabilities.check(raw, out["events"], errors, warnings))
 
     # ── tutorial (src/mods/tutorial.py) ──
     from src.mods import tutorial

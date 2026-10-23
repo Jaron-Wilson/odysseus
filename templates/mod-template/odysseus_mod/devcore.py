@@ -17,6 +17,10 @@ It does what the real core does for a mod, minus the real channels:
     --user, streaming the response through;
   - delivers events the mod emits back to its own webhook when it subscribed
     to them (so an emit/subscribe round trip can be tried alone);
+  - brokers capability calls (/api/mods/v1/cap/...): messaging.sms is a fake
+    gateway (texts to SMS_NUMBER are printed and listed), a capability the mod
+    provides itself is routed to its /mod/cap/..., and POST /devcore/sms
+    {"text"} pretends the user texted in (messaging.sms.received);
   - shows a page at / with the mod's tabs and cards, a tool tester, and the
     notifications and events so far.
 
@@ -47,9 +51,12 @@ PERMS_FOR = {
     ("POST", "notify"): "notify", ("POST", "events"): "events.emit",
     ("GET", "events/subscriptions"): "events.subscribe", ("POST", "events/subscriptions"): "events.subscribe",
     ("DELETE", "events/subscriptions"): "events.subscribe", ("GET", "devices"): "devices.read",
-    ("POST", "llm/chat"): "llm.call",
+    ("POST", "llm/chat"): "llm.call", ("GET", "machines"): "machines.read", ("GET", "stats"): "stats.read",
 }
 FAKE_DEVICES = [{"name": "dev-phone", "kind": "phone", "commands": ["notify", "open_url"], "online": True}]
+FAKE_MACHINES = [{"host": "dev-pc", "name": "DEV-PC", "dns": "dev-pc.example.ts.net", "ips": ["100.64.0.2"],
+                  "os": "windows", "online": True, "last_seen": "", "is_self": False, "shared": False,
+                  "ssh_user": ""}]
 
 
 def tutorial_problems(manifest: Dict[str, Any], mod_dir: str = ".") -> List[str]:
@@ -79,6 +86,8 @@ def free_port() -> int:
 
 
 class DevCore:
+    SMS_NUMBER = "+15550100000"     # the fake messaging.sms gateway's "your own number"
+
     def __init__(self, mod_dir: str = ".", port: int = 0, user: str = "dev", mod_port: Optional[int] = None,
                  state_dir: Optional[str] = None):
         with open(os.path.join(mod_dir, "odysseus-mod.json"), "r", encoding="utf-8") as f:
@@ -93,9 +102,17 @@ class DevCore:
         os.makedirs(self.state_dir, exist_ok=True)
         self.notifications: List[Dict[str, Any]] = []
         self.events: List[Dict[str, Any]] = []
+        self.texts: List[Dict[str, Any]] = []      # messaging.sms sends
         self.subs: List[Dict[str, str]] = [{"pattern": p, "path": (self.manifest.get("events") or {}).get(
             "webhook", "/mod/events")} for p in (self.manifest.get("events") or {}).get("subscribes", [])]
         self.tool_refreshes = 0
+        # What machines and stats answer; tests replace them.
+        self.machines: List[Dict[str, Any]] = [dict(m) for m in FAKE_MACHINES]
+        self.stats: Dict[str, Any] = {"now": time.time(), "hours": 24, "windows": [1, 24, 168, 720],
+                                      "live": {"replies": [], "coders": [], "shell_jobs": [], "queued_messages": 0},
+                                      "chat": {"hours": 24, "replies": 0, "models": [], "series": []},
+                                      "coders": {"runs": 0, "coders": [], "recent": []}}
+        self.transcripts: Dict[str, Dict[str, Any]] = {}
         self.tools_seen: List[str] = []
         self.warnings = tutorial_problems(self.manifest, mod_dir)
         for w in self.warnings:
@@ -211,6 +228,8 @@ class DevCore:
             perm = "storage"
         if path.startswith("devices/") and path.endswith("/command"):
             perm = "devices.control"
+        if path.startswith("stats/"):
+            perm = "stats.read"
         if perm and perm not in self.perms:
             return 403, {"detail": f"This mod was not granted the {perm} permission"}
         if path == "me":
@@ -256,6 +275,13 @@ class DevCore:
             return 200, {"ok": True, "queued": True}
         if path == "devices":
             return 200, {"devices": FAKE_DEVICES}
+        if path == "machines":
+            return 200, {"machines": self.machines}
+        if path == "stats":
+            return 200, {"scope": "devops", **self.stats}
+        if path.startswith("stats/transcripts/"):
+            t = self.transcripts.get(path.rsplit("/", 1)[1])
+            return (200, t) if t else (404, {"detail": "No transcript to show for this run"})
         if path.startswith("devices/"):
             print(f"[devcore] device command {body}", flush=True)
             return 200, {"ok": True, "devcore": True}
@@ -292,7 +318,75 @@ class DevCore:
                 return 200, {"content": out["choices"][0]["message"]["content"], "model": out.get("model")}
             last = next((m.get("content", "") for m in reversed(body.get("messages") or []) if m.get("role") == "user"), "")
             return 200, {"content": f"(devcore has no model) You said: {last[:200]}", "model": "devcore"}
+        if path == "cap" and method == "GET":
+            return 200, self.capabilities()
+        if path.startswith("cap/") and method == "POST":
+            cap, _, action = path[4:].partition("/")
+            return self.cap_call(cap, action, body)
         return 404, {"detail": "Not found"}
+
+    # ── capabilities ──
+    def _declared(self) -> List[str]:
+        return list((self.manifest.get("requires") or []) + (self.manifest.get("optional") or []))
+
+    def _available(self, cap: str) -> bool:
+        return cap == "messaging.sms" or cap in (self.manifest.get("provides") or [])
+
+    def capabilities(self) -> Dict[str, Any]:
+        def row(c):
+            return {"id": c, "available": self._available(c),
+                    "provider": ({"kind": "core", "id": "core", "name": "devcore"} if c == "messaging.sms"
+                                 else {"kind": "mod", "id": self.mod_id, "name": self.mod_id})
+                    if self._available(c) else None}
+        req = [row(c) for c in self.manifest.get("requires") or []]
+        opt = [row(c) for c in self.manifest.get("optional") or []]
+        return {"provides": [{"id": c} for c in self.manifest.get("provides") or []], "requires": req,
+                "optional": opt, "missing": [r["id"] for r in req if not r["available"]],
+                "missing_optional": [r["id"] for r in opt if not r["available"]]}
+
+    def cap_call(self, cap: str, action: str, body: Dict[str, Any]):
+        """Like the core's broker: the mod must declare it; messaging.sms is a
+        fake gateway whose only allowed number is SMS_NUMBER (texts are printed
+        and listed); a capability the mod provides itself is routed to it."""
+        if cap not in self._declared():
+            return 403, {"detail": f"This mod did not declare {cap} in `requires` or `optional`"}
+        args = {k: v for k, v in body.items() if k != "user"}
+        if cap == "messaging.sms":
+            if action == "status":
+                return 200, {"ok": True, "available": True, "can_send": True, "can_receive": True,
+                             "targets": ["*" * 8 + self.SMS_NUMBER[-4:]], "provider": "core"}
+            if action != "send":
+                return 404, {"detail": f"messaging.sms has no action {action!r} (send, status)"}
+            to = args.get("to") or self.SMS_NUMBER
+            if to != self.SMS_NUMBER:
+                return 403, {"detail": "That number is not the user's own allowed number"}
+            if not str(args.get("text") or "").strip():
+                return 400, {"detail": "send needs a `text`"}
+            self.texts.append({"to": to, "text": args["text"], "ts": time.time()})
+            print(f"[devcore] text to {to}: {args['text']}", flush=True)
+            return 200, {"ok": True, "to": to, "parts": 1, "via": "devcore", "capability": cap, "action": action,
+                         "provider": "core"}
+        if cap in (self.manifest.get("provides") or []):
+            conn, r = self.mod_request("POST", f"/mod/cap/{cap}/{action}", json.dumps(args).encode(), None,
+                                       {"Content-Type": "application/json", "X-Odysseus-Caller": self.mod_id})
+            try:
+                out = json.loads(r.read() or b"{}")
+            finally:
+                conn.close()
+            if r.status >= 400:
+                return r.status, {"detail": out.get("error") or f"HTTP {r.status}"}
+            return 200, dict(out, ok=out.get("ok", True), capability=cap, action=action, provider=self.mod_id)
+        return 424, {"detail": f"Nothing provides {cap} under devcore", "missing": cap}
+
+    def receive_text(self, text: str, sender: Optional[str] = None) -> Dict[str, Any]:
+        """Pretend the user texted Odysseus: messaging.sms.received, delivered
+        to the mod's subscriptions when it declared messaging.sms."""
+        ev = {"id": secrets.token_hex(8), "source": "core", "type": "messaging.sms.received",
+              "data": {"from": sender or self.SMS_NUMBER, "text": text, "user": self.user, "provider": "core"},
+              "ts": time.time()}
+        if "messaging.sms" in self._declared() + list(self.manifest.get("provides") or []):
+            self._deliver(ev)
+        return ev
 
     def index_page(self) -> str:
         ui = self.manifest.get("ui") or {}
@@ -307,6 +401,8 @@ class DevCore:
                         f"{html.escape(str(n.get('body', '')))}</li>" for n in reversed(self.notifications[-20:]))
         evs = "".join(f"<li>{html.escape(e['type'])} {html.escape(json.dumps(e['data'])[:120])}</li>"
                       for e in reversed(self.events[-20:]))
+        texts = "".join(f"<li>to {html.escape(t['to'])}: {html.escape(str(t['text'])[:200])}</li>"
+                        for t in reversed(self.texts[-20:]))
         return f"""<!doctype html><meta charset=utf-8><title>devcore: {html.escape(self.mod_id)}</title>
 <body style="font:14px system-ui;background:#111;color:#ddd;padding:20px;max-width:900px">
 <h1 style="font-size:18px">devcore for {html.escape(self.manifest.get('name', self.mod_id))}</h1>
@@ -318,7 +414,10 @@ class DevCore:
 .then(r=>r.text()).then(t=>this.o.textContent=t)"><input name=n placeholder="tool name">
 <input name=a value="{{}}" size=40><button>Call</button><pre name=o id=o></pre></form>
 <h2 style="font-size:15px">Notifications</h2><ul>{notes or '<li>None</li>'}</ul>
-<h2 style="font-size:15px">Events</h2><ul>{evs or '<li>None</li>'}</ul>"""
+<h2 style="font-size:15px">Events</h2><ul>{evs or '<li>None</li>'}</ul>
+<h2 style="font-size:15px">Texts (messaging.sms)</h2><ul>{texts or '<li>None</li>'}</ul>
+<form onsubmit="event.preventDefault();fetch('/devcore/sms',{{method:'POST',body:JSON.stringify({{text:this.t.value}})}})
+.then(()=>location.reload())"><input name=t placeholder="text the mod as the user" size=40><button>Text in</button></form>"""
 
     def _handler(self):
         core = self
@@ -361,6 +460,12 @@ class DevCore:
                     except json.JSONDecodeError:
                         args = {}
                     return self._reply(200, core.call_tool(path.rsplit("/", 1)[-1], args))
+                if path == "/devcore/sms" and self.command == "POST":
+                    try:
+                        b = json.loads(self._body() or b"{}")
+                    except json.JSONDecodeError:
+                        b = {}
+                    return self._reply(200, core.receive_text(str(b.get("text") or ""), b.get("from")))
                 prefix = f"/mods/{core.mod_id}"
                 if path == prefix:
                     self.send_response(307)

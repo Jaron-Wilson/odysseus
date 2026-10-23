@@ -730,9 +730,6 @@ app.include_router(setup_ide_routes())
 # (routes/claude_sessions_routes.py). The Claude sessions page is the Programming mod now.
 from routes.claude_sessions_routes import setup_claude_sessions_routes
 app.include_router(setup_claude_sessions_routes())
-# The ADS-B receiver (a Pi on the tailnet): status and its live map, admin only (routes/adsb_routes.py).
-from routes.adsb_routes import setup_adsb_routes
-app.include_router(setup_adsb_routes())
 # PC game streaming: the Games page (Sunshine on the PC, Moonlight Web at /play/), admin only (routes/games_routes.py).
 from routes.games_routes import setup_games_routes
 app.include_router(setup_games_routes())
@@ -792,9 +789,8 @@ app.include_router(setup_copilot_routes())
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
 app.include_router(setup_chatgpt_subscription_routes())
 
-# Sign in with ChatGPT (official ChatGPT plan usage, Responses API)
-from routes.chatgpt_plan_routes import setup_chatgpt_plan_routes
-app.include_router(setup_chatgpt_plan_routes())
+# Sign in with ChatGPT is the ChatGPT add-on now (Jaron-Wilson/odysseus-chatgpt):
+# its models are an endpoint mod://chatgpt/v1 (src/mods/llm_endpoints.py).
 
 # TTS
 from routes.tts_routes import setup_tts_routes

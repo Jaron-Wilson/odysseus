@@ -1,5 +1,6 @@
 """Who may use a mod. A mod is "admins" (the default) or "users" (every
-signed-in user). Managing mods (install, update, remove...) is always admin only."""
+signed-in user); a mod whose manifest says `admin_only` is always "admins".
+Managing mods (install, update, remove...) is always admin only."""
 from __future__ import annotations
 
 import os
@@ -30,7 +31,15 @@ def is_admin_name(user: Optional[str]) -> bool:
         return False
 
 
+def admin_only(entry: dict) -> bool:
+    """A mod whose manifest says `admin_only`: never for other users, whatever
+    its access setting says."""
+    return bool((entry.get("manifest") or {}).get("admin_only"))
+
+
 def may_use(entry: dict, user: Optional[str]) -> bool:
+    if admin_only(entry):
+        return is_admin_name(user)
     return entry.get("access") == "users" or is_admin_name(user)
 
 

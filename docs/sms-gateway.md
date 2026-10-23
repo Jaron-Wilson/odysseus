@@ -211,6 +211,15 @@ queueing.
 So the setup that works: the gateway phone keeps its carrier number, and you
 text that number from your Google Voice number (or any other phone).
 
+## Mods
+
+The gateway is the built-in provider of the `messaging.sms` capability
+(`docs/mods.md`, "Capabilities"). A mod that lists `messaging.sms` in
+`requires` or `optional` can text you through it (only your own numbers here,
+unless you grant it more in Settings > Mods; rate limited and logged), and
+gets every text the gateway accepts as the event `messaging.sms.received`.
+The commands above still run as before.
+
 ## Troubleshooting
 
 - **Nothing happens.** Check the forwarder's log for the HTTP status. `404`

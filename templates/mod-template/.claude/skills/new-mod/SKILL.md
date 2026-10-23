@@ -16,6 +16,8 @@ From the request, write down in one or two lines:
 - each page (Workspace tab), home card and the settings it needs
 - each agent tool: what a user would say to trigger it, and whether it controls a device
 - notifications (when, which level) and events (emitted types, subscribed patterns)
+- what it needs from other mods or gives them (capabilities like `messaging.sms` for texting the
+  user): hard needs go in `requires`, nice-to-haves in `optional`, what it serves in `provides`
 - the smallest permission set that covers all of that
 - what a new user must learn first (this becomes the tutorial in step 5)
 
@@ -43,7 +45,9 @@ In `odysseus-mod.json`:
 - `ui.tabs`, `ui.home_cards` (pick a `height` that fits the content), `ui.settings_path`.
 - Each tab's `section`: the sidebar group it belongs with (`organize`, `create`, `build`,
   `system`, or `mods`, the default), and `after`, the built-in page it should follow (a printer
-  mod: `"section": "create", "after": "print"`). See CLAUDE.md.
+  mod: `"section": "create", "after": "compare"`). See CLAUDE.md.
+- `requires` / `optional` / `provides`: the capabilities from step 1 (CLAUDE.md, "Capabilities").
+  Prefer `optional` unless the mod is useless without it.
 - `tools.keywords`: the words people will actually type (`garage`, `door`), not the mod id only.
 - `events.emits` (`<id>.<thing>`) and `events.subscribes` (`<other-mod>/<type glob>`).
 - `runtime.start`: `lazy` unless the mod must watch something all the time (then `boot`).
@@ -61,6 +65,9 @@ In `<python_name>/app.py`, one handler per feature, using `ModApp`:
 - Tools that only exist once the mod is set up: after saving the settings that enable them, call
   `app.core.refresh_tools()` so the agent sees them without a restart.
 - Events: `app.core.emit("<id>.<thing>", data)` and `@app.on_event(pattern)`.
+- Other mods' capabilities: `app.core.cap("<capability>", "<action>", {...})`; texts to the user:
+  `app.core.send_text(...)`. Catch `CoreError` 424 (no provider) for `optional` ones. Serving one:
+  `@app.provide("<capability>", "<action>")`.
 - Settings: `app.core.settings()` / `app.core.save_settings(...)`; small state:
   `app.core.kv_get/kv_put` (needs `storage`); files only under `MOD_DATA_DIR`.
 - Slow or periodic work goes in a background thread started from `main()`, never in `/health`.

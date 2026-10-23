@@ -212,7 +212,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
         normalize_base,
         resolve_endpoint_runtime,
     )
-    from src.chatgpt_plan import uses_request_scoped_bearer
+    from src.endpoint_resolver import uses_request_scoped_bearer
 
     current_url = sess.endpoint_url or ""
     owner = getattr(sess, "owner", None)
@@ -240,7 +240,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
         ping_url = build_models_url(base)
         headers = build_headers(api_key, base)
         try:
-            if ping_url:
+            if ping_url and not uses_request_scoped_bearer(base):
                 r = _req.get(ping_url, headers=headers, timeout=5)
                 r.raise_for_status()
                 data = r.json()
@@ -374,9 +374,9 @@ def _has_auth_keys(headers) -> bool:
 def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
     """Ensure session has auth headers — resolve from endpoint DB if missing."""
     try:
-        # ChatGPT Subscription and Sign in with ChatGPT both use short-lived
-        # OAuth bearers: re-resolve (and refresh) per request, never persist.
-        from src.chatgpt_plan import uses_request_scoped_bearer
+        # ChatGPT Subscription uses short-lived OAuth bearers (and an add-on's
+        # endpoint is signed per request): re-resolve per request, never persist.
+        from src.endpoint_resolver import uses_request_scoped_bearer
         is_chatgpt_subscription = uses_request_scoped_bearer(getattr(sess, "endpoint_url", "") or "")
     except Exception:
         is_chatgpt_subscription = False

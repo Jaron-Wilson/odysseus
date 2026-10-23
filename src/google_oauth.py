@@ -1,7 +1,6 @@
 """The Google OAuth client this server uses, shared by Sign in with Google
 (routes/auth_routes.py) and the Google account connection
-(src/google_workspace/connection.py: Calendar for Meet, Drive, Docs, Sheets,
-Slides, Tasks and Contacts).
+(src/google_workspace/connection.py: Calendar, with Meet).
 
 One client ID and secret, from settings first then the environment
 (GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET), and one redirect URI,

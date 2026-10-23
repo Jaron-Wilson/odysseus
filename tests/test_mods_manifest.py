@@ -15,6 +15,14 @@ def _base(**kw):
     return m
 
 
+def test_admin_only_is_a_boolean():
+    assert mf.validate(_base())["admin_only"] is False
+    assert mf.validate(_base(admin_only=True))["admin_only"] is True
+    with pytest.raises(mf.ManifestError) as e:
+        mf.validate(_base(admin_only="yes"))
+    assert "admin_only" in str(e.value)
+
+
 def test_hello_mod_manifest_is_valid():
     m = mf.load(HELLO)
     assert m["id"] == "hello-mod"

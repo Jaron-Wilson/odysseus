@@ -15,7 +15,7 @@
 //
 // settings.js calls load() whenever the Mods tab is opened.
 
-import { initBrowse, loadBrowse } from './modsBrowse.js';
+import { initBrowse, loadBrowse, setBrowseCapability } from './modsBrowse.js';
 
 const $ = (id) => document.getElementById(id);
 const API = '/api/mods';
@@ -33,9 +33,52 @@ async function api(method, path, body) {
   try { data = await res.json(); } catch (_) { /* empty */ }
   if (!res.ok) {
     const extra = Array.isArray(data.errors) && data.errors.length ? `: ${data.errors.join('; ')}` : '';
-    throw new Error((typeof data.detail === 'string' ? data.detail : `HTTP ${res.status}`) + extra);
+    const err = new Error((typeof data.detail === 'string' ? data.detail : `HTTP ${res.status}`) + extra);
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
   return data;
+}
+
+// Capabilities (src/mods/capabilities.py): what a mod provides, needs
+// (`requires`, hard) and may use (`optional`, soft), with who provides each.
+const capName = (c) => `<code title="${esc(c.description || '')}">${esc(c.id)}</code>${c.known && c.title ? ` (${esc(c.title)})` : ''}`;
+const findBtn = (id) => `<button class="settings-btn" type="button" data-mods-find-cap="${esc(id)}" style="padding:0 8px;font-size:12px" title="Search Browse for mods that provide ${esc(id)}">Find a provider</button>`;
+const providerText = (c) => (c.provider ? ` provided by ${esc(c.provider.name)}` : '');
+
+function capabilityLines(caps, opts) {
+  const o = opts || {};
+  if (!caps) return '';
+  const fresh = new Set(caps.new || []);
+  const isNew = (id) => (o.update && fresh.has(id) ? ' <strong>(new)</strong>' : '');
+  const lines = [];
+  for (const c of caps.provides || []) lines.push(`<li>Provides ${capName(c)}</li>`);
+  for (const c of caps.requires || []) {
+    lines.push(c.available
+      ? `<li>Needs ${capName(c)}${providerText(c)}${isNew(c.id)}</li>`
+      : `<li style="color:var(--red, #e5534b)">Needs ${capName(c)}${isNew(c.id)}: nothing installed provides it, so it will not work until you install a provider. ${findBtn(c.id)}</li>`);
+  }
+  for (const c of caps.optional || []) {
+    lines.push(c.available
+      ? `<li>Uses ${capName(c)} when available${providerText(c)}${isNew(c.id)}</li>`
+      : `<li>Works better with ${capName(c)}${isNew(c.id)}: it works without it. ${findBtn(c.id)}</li>`);
+  }
+  return lines.length ? `<ul class="admin-toggle-sub" style="margin:2px 0 0 18px;padding:0">${lines.join('')}</ul>` : '';
+}
+
+// "Text messages": extra numbers this admin lets the mod text (beyond their own).
+function grantRow(m) {
+  const caps = m.capabilities || {};
+  const uses = [...(caps.requires || []), ...(caps.optional || [])].some((c) => c.id === 'messaging.sms');
+  if (!uses) return '';
+  const nums = (((m.grants || {})['messaging.sms'] || {}).numbers || []).join(', ');
+  return `
+    <div class="settings-row" style="flex-wrap:wrap;gap:6px;margin-top:6px">
+      <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px;flex:1;min-width:260px" title="It can always text your own number (Settings > Calls & Meetings > Phone SMS). Add other numbers it may text for you, separated by commas.">Text messages: it may also text
+        <input type="text" class="settings-input" data-mod-grant-input="${esc(m.id)}" value="${esc(nums)}" placeholder="only your own number" style="flex:1;min-width:140px"></label>
+      <button class="settings-btn" type="button" data-mod-grant="${esc(m.id)}">Save</button>
+    </div>`;
 }
 
 function say(text, isError) {
@@ -104,8 +147,11 @@ function renderMod(m) {
     <div class="admin-toggle-sub">From ${esc(sourceText(m.source))}${m.commit ? ` (${esc(String(m.commit).slice(0, 10))})` : ''} · ${esc((m.runtime || {}).type || 'process')}, starts ${esc((m.runtime || {}).start || 'lazy')}${bits.length ? ` · ${bits.join(' · ')}` : ''}</div>
     ${err ? `<div class="admin-toggle-sub" style="color:var(--red, #d33)">${esc(err)}</div>` : ''}
     ${(m.warnings || []).map((w) => `<div class="admin-toggle-sub" style="color:var(--yellow, #d29922)">${esc(w)}</div>`).join('')}
+    ${((m.capabilities || {}).missing || []).length ? `<div class="admin-toggle-sub" data-mod-missing="${esc(m.id)}" style="color:var(--red, #e5534b)">Needs ${m.capabilities.missing.map((c) => `<code>${esc(c)}</code>`).join(', ')}, which nothing installed provides.</div>` : ''}
+    ${(m.dependents || []).length ? `<div class="admin-toggle-sub" data-mod-dependents="${esc(m.id)}">Other mods use what it provides: ${[...new Set(m.dependents.map((d) => d.name))].map(esc).join(', ')}.</div>` : ''}
     <details style="margin-top:4px"><summary class="admin-toggle-sub" style="cursor:pointer">Permissions</summary>
       <ul class="admin-toggle-sub" style="margin:4px 0 0 18px;padding:0">${perms}</ul></details>
+    ${capabilityLines(m.capabilities) ? `<details style="margin-top:4px"><summary class="admin-toggle-sub" style="cursor:pointer">Capabilities</summary>${capabilityLines(m.capabilities)}</details>` : ''}
     <div class="settings-row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
       ${m.enabled ? btn('disable', 'Disable') : btn('enable', 'Enable')}
       ${m.enabled ? (status === 'running' ? btn('restart', 'Restart') + btn('stop', 'Stop') : btn('start', 'Start')) : ''}
@@ -114,14 +160,14 @@ function renderMod(m) {
       ${btn('update', 'Update', 'Fetch the newest code from where it was installed (or another branch or tag)')}
       ${btn('rotate-token', 'New token', 'Give the mod a new API token; the old one stops working')}
       ${btn('remove', 'Remove')}
-      <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">Who can use it
+      ${m.admin_only ? '<span class="admin-toggle-sub" data-mod-admin-only title="Its manifest says admin_only: it gives admin powers, like a shell on this server">Admins only</span>' : `<label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">Who can use it
         <select class="settings-select" data-mod-access="${esc(m.id)}" style="width:auto">
           <option value="admins"${m.access !== 'users' ? ' selected' : ''}>Admins</option>
           <option value="users"${m.access === 'users' ? ' selected' : ''}>All users</option>
-        </select></label>
+        </select></label>`}
       <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">
         <input type="checkbox" data-mod-mute="${esc(m.id)}"${m.notify_muted ? ' checked' : ''}> Mute notifications</label>
-    </div>${placementRow(m)}
+    </div>${placementRow(m)}${grantRow(m)}
     <pre class="mods-log" data-mod-log="${esc(m.id)}" style="display:${_openLogs.has(m.id) ? 'block' : 'none'};max-height:260px;overflow:auto;font-size:11px;background:var(--bg-tertiary, rgba(0,0,0,.25));padding:8px;border-radius:6px;white-space:pre-wrap;margin-top:8px"></pre>
   </div>`;
 }
@@ -164,6 +210,8 @@ function renderStaged() {
     ${setup ? `<div class="admin-toggle-sub">After approval it runs these setup commands:<br>${setup}</div>` : ''}
     <div class="admin-toggle-sub" style="margin-top:6px"><strong>It asks for:</strong></div>
     <ul class="admin-toggle-sub" style="margin:2px 0 0 18px;padding:0">${perms}</ul>
+    ${capabilityLines(s.capabilities, { update: !!s.previous_version }) ? `<div class="admin-toggle-sub" style="margin-top:6px"><strong>Capabilities:</strong></div>${capabilityLines(s.capabilities, { update: !!s.previous_version })}` : ''}
+    ${s.admin_only ? '<div class="admin-toggle-sub" data-mod-admin-only style="margin-top:4px"><strong>Admins only.</strong> It gives admin powers (like a shell on this server), so only admins can ever use it.</div>' : ''}
     ${(s.warnings || []).map((w) => `<div class="admin-toggle-sub" style="color:var(--yellow, #d29922)">Note: ${esc(w)}</div>`).join('')}
     <div class="admin-toggle-sub" style="margin-top:6px">Adds ${(ui.tabs || []).length} tab(s), ${(ui.home_cards || []).length} home card(s)${s.tools ? ' and agent tools' : ''}.
       ${s.tutorial ? `It has a tutorial${s.tutorial.steps ? ` (${s.tutorial.steps} step${s.tutorial.steps > 1 ? 's' : ''})` : ''}, shown the first time someone opens it.` : '<strong>It has no tutorial.</strong>'}
@@ -200,6 +248,8 @@ function replaceMod(m) {
   const i = _mods.findIndex((x) => x.id === m.id);
   if (i >= 0) _mods[i] = m; else _mods.push(m);
   renderList();
+  // A provider came, went or changed: other mods' "Needs ..." lines change with it.
+  if (((m.capabilities || {}).provides || []).length) load();
   window.dispatchEvent(new CustomEvent('odysseus:mods-changed'));
 }
 
@@ -262,6 +312,13 @@ function setView(v) {
 async function confirmStaged(yes) {
   const s = _staged;
   if (!s) return;
+  // A hard requirement nobody provides: the mod will not work yet.
+  const missing = (s.capabilities || {}).missing || [];
+  let allowMissing = false;
+  if (yes && missing.length) {
+    if (!confirm(`${s.name} needs ${missing.join(', ')}, and nothing installed provides ${missing.length > 1 ? 'them' : 'it'}. It will not work until you install a provider (Find a provider searches Browse).\n\nOK installs it anyway, Cancel goes back.`)) return;
+    allowMissing = true;
+  }
   _staged = null;
   _origin = null;
   renderStaged();
@@ -273,12 +330,41 @@ async function confirmStaged(yes) {
   say(s.previous_version ? 'Updating…' : 'Installing…');
   try {
     const d = await api('POST', `${API}/install/confirm`, {
-      install_id: s.install_id, permissions: (s.permissions || []).map((p) => p.id),
+      install_id: s.install_id, permissions: (s.permissions || []).map((p) => p.id), allow_missing: allowMissing,
     });
     replaceMod(d.mod);
     $('mods-install-source').value = '';
     say(`${d.mod.name} ${s.previous_version ? 'updated' : 'installed'}.`);
   } catch (e) { say(e.message, true); }
+}
+
+// Disable or remove a mod other mods depend on: the server answers 409 with
+// the list; ask, then try again with force. Answers null when canceled.
+async function withDependents(m, verb, first, forced) {
+  try {
+    return await first();
+  } catch (e) {
+    if (e.status !== 409 || !(e.data || {}).dependents) throw e;
+    const lines = e.data.dependents.map((d) => `- ${d.name}: ${d.kind === 'requires' ? 'needs' : 'works better with'} ${d.capability}`);
+    if (!confirm(`${e.message}\n\n${lines.join('\n')}\n\nOK: ${verb.toLowerCase()} ${m.name || m.id} anyway. Cancel: keep it.`)) return null;
+    return forced();
+  }
+}
+
+async function saveGrant(id) {
+  const input = document.querySelector(`[data-mod-grant-input="${CSS.escape(id)}"]`);
+  const numbers = String(input?.value || '').split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
+  try {
+    replaceMod((await api('POST', `${API}/${encodeURIComponent(id)}/grants`, { capability: 'messaging.sms', numbers })).mod);
+    say(numbers.length ? `It may also text ${numbers.length} other number${numbers.length > 1 ? 's' : ''} for you.` : 'It may only text your own number.');
+  } catch (e) { say(e.message, true); }
+}
+
+// "Find a provider": Browse, showing only mods that provide the capability.
+function findProvider(cap) {
+  setBrowseCapability(cap);
+  setView('browse');
+  if (_staged) say(`Install a mod that provides ${cap} first, then install ${_staged.name} again.`);
 }
 
 async function onAction(btn) {
@@ -303,9 +389,12 @@ async function onAction(btn) {
       : 'Keep its data (settings and files) in case you install it again?\n\nOK keeps it, Cancel deletes it too.');
     const images = docker && confirm('Also remove the Docker images built for it?\n\nOK removes them, Cancel keeps them.');
     try {
-      await api('DELETE', `${API}/${encodeURIComponent(id)}?keep_data=${keep}&remove_images=${images}`);
+      const path = `${API}/${encodeURIComponent(id)}?keep_data=${keep}&remove_images=${images}`;
+      const done = await withDependents(m, 'Remove', () => api('DELETE', path), () => api('DELETE', `${path}&force=true`));
+      if (!done) { say('Canceled.'); return; }
       _mods = _mods.filter((x) => x.id !== id);
       renderList();
+      if (((m.capabilities || {}).provides || []).length) load();
       window.dispatchEvent(new CustomEvent('odysseus:mods-changed'));
       say(`${m.name || id} removed.`);
     } catch (e) { say(e.message, true); }
@@ -328,7 +417,11 @@ async function onAction(btn) {
   btn.disabled = true;
   say(`${action[0].toUpperCase()}${action.slice(1).replace('-', ' ')}…`);
   try {
-    const d = await api('POST', `${API}/${encodeURIComponent(id)}/${action}`);
+    const path = `${API}/${encodeURIComponent(id)}/${action}`;
+    const d = action === 'disable'
+      ? await withDependents(m, 'Disable', () => api('POST', path), () => api('POST', `${path}?force=true`))
+      : await api('POST', path);
+    if (!d) { say('Canceled.'); btn.disabled = false; return; }
     replaceMod(d.mod);
     const st = d.mod.state || {};
     say(st.status === 'failed' || st.status === 'backoff' ? (st.last_error || 'It did not start; see Logs.') : 'Done.',
@@ -365,6 +458,10 @@ async function onClick(ev) {
   const t = ev.target;
   const actionBtn = t.closest('[data-mod-action]');
   if (actionBtn) { onAction(actionBtn); return; }
+  const findCap = t.closest('[data-mods-find-cap]');
+  if (findCap) { findProvider(findCap.dataset.modsFindCap); return; }
+  const grantBtn = t.closest('[data-mod-grant]');
+  if (grantBtn) { saveGrant(grantBtn.dataset.modGrant); return; }
   if (t.closest('#mods-view-installed')) setView('installed');
   else if (t.closest('#mods-view-browse')) setView('browse');
   else if (t.closest('#mods-install-go')) prepareInstall();

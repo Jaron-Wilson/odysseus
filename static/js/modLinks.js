@@ -183,5 +183,5 @@ window.addEventListener('message', (ev) => {
 window.addEventListener('hashchange', _fromLocation);
 _fromLocation();
 
-window.modLinks = { route, openMod, openLegacy, openFallback, closeFallback, builtinAvailable };
+window.modLinks = { route, openMod, openLegacy, openFallback, closeFallback, builtinAvailable, browse: _browse };
 export default window.modLinks;
