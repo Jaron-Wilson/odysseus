@@ -394,6 +394,38 @@ def _setup_v1(router: APIRouter) -> None:
         runtime.log_line(e["id"], f"[odysseus] llm/chat via {model}")
         return {"content": text, "model": model}
 
+    # ── Model endpoints served by the mod (src/mods/llm_endpoints.py) ──
+    def _endpoint_user(e: Dict[str, Any], user: Any) -> str:
+        from src.mods import providers as prov, signing
+        if "llm.provider" not in prov.provides(e):
+            raise HTTPException(403, "Only a mod that provides llm.provider can register model endpoints")
+        user = str(user or "").strip()
+        if access.auth_disabled():
+            return user or signing.LOCAL_USER
+        if not user or not access.known_user(user) or not access.may_use(e, user):
+            raise HTTPException(400, "user must be an Odysseus user who may use this mod")
+        return user
+
+    @router.put("/api/mods/v1/llm/endpoint")
+    async def v1_llm_endpoint_put(request: Request):
+        """Show the mod's models in this user's model picker (one row per user,
+        base URL mod://<id>/v1)."""
+        from src.mods import llm_endpoints
+        e = _mod(request)
+        body = await _json(request)
+        user = _endpoint_user(e, body.get("user"))
+        models = body.get("models")
+        if not isinstance(models, list) or not all(isinstance(m, str) and 0 < len(m) <= 200 for m in models):
+            raise HTTPException(400, "models must be a list of model ids")
+        name = body.get("name") if isinstance(body.get("name"), str) else ""
+        return {"ok": True, "endpoint": llm_endpoints.upsert_endpoint(e["id"], user, models, name)}
+
+    @router.delete("/api/mods/v1/llm/endpoint")
+    async def v1_llm_endpoint_delete(request: Request, user: str = ""):
+        from src.mods import llm_endpoints
+        e = _mod(request)
+        return {"ok": True, "removed": llm_endpoints.remove_endpoint(e["id"], _endpoint_user(e, user))}
+
     @router.post("/api/mods/v1/tools/refresh")
     async def v1_tools_refresh(request: Request):
         """The mod's tools changed (it was configured, a device appeared...):

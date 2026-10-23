@@ -611,6 +611,37 @@ one is installed).
 | `llm.provider` | An OpenAI-compatible API under `v1/` (`v1/models`, `v1/chat/completions`) | Model endpoints: an endpoint whose URL is `mod://<id>/v1` |
 | `network.peers` | `peers`, `resolve` | Machines, model discovery and host names on a private network |
 
+#### Models from a mod (`llm.provider`)
+
+A mod that offers models (like the [ChatGPT add-on](https://github.com/Jaron-Wilson/odysseus-chatgpt))
+serves an OpenAI-compatible API at `/mod/cap/llm.provider/v1/` (`GET models`, `POST chat/completions`,
+streamed or not, with tool calls). Its endpoint rows have the base URL `mod://<id>/v1`, which stays the
+same across restarts; the core turns it into the mod's real address only when it sends a request
+(`src/mods/llm_endpoints.py`), with the signed identity of the user the chat belongs to, so the mod
+uses that user's own sign-in. The core never sees the mod's credentials. Without the mod, such a row
+answers "Install the add-on" instead of a connection error.
+
+The mod keeps its rows itself, one per user, so its models show in that user's model picker:
+
+| Call | Body / answer |
+|---|---|
+| `PUT /api/mods/v1/llm/endpoint` | `{user, models, name}`: adds or updates the user's row (`user` from the identity headers; with sign-in off, `local`). Answers `{ok, endpoint}` |
+| `DELETE /api/mods/v1/llm/endpoint?user=` | Removes it. Answers `{ok, removed}` |
+
+An error the mod answers as `{"error": {"type": "add_on", "message": "..."}}` (any HTTP status) is
+shown to the user as written, instead of the generic "rejected the API key" text.
+
+Only a mod whose manifest `provides` `llm.provider` may call them, and a row only ever points at that
+mod. Optional metadata in the manifest:
+
+```json
+"llm_provider": { "label": "ChatGPT", "usage_provider": "chatgpt-plan", "billing": "subscription", "tool_cap": true }
+```
+
+`usage_provider` is the provider name in usage rows and subscription plans (never one of the core's
+own, like `openai`); `billing` is `subscription`, `metered` or `local_free` (System > Usage);
+`tool_cap` keeps requests under OpenAI's 128 function tools (`src/tool_cap.py`).
+
 ### UI
 
 - Each `ui.tabs` entry is a Workspace tab. It is listed in the sidebar and in the Workspace "+"
@@ -891,6 +922,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/events.py`, `notify.py` | The event bus and notification fan-out |
 | `src/mods/tools.py` | Tool lists, selection per message and calls |
 | `src/mods/providers.py` | Capability providers: mods the core calls for a feature (`provides`) |
+| `src/mods/llm_endpoints.py` | Model endpoints served by a mod (`mod://<id>/v1`) |
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |
 | `static/js/modsSettings.js` | Settings > Mods |
 | `static/js/modsBrowse.js` | Settings > Mods > Browse |

@@ -2645,14 +2645,6 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    if _endpoint_supports is False and not _is_api_model:
-        try:
-            from src.chatgpt_plan import is_chatgpt_plan_base as _is_cgp
-            if _is_cgp(endpoint_url or ""):
-                logger.info("[agent] native tools are switched off for the ChatGPT endpoint; "
-                            "tools go to %s as fenced blocks in the prompt", model)
-        except Exception:
-            pass
     # Tools a trimmed or reordered list keeps first: a Company run's own
     # tools and the coding agent.
     _tool_priority = sorted(_company_tools.TOOL_NAMES) + ["claude_code"] if _company_run else ["claude_code"]

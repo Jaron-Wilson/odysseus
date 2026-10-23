@@ -79,13 +79,6 @@ def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Opti
     base = normalize_base(getattr(ep, "base_url", "") or "")
     api_key = getattr(ep, "api_key", None)
     auth_id = getattr(ep, "provider_auth_id", None)
-    from src.chatgpt_plan import is_chatgpt_plan_base
-    if is_chatgpt_plan_base(base):
-        # Sign in with ChatGPT: per-user tokens in the data dir, refreshed
-        # here before expiry. Raises NotSignedIn / ReauthRequired.
-        from src.chatgpt_plan import get_access_token
-
-        return base, get_access_token(owner if owner is not None else getattr(ep, "owner", None))
     if auth_id:
         from src.chatgpt_subscription import resolve_runtime_credentials
 
@@ -99,39 +92,41 @@ def _without_auth(headers: Dict[str, str]) -> Dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() != "authorization"}
 
 
+def uses_request_scoped_bearer(url: str) -> bool:
+    """True for endpoints whose credentials are never persisted on a session:
+    ChatGPT Subscription (a short-lived bearer) and an add-on's models
+    (mod://<id>/v1, signed per request by src/mods/llm_endpoints.py)."""
+    from src.mods.llm_endpoints import is_mod_url
+    if is_mod_url(url):
+        return True
+    try:
+        from src.chatgpt_subscription import is_chatgpt_subscription_base
+
+        return is_chatgpt_subscription_base(url)
+    except Exception:
+        return False
+
+
 def request_scoped_headers(url: str, headers: Optional[Dict], owner: Optional[str] = None) -> Optional[Dict]:
     """Headers with a current bearer for providers whose token is never persisted.
 
-    Sign in with ChatGPT and ChatGPT Subscription use short-lived OAuth
-    bearers, so sessions store ``headers = {}`` for them and the token has to
-    be resolved when the request is made (``sess.headers`` is reloaded from
-    the DB on every ``get_session``, which drops any request-local token).
-    llm_core calls this right before sending; every other provider gets
-    ``headers`` back unchanged.
+    ChatGPT Subscription uses short-lived OAuth bearers, so sessions store
+    ``headers = {}`` for it and the token has to be resolved when the request
+    is made (``sess.headers`` is reloaded from the DB on every
+    ``get_session``, which drops any request-local token). llm_core calls this
+    right before sending; every other provider gets ``headers`` back
+    unchanged. (An add-on's endpoint gets its signed identity in llm_core.)
 
     ``owner`` picks whose sign-in to use. When it is None and the caller
     already supplied a bearer, that bearer is kept as is.
     """
-    from src.chatgpt_plan import is_chatgpt_plan_base, uses_request_scoped_bearer
+    from src.mods.llm_endpoints import is_mod_url
 
-    if not url or not uses_request_scoped_bearer(url):
+    if not url or is_mod_url(url) or not uses_request_scoped_bearer(url):
         return headers
     out: Dict[str, str] = dict(headers) if isinstance(headers, dict) else {}
     has_auth = any(k.lower() == "authorization" for k in out)
     if has_auth and owner is None:
-        return out
-    if is_chatgpt_plan_base(url):
-        from src import chatgpt_plan
-
-        try:
-            token = chatgpt_plan.get_access_token(owner)
-        except Exception as e:
-            # Signed out or the refresh was rejected: drop any stale bearer so
-            # the caller gets the sign-in message instead of an upstream 401.
-            logger.info("ChatGPT plan token unavailable at request time: %s", type(e).__name__)
-            return _without_auth(out)
-        out = _without_auth(out)
-        out.update(chatgpt_plan.headers_for(token))
         return out
     if has_auth:
         # ChatGPT Subscription: a bearer resolved earlier in this request.
@@ -204,7 +199,8 @@ def resolve_url(url: str) -> str:
     """If a URL's hostname can't be resolved via DNS, try Tailscale."""
     parsed = urlparse(url)
     hostname = parsed.hostname
-    if not hostname:
+    if not hostname or parsed.scheme == "mod":
+        # mod://<id>/v1 is an add-on, resolved when a request is sent.
         return url
     ip = _resolve_tailscale_host(hostname)
     if ip:
@@ -257,7 +253,7 @@ def build_chat_url(base: str) -> str:
         return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama":
         return _ollama_api_root(base) + "/chat"
-    if provider in ("chatgpt-subscription", "chatgpt-plan"):
+    if provider == "chatgpt-subscription":
         return base.rstrip("/") + "/responses"
     return base + "/chat/completions"
 
@@ -270,7 +266,7 @@ def build_models_url(base: str) -> Optional[str]:
         return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama":
         return _ollama_api_root(base) + "/tags"
-    if provider in ("chatgpt-subscription", "chatgpt-plan"):
+    if provider == "chatgpt-subscription":
         return None
     return base + "/models"
 
@@ -290,9 +286,6 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     if provider == "chatgpt-subscription":
         from src.chatgpt_subscription import chatgpt_headers
         return chatgpt_headers(api_key)
-    if provider == "chatgpt-plan":
-        from src.chatgpt_plan import headers_for
-        return headers_for(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if provider == "openrouter":
