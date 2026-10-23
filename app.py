@@ -1363,6 +1363,9 @@ async def _startup_event():
     try:
         from src.mods import runtime as _mods_runtime
         _startup_tasks.append(asyncio.create_task(_mods_runtime.startup()))
+        # Which mods have an update: a check soon after start, then every 6 hours.
+        from src.mods import updates as _mods_updates
+        _startup_tasks.append(asyncio.create_task(_mods_updates.run_forever()))
     except Exception as _e:
         logger.warning("Could not start mods: %s", _e)
 

@@ -41,6 +41,42 @@ Settings > Mods (admins only) has two views: **Installed** (below) and **Browse*
    Odysseus, Discord (the webhook in Integrations), ntfy, and text messages at or above a level.
 5. **New mod**: copies the mod template into a folder with your id and name filled in.
 
+### Updates
+
+The top of Installed is **Needs update (N)**, and the Mods item in the Settings menu carries the same
+count. It lists only the mods with a newer commit on the branch they track (the branch or tag you
+installed from, else the default branch). Each shows the installed and available version and commit,
+how long ago the new commit was published, a collapsed list of the commits in between, and its own
+**Update** button, which is the normal review and approve step. Warnings:
+
+- **Asks for new permissions**: the new manifest wants permissions you never approved. They must be
+  approved again, so the mod is not part of **Update all**.
+- **Needs a newer Odysseus**: its `min_core` is above this Odysseus's mod API; updating is refused.
+- A Docker mod says its images rebuild the next time it starts.
+
+**Update all** updates the mods that need no new approval, one after another, and stops at the first
+failure with a message naming the mod and the ones not tried. **Check now** asks the repositories
+again. Below the list, **Can't check** shows each mod whose repository could not be reached and why
+(for a private one: add a GitHub token under Browse > Discovery settings, or run `gh auth setup-git`
+on the server); such a mod is never counted as up to date. **Up to date** (collapsed) shows when each
+mod was last checked. Mods installed from a folder are not checked.
+
+How it checks, without cloning: the GitHub API (with the catalog's token when there is one, which also
+covers private repositories) gives the newest commit, the commits in between and the manifest at that
+commit; otherwise, and for other hosts, `git ls-remote` over the repository's URL gives the newest
+commit only (no messages, and the new permissions are first shown when you review the update). A mod
+installed from a subfolder only counts commits that touched that folder (GitHub only). Results are
+saved in `mods/updates.json` with a timestamp. A check runs 30 seconds after the server starts (unless
+one ran recently), every 6 hours, and on **Check now** (pressed again within 20 seconds it answers from
+the saved result). Opening the page only reads the saved result. When GitHub's rate limit is reached,
+the rest of that run uses `git ls-remote`.
+
+| Route (admin only) | |
+|---|---|
+| `GET /api/mods/updates` | The saved state: `needs_update`, `current`, `errors`, `unchecked`, `count`, `checked_at`, `checking` |
+| `POST /api/mods/updates/check` | Check now; returns the new state |
+| `POST /api/mods/updates/apply` | `{ids: [...]}`: update in order, stop at the first failure; `{results, stopped, ok, updates}`. A mod asking for new permissions is skipped (`needs_review`) |
+
 From a shell in the Odysseus checkout:
 
 ```
@@ -55,6 +91,7 @@ Installed mods live in `<data dir>/mods/` (`ODYSSEUS_MODS_DIR` overrides it):
 mods/registry.json         the registry (0600; tokens encrypted)
 mods/.frame_secret         signs the frame tokens of mod pages
 mods/.staging/             fetched, not yet approved installs (removed after an hour)
+mods/updates.json          the last update check of every mod
 mods/<id>/src/             the mod's code
 mods/<id>/data/            MOD_DATA_DIR, kept across updates
 mods/<id>/logs/mod.log     its output (rotated at 1 MB), shown under Logs
@@ -78,7 +115,7 @@ Each result shows its badges, version, stars, last update, tags and what it asks
 | **Community, not reviewed** | Found only by its topic, or listed by an index with `verified` false. Nobody has checked it. |
 | **No tutorial** | Its manifest has no `tutorial`. It is never Verified, even when an index says so: the badge is dropped and its tooltip says why (`verified_dropped`). |
 | **Yours** | A repository the token's account owns. |
-| **Private** | A private repository. It installs over SSH (`git@github.com:...`), so the server needs a GitHub SSH key that can read it; the token is never put in a clone URL. |
+| **Private** | A private repository. It installs over https like any other: the server's credential helper logs in (run `gh auth login` and `gh auth setup-git` once, so `gh auth git-credential` supplies the login). The token is never put in a clone URL or stored in a config. A mod already recorded with an SSH source keeps using it; if that fails (no GitHub key on the server) the https URL is tried and then recorded instead. |
 | **Installed**, **Update available** | Already installed; a newer version is out (see below). |
 | **Not compatible** | Its `min_core` (or the index's) is newer than this Odysseus's mod API. |
 | **Manifest problems** | Its `odysseus-mod.json` is missing or invalid. |
@@ -1084,6 +1121,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/capabilities.py` | `provides`, `requires`, `optional`; the capability broker, its rules and log; the built-in `messaging.sms` |
 | `src/mods/catalog.py` | Finding mods: GitHub topic search, indexes, the cache, details, update checks |
 | `src/mods/registry.py` | Install (prepare, confirm), update, enable, remove, tokens |
+| `src/mods/updates.py` | Update checks (GitHub API or `git ls-remote`), the saved `updates.json`, the 6 hour timer, Update all |
 | `src/mods/runtime.py` | Start, stop, health checks, restart with backoff, logs, idle stop |
 | `src/mods/proxy.py` | `/mods/<id>/` HTTP and WebSocket proxy |
 | `src/mods/signing.py` | Identity signatures and frame tokens |
@@ -1098,6 +1136,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/llm_endpoints.py` | Model endpoints served by a mod (`mod://<id>/v1`) |
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |
 | `static/js/modsSettings.js` | Settings > Mods |
+| `static/js/modsUpdates.js` | The Needs update section and the count on the Mods menu item |
 | `static/js/modsBrowse.js` | Settings > Mods > Browse |
 | `static/js/modPanel.js` | Mod tabs, home cards and tutorials (used by `workspace/shell.js` and `home.js`) |
 | `static/js/modNav.js` | Mod tabs in the sidebar groups |

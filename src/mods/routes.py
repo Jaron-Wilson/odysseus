@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from src.mods import (access, capabilities, catalog, events, manifest as mf, notify, placement, proxy, registry, runtime,
-                      runs, tools, tutorial, usage_api)
+                      runs, tools, tutorial, updates, usage_api)
 from src.mods import llm as mod_llm
 
 logger = logging.getLogger(__name__)
@@ -562,6 +562,7 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
             return _err(e)
         mod_id = entry["id"]
         if update_of:
+            updates.mark_updated(mod_id)
             if entry.get("enabled"):
                 await _after_enable(mod_id)
         elif body.get("enable", True):
@@ -594,6 +595,30 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
     async def recent_events(request: Request, source: str = ""):
         _require_admin(request)
         return {"events": events.recent(100, source or None)}
+
+    # Update checks (src/mods/updates.py). These come before /api/mods/{mod_id}
+    # so "updates" is not read as a mod id. GET only reads the saved result.
+    @router.get("/api/mods/updates")
+    async def updates_state(request: Request):
+        _require_admin(request)
+        return updates.view()
+
+    @router.post("/api/mods/updates/check")
+    async def updates_check(request: Request):
+        _require_admin(request)
+        return await asyncio.to_thread(updates.check_all, False)
+
+    @router.post("/api/mods/updates/apply")
+    async def updates_apply(request: Request):
+        _require_admin(request)
+        body = await _json(request)
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids) or len(ids) > 100:
+            raise HTTPException(400, "ids must be a list of mod ids")
+        unknown = [i for i in ids if not registry.get(i)]
+        if unknown:
+            raise HTTPException(404, f"No such mod: {', '.join(unknown)}")
+        return await updates.apply(list(dict.fromkeys(ids)))
 
     @router.post("/api/mods/scaffold")
     async def scaffold(request: Request):
