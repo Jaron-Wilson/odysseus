@@ -51,7 +51,7 @@ PERMS_FOR = {
     ("POST", "notify"): "notify", ("POST", "events"): "events.emit",
     ("GET", "events/subscriptions"): "events.subscribe", ("POST", "events/subscriptions"): "events.subscribe",
     ("DELETE", "events/subscriptions"): "events.subscribe", ("GET", "devices"): "devices.read",
-    ("POST", "llm/chat"): "llm.call", ("GET", "machines"): "machines.read", ("GET", "stats"): "stats.read",
+    ("POST", "ui/style/refresh"): "ui.style", ("POST", "llm/chat"): "llm.call", ("GET", "machines"): "machines.read", ("GET", "stats"): "stats.read",
 }
 FAKE_DEVICES = [{"name": "dev-phone", "kind": "phone", "commands": ["notify", "open_url"], "online": True}]
 FAKE_MACHINES = [{"host": "dev-pc", "name": "DEV-PC", "dns": "dev-pc.example.ts.net", "ips": ["100.64.0.2"],
@@ -106,6 +106,8 @@ class DevCore:
         self.subs: List[Dict[str, str]] = [{"pattern": p, "path": (self.manifest.get("events") or {}).get(
             "webhook", "/mod/events")} for p in (self.manifest.get("events") or {}).get("subscribes", [])]
         self.tool_refreshes = 0
+        self.style_css = ""          # the stylesheet the core would link (ui.style), as last fetched
+        self.style_refreshes = 0
         # What machines and stats answer; tests replace them.
         self.machines: List[Dict[str, Any]] = [dict(m) for m in FAKE_MACHINES]
         self.stats: Dict[str, Any] = {"now": time.time(), "hours": 24, "windows": [1, 24, 168, 720],
@@ -273,6 +275,19 @@ class DevCore:
                 return 200, {"ok": True, "tools": self.tools_seen}
             threading.Thread(target=reread, daemon=True).start()
             return 200, {"ok": True, "queued": True}
+        if path == "ui/style/refresh" and method == "POST":
+            # The core would fetch the mod's stylesheet, check it and re-link it in the page.
+            sp = (((self.manifest.get("ui") or {}).get("style")) or {}).get("path")
+            if not sp:
+                return 400, {"detail": "This mod has no `ui.style` in its manifest"}
+            conn, r = self.mod_request("GET", sp, user=CORE_USER)
+            try:
+                self.style_css = r.read().decode("utf-8", "replace")
+            finally:
+                conn.close()
+            self.style_refreshes += 1
+            print(f"[devcore] stylesheet fetched ({len(self.style_css)} bytes)", flush=True)
+            return 200, {"ok": True, "style": {"active": True, "bytes": len(self.style_css)}}
         if path == "devices":
             return 200, {"devices": FAKE_DEVICES}
         if path == "machines":

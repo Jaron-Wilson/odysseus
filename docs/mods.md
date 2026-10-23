@@ -194,10 +194,12 @@ Start from the template, either the **New mod** button, `python -m src.mods new`
 - `my_mod/app.py`, a starter mod with a page, a card, settings, a tool, a notification and events.
 - `odysseus_mod/`, a small standard-library SDK:
   - `ModApp` (routes, tools, event handlers, the identity check, standalone login)
-  - `CoreClient` (the mod API, with local fallbacks when standalone)
+  - `CoreClient` (the mod API, with local fallbacks when standalone), including
+    `refresh_style()` for a mod with the `ui.style` permission (see [Changing how Odysseus looks](#changing-how-odysseus-looks))
   - `sign_identity` / `verify_identity`
 - `odysseus_mod/devcore.py`, a stand-in core. `python -m odysseus_mod.devcore` starts the mod
-  with the same environment, serves the mod API with the manifest's permissions enforced, proxies
+  with the same environment, serves the mod API with the manifest's permissions enforced (the
+  `ui.style` refresh fetches the mod's stylesheet like the core would), proxies
   `/mods/<id>/` with signed headers, delivers events and has a page for trying tools.
 - `tests/`, which run the mod under devcore.
 - `CLAUDE.md` and `.claude/skills/new-mod/SKILL.md`, so an AI assistant can build a mod from a
@@ -375,6 +377,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `ui.tabs[].replaces` | Optional: the key of a built-in page this tab takes over (`adsb`, `games`, `print`, `devops`, `company`, ...; see [Pages that moved to mods](#pages-that-moved-to-mods)). Its old links and saved Workspace tabs open this tab. A key not in the list is a warning and ignored; two tabs of one mod cannot replace the same key. |
 | `ui.home_cards[]` | `id`, `title` (optional), `path`, `height` (60 to 600 pixels, default 180). |
 | `ui.embeds[]` | `id`, `path` (a page of this server like `/play/stream.html`), `title` (optional), `allow` (browser features). Needs the `embed` permission; see [Embedding a page of this server](#embedding-a-page-of-this-server). |
+| `ui.style` | `{"path": "/mod/style.css"}`: where the mod's server serves the one CSS-only stylesheet it adds to the main page. Needs the `ui.style` permission; see [Changing how Odysseus looks](#changing-how-odysseus-looks). |
 | `ui.settings_path` | The mod's settings page, opened from its tab. |
 | `tools.endpoint` | Default `/mod/tools`. |
 | `tools.keywords` | Words that make the agent offer the mod's tools. |
@@ -414,6 +417,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `stats.read` | `GET stats` and `GET stats/transcripts/<run>`: server-wide activity (what is running, model speed, coder runs and their transcripts). Only for a mod that only admins may use: with **Who can use it** set to all users, these calls answer 403 |
 | `machines.read` | `GET machines`: the tailnet's machines (name, addresses, operating system, online), with the SSH user set for each in Settings > Devices. No keys and no commands |
 | `embed` | Show a page of this server, named in the manifest's `ui.embeds`, in an unsandboxed frame inside the mod's window (see [Embedding a page of this server](#embedding-a-page-of-this-server)) |
+| `ui.style` | Change how Odysseus looks: one CSS-only stylesheet, named in the manifest's `ui.style`, linked into the main page (see [Changing how Odysseus looks](#changing-how-odysseus-looks)). The install review says "Change how Odysseus looks" |
 
 Settings (`GET/PUT settings`) and `GET me` need no permission.
 
@@ -1058,6 +1062,88 @@ an embed its manifest lists and the user granted. The embedded page runs with th
 only list pages you trust: an `embed` mod can show them but cannot read them (the frames are siblings,
 not parent and child).
 
+#### Changing how Odysseus looks
+
+A mod page is sandboxed, so it cannot restyle Odysseus itself. A mod the admin approves for
+`ui.style` can still add **one stylesheet** to the main page. It is CSS only: **no script from a
+mod is ever injected into the main page** by this. The reference mod is
+`Jaron-Wilson/odysseus-retheme` (presets, accent, corner radius, text size, density).
+
+```json
+"permissions": ["ui.style"],
+"ui": { "style": { "path": "/mod/style.css" } }
+```
+
+How it works:
+
+1. The mod's server serves the stylesheet at `ui.style.path`. The core fetches it (signed like any
+   request to the mod, starting the mod if it is stopped) when the mod is enabled, updated, or tells
+   the core it changed, and **checks it** (below). The checked copy is kept in the core's own
+   folder (`mods/<id>/ui-style/`, not the mod's `data/`), and served from Odysseus's own origin at
+   `/api/mods/ui/style/<id>.css?v=<hash>`.
+2. The main page's `<head>` gets `<link rel="stylesheet" data-mod="<id>" href="...">` for every
+   enabled, approved mod, **after** the core's own styles and **ordered by mod id**. Disabling,
+   removing or refusing a mod removes its link at once.
+3. The mod tells the core its style changed with `POST /api/mods/v1/ui/style/refresh` (the SDK:
+   `app.core.refresh_style()`; needs `ui.style`). The core fetches it again. An open page checks
+   `GET /api/mods/ui/styles` every few seconds and when its window gets focus (`static/js/modStyles.js`),
+   and re-links a sheet whose `?v=` changed: the new sheet loads, then the old link is dropped, so
+   nothing flashes. A mod's own page can make that immediate by posting
+   `parent.postMessage({type: 'odysseus:style-changed'}, '*')` after saving.
+
+**What is checked.** The core refuses the **whole** stylesheet (it never trims silently; the
+reason is shown in Settings > Mods and written to the mod's log, and the page goes back to normal):
+
+- larger than **64 KB**
+- `@import` (and `@namespace`)
+- any `url()` that is not a `data:image/...` URI, a `#fragment`, or one of the mod's own proxied
+  files `/mods/<its id>/...` (so no off-origin URLs, no other mod's files, no `/api`);
+  `image-set()`, `src()`, `cross-fade()`, `element()` and `paint()` too, since they can hide a URL
+  in a string
+- `expression()`, `behavior:`, `-moz-binding`, `javascript:`, `vbscript:`
+- CSS escapes that spell any of those (`\75rl(` is read as `url(`), comments inserted to split
+  them, and `</` or `<!--`
+
+**Theme tokens.** Retheme with CSS custom properties on `:root` rather than selectors: the app's
+class names change between releases, the tokens do not.
+
+| Token | What it changes |
+|---|---|
+| `--bg` | page background |
+| `--fg` | main text |
+| `--panel` | raised surfaces: sidebar, cards, dialogs, inputs |
+| `--border` | lines and outlines, including the Workspace and Studio designs' lines |
+| `--accent` | links, active items, buttons, highlights, including the Workspace and Studio accent |
+| `--accent-ink` | text on top of `--accent` |
+| `--fg-muted` | secondary text, including the Workspace and Studio secondary text |
+| `--red` | the theme's brand color (loading screen, warnings) |
+| `--font-family` | the font stack for the whole app |
+| `--ody-radius` | corner radius of buttons, inputs, cards, dialogs and tabs, like `12px` (`0` for square) |
+| `--ody-font-scale` | text and spacing scale of the sidebar, Workspace pages, chat messages and dialogs: `0.9`, `1`, `1.15` |
+| `--ody-density` | spacing of chat messages, lists and the Home grid: `0.7` compact, `1` normal, `1.3` roomy |
+
+The color tokens are Odysseus's own variables, so the whole app (it uses them throughout) follows.
+The Workspace and Studio designs (the default) draw their lines, secondary text and accent from their
+own `--st-*` variables, so when a mod sets `--border`, `--fg-muted`, `--accent` or `--accent-ink` the core
+also points the matching `--st-*` variable at it (a `html.ui-studio { ... }` rule it appends).
+The user's own theme (Settings > Theme) sets them inline on `<html>`, which would beat a stylesheet,
+so **the core adds `!important` to every declaration of a color token** in a mod's sheet: while the
+mod is on, its colors win. The `--ody-*` tokens are applied by rules the core appends after the mod's
+sheet, **only for the tokens the mod set**: a sheet that sets none of them changes nothing it did not
+ask for. (The scale is a `zoom` on the sidebar's and pages' contents, never on the whole page: the
+Workspace measures the shell in screen pixels.) Selectors are allowed too, but they are the mod's
+risk when the app changes.
+
+**Keep it readable.** Check contrast (4.5:1 for body text) for each look and open the app with it
+on. A mod style can hide or mislead like any restyle, which is why the admin approves it.
+
+**Safe mode, in case a style makes the app unusable.** Open Odysseus with **`?safe=1`** on the
+address (for example `https://odysseus.example/?safe=1`): that page load has no mod stylesheet at
+all (the server leaves the links out, and the page does not add them back). **Settings > Mods >
+Mod styles > Safe mode** does the same for every load in that browser, until it is turned off (a
+`ody_mod_styles=off` cookie, which the server reads before it writes the page). Then turn the mod
+off or remove it. Both switches skip *all* mod styles.
+
 #### Pages that moved to mods
 
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
@@ -1135,6 +1221,10 @@ Mods are **untrusted code**. What protects you:
   `postMessage`). Popups it opens escape the sandbox, so they run as an ordinary page of that
   address, with no access to Odysseus either. Odysseus's cookies and `Authorization` headers are
   never forwarded to a mod.
+- **A mod's stylesheet is CSS only and checked** (permission `ui.style`): the core fetches it, refuses
+  `@import`, off-origin `url()`s, script-like constructs and anything over 64 KB, and serves its own copy
+  from its own origin. No script from a mod runs in the main page. `?safe=1` and a Settings switch
+  load Odysseus without any mod style (see [Changing how Odysseus looks](#changing-how-odysseus-looks)).
 - **Tutorials are rendered by the core**: their Markdown is escaped before the few allowed
   formats are applied, and their images are served only from the mod's own folder.
 - **Device actions need the user.** Mod tools that control devices go through the chat's approval

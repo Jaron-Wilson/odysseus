@@ -944,19 +944,24 @@ app.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
-def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
-    """Read an HTML file and inject the CSP nonce into inline <script> tags."""
+def _serve_html_with_nonce(request: Request, file_path: str, mod_styles: bool = False) -> HTMLResponse:
+    """Read an HTML file and inject the CSP nonce into inline <script> tags.
+    `mod_styles`: link the stylesheets of mods granted ui.style (src/mods/style.py;
+    CSS only, skipped by ?safe=1)."""
     with open(file_path, "r", encoding="utf-8") as f:
         html = f.read()
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
+    if mod_styles:
+        from src.mods import style as mod_style
+        html = mod_style.with_links(html, request)
     return HTMLResponse(html)
 
 @app.get("/")
 async def serve_index(request: Request):
     static_path = abs_join(BASE_DIR, "static/index.html")
     if os.path.exists(static_path):
-        return _serve_html_with_nonce(request, static_path)
+        return _serve_html_with_nonce(request, static_path, mod_styles=True)
     root_path = abs_join(BASE_DIR, "index.html")
     if os.path.exists(root_path):
         return _serve_html_with_nonce(request, root_path)
