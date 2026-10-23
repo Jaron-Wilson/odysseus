@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 from src.mods import manifest as mf
 from src.mods import paths
 from src.mods import signing
+from src.mods import legacy as _legacy
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,8 @@ def save_settings(values: Dict[str, Any]) -> Dict[str, Any]:
 # ── Fetching ─────────────────────────────────────────────────────────────
 
 def _git(args: List[str], cwd: Optional[str] = None, timeout: int = GIT_TIMEOUT_S) -> str:
-    env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "SSH_AUTH_SOCK", "TMPDIR")}
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "SSH_AUTH_SOCK", "TMPDIR",
+                                                           "XDG_CONFIG_HOME", "GH_CONFIG_DIR")}
     env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
@@ -232,7 +234,19 @@ def _fetch(src: Dict[str, Any], dest: str) -> Dict[str, Any]:
         args += ["--branch", src["ref"]]
     if src.get("subdir"):
         args += ["--filter=blob:none", "--sparse"]
-    _git(args + ["--", src["url"], clone])
+    try:
+        _git(args + ["--", src["url"], clone])
+    except RegistryError:
+        # A recorded SSH source that does not work here (no GitHub key on the
+        # server): try the https URL, which git's credential helper can
+        # authenticate. It stays the source from then on.
+        from src.mods import catalog
+        alt = catalog.https_fallback(src["url"])
+        if not alt:
+            raise
+        shutil.rmtree(clone, ignore_errors=True)
+        _git(args + ["--", alt, clone])
+        src["url"] = alt
     try:
         if src.get("subdir"):
             _git(["sparse-checkout", "set", src["subdir"]], cwd=clone)
@@ -322,6 +336,8 @@ def prepare(source: str, ref: Optional[str] = None, subdir: Optional[str] = None
         # What it provides, needs (`missing`: nobody provides it yet) and may
         # use (src/mods/capabilities.py); for an update, what it newly uses.
         "capabilities": _capabilities_review(manifest, existing),
+        # The built-in settings it will import once (src/mods/legacy.py), for the review.
+        "imports": _legacy.review(manifest, existing),
     }
 
 
@@ -422,6 +438,7 @@ def confirm(install_id: str, approved: List[str]) -> Dict[str, Any]:
             "source": meta["source"],
             "commit": meta.get("commit"),
             "granted_permissions": list(manifest["permissions"]),
+            "granted_imports": list(manifest.get("imports") or []),   # shown in the review (src/mods/legacy.py)
             "updated_at": now,
         })
         if not existing:

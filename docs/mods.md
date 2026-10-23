@@ -41,6 +41,42 @@ Settings > Mods (admins only) has two views: **Installed** (below) and **Browse*
    Odysseus, Discord (the webhook in Integrations), ntfy, and text messages at or above a level.
 5. **New mod**: copies the mod template into a folder with your id and name filled in.
 
+### Updates
+
+The top of Installed is **Needs update (N)**, and the Mods item in the Settings menu carries the same
+count. It lists only the mods with a newer commit on the branch they track (the branch or tag you
+installed from, else the default branch). Each shows the installed and available version and commit,
+how long ago the new commit was published, a collapsed list of the commits in between, and its own
+**Update** button, which is the normal review and approve step. Warnings:
+
+- **Asks for new permissions**: the new manifest wants permissions you never approved. They must be
+  approved again, so the mod is not part of **Update all**.
+- **Needs a newer Odysseus**: its `min_core` is above this Odysseus's mod API; updating is refused.
+- A Docker mod says its images rebuild the next time it starts.
+
+**Update all** updates the mods that need no new approval, one after another, and stops at the first
+failure with a message naming the mod and the ones not tried. **Check now** asks the repositories
+again. Below the list, **Can't check** shows each mod whose repository could not be reached and why
+(for a private one: add a GitHub token under Browse > Discovery settings, or run `gh auth setup-git`
+on the server); such a mod is never counted as up to date. **Up to date** (collapsed) shows when each
+mod was last checked. Mods installed from a folder are not checked.
+
+How it checks, without cloning: the GitHub API (with the catalog's token when there is one, which also
+covers private repositories) gives the newest commit, the commits in between and the manifest at that
+commit; otherwise, and for other hosts, `git ls-remote` over the repository's URL gives the newest
+commit only (no messages, and the new permissions are first shown when you review the update). A mod
+installed from a subfolder only counts commits that touched that folder (GitHub only). Results are
+saved in `mods/updates.json` with a timestamp. A check runs 30 seconds after the server starts (unless
+one ran recently), every 6 hours, and on **Check now** (pressed again within 20 seconds it answers from
+the saved result). Opening the page only reads the saved result. When GitHub's rate limit is reached,
+the rest of that run uses `git ls-remote`.
+
+| Route (admin only) | |
+|---|---|
+| `GET /api/mods/updates` | The saved state: `needs_update`, `current`, `errors`, `unchecked`, `count`, `checked_at`, `checking` |
+| `POST /api/mods/updates/check` | Check now; returns the new state |
+| `POST /api/mods/updates/apply` | `{ids: [...]}`: update in order, stop at the first failure; `{results, stopped, ok, updates}`. A mod asking for new permissions is skipped (`needs_review`) |
+
 From a shell in the Odysseus checkout:
 
 ```
@@ -55,6 +91,7 @@ Installed mods live in `<data dir>/mods/` (`ODYSSEUS_MODS_DIR` overrides it):
 mods/registry.json         the registry (0600; tokens encrypted)
 mods/.frame_secret         signs the frame tokens of mod pages
 mods/.staging/             fetched, not yet approved installs (removed after an hour)
+mods/updates.json          the last update check of every mod
 mods/<id>/src/             the mod's code
 mods/<id>/data/            MOD_DATA_DIR, kept across updates
 mods/<id>/logs/mod.log     its output (rotated at 1 MB), shown under Logs
@@ -78,7 +115,7 @@ Each result shows its badges, version, stars, last update, tags and what it asks
 | **Community, not reviewed** | Found only by its topic, or listed by an index with `verified` false. Nobody has checked it. |
 | **No tutorial** | Its manifest has no `tutorial`. It is never Verified, even when an index says so: the badge is dropped and its tooltip says why (`verified_dropped`). |
 | **Yours** | A repository the token's account owns. |
-| **Private** | A private repository. It installs over SSH (`git@github.com:...`), so the server needs a GitHub SSH key that can read it; the token is never put in a clone URL. |
+| **Private** | A private repository. It installs over https like any other: the server's credential helper logs in (run `gh auth login` and `gh auth setup-git` once, so `gh auth git-credential` supplies the login). The token is never put in a clone URL or stored in a config. A mod already recorded with an SSH source keeps using it; if that fails (no GitHub key on the server) the https URL is tried and then recorded instead. |
 | **Installed**, **Update available** | Already installed; a newer version is out (see below). |
 | **Not compatible** | Its `min_core` (or the index's) is newer than this Odysseus's mod API. |
 | **Manifest problems** | Its `odysseus-mod.json` is missing or invalid. |
@@ -347,6 +384,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `provides` | Optional, up to 16 capability ids it serves for other mods and for the core, like `messaging.sms`, `tts.voice`, or its own API, `<its id>.<name>`. See [Capabilities](#capabilities) and [Capability providers](#capability-providers). |
 | `requires` | Optional capability ids it does not work without. Installing it while nothing provides one asks first and offers to find a provider. |
 | `optional` | Optional capability ids it works better with. Nothing is asked; its card says "Works better with ...". An id cannot be in both `requires` and `optional`. |
+| `imports` | Optional: the legacy settings slices it may import once, from the list under [Importing settings from before a mod existed](#importing-settings-from-before-a-mod-existed) (`sms`, `telephony`, `meet`, `games`). Anything else is a manifest error. Shown in the install review. |
 | `tutorial` | Expected of every mod; missing is a warning, and such a mod is never Verified. `{"version", "steps"}` (recommended) or `{"version", "path"}`; see [Tutorials](#tutorials). |
 | `tutorial.version` | A whole number from 1, default 1. Raise it to show the tutorial again to everyone who saw it. |
 | `tutorial.steps[]` | 1 to 8 steps: `title` (up to 80 characters), `body` (short Markdown, up to 1200), optionally `image` (a PNG, JPEG, GIF or WebP file in the mod, a relative path, under 2 MB; a file that is not there is a warning) and `action` (`{"label", "path"}` to open a page of the mod, or `{"label", "settings": true}`, which needs `ui.settings_path`). |
@@ -485,6 +523,9 @@ signed-in user. A mod whose manifest says `admin_only` is for admins whatever it
 | `GET machines?refresh=1` | `machines.read` | `{machines: [{host, name, dns, ips, os, online, last_seen, is_self, shared, ssh_user}]}` (`refresh` asks Tailscale again instead of the 15 second cache) |
 | `GET cap` | | The capabilities it declared and who provides each now: `{provides, requires, optional, missing, missing_optional}` |
 | `POST cap/<capability>/<action>?provider=` | it is in `requires` or `optional` | A capability call, brokered by the core (see [Capabilities](#capabilities)). The body is the arguments, plus `user` (up to 4 MB, so a provider can take a base64 file). Answers the provider's JSON object with `ok`, `capability`, `action` and `provider` set |
+| `GET legacy` | | The legacy slices it declared: `{slices: [{slice, title, granted, imported, imported_at, available}]}` |
+| `POST legacy/export` | the slice is in `imports` and was approved | `{slice}`: that slice's old built-in settings with the secrets decrypted, local channel only, `410` once imported |
+| `POST legacy/imported` | same | `{slice}`: the mod has stored it, so the slice closes |
 | `POST tools/refresh` | | The mod's tools changed: the core reads `GET <tools.endpoint>` again. Answers `{ok, queued}` at once and refreshes in the background; `{"wait": true}` waits and answers `{ok, tools: [names]}` (only from a server that serves requests in parallel). 400 for a mod without `tools` |
 
 Calls are rate limited per mod: notify 30 a minute, llm 20, events 240, device commands 30, tool
@@ -761,6 +802,60 @@ the tool and the arguments, with Approve and Deny, before it runs. `devices.cont
 for a `controls_devices` tool to run at all. A tool marked `asks_first` (a write to the user's
 account, like a Google Drive upload) goes through the same flow; it needs no permission, since it
 only adds a check.
+
+### Importing settings from before a mod existed
+
+When a built-in feature becomes a mod, what you had set in it should not have to be typed again,
+and that includes the secrets the core kept encrypted with its own key (a mod cannot read those
+itself). A mod asks for a one-time hand-off of the exact slices it replaces:
+
+```json
+"imports": ["sms", "telephony", "meet"]
+```
+
+| Slice | What the core hands over |
+|---|---|
+| `sms` | `sms_gateway` of each user's prefs: numbers, reply URL, the forward secret's hash, each number's conversation |
+| `telephony` | `phone_calls`: Twilio, the SIP line, the PIN, with the Twilio auth token and the SIP password decrypted |
+| `meet` | `google_meet` and `google_meet_chats` |
+| `games` | `games.json`: Sunshine's addresses and login (the password decrypted), Moonlight Web's address, the pinned certificates, the Steam sync settings |
+
+The list is fixed in the core (`SLICES` in `src/mods/legacy.py`): a mod cannot name a file, a key
+or another mod's slice, and an unknown name fails the manifest. The install and update review
+lists the slices ("Imports your old built-in settings, once", with "(new)" on an update); the admin
+who approves the install grants them (`granted_imports` in the registry). A slice added by an update
+is not readable until that update is approved.
+
+The mod calls `POST /api/mods/v1/legacy/export {"slice": "sms"}` with its own token. The answer is
+the old settings in the shape the prefs store had (`{"_users": {"<user>": {...}}}` for the prefs
+slices, the file's keys for `games`), with `secrets` (which fields were set) and `unreadable`
+(secrets the core could not decrypt, so the mod can say "enter it again"). Then:
+
+- **Local only, never logged.** The call is refused unless it came straight from this machine (no
+  proxy header, loopback peer). The answer is `Cache-Control: no-store`. The core writes one audit line
+  per call to `mods/legacy-import-log.jsonl` (mod, slice, how many users, which settings and which secret
+  fields were present) and never a value; the secret is not written to disk by the core.
+- **One time.** The mod stores the settings with its own encryption, then calls
+  `POST /api/mods/v1/legacy/imported {"slice": ...}`. From then on `export` answers `410`. Until then the
+  mod may read it again (for a preview that shows secrets only as "set"). An admin can open a slice again
+  with `POST /api/mods/<id>/legacy/<slice>/reopen`, and removing and reinstalling a mod does it by itself.
+- **Merge, do not overwrite.** A mod fills in what it has not set and keeps what it has, unless the user
+  chooses to overwrite.
+- **No dependence on the rest of the app.** The core decrypts with `src/secret_storage.py`, or with the same
+  key file directly when that module cannot be imported.
+
+A mod does this on its first start and offers the same as an **Import from built-in settings** button
+with a preview. `GET /api/mods/<id>/legacy` (admin) lists each slice's state.
+
+**Old addresses keep working.** The phone's SMS Forwarder still posts to
+`/api/sms/inbound/<secret>`, the address the core used before texting became the Phone & Messages mod.
+The core hands that request to the mod's `/public/sms/inbound/<secret>` in-process (not a redirect, since an
+app may not follow one for a POST), and the mod checks the secret against the hash it imported, exactly as
+before; nothing on the phone changes. The core's log lines redact the secret. The reply URL (where the
+server sends a text out, SMS Gate for Android) is an outgoing address, imported with the `sms` slice.
+Twilio's webhooks are not forwarded: Twilio signs the URL it called, so a forward under another path could
+not verify (set the new address in Twilio, shown in the mod's phone settings). The forward is in
+`src/mods/legacy_urls.py`.
 
 ### Capability providers
 
@@ -1125,6 +1220,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/capabilities.py` | `provides`, `requires`, `optional`; the capability broker, its rules and log; the built-in `messaging.sms` |
 | `src/mods/catalog.py` | Finding mods: GitHub topic search, indexes, the cache, details, update checks |
 | `src/mods/registry.py` | Install (prepare, confirm), update, enable, remove, tokens |
+| `src/mods/updates.py` | Update checks (GitHub API or `git ls-remote`), the saved `updates.json`, the 6 hour timer, Update all |
 | `src/mods/runtime.py` | Start, stop, health checks, restart with backoff, logs, idle stop |
 | `src/mods/proxy.py` | `/mods/<id>/` HTTP and WebSocket proxy |
 | `src/mods/signing.py` | Identity signatures and frame tokens |
@@ -1139,6 +1235,7 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/llm_endpoints.py` | Model endpoints served by a mod (`mod://<id>/v1`) |
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |
 | `static/js/modsSettings.js` | Settings > Mods |
+| `static/js/modsUpdates.js` | The Needs update section and the count on the Mods menu item |
 | `static/js/modsBrowse.js` | Settings > Mods > Browse |
 | `static/js/modPanel.js` | Mod tabs, home cards and tutorials (used by `workspace/shell.js` and `home.js`) |
 | `static/js/modNav.js` | Mod tabs in the sidebar groups |

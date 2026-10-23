@@ -233,6 +233,10 @@ if AUTH_ENABLED:
         # public.http; src/mods/proxy.py checks that and the mod checks its
         # own secrets (docs/mods.md, "Public paths").
         _re.compile(r"^/mods/[a-z][a-z0-9-]{1,31}/public/.*$"),
+        # The phone's SMS Forwarder still posts to the address it had before
+        # texting became a mod; src/mods/legacy_urls.py hands it to the mod,
+        # which checks the secret in the path as before.
+        _re.compile(r"^/api/sms/inbound/[A-Za-z0-9_-]{32,64}/?$"),
         # A mod's page and its requests, loaded in a sandboxed frame that
         # sends no cookie. The signed frame token after "~" is the
         # credential; src/mods/proxy.py checks it and refuses anything else.
@@ -724,6 +728,8 @@ app.include_router(setup_claude_sessions_routes())
 # Mods: /mods/<id>/ (the proxy), /api/mods (manage), /api/mods/v1 (the mod API).
 from src.mods.routes import setup_mods_routes
 app.include_router(setup_mods_routes(auth_manager))
+from src.mods.legacy_urls import setup_legacy_url_routes
+app.include_router(setup_legacy_url_routes())
 
 
 @app.get("/api/version")
@@ -1363,6 +1369,9 @@ async def _startup_event():
     try:
         from src.mods import runtime as _mods_runtime
         _startup_tasks.append(asyncio.create_task(_mods_runtime.startup()))
+        # Which mods have an update: a check soon after start, then every 6 hours.
+        from src.mods import updates as _mods_updates
+        _startup_tasks.append(asyncio.create_task(_mods_updates.run_forever()))
     except Exception as _e:
         logger.warning("Could not start mods: %s", _e)
 

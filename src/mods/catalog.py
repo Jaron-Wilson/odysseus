@@ -975,12 +975,26 @@ def _public_entry(e: Dict[str, Any], installed_by_repo, installed_by_id) -> Dict
 
 
 def install_source(e: Dict[str, Any]) -> str:
-    """The git URL Install uses: https for public repositories, SSH for
-    private ones (the server's own GitHub key; the token is never put in a
-    git URL)."""
-    if e.get("private"):
-        return e.get("ssh_url") or f"git@github.com:{e['full_name']}.git"
+    """The clone URL Install uses: the https one, for private repositories
+    too. The credential helper configured for the server's own login (for
+    example `gh auth git-credential`, set up with `gh auth setup-git`)
+    supplies the login for a private one; the token is never put in a URL or
+    stored in a config. (SSH would need a GitHub key on the server, which most
+    servers do not have.)"""
     return e.get("clone_url") or f"https://github.com/{e['full_name']}.git"
+
+
+def https_fallback(url: str) -> Optional[str]:
+    """The https clone URL for a GitHub SSH URL (git@github.com:o/r.git), or
+    None for anything else. Used when a recorded SSH source does not work."""
+    u = (url or "").strip()
+    if u.lower().startswith(("https://", "http://", "file://")):
+        return None
+    for rx in _GH_URL_RES[1:]:
+        m = rx.match(u)
+        if m:
+            return f"https://github.com/{m.group(1)}/{m.group(2)}.git"
+    return None
 
 
 def _truthy(v: Optional[str]) -> Optional[bool]:

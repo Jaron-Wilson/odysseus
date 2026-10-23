@@ -417,6 +417,10 @@ def validate(raw: Any) -> Dict[str, Any]:
     from src.mods import capabilities
     out.update(capabilities.check(raw, out["events"], errors, warnings))
 
+    # ── legacy settings the mod may import once (src/mods/legacy.py) ──
+    from src.mods import legacy
+    out["imports"] = legacy.check(raw, errors)
+
     # ── tutorial (src/mods/tutorial.py) ──
     from src.mods import tutorial
     out["tutorial"] = tutorial.check(raw.get("tutorial"), bool(out["ui"]["settings_path"]),
