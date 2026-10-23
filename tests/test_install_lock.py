@@ -15,7 +15,11 @@ def test_one_install_at_a_time():
     assert "New-Object System.Threading.Mutex($false, 'Global\\OdysseusInstall')" in PS1
     assert "Another Odysseus install is already running on this computer." in PS1
     # Released when it ends and when it stops on an error (iex keeps the console).
-    assert "function Die($m) { Write-Host \"Error: $m\" -ForegroundColor Red; Unlock; throw $m }" in PS1
+    die = PS1[PS1.index("function Die($m) {"):]
+    die = die[:die.index("\n}\n")]
+    assert "[Console]::Error.WriteLine($m); exit 1" in die and "throw $m" in die
+    assert die.index("Unlock") < die.index("exit 1")
+    assert "WaitOne(60000)" in PS1
     assert PS1.index("Unlock\n} catch {") > PS1.index("Open Settings > Devices in Odysseus to see this PC.")
 
 

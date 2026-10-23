@@ -705,6 +705,7 @@ document.addEventListener('click', async (ev) => {
   const out = document.querySelector(`[data-m-result="${CSS.escape(b.dataset.mHost || '')}"]`);
   b.disabled = true;
   const label = b.textContent;
+  let retry = false;
   b.textContent = 'Installing\u2026';
   if (out) out.textContent = 'Installing on that computer over SSH (the same install command as Add a device). This can take a few minutes the first time.';
   try {
@@ -723,10 +724,13 @@ document.addEventListener('click', async (ev) => {
     if (out) out.textContent = `Done: ${r.machine} has the latest Odysseus tools. It reconnects within a minute.`;
     setTimeout(loadTools, 20000);
   } catch (e) {
-    if (out) out.textContent = `Could not install: ${e.message}`;
+    retry = /already running/i.test(e.message || '');
+    if (out) out.textContent = retry
+      ? 'Another install is already running on that computer. Wait for it to finish, then press Try again.'
+      : `Could not install: ${e.message}`;
   } finally {
     b.disabled = false;
-    b.textContent = label;
+    b.textContent = retry ? 'Try again' : label;
   }
 });
 

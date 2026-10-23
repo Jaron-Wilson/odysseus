@@ -28,14 +28,24 @@ $KeyOnly = ($PubKey -split ' ')[0..1] -join ' '
 
 function Say($m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Unlock { if ($script:lock) { try { $script:lock.ReleaseMutex() } catch {} ; $script:lock = $null } }
-function Die($m) { Write-Host "Error: $m" -ForegroundColor Red; Unlock; throw $m }
+# Run by Odysseus over SSH (ODYSSEUS_INSTALL_QUIET): stop with just the message
+# on stderr and a non-zero exit code, not a thrown error record (which PowerShell
+# wraps in CLIXML with the line position and CategoryInfo). Run by hand through
+# iex, throw instead: exit would close the user's console window.
+function Die($m) {
+    Unlock
+    if ($env:ODYSSEUS_INSTALL_QUIET) { [Console]::Error.WriteLine($m); exit 1 }
+    Write-Host "Error: $m" -ForegroundColor Red
+    throw $m
+}
 
 # One install at a time: copies started over SSH piled up on 2026-09-29, each
 # rewriting the MCP server's file, and one left it locked ("can't open file
 # ... desktop_mcp_server.py: [Errno 13] Permission denied"), so the server
 # died at every start.
 $lock = New-Object System.Threading.Mutex($false, 'Global\OdysseusInstall')
-try { $got = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+# Wait up to a minute for another install (often the one just before this) to end.
+try { $got = $lock.WaitOne(0); if (-not $got) { Say 'Another Odysseus install is running; waiting for it to finish...'; $got = $lock.WaitOne(60000) } } catch [System.Threading.AbandonedMutexException] { $got = $true }
 if (-not $got) { $lock = $null; Die 'Another Odysseus install is already running on this computer. Wait for it to finish, then run this again if needed.' }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
