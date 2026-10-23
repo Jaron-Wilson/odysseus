@@ -666,6 +666,26 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         return {"mods": out, "nav": placement.nav(shown), "groups": placement.groups(),
                 "replaces": placement.replacements(shown), "legacy_pages": placement.LEGACY_PAGES}
 
+    # ── The @ picker of chats (src/mods/chat_mentions.py): any signed-in user, for mods they may use ──
+    @router.get("/api/mods/chat/mentions")
+    async def chat_mentions_list(request: Request):
+        from src.mods import chat_mentions
+        user = proxy.cookie_user(request)
+        if user is None:
+            raise HTTPException(401, "Not signed in")
+        return {"mods": chat_mentions.catalog(user)}
+
+    @router.get("/api/mods/chat/mentions/{mod_id}/items")
+    async def chat_mentions_items(request: Request, mod_id: str, q: str = ""):
+        from src.mods import chat_mentions
+        user = proxy.cookie_user(request)
+        if user is None:
+            raise HTTPException(401, "Not signed in")
+        rows = await chat_mentions.items(mod_id, user, q)
+        if rows is None:
+            raise HTTPException(404, "No such mod, or it has no items")
+        return {"items": rows}
+
     # ── Capability providers (src/mods/providers.py): which add-on, if any,
     # supplies a core feature, so a page can offer it or say "Install the add-on".
     @router.get("/api/mods/providers")

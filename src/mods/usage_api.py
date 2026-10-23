@@ -15,6 +15,9 @@ spend apart with one path.
 
     GET    /api/mods/v1/usage?scope=c/3f2a[&user=&month=YYYY-MM]
            what the scope (and everything under it) cost this month
+    PUT    /api/mods/v1/usage/labels            {labels: {"c/3f2a": "Acme"}}: names for scope paths; the
+                                                Usage page groups a mod's spend by the first two segments
+                                                of the path (mod:company/c/3f2a) and shows these names
     GET    /api/mods/v1/budgets                 the mod's budgets, each checked
     PUT    /api/mods/v1/budgets                 {scope, monthly_limit_cents, caps?}
     DELETE /api/mods/v1/budgets?scope=c/3f2a
@@ -42,6 +45,7 @@ SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 MAX_SEGMENTS = 8
 MAX_BUDGETS = 512
 _lock = threading.Lock()
+MAX_LABELS = 1000
 
 
 def clean_path(path: Any, *, allow_empty: bool = True) -> str:
@@ -81,6 +85,46 @@ def _save(mod_id: str, data: Dict[str, Dict[str, Any]]) -> None:
     with open(p + ".tmp", "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
     os.replace(p + ".tmp", p)
+
+
+def _labels_file(mod_id: str) -> str:
+    return os.path.join(paths.mod_dir(mod_id), "usage_labels.json")
+
+
+def load_labels(mod_id: str) -> Dict[str, str]:
+    """Names the mod gave its scope paths ("c/3f2a" -> "Acme"), for the Usage page."""
+    try:
+        with open(_labels_file(mod_id), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def set_labels(mod_id: str, labels: Any) -> Dict[str, str]:
+    """Merge {path: label}; an empty label removes one. At most MAX_LABELS are kept. Raises ValueError."""
+    if not isinstance(labels, dict) or len(labels) > 200:
+        raise ValueError("labels must be an object of {scope path: name}, at most 200 at a time")
+    with _lock:
+        cur = load_labels(mod_id)
+        for path, name in labels.items():
+            p = clean_path(path, allow_empty=False)
+            if not isinstance(name, str):
+                raise ValueError("a label must be a string")
+            name = " ".join(name.split())[:80]
+            if name:
+                cur[p] = name
+            else:
+                cur.pop(p, None)
+        if len(cur) > MAX_LABELS:
+            for k in list(cur)[:len(cur) - MAX_LABELS]:
+                cur.pop(k, None)
+        os.makedirs(paths.mod_dir(mod_id), exist_ok=True)
+        p = _labels_file(mod_id)
+        with open(p + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(cur, f, indent=1)
+        os.replace(p + ".tmp", p)
+    return cur
 
 
 def set_budget(mod_id: str, path: str, monthly_limit_cents: Any, caps: Any = None) -> Dict[str, Any]:
@@ -176,6 +220,20 @@ def setup(router: APIRouter, mod_for) -> None:
         except ValueError as ex:
             raise _bad(ex)
         return out
+
+    @router.put("/api/mods/v1/usage/labels")
+    async def v1_usage_labels(request: Request):
+        e = mod_for(request, "budgets")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(400, "Expected a JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected a JSON object")
+        try:
+            return {"labels": set_labels(e["id"], body.get("labels"))}
+        except ValueError as ex:
+            raise _bad(ex)
 
     @router.get("/api/mods/v1/budgets")
     async def v1_budgets(request: Request):
