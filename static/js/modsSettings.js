@@ -190,6 +190,13 @@ function renderNotify(n) {
   if ($('mods-notify-ntfy-topic')) $('mods-notify-ntfy-topic').value = n.ntfy_topic || '';
 }
 
+// The built-in settings a mod will import once (src/mods/legacy.py), for the install review.
+function importLines(list, update) {
+  if (!(list || []).length) return '';
+  const li = list.map((i) => `<li data-mod-import="${esc(i.slice)}"><strong>${esc(i.title)}</strong>${update && i.new ? ' <strong>(new)</strong>' : ''}: ${esc(i.description)}${(i.secrets || []).length ? ' Secrets are decrypted by Odysseus and handed to the mod once.' : ''}</li>`).join('');
+  return `<div class="admin-toggle-sub" style="margin-top:6px"><strong>Imports your old built-in settings, once:</strong></div><ul class="admin-toggle-sub" style="margin:2px 0 0 18px;padding:0">${li}</ul>`;
+}
+
 function renderStaged() {
   const box = $('mods-approve');
   if (!box) return;
@@ -211,6 +218,7 @@ function renderStaged() {
     <div class="admin-toggle-sub" style="margin-top:6px"><strong>It asks for:</strong></div>
     <ul class="admin-toggle-sub" style="margin:2px 0 0 18px;padding:0">${perms}</ul>
     ${capabilityLines(s.capabilities, { update: !!s.previous_version }) ? `<div class="admin-toggle-sub" style="margin-top:6px"><strong>Capabilities:</strong></div>${capabilityLines(s.capabilities, { update: !!s.previous_version })}` : ''}
+    ${importLines(s.imports, !!s.previous_version)}
     ${s.admin_only ? '<div class="admin-toggle-sub" data-mod-admin-only style="margin-top:4px"><strong>Admins only.</strong> It gives admin powers (like a shell on this server), so only admins can ever use it.</div>' : ''}
     ${(s.warnings || []).map((w) => `<div class="admin-toggle-sub" style="color:var(--yellow, #d29922)">Note: ${esc(w)}</div>`).join('')}
     <div class="admin-toggle-sub" style="margin-top:6px">Adds ${(ui.tabs || []).length} tab(s), ${(ui.home_cards || []).length} home card(s)${s.tools ? ' and agent tools' : ''}.
