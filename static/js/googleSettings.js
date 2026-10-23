@@ -47,7 +47,7 @@ function shortScope(s) {
   return s.replace('https://www.googleapis.com/auth/', '');
 }
 
-const TOOL_LABELS = { google_meet: 'make or join a Meet' };
+const TOOL_LABELS = {};
 
 // Drive, Docs, Sheets, Slides, Tasks and Contacts are the Google add-on's
 // (mod `google`). Installed and usable: a link to it; otherwise how to get it.

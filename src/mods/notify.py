@@ -117,7 +117,20 @@ async def _post_integration(preset: str, payload: bytes, url_suffix: str = "",
 
 
 async def _sms(owner: str, text: str) -> str:
+    """A text to the owner's first number: through the mod that provides
+    messaging.sms when one is installed and enabled (Phone & Messages, with
+    its own reply URL), else the core's built-in reply URL."""
     from routes import sms_routes
+    from src.mods import capabilities
+    prov = capabilities.provider("messaging.sms")
+    if prov and prov["kind"] == "mod":
+        own = capabilities._sms_own_numbers(owner or None)
+        args = {"text": text[:600], **({"to": own[0]} if own else {})}   # no number: the mod's own first one
+        try:
+            r = await capabilities._call_mod(prov["id"], "messaging.sms", "send", args, owner or None, "core")
+            return str(r.get("via") or "sent")
+        except capabilities.CapError as e:
+            return f"the {prov['id']} mod did not send it: {e.message}"[:200]
     cfg = sms_routes.get_config(owner or None)
     numbers = cfg.get("numbers") or []
     if not numbers or not str(cfg.get("reply_url") or "").strip():

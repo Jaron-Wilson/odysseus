@@ -91,8 +91,8 @@ Writes:
   These are you acting directly, so there is no approval card.
 - **The assistant's** `manage_calendar` create, update and delete on a Google calendar wait for
   your **Approve** in the chat (see the next sections), then go to Google.
-- Invitations are not emailed for changes made here (`sendUpdates=none`); use `google_meet` to
-  invite people.
+- Invitations are not emailed for changes made here (`sendUpdates=none`); the Phone & Messages
+  mod's meeting tool makes a Meet and invites people.
 
 When something is wrong (Google not connected, the connection revoked, Calendar turned off, a
 permission missing, the Calendar API not enabled), the Calendar page shows the reason above the
@@ -123,9 +123,9 @@ never carries permissions over from a different Google account.
 
 ## What the agent can do
 
-`google_meet` (with Google Calendar connected) makes or joins a Meet (see docs/google-meet.md),
-and `manage_calendar` works on the Google calendars you linked in Organize > Calendar. The
-Google add-on adds the Drive, Docs, Sheets, Slides, Tasks and Contacts tools.
+`manage_calendar` works on the Google calendars you linked in Organize > Calendar. The Google
+add-on adds the Drive, Docs, Sheets, Slides, Tasks and Contacts tools, and the Phone & Messages
+mod makes and joins Google Meets.
 
 ## Ask before writing to my Google account (and Gmail)
 
@@ -141,10 +141,10 @@ What asks first:
 | Where | Asks before | Never asks |
 | --- | --- | --- |
 | Drive, Docs, Sheets, Slides, Tasks | the Google add-on's own: its writing tools are marked `asks_first`, so the same chat card holds them (its settings have the switch) | its reads |
-| Google Meet | `google_meet` start, now, create, schedule (each makes a Calendar event and a Meet space, and may email invites) | join, status |
+| Google Meet | the Phone & Messages mod's `meet_create` tool (makes a Calendar event and a Meet space through the mod API, and may email invites; it is `asks_first`, so the same chat card holds it) | joining |
 | Google Calendar | `manage_calendar` create_event, update_event, delete_event, or a batch of events, on a Google calendar linked through this connection (Organize > Calendar), or on a CalDAV calendar whose account URL is Google's (`apidata.googleusercontent.com`, `google.com/calendar/dav`) | list_events, list_calendars; local calendars and other CalDAV servers (Fastmail, iCloud, Nextcloud...); your own create/edit/delete on the Calendar page |
 | Gmail | `send_email`, `reply_to_email`, `archive_email`, `delete_email`, `mark_email_read`, `bulk_email` on a mailbox whose IMAP or SMTP server is Google's (`imap.gmail.com`, `smtp.gmail.com`, so Google Workspace mail counts) or whose address is `@gmail.com` | list, read and search email; drafts (`draft_email`, `draft_email_reply`, `ai_draft_email_reply` save a draft in Odysseus, not in Gmail); other mailboxes |
-| `app_api` | a POST, PUT, PATCH or DELETE to `/api/email`, `/api/calendar`, `/api/caldav`, `/api/meet` or `/api/google` is refused outright while this is on (it cannot ask); the named tools above are the way | GETs |
+| `app_api` | a POST, PUT, PATCH or DELETE to `/api/email`, `/api/calendar`, `/api/caldav` or `/api/google` is refused outright while this is on (it cannot ask); the named tools above are the way | GETs |
 
 How an answer works:
 

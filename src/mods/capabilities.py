@@ -35,10 +35,11 @@ capability's events (KNOWN[...]["events"]) can only be emitted by a provider
 of it, and are delivered only to mods that declare the capability (and that
 the user it is for may use); see src/mods/events.py.
 
-The built-in provider of messaging.sms is the Odysseus SMS gateway
-(routes/sms_routes.py: SMS Forwarder inbound, SMS Gate reply URL). When a
-"Phone & Messages" mod lists messaging.sms in `provides`, calls go to it
-instead, with the same rules, and nothing changes for the callers.
+The built-in provider of messaging.sms sends through the phone's reply URL
+(routes/sms_routes.py, SMS Gate for Android); it cannot receive. The Phone &
+Messages mod (Jaron-Wilson/odysseus-phone) lists messaging.sms in `provides`:
+installed, calls go to it instead, with the same rules, nothing changes for
+the callers, and it publishes messaging.sms.received for the texts it gets.
 """
 from __future__ import annotations
 
@@ -89,7 +90,7 @@ KNOWN: Dict[str, Dict[str, Any]] = {
             "status": "Whether texting is set up: {available, can_send, can_receive, targets}",
         },
         "events": ["messaging.sms.received"],
-        "builtin": "The Odysseus SMS gateway (Settings > Calls & Meetings > Phone SMS)",
+        "builtin": "The Odysseus SMS gateway (Settings > Calls & Meetings > Text messages)",
         # (calls, seconds) per calling mod and action; every window must have room.
         "rate_limits": {"send": [(10, 60), (100, 24 * 3600)], "status": [(60, 60)]},
     },
@@ -374,7 +375,7 @@ def _mask(number: str) -> str:
 def _sms_policy(caller: Dict[str, Any], user: Optional[str], action: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """messaging.sms: check and normalize the arguments before any provider
     sees them. `send` may only text the user's own allowed numbers (Settings
-    > Calls & Meetings > Phone SMS) or numbers the user granted this mod."""
+    > Calls & Meetings > Text messages) or numbers the user granted this mod."""
     if action == "status":
         return {}
     if action != "send":
@@ -391,7 +392,7 @@ def _sms_policy(caller: Dict[str, Any], user: Optional[str], action: str, args: 
     if raw_to in (None, ""):
         if not own:
             raise CapError(409, "The user has no phone number set up for texts "
-                                "(Settings > Calls & Meetings > Phone SMS)")
+                                "(Settings > Calls & Meetings > Text messages)")
         to = own[0]
     else:
         to = normalize_number(raw_to)
@@ -408,10 +409,11 @@ async def _sms_builtin(action: str, args: Dict[str, Any], user: Optional[str]) -
     if action == "status":
         # `available`: a text sent now would go out (the gateway has a number and a reply URL).
         return {"available": can_send, "provider": BUILTIN, "can_send": can_send,
-                "can_receive": bool(cfg.get("secret_hash")) and bool(cfg.get("numbers")),
+                # Receiving texts is the Phone & Messages mod's (the core has no inbound webhook).
+                "can_receive": False,
                 "targets": [_mask(n) for n in _sms_own_numbers(user)]}
     if not can_send:
-        raise CapError(409, "The SMS gateway has no reply URL or number (Settings > Calls & Meetings > Phone SMS)")
+        raise CapError(409, "The SMS gateway has no reply URL or number (Settings > Calls & Meetings > Text messages)")
     parts = sms_routes.split_reply(args["text"])
     vias = []
     for part in parts:
@@ -545,9 +547,11 @@ async def call(caller: Dict[str, Any], user: Optional[str], cap: str, action: st
 # ── Inbound: the built-in SMS gateway got a text ──────────────────────────
 
 def sms_received(owner: Optional[str], sender: str, text: str) -> None:
-    """Called by the SMS gateway for each accepted inbound text: publish
-    messaging.sms.received to the mods that declare messaging.sms (events.py
-    keeps it to them). Never raises into the gateway."""
+    """Publish messaging.sms.received as the core, for an inbound text the
+    core accepted, to the mods that declare messaging.sms (events.py keeps it
+    to them). Never raises. The core has no inbound gateway now (texting is
+    the Phone & Messages mod, which publishes the event itself as the
+    provider); this stays for a built-in receiver."""
     if not any(declares(e, "messaging.sms") and e.get("enabled") for e in registry.list_mods()):
         return
     try:

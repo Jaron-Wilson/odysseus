@@ -163,9 +163,7 @@ def test_paused_without_kokoro_hands_to_the_browser(addon, tmp_path, monkeypatch
         svc.synthesize_checked("No credits.")
     assert e.value.status == 409 and getattr(e.value, "fallback", "") == "browser"
     assert svc.get_stats()["effective_provider"] == "browser"
-    from src.telephony import call
-    monkeypatch.setattr("services.tts.get_tts_service", lambda: svc)
-    assert any("Kokoro is not ready" in p for p in call.engines_ready())
+    # (The phone call engine check, which reports this, is the Phone & Messages mod's.)
 
 
 def test_add_on_errors_are_never_401(addon, tmp_path, monkeypatch):

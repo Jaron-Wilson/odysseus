@@ -57,7 +57,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(cdb, "SessionLocal", ts)
     monkeypatch.setattr(croutes, "SessionLocal", ts, raising=False)
 
-    calls = {"google": [], "mcp": [], "writeback": [], "meet": [], "notify": []}
+    calls = {"google": [], "mcp": [], "writeback": [], "notify": []}
 
     # Email tools (an MCP server): every call recorded, never sent.
     class FakeMCP:
@@ -71,6 +71,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(te, "get_mcp_manager", lambda: FakeMCP())
     # Single-user box: the owner may use calendar tools (not what is tested here).
     monkeypatch.setattr(te, "_owner_is_admin", lambda owner: True)
+    monkeypatch.setitem(execute_tool_block.__globals__, "_owner_is_admin", lambda owner: True)
 
     # CalDAV accounts and write-back.
     import src.caldav_sync as cs
@@ -87,31 +88,13 @@ def env(tmp_path, monkeypatch):
     import routes.prefs_routes as prefs
     monkeypatch.setattr(prefs, "_load_for_user", lambda user=None: {})
 
-    # Meet.
-    from routes import meet_routes
-
-    async def fake_create(owner, is_admin, body):
-        calls["meet"].append(body)
-        return {"message": "Made it", "url": "https://meet.google.com/abc-defg-hij", "title": body.get("title")}
-    monkeypatch.setattr(meet_routes, "create_meeting", fake_create)
-
-    async def fake_join(owner, is_admin, body):
-        class M:
-            via = "browser"
-            url = body["url"]
-            dial_in = {}
-
-            def public(self):
-                return {"url": self.url}
-        return M()
-    monkeypatch.setattr(meet_routes, "start_join", fake_join)
-
     import src.chat_queue as cq
 
     async def fake_notify(session_id, notify, heading, body, **kw):
         calls["notify"].append({"chat": session_id, "heading": heading, "body": body})
         return {}
     monkeypatch.setattr(cq, "send_notification", fake_notify)
+    _add_calendar("tripcal", "g", name="Trip")
     return calls
 
 
@@ -187,17 +170,23 @@ ANN = {"x-test-user": "ann"}
 BOB = {"x-test-user": "bob"}
 ADMIN = {"x-test-user": "admin"}
 
-# The write the generic tests use: making a Meet (a Calendar event and a
-# Meet space), held like every Google write the core makes.
-W_TOOL = "google_meet"
-W_ARGS = {"action": "start", "title": "Trip notes", "attendees": ["bob@x.com"]}
+# The write the generic tests use: an event on a Google calendar linked through
+# CalDAV, held like every Google write the core makes.
+W_TOOL = "manage_calendar"
+
+
+def _ev(title):
+    return {"action": "create_event", "summary": title, "dtstart": "2026-10-20T10:00", "calendar": "Trip"}
+
+
+W_ARGS = _ev("Trip notes")
 
 
 def test_workspace_tools_left_the_core():
     """Drive, Docs, Sheets, Slides, Tasks and Contacts are the Google add-on's."""
     from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
     names = {s["function"]["name"] for s in FUNCTION_TOOL_SCHEMAS}
-    assert not {n for n in names if n.startswith("google_") and n != "google_meet"}
+    assert not {n for n in names if n.startswith("google_")}
     assert not G.is_candidate("google_doc_create", "{}")
 
 
@@ -206,30 +195,7 @@ def test_another_user_cannot_see_or_answer_it(env, client):
     aid = out["action_approval"]["id"]
     assert client.get(f"/api/action_approvals/{aid}", headers=BOB).status_code == 404
     assert client.post(f"/api/action_approvals/{aid}/approve", headers=BOB).status_code == 404
-    assert env["meet"] == []
-
-
-# ── Meet ─────────────────────────────────────────────────────────────────
-
-@pytest.mark.parametrize("args", [
-    {"action": "start", "title": "Quick sync", "attendees": ["bob@x.com"]},
-    {"action": "schedule", "title": "Planning", "start": "tomorrow at 3pm"},
-    {"title": "No action means start"},
-])
-def test_meet_create_is_held(args, env, client):
-    _, out = _call("google_meet", args, owner="ann")
-    assert _held(out) and env["meet"] == []
-    client.post(f"/api/action_approvals/{out['action_approval']['id']}/approve", headers=ANN)
-    assert len(env["meet"]) == 1
-
-
-@pytest.mark.parametrize("args", [{"action": "join", "url": "https://meet.google.com/abc-defg-hij"},
-                                  {"action": "status"}])
-def test_meet_join_and_status_are_not_held(args, env, monkeypatch):
-    from src.meet import tool as meet_tool
-    monkeypatch.setattr(meet_tool, "_status", lambda owner: "ok")
-    _, out = _call("google_meet", args)
-    assert not _held(out)
+    assert env["writeback"] == []
 
 
 # ── Google Calendar over CalDAV, and other calendars ────────────────────
@@ -419,19 +385,19 @@ def test_deny_tells_the_model_and_never_runs(env, client):
     r = client.post(f"/api/action_approvals/{aid}/deny", json={"note": "wrong folder"}, headers=ANN)
     assert r.status_code == 200 and r.json()["status"] == "denied"
     (resume,) = client.resumed
-    assert "denied" in resume["prompt"] and "Start a Google Meet now" in resume["prompt"] and "wrong folder" in resume["prompt"]
+    assert "denied" in resume["prompt"] and "Google Calendar" in resume["prompt"] and "wrong folder" in resume["prompt"]
     assert client.post(f"/api/action_approvals/{aid}/approve", headers=ANN).status_code == 409
-    assert env["meet"] == []
+    assert env["writeback"] == []
 
 
 def test_it_expires_after_30_minutes(env, client):
-    _, out = _call(W_TOOL, dict(W_ARGS, title="Call mom"), owner="ann")
+    _, out = _call(W_TOOL, _ev("Call mom"), owner="ann")
     aid = out["action_approval"]["id"]
     assert AA.get(aid)["expires_at"] - AA.get(aid)["created"] == 30 * 60
     AA.set_fields(aid, expires_at=time.time() - 1)
     r = client.post(f"/api/action_approvals/{aid}/approve", headers=ANN)
     assert r.status_code == 409 and "expired" in r.json()["detail"]
-    assert AA.get(aid)["status"] == "expired" and env["meet"] == []
+    assert AA.get(aid)["status"] == "expired" and env["writeback"] == []
     assert any(row["outcome"] == "expired" for row in AA.recent_audit("ann"))
 
 
@@ -444,7 +410,7 @@ def test_the_state_survives_a_reload(env, client, tmp_path):
     assert [r["id"] for r in rows] == [aid]
     client.post(f"/api/action_approvals/{aid}/approve", headers=ANN)
     rows = client.get(f"/api/action_approvals?chat={CHAT}", headers=ANN).json()["approvals"]
-    assert rows[0]["status"] == "approved" and "Made it" in rows[0]["result"]["output"]
+    assert rows[0]["status"] == "approved" and "Created event" in rows[0]["result"]["output"]
 
 
 def test_the_same_call_twice_is_one_card(env):
@@ -456,11 +422,11 @@ def test_the_same_call_twice_is_one_card(env):
 def test_the_approval_lets_through_only_that_call(env):
     """The pinned call passes the gate once; a different call made while it
     runs is still held."""
-    e = AA.create("", CHAT, W_TOOL, json.dumps({"action": "start", "title": "A"}), {"title": "A"})
+    e = AA.create("", CHAT, W_TOOL, json.dumps(_ev("A")), {"title": "A"})
     seen = []
 
     async def go():
-        a, b = json.dumps({"action": "start", "title": "A"}), json.dumps({"action": "start", "title": "B"})
+        a, b = json.dumps(_ev("A")), json.dumps(_ev("B"))
         tok = AA._approved_call.set((W_TOOL, a, e["id"]))
         try:
             seen.append(await G.intercept(W_TOOL, b, None, CHAT))
@@ -479,6 +445,9 @@ def _run_loop(monkeypatch, text, rounds=None):
     seen = []
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
+    monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
+    # Whatever module copy the loop runs tools through, the owner may use calendar tools.
+    monkeypatch.setitem(al.execute_tool_block.__globals__, "_owner_is_admin", lambda owner: True)
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
 
     async def fake_stream(_candidates, messages, **kwargs):
@@ -490,8 +459,8 @@ def _run_loop(monkeypatch, text, rounds=None):
     async def collect():
         return [c async for c in al.stream_agent_loop(
             "http://x/v1", "m", [{"role": "user", "content": "start a google meet with bob"}],
-            max_rounds=3, relevant_tools={"google_meet", "read_file"},
-            session_id=CHAT)]
+            max_rounds=3, relevant_tools={"manage_calendar", "read_file"},
+            session_id=CHAT, owner="ann")]
     chunks = asyncio.run(collect())
     events = []
     for c in chunks:
@@ -504,26 +473,26 @@ def _run_loop(monkeypatch, text, rounds=None):
 
 
 def test_a_fenced_block_is_held_and_the_turn_ends(env, monkeypatch):
-    block = "```google_meet\n" + json.dumps({"action": "start", "title": "Trip"}) + "\n```"
+    block = "```manage_calendar\n" + json.dumps(_ev("Trip")) + "\n```"
     seen, events = _run_loop(monkeypatch, block)
-    assert len(seen) == 1, "the turn must end while the change waits for the user"
+    assert len(seen) == 1, "the turn must end while the change waits for the user: " + str([e.get("output") for e in events if e.get("type") == "tool_output"])
     out = [e for e in events if e.get("type") == "tool_output" and e.get("tool") == W_TOOL]
     assert out and AA.valid_id(out[0]["action_approval_id"])
     assert any("Waiting for your approval" in (e.get("delta") or "") for e in events)
     metrics = next(e for e in events if e.get("type") == "metrics")["data"]
     ev = [t for t in metrics.get("tool_events", []) if t.get("tool") == W_TOOL]
     assert ev and ev[0]["action_approval_id"] == out[0]["action_approval_id"]
-    assert env["meet"] == []
+    assert env["writeback"] == []
 
 
 def test_two_writes_in_one_turn_show_one_card(env, monkeypatch):
-    blocks = ("```google_meet\n" + json.dumps({"action": "start", "title": "One"}) + "\n```\n"
-              "```google_meet\n" + json.dumps({"action": "start", "title": "Two"}) + "\n```")
+    blocks = ("```manage_calendar\n" + json.dumps(_ev("One")) + "\n```\n"
+              "```manage_calendar\n" + json.dumps(_ev("Two")) + "\n```")
     _, events = _run_loop(monkeypatch, blocks)
     outs = [e for e in events if e.get("type") == "tool_output"]
     assert sum(1 for e in outs if e.get("action_approval_id")) == 1
     assert any("One at a time" in (e.get("output") or "") for e in outs)
-    assert len(AA.for_chat(CHAT)) == 1 and env["meet"] == []
+    assert len(AA.for_chat(CHAT)) == 1 and env["writeback"] == []
 
 
 # ── Company runs, scheduled tasks ───────────────────────────────────────
@@ -548,10 +517,10 @@ def test_a_company_run_goes_to_company_approvals(env, client, monkeypatch):
     assert client.post(f"/api/action_approvals/{aid}/approve", headers=ANN).status_code == 409
     # Approved in Company > Approvals: runs once when the agent wakes.
     AA.company_decided("cap1", "approved", by="ann")
-    assert AA.get(aid)["status"] == "queued" and env["meet"] == []
+    assert AA.get(aid)["status"] == "queued" and env["writeback"] == []
     asyncio.run(AA.run_company_queued("cap1"))
     asyncio.run(AA.run_company_queued("cap1"))
-    assert len(env["meet"]) == 1 and AA.get(aid)["status"] == "approved"
+    assert len(env["writeback"]) == 1 and AA.get(aid)["status"] == "approved"
 
 
 def test_a_company_rejection_never_runs(env):
@@ -559,7 +528,7 @@ def test_a_company_rejection_never_runs(env):
                   extra={"company_approval_id": "cap2"})
     AA.company_decided("cap2", "rejected", "no")
     asyncio.run(AA.run_company_queued("cap2"))
-    assert AA.get(e["id"])["status"] == "denied" and env["meet"] == []
+    assert AA.get(e["id"])["status"] == "denied" and env["writeback"] == []
 
 
 def test_google_write_is_a_company_approval_type_and_models_cannot_decide_it():
@@ -581,7 +550,7 @@ def test_a_scheduled_task_holds_and_notifies(env):
     _, out = asyncio.run(_with_drain(go()))
     assert _held(out) and AA.get(out["action_approval"]["id"])["source"] == "task"
     assert env["notify"] and env["notify"][0]["heading"] == "Approve a Google change?"
-    assert env["meet"] == []
+    assert env["writeback"] == []
 
 
 def test_the_mail_listener_holds_and_notifies(env):
@@ -614,7 +583,7 @@ def test_only_an_admin_can_turn_it_off(env, client):
     assert r.status_code == 200 and r.json()["enabled"] is False and G.enabled() is False
     # Off: writes run straight away.
     _, out = _call(W_TOOL, W_ARGS)
-    assert not _held(out) and len(env["meet"]) == 1
+    assert not _held(out) and len(env["writeback"]) == 1
     # Anyone may turn it back on.
     assert client.put("/api/google/write-approval", json={"enabled": True}, headers=ANN).json()["enabled"] is True
 
@@ -629,9 +598,9 @@ def test_the_switch_is_not_a_setting_the_model_can_change(env):
 def test_every_answer_is_logged_and_listed(env, client):
     _, a = _call(W_TOOL, W_ARGS, owner="ann")
     client.post(f"/api/action_approvals/{a['action_approval']['id']}/approve", headers=ANN)
-    _, b = _call(W_TOOL, dict(W_ARGS, title="Call mom"), owner="ann")
+    _, b = _call(W_TOOL, _ev("Call mom"), owner="ann")
     client.post(f"/api/action_approvals/{b['action_approval']['id']}/deny", json={"note": "later"}, headers=ANN)
-    _, c = _call(W_TOOL, dict(W_ARGS, title="Receipts"), owner="ann")
+    _, c = _call(W_TOOL, _ev("Receipts"), owner="ann")
     s = client.get("/api/google/write-approval", headers=ANN).json()
     outcomes = [(r["tool"], r["outcome"]) for r in s["recent"]]
     assert outcomes == [(W_TOOL, "denied"), (W_TOOL, "approved")]
@@ -661,7 +630,7 @@ def test_company_flow_end_to_end(env):
         db.close()
     with ct.agent_context(owner="ann", company_id=c["id"], agent_id=ag["id"], run_id="r1"):
         _, out = _call(W_TOOL, W_ARGS, chat="run-thread", owner="ann")
-    assert _held(out) and env["meet"] == []
+    assert _held(out) and env["writeback"] == []
     held = AA.get(out["action_approval"]["id"])
     db = cdb.SessionLocal()
     try:
@@ -673,9 +642,9 @@ def test_company_flow_end_to_end(env):
         co.decide_approval(db, "ann", me, ap.id, "approved")
     finally:
         db.close()
-    assert AA.get(held["id"])["status"] == "queued" and env["meet"] == []
+    assert AA.get(held["id"])["status"] == "queued" and env["writeback"] == []
     asyncio.run(AA.run_company_queued(held["company_approval_id"]))
-    assert len(env["meet"]) == 1
+    assert len(env["writeback"]) == 1
     db = cdb.SessionLocal()
     try:
         agent = db.query(cdb.CompanyAgent).filter(cdb.CompanyAgent.id == ag["id"]).one()
@@ -686,4 +655,4 @@ def test_company_flow_end_to_end(env):
         _system, user, _plan, _limits = cx.build_prompt(db, "ann", agent, company, run, [wake])
     finally:
         db.close()
-    assert "APPROVED and ran once" in user and "Made it" in user
+    assert "APPROVED and ran once" in user and "Created event" in user

@@ -1,5 +1,5 @@
 """Drive, Docs, Sheets, Slides, Tasks and Contacts left the core for the
-Google add-on (mod `google`). The core keeps Calendar (with Meet) on its
+Google add-on (mod `google`). The core keeps Calendar on its
 Google connection, has none of the Workspace tools, points to the add-on,
 and does not revoke a grant the add-on may share. Nothing reaches Google."""
 import asyncio
@@ -19,7 +19,7 @@ def test_no_workspace_tools_in_the_core():
              "google_slides_create", "google_task_create", "google_contacts_search"}
     names = {s["function"]["name"] for s in FUNCTION_TOOL_SCHEMAS}
     assert not moved & names and not moved & set(TOOL_TAGS) and not moved & set(BUILTIN_TOOL_DESCRIPTIONS)
-    assert "google_meet" in names
+    assert "google_meet" not in names  # Meet is the Phone & Messages mod's now
 
 
 def test_only_calendar_is_a_core_product():

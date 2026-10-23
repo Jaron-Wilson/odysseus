@@ -864,14 +864,6 @@ async def execute_tool_block(
         except Exception as e:
             logger.warning("manage_devices failed: %s", e, exc_info=True)
             result = {"error": f"manage_devices: {type(e).__name__}: {e}"[:400], "exit_code": 1}
-    elif tool == "google_meet":
-        desc = f"google_meet: {content.split(chr(10))[0][:60]}"
-        from src.meet import tool as meet_tool
-        try:
-            result = await meet_tool.run_tool(content, owner=owner, is_admin=_owner_is_admin(owner))
-        except Exception as e:
-            logger.warning("google_meet failed: %s", e, exc_info=True)
-            result = {"error": f"google_meet: {type(e).__name__}: {e}"[:400], "exit_code": 1}
     elif tool == "whats_new":
         desc = f"whats_new: {content.split(chr(10))[0][:60]}"
         from src import whats_new
@@ -910,14 +902,6 @@ async def execute_tool_block(
             logger.warning("%s failed: %s", tool, e, exc_info=True)
             result = {"error": f"{tool}: {type(e).__name__}: {e}"[:400], "exit_code": 1}
         desc = f"{tool}: {((result or {}).get('thread') or {}).get('name', '')}"[:100]
-    elif tool == "call_me":
-        desc = f"call_me: {content.split(chr(10))[0][:80]}"
-        from src.agent_tools import TOOL_HANDLERS
-        try:
-            result = await TOOL_HANDLERS["call_me"](content, {"owner": owner})
-        except Exception as e:
-            logger.warning("call_me failed: %s", e, exc_info=True)
-            result = {"error": f"call_me: {type(e).__name__}: {e}"[:400], "exit_code": 1}
     elif tool == "notify_device":
         desc = f"notify_device: {content.split(chr(10))[0][:80]}"
         from src.agent_tools import TOOL_HANDLERS

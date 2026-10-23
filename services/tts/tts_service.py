@@ -402,7 +402,7 @@ class TTSService:
         """Audio for `text` with the configured provider. `voice` and `speed`
         override the saved ones (the Settings preview). `response_format` is
         what an API engine is asked for: MP3 for the browser, WAV for a phone
-        call (src/telephony), which has no MP3 decoder to count on. Kokoro
+        call (the Phone & Messages mod, through the mod API), which has no MP3 decoder to count on. Kokoro
         always makes WAV. Raises TTSError."""
         settings = self._load_settings()
         provider = settings["tts_provider"]

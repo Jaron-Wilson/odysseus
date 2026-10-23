@@ -450,12 +450,13 @@ and lets you open a chat to ask about one.
 <details>
 <summary>Phone, SMS and Google Meet</summary>
 
-These cards live in **Settings > Calls & Meetings**.
+These are the **Phone & Messages** mod ([Jaron-Wilson/odysseus-phone](https://github.com/Jaron-Wilson/odysseus-phone), Settings > Mods > Browse), not the core:
 
-- **SMS gateway**: text Odysseus from your phone. An Android gateway phone (for example a Pixel) forwards incoming texts with SMS Forwarder to a secret URL, and replies go back through SMS Gateway for Android (or as a push notification). Only your own numbers are answered, and a Google Voice number works as a sender. Commands include `list`, `new [model]`, `chat <n>`, `models`, `model <n|name>`, `say <n> <text>`, `find`, `status` and `help`, and long answers are split into numbered texts. See [docs/sms-gateway.md](docs/sms-gateway.md).
-- **Phone calls**: a Twilio number streams the call to Odysseus and you talk to the agent like `/call`, or the agent calls you. See [docs/phone-calls.md](docs/phone-calls.md).
-- **Free SIP line**: call the agent from a softphone (Linphone, Zoiper) on any tailnet device, with no phone number. It is off by default, binds only to Tailscale addresses and uses SIP digest auth. See [docs/sip-line.md](docs/sip-line.md).
-- **Google Meet**: the voice agent joins a meeting as "Odysseus (AI)" by phone dial-in or through the cloud browser, then either talks with you or acts as a meeting assistant (transcribes, answers when named, posts notes at the end). It can also start or schedule a Meet from your Google account. See [docs/google-meet.md](docs/google-meet.md) for what Google currently allows.
+- **Texting the agent**: an Android gateway phone forwards your texts to Odysseus (SMS Forwarder), and the agent texts back (SMS Gate for Android).
+- **Phone calls**: a free SIP line on your tailnet (Linphone, Zoiper) or a Twilio number, and the agent can call you.
+- **Google Meet**: the voice agent joins a meeting as "Odysseus (AI)", talks with you or takes notes, and can make a Meet in your Google Calendar.
+
+Without the mod, Odysseus can still text you (mod notifications at a level you pick): **Settings > Calls & Meetings > Text messages**, see [docs/sms-gateway.md](docs/sms-gateway.md).
 
 </details>
 

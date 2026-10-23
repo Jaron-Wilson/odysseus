@@ -387,7 +387,7 @@ async def _prepare(sess, session_id: str, context: List[Dict]):
 async def run_headless(session_id: str, text: str, client_device: Optional[Dict] = None,
                        source: str = "queued", voice_call: bool = False, note: str = "") -> bool:
     """Send a message with no page open, as a detached run: a queued
-    message, or a turn of a phone call (src/telephony/agent.py), which
+    message, or a turn a mod sends (a phone call, a text: src/mods/host_api.py), which
     `source` marks on both saved messages. `note` is added to the system
     message for this turn only (a Google Meet says who else is listening)."""
     try:
