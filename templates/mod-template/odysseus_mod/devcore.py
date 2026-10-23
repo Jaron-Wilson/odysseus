@@ -233,7 +233,7 @@ class DevCore:
         if perm and perm not in self.perms:
             return 403, {"detail": f"This mod was not granted the {perm} permission"}
         if path == "me":
-            return 200, {"id": self.mod_id, "permissions": sorted(self.perms), "core_api": "0.1",
+            return 200, {"id": self.mod_id, "permissions": sorted(self.perms), "core_api": "0.2",
                          "base_path": f"/mods/{self.mod_id}", "devcore": True}
         if path == "notify":
             n = dict(body, ts=time.time())

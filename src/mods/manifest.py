@@ -16,7 +16,7 @@ MANIFEST_FILE = "odysseus-mod.json"
 
 # The mod API version this core speaks. A manifest's `min_core` is compared
 # against it, not against the Odysseus release number.
-CORE_API_VERSION = "0.1"
+CORE_API_VERSION = "0.2"      # 0.2: provider callbacks, consumers and scopes (src/mods/capabilities.py)
 MANIFEST_VERSION = 1
 
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,31}$")

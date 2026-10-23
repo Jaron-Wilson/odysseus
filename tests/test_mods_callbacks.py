@@ -217,3 +217,10 @@ def test_a_plain_call_still_goes_to_the_provider(env):
         r = env.post("/api/mods/v1/cap/chat.commands/register", headers=bearer(ctok), json={})
         assert r.status_code == 200 and r.json()["provider"] == "chatbot"
     assert seen == [("printer", None)]
+
+
+def test_a_mod_can_require_the_callback_api():
+    assert mf.CORE_API_VERSION == "0.2"
+    assert mf.validate(_man(min_core="0.2"))["min_core"] == "0.2"
+    with pytest.raises(mf.ManifestError):
+        mf.validate(_man(min_core="0.3"))

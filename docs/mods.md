@@ -316,7 +316,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `name` | Required, up to 60 characters. |
 | `version` | Required, like `1`, `1.2` or `1.2.3`, with an optional `-suffix`. |
 | `description`, `author`, `license`, `homepage` | Optional text. |
-| `min_core` | The oldest mod API it works with. The core is `0.1`; a mod asking for more is refused. |
+| `min_core` | The oldest mod API it works with. The core is `0.2` (0.2 added provider callbacks, `consumers` and `scopes`; every 0.1 mod still works); a mod asking for more is refused. |
 | `tags` | Optional, up to 10 lowercase slugs like `3d-printing` (see [Tags](#tags)). Unknown tags are allowed. |
 | `admin_only` | Optional, default `false`. `true` for a mod that gives admin powers (a shell on the server, its files, other users' sessions): only admins can ever use it. Its **Who can use it** setting is fixed to Admins (setting it to All users is refused), and the install review says so. |
 | `icon_url` | Optional https URL of a square image, shown in Browse (only from GitHub's hosts). |
