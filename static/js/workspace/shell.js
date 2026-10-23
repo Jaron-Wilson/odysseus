@@ -188,6 +188,15 @@ function _load() {
   } catch {}
 }
 
+// A split side never gets narrower than a composer can use: 25% to 75%, and
+// at least MIN_PANE px each (a narrow window keeps the middle).
+const MIN_PANE = 340;
+function clampRatio(r, w) {
+  const lo = Math.max(0.25, MIN_PANE / (w || 1));
+  const hi = Math.min(0.75, 1 - lo);
+  return lo > hi ? 0.5 : Math.min(hi, Math.max(lo, r));
+}
+
 const tab = (id) => S.tabs.find(t => t.id === id);
 const activeId = () => (S.focus === 'right' && S.right) ? S.right : S.left;
 const shown = () => [S.left, S.right].filter(Boolean);
@@ -553,7 +562,7 @@ function layout() {
   const w = phone ? document.documentElement.clientWidth : Math.round(r.right + (parseFloat(cs.marginRight) || 0)) - x;
   const root = document.documentElement.style;
   const split = !!S.right && !isPhone();
-  const lw = split ? Math.round(w * S.ratio) : w;
+  const lw = split ? Math.round(w * clampRatio(S.ratio, w)) : w;
   root.setProperty('--ws-x', x + 'px');
   root.setProperty('--ws-w', w + 'px');
   root.setProperty('--ws-lw', lw + 'px');
@@ -1000,7 +1009,7 @@ function _buildDivider() {
     document.documentElement.classList.add('ws-resizing');
     const x0 = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ws-x')) || 0;
     const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ws-w')) || innerWidth;
-    const move = (ev) => { S.ratio = Math.min(0.75, Math.max(0.25, (ev.clientX - x0) / w)); layout(); };
+    const move = (ev) => { S.ratio = clampRatio((ev.clientX - x0) / w, w); layout(); };
     const up = () => {
       _div.removeEventListener('pointermove', move);
       document.documentElement.classList.remove('ws-resizing');
@@ -1013,7 +1022,8 @@ function _buildDivider() {
   });
   _div.addEventListener('keydown', e => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    S.ratio = Math.min(0.75, Math.max(0.25, S.ratio + (e.key === 'ArrowRight' ? 0.05 : -0.05)));
+    const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ws-w')) || innerWidth;
+    S.ratio = clampRatio(S.ratio + (e.key === 'ArrowRight' ? 0.05 : -0.05), w);
     layout(); _save(); e.preventDefault();
   });
   _div.addEventListener('dblclick', () => { S.ratio = 0.5; layout(); _save(); });

@@ -80,8 +80,8 @@ _PAGE = """<!doctype html><html class="ui-workspace ui-studio"><head>
   <span id="user-bar-name">Jaron Wilson</span>
 </nav>
 <button id="rail-new-session">+</button>
-<main id="chat-container" class="chat-container" style="flex:1;min-width:0">
-  <div id="chat-history"></div>
+<main id="chat-container" class="chat-container" style="flex:1;min-width:0;display:flex;flex-direction:column">
+  <div id="chat-history" style="flex:1"></div>
   <textarea id="message"></textarea>
   <form id="chat-form"></form>
 </main>
@@ -125,8 +125,8 @@ _PAGE = """<!doctype html><html class="ui-workspace ui-studio"><head>
 # chat page, ody-pane): it selects the session from its hash, switches in
 # place through sessionModule when asked, reports what it settled on to the
 # page around it, and POSTs its own stream to /api/chat_stream.
-_PANE_PAGE = """<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;font-family:sans-serif">
-<div id="out"></div>
+_PANE_PAGE = """<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;font-family:sans-serif;display:flex;flex-direction:column;height:100vh">
+<div id="out" style="flex:1"></div>
 <form id="pane-form" style="display:flex;gap:6px;padding:8px">
   <input id="pane-msg" name="message" style="flex:1">
   <button>Send</button>
@@ -279,6 +279,52 @@ def test_two_different_chats_can_be_shown_at_once(page):
     assert geo["mainR"] <= geo["w"] + 1 and geo["paneR"] <= geo["w"] + 1
     # The pane's header names the pane's chat.
     assert page.inner_text("#chat-pane-page .cp-name-text") == "Chat one"
+
+
+def _composer_boxes(pg):
+    """Both composers' boxes (page coordinates) and the two panes' boxes."""
+    return pg.evaluate("""() => {
+      const box = (r, dx = 0, dy = 0) => ({ l: r.left + dx, t: r.top + dy, r: r.right + dx, b: r.bottom + dy,
+                                            w: r.width, h: r.height });
+      const m = document.getElementById('chat-container').getBoundingClientRect();
+      const p = document.getElementById('chat-pane-page').getBoundingClientRect();
+      const f = document.querySelector('#chat-pane-page .cp-frame');
+      const fr = f.getBoundingClientRect();
+      const main = document.getElementById('message').getBoundingClientRect();
+      const pane = f.contentDocument.getElementById('pane-msg').getBoundingClientRect();
+      return { main: box(main), pane: box(pane, fr.left, fr.top), mainPane: box(m), sidePane: box(p), vh: innerHeight };
+    }""")
+
+
+@pytest.mark.parametrize("width", [1440, 1100])
+@pytest.mark.parametrize("ratio", [None, 0.25, 0.75])
+def test_both_composers_are_visible_in_their_own_pane(page, width, ratio):
+    # Regression: the pane's iframe kept its default 150px height (a docked
+    # page's display:block beat the pane's flex column), so the second chat's
+    # composer was cut off and only one chatbox showed.
+    page.set_viewport_size({"width": width, "height": 900})
+    page.boot()
+    _two_chats(page)
+    _pane_ready(page)
+    if ratio is not None:
+        page.evaluate("""(r) => { const d = document.getElementById('ws-divider');
+          const x0 = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ws-x'));
+          const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ws-w'));
+          const fire = (t, x) => d.dispatchEvent(new PointerEvent(t, { clientX: x, pointerId: 1, bubbles: true }));
+          fire('pointerdown', x0 + w * 0.5); fire('pointermove', x0 + w * r); fire('pointerup', x0 + w * r); }""", ratio)
+        _settle(page)
+    g = _composer_boxes(page)
+    for name, pane in (("main", "mainPane"), ("pane", "sidePane")):
+        c, box = g[name], g[pane]
+        assert c["w"] > 100 and c["h"] > 10, (name, c)
+        assert c["l"] >= box["l"] - 1 and c["r"] <= box["r"] + 1, (name, c, box)
+        assert c["t"] >= box["t"] - 1 and c["b"] <= box["b"] + 1, (name, c, box)
+        assert c["b"] <= g["vh"], (name, c)
+        # At the bottom of its own pane, not stranded at the top.
+        assert box["b"] - c["b"] < 200, (name, c, box)
+    # Each pane is usable (never squeezed under a composer's width) and they do not overlap.
+    assert g["mainPane"]["w"] >= 320 and g["sidePane"]["w"] >= 320, g
+    assert g["main"]["r"] <= g["pane"]["l"] + 1 or g["pane"]["r"] <= g["main"]["l"] + 1, g
 
 
 def test_the_pane_header_picks_another_chat_for_the_pane_only(page):
