@@ -316,6 +316,7 @@ def prepare(source: str, ref: Optional[str] = None, subdir: Optional[str] = None
         "new_permissions": sorted(set(manifest["permissions"]) - granted) if existing else manifest["permissions"],
         "ui": manifest["ui"],
         "tools": bool(manifest["tools"]),
+        "admin_only": bool(manifest.get("admin_only")),
         "tutorial": _tutorial_summary(manifest.get("tutorial")),
         "warnings": manifest.get("warnings") or [],
         # What it provides, needs (`missing`: nobody provides it yet) and may
@@ -433,6 +434,8 @@ def confirm(install_id: str, approved: List[str]) -> Dict[str, Any]:
             was_docker = ((existing.get("manifest") or {}).get("runtime") or {}).get("type") == "docker"
             entry["compose_project"] = (runtime.LEGACY_PROJECT_PREFIX + mod_id if was_docker
                                         else runtime.new_compose_project(mod_id))
+        if manifest.get("admin_only"):
+            entry["access"] = "admins"
         # The next start of a docker mod rebuilds its images from this code.
         entry["build_pending"] = manifest["runtime"]["type"] == "docker"
         data["mods"][mod_id] = entry
@@ -455,6 +458,9 @@ def set_enabled(mod_id: str, enabled: bool) -> Dict[str, Any]:
 def set_access(mod_id: str, access: str) -> Dict[str, Any]:
     if access not in ("admins", "users"):
         raise RegistryError("access must be admins or users")
+    entry = get(mod_id)
+    if access == "users" and entry and (entry.get("manifest") or {}).get("admin_only"):
+        raise RegistryError(f"{entry.get('name') or mod_id} is only for admins (its manifest says admin_only)")
     return _update(mod_id, access=access)
 
 
@@ -517,7 +523,8 @@ def public(entry: Dict[str, Any]) -> Dict[str, Any]:
         "author": man.get("author", ""),
         "homepage": man.get("homepage", ""),
         "enabled": bool(entry.get("enabled")),
-        "access": entry.get("access", "admins"),
+        "access": "admins" if man.get("admin_only") else entry.get("access", "admins"),
+        "admin_only": bool(man.get("admin_only")),
         "source": entry.get("source"),
         "commit": entry.get("commit"),
         "installed_at": entry.get("installed_at"),

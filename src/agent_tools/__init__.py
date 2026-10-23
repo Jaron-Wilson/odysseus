@@ -102,18 +102,9 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
 # The user's Company from a chat (src/agent_tools/company_chat_tools.py).
 from .company_chat_tools import ALL_TOOLS as _COMPANY_CHAT_TOOLS  # noqa: E402
 TOOL_TAGS |= _COMPANY_CHAT_TOOLS
-# Game streaming from the PC: Sunshine apps, launch link, stop, Steam sync
-# (src/agent_tools/game_tools.py).
-from .game_tools import ALL_TOOLS as _GAME_TOOLS  # noqa: E402
-TOOL_TAGS |= _GAME_TOOLS
 # Company agents' tools (src/company_tools.py); only offered in a Company run.
 from src.company_tools import TOOL_NAMES as _COMPANY_TOOL_NAMES  # noqa: E402
 TOOL_TAGS |= set(_COMPANY_TOOL_NAMES)
-
-# Google products: Drive, Docs, Sheets, Slides, Tasks, Contacts
-# (src/google_workspace/products.py).
-from src.google_workspace.products import ALL_TOOLS as _GOOGLE_TOOLS  # noqa: E402
-TOOL_TAGS |= _GOOGLE_TOOLS
 
 ToolBlock =namedtuple("ToolBlock", ["tool_type", "content"])
 

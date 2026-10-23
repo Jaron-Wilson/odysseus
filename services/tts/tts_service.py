@@ -1,20 +1,19 @@
 # services/tts/tts_service.py
 """Multi-provider TTS service: local Kokoro (kokoro-onnx), an
-OpenAI-compatible API (OpenAI, Kokoro-FastAPI, ...), ElevenLabs, or the
-browser."""
+OpenAI-compatible API (OpenAI, Kokoro-FastAPI, ...), an add-on voice (a mod
+that provides `tts.voice`, like ElevenLabs), or the browser."""
 
 import hashlib
 import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import httpx
 
 from src.constants import TTS_CACHE_DIR
 from src.upload_limits import read_byte_limit_env
-from services.tts import elevenlabs as el
 from services.tts.kokoro_local import (
     KOKORO_MODELS, PIP, VOICES, KokoroEngine, TTSError, cpu_has_vnni, cpu_threads,
     default_model, missing_packages, model_status, models_dir, resolve_model, resolve_voice,
@@ -42,17 +41,22 @@ def _safe_num(value, default: float) -> float:
     return v if v >= 0 else default
 
 
-def _cap_text(text: str, limit: int) -> str:
-    """At most `limit` characters, cut at the last sentence (or word) end."""
-    if not limit or len(text) <= limit:
-        return text
-    cut = text[:limit]
-    for mark in (". ", "! ", "? ", "\n"):
-        i = cut.rfind(mark)
-        if i > limit * 0.5:
-            return cut[: i + 1].strip()
-    i = cut.rfind(" ")
-    return (cut[:i] if i > limit * 0.5 else cut).strip()
+# An add-on voice is the provider "mod:<mod id>" (src/mods/providers.py,
+# capability tts.voice). ElevenLabs was built in before it became an add-on,
+# so a saved "elevenlabs" means that add-on.
+MOD_PREFIX = "mod:"
+LEGACY_PROVIDERS = {"elevenlabs": "mod:elevenlabs"}
+# The add-ons the core knows by name, for "Install the ... add-on".
+KNOWN_ADDONS = {"elevenlabs": "ElevenLabs voice"}
+MOD_STATUS_TTL = 10.0
+
+
+def mod_id_of(provider: str) -> Optional[str]:
+    """The mod id of an add-on voice provider, else None."""
+    provider = LEGACY_PROVIDERS.get(provider or "", provider or "")
+    if not provider.startswith(MOD_PREFIX):
+        return None
+    return provider[len(MOD_PREFIX):] or None
 
 
 def _safe_speed(value, default: float = 1.0) -> float:
@@ -77,10 +81,11 @@ class TTSService:
       "local"           - Kokoro-82M on this machine via kokoro-onnx (no torch)
       "endpoint:<id>"   - OpenAI-compatible /audio/speech via ModelEndpoint
                           (also Kokoro-FastAPI on a GPU box: voice "af_heart")
-      "elevenlabs"      - ElevenLabs (services/tts/elevenlabs.py). Paid per
-                          character, so it has a credit guard: below the
-                          set reserve it hands over to Kokoro when Kokoro
-                          is ready, else to the browser voice.
+      "mod:<id>"        - an add-on voice (a mod that provides tts.voice,
+                          like ElevenLabs). When the add-on says it is
+                          paused (out of credits), Kokoro speaks if it is
+                          ready, else the browser voice. The add-on keeps
+                          its own key, cache and limits.
 
     Speed is applied here for every server provider (Kokoro natively, APIs
     through their `speed` field), so the browser plays the audio at 1x.
@@ -90,10 +95,9 @@ class TTSService:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._kokoro = None  # lazy-init
-        self._eleven = None  # lazy-init
-        self._fallback: Optional[Dict[str, Any]] = None  # last ElevenLabs hand-over
-        self._quota_hit: Optional[Dict[str, Any]] = None
+        self._fallback: Optional[Dict[str, Any]] = None  # last add-on hand-over
         self._last_fallback: Optional[Dict[str, Any]] = None
+        self._mod_status_cache: Dict[str, Any] = {}  # mod id -> (at, status)
 
     # ── Settings ──
 
@@ -102,15 +106,12 @@ class TTSService:
         saved = load_settings()
         return {
             "tts_enabled": saved.get("tts_enabled", True),
-            "tts_provider": saved.get("tts_provider", "disabled"),
+            "tts_provider": LEGACY_PROVIDERS.get(saved.get("tts_provider", "disabled"),
+                                                 saved.get("tts_provider", "disabled")),
             "tts_model": saved.get("tts_model", "tts-1"),
             "tts_voice": saved.get("tts_voice", "alloy"),
             "tts_speed": saved.get("tts_speed", "1"),
             "tts_kokoro_model": saved.get("tts_kokoro_model", ""),
-            "tts_elevenlabs_model": saved.get("tts_elevenlabs_model", el.DEFAULT_MODEL),
-            "tts_elevenlabs_min_credits_pct": saved.get("tts_elevenlabs_min_credits_pct", 5),
-            "tts_elevenlabs_min_credits": saved.get("tts_elevenlabs_min_credits", 0),
-            "tts_elevenlabs_max_reply_chars": saved.get("tts_elevenlabs_max_reply_chars", 1500),
         }
 
     def _kokoro_model(self, settings: dict) -> str:
@@ -131,91 +132,106 @@ class TTSService:
             return self._get_kokoro().readiness(self._kokoro_model(settings)) is None
         if provider.startswith("endpoint:"):
             return True  # assume reachable; errors surface at synthesis time
-        if provider == "elevenlabs":
-            return bool(self.elevenlabs.key())
+        if mod_id_of(provider):
+            return bool(self.mod_status(mod_id_of(provider)).get("ready"))
         return False
 
-    # ── ElevenLabs ──
+    # ── Add-on voices (mods that provide tts.voice) ──
 
-    @property
-    def elevenlabs(self) -> "el.ElevenLabsClient":
-        if self._eleven is None:
-            self._eleven = el.ElevenLabsClient()
-        return self._eleven
+    def _kokoro_ready(self, settings: dict) -> bool:
+        try:
+            return self._get_kokoro().readiness(self._kokoro_model(settings)) is None
+        except Exception:
+            return False
 
-    def elevenlabs_guard(self, settings: Optional[dict] = None) -> Dict[str, Any]:
-        """Whether ElevenLabs may be used right now. Trips when the remaining
-        credits are below the reserve (a percent of the plan and/or a fixed
-        number), or for ten minutes after ElevenLabs said the quota is used
-        up. `fallback` is what speaks instead: "local" when Kokoro is ready,
-        else "browser"."""
-        settings = settings or self._load_settings()
-        pct = _safe_num(settings.get("tts_elevenlabs_min_credits_pct"), 5.0)
-        floor = _safe_num(settings.get("tts_elevenlabs_min_credits"), 0.0)
-        credits = self.elevenlabs.credits() if self.elevenlabs.key() else {"known": False, "error": ""}
-        tripped, reason = False, ""
-        if credits.get("known"):
-            remaining, limit = credits["remaining"], credits["limit"]
-            if limit and remaining * 100.0 / limit < pct:
-                tripped, reason = True, f"ElevenLabs credits are below {pct:g}% ({remaining:,} of {limit:,} left)"
-            elif floor and remaining < floor:
-                tripped, reason = True, f"ElevenLabs credits are below {floor:,.0f} ({remaining:,} left)"
-        quota = self._quota_hit
-        if not tripped and quota and time.time() - quota["at"] < 600:
-            tripped, reason = True, quota["reason"]
-        out = {"tripped": tripped, "reason": reason, "min_credits_pct": pct, "min_credits": floor,
-               "max_reply_chars": int(_safe_num(settings.get("tts_elevenlabs_max_reply_chars"), 1500)),
-               "credits": credits}
-        if tripped:
-            ready = self._get_kokoro().readiness(self._kokoro_model(settings)) is None
-            out["fallback"] = "local" if ready else "browser"
+    @staticmethod
+    def _addon_name(mod_id: str) -> str:
+        from src.mods import registry
+        e = registry.get(mod_id)
+        return (e or {}).get("name") or KNOWN_ADDONS.get(mod_id) or mod_id
+
+    def _missing_reason(self, mod_id: str) -> str:
+        """Why an add-on voice cannot speak when no enabled mod provides it."""
+        from src.mods import registry
+        name = self._addon_name(mod_id)
+        e = registry.get(mod_id)
+        if e and not e.get("enabled"):
+            return f"The {name} add-on is turned off. Turn it on in Settings > Mods."
+        if e:
+            return f"The {name} add-on does not provide a voice."
+        return f"Install the {name} add-on (Settings > Mods > Browse) to speak with it."
+
+    def mod_status(self, mod_id: str, refresh: bool = False) -> Dict[str, Any]:
+        """The add-on's own status (ready, paused and why, max per reply ...),
+        asked at most every MOD_STATUS_TTL seconds. Never raises."""
+        from src.mods import providers
+        hit = self._mod_status_cache.get(mod_id)
+        if hit and not refresh and time.time() - hit[0] < MOD_STATUS_TTL:
+            return hit[1]
+        if not providers.provider("tts.voice", mod_id):
+            out: Dict[str, Any] = {"ready": False, "installed": False, "reason": self._missing_reason(mod_id)}
+        else:
+            try:
+                r = providers.call_sync("tts.voice", "status", {"refresh": "1"} if refresh else None,
+                                        mod_id=mod_id, method="GET", timeout=10)
+                d = _json(r)
+                if r.status_code >= 400:
+                    out = {"ready": False, "reason": f"The {self._addon_name(mod_id)} add-on answered {r.status_code}."}
+                else:
+                    out = d
+            except providers.ProviderUnavailable as e:
+                out = {"ready": False, "reason": e.message}
+            out["installed"] = True
+        out.setdefault("label", self._addon_name(mod_id))
+        self._mod_status_cache[mod_id] = (time.time(), out)
         return out
 
-    def elevenlabs_status(self, refresh: bool = False) -> Dict[str, Any]:
-        """Everything the Settings card shows; never the key itself."""
-        settings = self._load_settings()
-        key = self.elevenlabs.key()
-        if refresh and key:
-            self.elevenlabs.subscription(refresh=True)
-        guard = self.elevenlabs_guard(settings)
-        credits = guard.pop("credits")
-        return {
-            "key_set": bool(key),
-            "key_hint": el.mask_key(key),
-            "model": el.resolve_model(settings.get("tts_elevenlabs_model")),
-            "models": el.MODELS,
-            "default_model": el.DEFAULT_MODEL,
-            "default_voice": el.DEFAULT_VOICE,
-            "guard": guard,
-            "credits": credits,
-            "tally": self.elevenlabs.tally.snapshot(),
-            "last_fallback": self._last_fallback,
-        }
-
-    def set_elevenlabs_key(self, key: str) -> Dict[str, Any]:
-        """Check the key against the account, then store it encrypted. A key
-        ElevenLabs rejects is not stored; a key that works but cannot read
-        the account (a restricted key) is stored with a warning."""
-        key = (key or "").strip()
-        if not key:
-            raise TTSError("Paste an ElevenLabs API key first.", 400)
-        warning = ""
+    def mod_voices(self, provider: str, refresh: bool = False) -> List[Dict[str, Any]]:
+        """The voices an add-on offers (an empty list for other providers)."""
+        from src.mods import providers
+        mod_id = mod_id_of(provider)
+        if not mod_id:
+            return []
+        if not providers.provider("tts.voice", mod_id):
+            raise TTSError(self._missing_reason(mod_id), 400)
         try:
-            self.elevenlabs.subscription(key=key)
-        except TTSError as e:
-            if isinstance(e, el.InvalidKey):
-                raise
-            warning = e.message + " The key was saved, but the credit numbers may not show."
-        el.save_api_key(key)
-        self.elevenlabs.forget()
-        self._quota_hit = None
-        logger.info("ElevenLabs API key saved (%s)", el.mask_key(key))
-        return {"saved": True, "warning": warning, "key_hint": el.mask_key(key)}
+            r = providers.call_sync("tts.voice", "voices", {"refresh": "1"} if refresh else None,
+                                    mod_id=mod_id, method="GET", timeout=20)
+        except providers.ProviderUnavailable as e:
+            raise TTSError(e.message, 503)
+        d = _json(r)
+        if r.status_code >= 400:
+            raise TTSError(str(d.get("error") or f"The add-on answered {r.status_code}."), _status_for(r.status_code))
+        voices = d.get("voices") if isinstance(d.get("voices"), list) else []
+        return [v for v in voices if isinstance(v, dict) and v.get("voice_id")]
 
-    def delete_elevenlabs_key(self) -> None:
-        el.delete_api_key()
-        self.elevenlabs.forget()
-        logger.info("ElevenLabs API key removed")
+    def _synthesize_mod(self, mod_id: str, text: str, voice: str, speed: float, response_format: str,
+                        use_cache: bool, settings: dict) -> bytes:
+        from src.mods import providers
+        self._fallback = None
+        if not providers.provider("tts.voice", mod_id):
+            raise TTSError(self._missing_reason(mod_id), 400)
+        t0 = time.monotonic()
+        try:
+            r = providers.call_sync("tts.voice", "synthesize",
+                                    {"text": text, "voice": voice, "speed": speed, "format": response_format,
+                                     "use_cache": use_cache}, mod_id=mod_id, timeout=60)
+        except providers.ProviderUnavailable as e:
+            raise TTSError(e.message, 503)
+        if r.status_code == 409:
+            d = _json(r)
+            if d.get("paused"):
+                # The add-on is paused (credit reserve, quota): Kokoro or the browser speaks.
+                self._mod_status_cache.pop(mod_id, None)
+                return self._synthesize_fallback(mod_id, str(d.get("reason") or ""), text, speed, use_cache, settings)
+        if r.status_code >= 400:
+            d = _json(r)
+            raise TTSError(str(d.get("error") or f"The {self._addon_name(mod_id)} add-on answered {r.status_code}."),
+                           _status_for(r.status_code))
+        if not r.content:
+            raise TTSError(f"The {self._addon_name(mod_id)} add-on sent no audio.", 502)
+        self._last_api = {"latency_ms": round((time.monotonic() - t0) * 1000), "chars": len(text), "at": time.time()}
+        return r.content
 
     # ── Cache ──
 
@@ -404,25 +420,19 @@ class TTSService:
         if len(text) > 5000:
             text = text[:5000]
 
-        if provider == "elevenlabs":
-            self._fallback = None
-            if not self.elevenlabs.key():
-                raise TTSError("No ElevenLabs API key yet. Paste one in Settings > AI Defaults > Voice call.", 400)
-            model = el.resolve_model(settings.get("tts_elevenlabs_model"))
-            voice = el.resolve_voice(voice)
-            # Credits are per character: one request never sends more than
-            # the per-reply cap (0 means no cap).
-            text = _cap_text(text, int(_safe_num(settings.get("tts_elevenlabs_max_reply_chars"), 1500)))
-        elif provider == "local":
+        mod_id = mod_id_of(provider)
+        if mod_id:
+            # The add-on keeps its own cache (and limits, and voice defaults).
+            return self._synthesize_mod(mod_id, text, voice or "", speed, response_format, use_cache, settings)
+        if provider == "local":
             model = self._kokoro_model(settings)
             voice = resolve_voice(voice)
         elif not provider.startswith("endpoint:"):
             raise TTSError(f"Unknown TTS provider: {provider}", 400)
 
         # The format is in the key only when it is not the default, so the
-        # cache the browser already filled stays valid. ElevenLabs always
-        # has it, since its WAV and MP3 for one phrase differ.
-        if provider == "elevenlabs" or (response_format != "mp3" and provider != "local"):
+        # cache the browser already filled stays valid.
+        if response_format != "mp3" and provider != "local":
             cache_voice = f"{voice}|{response_format}"
         else:
             cache_voice = voice
@@ -433,22 +443,7 @@ class TTSService:
                 logger.info(f"TTS cache hit ({len(text)} chars)")
                 return cached
 
-        if provider == "elevenlabs":
-            # Only a cache miss costs credits, so only then check the reserve.
-            guard = self.elevenlabs_guard(settings)
-            if guard["tripped"]:
-                return self._synthesize_fallback(guard, text, speed, use_cache)
-            t0 = time.monotonic()
-            try:
-                audio_data = self.elevenlabs.synthesize(text, voice, model, speed, wav=response_format == "wav")
-            except el.QuotaExceeded as e:
-                # Out of credits: stop asking for ten minutes and let this
-                # reply speak with the fallback.
-                self._quota_hit = {"reason": e.message.rstrip("."), "at": time.time()}
-                return self._synthesize_fallback(self.elevenlabs_guard(settings), text, speed, use_cache)
-            self._last_api = {"latency_ms": round((time.monotonic() - t0) * 1000), "chars": len(text),
-                              "at": time.time()}
-        elif provider == "local":
+        if provider == "local":
             k = self._get_kokoro()
             reason = k.readiness(model)
             if reason:
@@ -469,21 +464,21 @@ class TTSService:
             self._put_cache(key, audio_data)
         return audio_data
 
-    def _synthesize_fallback(self, guard: Dict[str, Any], text: str, speed: float, use_cache: bool) -> bytes:
-        """ElevenLabs is paused (credit reserve or quota): speak with Kokoro
-        when it is ready, else raise so the browser voice takes over. The
-        hand-over is recorded for the notice in the app."""
-        to = guard.get("fallback") or "browser"
-        reason = guard.get("reason") or "ElevenLabs is paused"
+    def _synthesize_fallback(self, mod_id: str, reason: str, text: str, speed: float, use_cache: bool,
+                             settings: dict) -> bytes:
+        """The add-on voice is paused (credit reserve or quota): speak with
+        Kokoro when it is ready, else raise so the browser voice takes over.
+        The hand-over is recorded for the notice in the app."""
+        to = "local" if self._kokoro_ready(settings) else "browser"
+        reason = reason or f"{self._addon_name(mod_id)} is paused"
         if not self._last_fallback or self._last_fallback.get("reason") != reason:
-            logger.warning("ElevenLabs paused: %s; speaking with %s", reason, to)
-        self._fallback = {"reason": reason, "to": to, "at": time.time()}
+            logger.warning("%s paused: %s; speaking with %s", mod_id, reason, to)
+        self._fallback = {"reason": reason, "to": to, "at": time.time(), "addon": self._addon_name(mod_id)}
         self._last_fallback = self._fallback
         if to != "local":
             err = TTSError(reason + ". Kokoro is not ready, so the browser voice speaks instead.", 409)
             err.fallback = "browser"
             raise err
-        settings = self._load_settings()
         model = self._kokoro_model(settings)
         voice = resolve_voice("")
         key = self._cache_key(text, "local", model, voice, speed)
@@ -497,7 +492,7 @@ class TTSService:
         return audio
 
     def current_fallback(self) -> Optional[Dict[str, Any]]:
-        """The ElevenLabs hand-over that applied to the last synthesis, if any."""
+        """The add-on hand-over that applied to the last synthesis, if any."""
         return self._fallback
 
     def synthesize(self, text: str, use_cache: bool = True, response_format: str = "mp3") -> Optional[bytes]:
@@ -564,7 +559,7 @@ class TTSService:
             "voice": settings["tts_voice"],
             "speed": _safe_speed(settings.get("tts_speed", "1")),
             # Server providers apply the speed themselves; play at 1x.
-            "speed_applied": provider in ("local", "elevenlabs") or provider.startswith("endpoint:"),
+            "speed_applied": provider == "local" or provider.startswith(("endpoint:", MOD_PREFIX)),
             "cache_entries": len(cache_files),
             "cache_size_mb": round(cache_size / (1024 * 1024), 2),
         }
@@ -590,23 +585,23 @@ class TTSService:
                 stats["last_latency_ms"] = k.last.get("latency_ms")
         elif provider == "browser":
             stats["model"] = "Browser (Web Speech API)"
-        elif provider == "elevenlabs":
-            key_set = bool(self.elevenlabs.key())
-            guard = self.elevenlabs_guard(settings)
-            credits = guard.pop("credits")
-            effective = guard.get("fallback", "elevenlabs") if guard["tripped"] else "elevenlabs"
+        elif mod_id_of(provider):
+            mod_id = mod_id_of(provider)
+            st = self.mod_status(mod_id)
+            paused = bool(st.get("paused")) and is_available
+            fallback = ("local" if self._kokoro_ready(settings) else "browser") if paused else ""
             stats.update({
-                "engine": "elevenlabs",
-                "model": el.resolve_model(settings.get("tts_elevenlabs_model")),
-                "voice": el.resolve_voice(settings["tts_voice"]),
-                "key_set": key_set,
+                "engine": mod_id,
+                "addon": {"id": mod_id, "name": st.get("label") or self._addon_name(mod_id),
+                          "installed": bool(st.get("installed"))},
+                "model": str(st.get("model") or ""),
                 "ready": is_available,
-                "reason": "" if key_set else "No ElevenLabs API key yet. Paste one in Settings > AI Defaults > Voice call.",
-                "credits": credits,
-                "guard": guard,
-                "max_reply_chars": guard["max_reply_chars"],
-                "effective_provider": effective,
-                "fallback_reason": guard["reason"],
+                "reason": "" if is_available else str(st.get("reason") or ""),
+                "speed_applied": st.get("speed_applied", True) is not False,
+                # The add-on's per-reply cap (0 = none): auto-read stops past it.
+                "max_reply_chars": int(_safe_num(st.get("max_reply_chars"), 0)),
+                "effective_provider": fallback or provider,
+                "fallback_reason": str(st.get("pause_reason") or "") if paused else "",
             })
             last = getattr(self, "_last_api", None)
             if last:
@@ -620,6 +615,22 @@ class TTSService:
                 stats["last_latency_ms"] = last["latency_ms"]
 
         return stats
+
+
+def _json(r) -> Dict[str, Any]:
+    try:
+        d = r.json()
+    except ValueError:
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _status_for(code: int) -> int:
+    """An add-on's error status as one for the app: never 401 (the app reads
+    any 401 from /api as its own sign-out), 502 for the add-on's own errors."""
+    if code in (401, 403):
+        return 400
+    return 502 if code >= 500 else code
 
 
 # Module-level singleton

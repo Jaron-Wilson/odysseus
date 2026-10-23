@@ -95,7 +95,19 @@ function renderMachines() {
   if (!box) return;
   const ov = state.overview || {};
   if (!ov.tailscale) {
-    box.innerHTML = '<div class="admin-toggle-sub">Tailscale is not running on this server, so machines cannot be found. Install it and sign in to the same tailnet.</div>';
+    // Machines come from the Tailscale add-on (it provides network.peers).
+    const net = ov.network || {};
+    let msg;
+    if (net.provider) {
+      msg = `${esc(net.provider.name)} found no machines${net.error ? ': ' + esc(net.error) : ''}. Is Tailscale running on this server and signed in to your tailnet?`;
+    } else if (net.installed_off) {
+      msg = 'The Tailscale add-on is installed but turned off. Turn it on in Settings &gt; Mods to see your machines here.';
+    } else {
+      msg = 'Machines on your tailnet are found by the Tailscale add-on. <button type="button" class="admin-btn-sm" data-install-tailscale>Install the Tailscale add-on</button> MCP servers you added still work and are listed below.';
+    }
+    box.innerHTML = `<div class="admin-toggle-sub">${msg}</div>`;
+    const b = box.querySelector('[data-install-tailscale]');
+    if (b) b.onclick = () => window.modLinks && window.modLinks.browse && window.modLinks.browse('tailscale');
     return;
   }
   box.innerHTML = (ov.machines || []).map((m) => {

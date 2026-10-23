@@ -259,6 +259,15 @@ def classify(base_url: Optional[str], *, provider: Optional[str] = None,
     if not base_url:
         return BILLING_UNKNOWN
     provider = provider or detect_provider(base_url)
+    from src.mods import llm_endpoints
+    if llm_endpoints.is_mod_url(base_url):
+        # An add-on's models (src/mods/llm_endpoints.py): what its manifest says.
+        try:
+            billing = llm_endpoints.meta(llm_endpoints.mod_id_of(base_url) or "")["billing"]
+        except Exception:
+            billing = ""
+        if billing:
+            return billing
     if provider in SUBSCRIPTION_PROVIDERS:
         return BILLING_SUBSCRIPTION
     if provider == "ollama":

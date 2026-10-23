@@ -37,7 +37,9 @@ MAX_KV_VALUE_BYTES = 64 * 1024
 _KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 # Per-mod, per-permission rate limits: (calls, seconds).
 RATE_LIMITS = {"notify": (30, 60), "llm.call": (20, 60), "events.emit": (240, 60), "devices.control": (30, 60),
-               "tools.refresh": (6, 60)}
+               "tools.refresh": (6, 60), "stats.read": (120, 60)}
+# What GET /api/mods/v1/stats can read (stats.read).
+STATS_SCOPES = ("devops",)
 _calls: Dict[tuple, Deque[float]] = defaultdict(deque)
 _background: set = set()   # running background tasks (kept so they are not garbage collected)
 
@@ -177,7 +179,11 @@ def _setup_v1(router: APIRouter) -> None:
         e = _mod(request)
         return {"id": e["id"], "name": e.get("name"), "version": e.get("version"),
                 "permissions": e.get("granted_permissions") or [], "core_api": mf.CORE_API_VERSION,
-                "base_path": f"/mods/{e['id']}"}
+                "base_path": f"/mods/{e['id']}",
+                # Who can use it, so a mod that must stay admin only can check
+                # that this core enforces it (src/mods/access.py).
+                "admin_only": access.admin_only(e),
+                "access": "admins" if access.admin_only(e) else e.get("access", "admins")}
 
     @router.post("/api/mods/v1/notify")
     async def v1_notify(request: Request):
@@ -246,6 +252,49 @@ def _setup_v1(router: APIRouter) -> None:
         params = body.get("params") if isinstance(body.get("params"), dict) else {}
         runtime.log_line(e["id"], f"[odysseus] device command {command} -> {dev.get('name')}")
         return await devices.send_command(dev, command, params)
+
+    def _stats_mod(request: Request) -> Dict[str, Any]:
+        """stats.read is server-wide (every chat and run), so only a mod that
+        only admins may use gets it, whatever it was granted."""
+        e = _mod(request, "stats.read")
+        if e.get("access") == "users":
+            raise HTTPException(403, "stats.read is only for a mod that only admins may use "
+                                     "(Settings > Mods > Who can use it)")
+        return e
+
+    @router.get("/api/mods/v1/stats")
+    async def v1_stats(request: Request, scope: str = "", hours: float = 24):
+        """Read-only core stats. scope=devops: what src/devops_stats.py's
+        snapshot() returns (what is running, model speed, coder runs)."""
+        _stats_mod(request)
+        if scope not in STATS_SCOPES:
+            raise HTTPException(400, f"scope must be one of: {', '.join(STATS_SCOPES)}")
+        from src import devops_stats
+        return {"scope": scope, **await asyncio.to_thread(devops_stats.snapshot, hours)}
+
+    @router.get("/api/mods/v1/stats/transcripts/{run_id}")
+    async def v1_stats_transcript(request: Request, run_id: str):
+        """One coder run's parsed transcript (the same as /api/transcript/runs/<id>
+        for its owner), for the stats a mod shows."""
+        _stats_mod(request)
+        from routes.transcript_routes import detail_for
+        out = await asyncio.to_thread(detail_for, run_id)
+        if out is None:
+            raise HTTPException(404, "No transcript to show for this run")
+        return out
+
+    @router.get("/api/mods/v1/machines")
+    async def v1_machines(request: Request, refresh: bool = False):
+        """The tailnet's machines (src/machines.py peers), with the SSH user
+        set for each in Settings > Devices. Read-only: no keys, no commands."""
+        _mod(request, "machines.read")
+        from src import machines
+        peers = await asyncio.to_thread(machines.peers, bool(refresh))
+        prefs = machines.load_prefs()
+        keep = ("host", "name", "dns", "ips", "os", "online", "last_seen", "is_self", "shared")
+        return {"machines": [{**{k: p.get(k) for k in keep},
+                              "ssh_user": str((prefs.get(p.get("host") or "") or {}).get("ssh_user") or "")}
+                             for p in peers]}
 
     def _json_file(path: str) -> Dict[str, Any]:
         try:
@@ -344,6 +393,38 @@ def _setup_v1(router: APIRouter) -> None:
             raise HTTPException(502, f"The model call failed: {type(ex).__name__}")
         runtime.log_line(e["id"], f"[odysseus] llm/chat via {model}")
         return {"content": text, "model": model}
+
+    # ── Model endpoints served by the mod (src/mods/llm_endpoints.py) ──
+    def _endpoint_user(e: Dict[str, Any], user: Any) -> str:
+        from src.mods import providers as prov, signing
+        if "llm.provider" not in prov.provides(e):
+            raise HTTPException(403, "Only a mod that provides llm.provider can register model endpoints")
+        user = str(user or "").strip()
+        if access.auth_disabled():
+            return user or signing.LOCAL_USER
+        if not user or not access.known_user(user) or not access.may_use(e, user):
+            raise HTTPException(400, "user must be an Odysseus user who may use this mod")
+        return user
+
+    @router.put("/api/mods/v1/llm/endpoint")
+    async def v1_llm_endpoint_put(request: Request):
+        """Show the mod's models in this user's model picker (one row per user,
+        base URL mod://<id>/v1)."""
+        from src.mods import llm_endpoints
+        e = _mod(request)
+        body = await _json(request)
+        user = _endpoint_user(e, body.get("user"))
+        models = body.get("models")
+        if not isinstance(models, list) or not all(isinstance(m, str) and 0 < len(m) <= 200 for m in models):
+            raise HTTPException(400, "models must be a list of model ids")
+        name = body.get("name") if isinstance(body.get("name"), str) else ""
+        return {"ok": True, "endpoint": llm_endpoints.upsert_endpoint(e["id"], user, models, name)}
+
+    @router.delete("/api/mods/v1/llm/endpoint")
+    async def v1_llm_endpoint_delete(request: Request, user: str = ""):
+        from src.mods import llm_endpoints
+        e = _mod(request)
+        return {"ok": True, "removed": llm_endpoints.remove_endpoint(e["id"], _endpoint_user(e, user))}
 
     @router.post("/api/mods/v1/tools/refresh")
     async def v1_tools_refresh(request: Request):
@@ -523,6 +604,16 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
         # `replaces`: which mod tab takes over an old built-in page key (#adsb...).
         return {"mods": out, "nav": placement.nav(shown), "groups": placement.groups(),
                 "replaces": placement.replacements(shown), "legacy_pages": placement.LEGACY_PAGES}
+
+    # ── Capability providers (src/mods/providers.py): which add-on, if any,
+    # supplies a core feature, so a page can offer it or say "Install the add-on".
+    @router.get("/api/mods/providers")
+    async def providers_list(request: Request, cap: str = ""):
+        from src.mods import providers as prov
+        if proxy.cookie_user(request) is None:
+            raise HTTPException(401, "Not signed in")
+        caps = [c for c in cap.split(",") if prov.CAP_RE.match(c)][:8]
+        return {"capabilities": {c: prov.describe(c) for c in caps}}
 
     # ── Tutorials (src/mods/tutorial.py): any user who may use the mod ──
     def _usable(request: Request, mod_id: str):

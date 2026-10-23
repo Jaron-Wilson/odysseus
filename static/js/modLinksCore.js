@@ -9,6 +9,8 @@
 //                                    `replaces` it, else the built-in page if
 //                                    it is still there, else a "This feature
 //                                    is now a mod" card
+//   #claude-sessions?id=...          ... with a query, which the mod tab's
+//                                    page gets (its own path + "?" + query)
 //
 // modLinks.js does the opening; workspace/shell.js maps saved tabs with
 // mapSavedTab().
@@ -34,6 +36,8 @@ export const LEGACY_PAGES = {
 
 const MOD_ID_RE = /^[a-z][a-z0-9-]{1,31}$/;
 const TAB_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+// The query of an old page link, passed on to the mod tab that replaces it.
+const LEGACY_QUERY_RE = /^[A-Za-z0-9._~!$&'()*+,;=:@%/?-]{1,400}$/;
 // A path of the mod (what the manifest allows for paths), with an optional query.
 const SUB_PATH_RE = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*(?:\?[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*)?$/;
 
@@ -49,7 +53,9 @@ export function safeSubPath(p) {
 
 /** What a location hash points at:
  *   {kind: 'mod', mod, tab, path}   a mod tab (path null: the tab's own page)
- *   {kind: 'legacy', key}           an old built-in page key
+ *   {kind: 'legacy', key, query?}   an old built-in page key (and its query,
+ *                                   like "play=elden"; "#key/more" from before
+ *                                   a page moved is just the key)
  *   null                            anything else (a chat id, an entity...) */
 export function parseHash(hash) {
   const h = String(hash || '').replace(/^#/, '');
@@ -68,9 +74,12 @@ export function parseHash(hash) {
     }
     return { kind: 'mod', mod, tab: tab || null, path };
   }
-  const key = h.split('?')[0];
-  if (Object.prototype.hasOwnProperty.call(LEGACY_PAGES, key)) return { kind: 'legacy', key };
-  return null;
+  const [route, query = ''] = h.split(/\?(.*)/s);
+  const key = route.split('/')[0];
+  if (!Object.prototype.hasOwnProperty.call(LEGACY_PAGES, key)) return null;
+  const out = { kind: 'legacy', key };
+  if (query && LEGACY_QUERY_RE.test(query)) out.query = query;
+  return out;
 }
 
 /** The hash for a link to a mod tab (and a page under it). */

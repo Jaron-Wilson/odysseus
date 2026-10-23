@@ -49,11 +49,13 @@ class AITTSManager {
             this.available = stats.available && stats.ready;
             this.playbackSpeed = stats.speed || 1;
             this._provider = stats.provider || 'disabled';
-            // ElevenLabs bills per character: auto-read stops after this many
-            // characters of one reply (0 = no limit).
-            this.maxReplyChars = stats.provider === 'elevenlabs' ? (Number(stats.max_reply_chars) || 0) : 0;
-            if (stats.provider === 'elevenlabs' && stats.available && stats.effective_provider === 'browser') {
-                // The credit guard paused ElevenLabs and Kokoro is not ready.
+            // An add-on voice billed per character (ElevenLabs) may cap how
+            // much of one reply is read aloud (0 = no limit).
+            const isAddon = String(stats.provider || '').startsWith('mod:');
+            this._addonName = (stats.addon && stats.addon.name) || 'the add-on voice';
+            this.maxReplyChars = isAddon ? (Number(stats.max_reply_chars) || 0) : 0;
+            if (isAddon && stats.available && stats.effective_provider === 'browser') {
+                // The add-on paused itself (credits) and Kokoro is not ready.
                 this._fallbackToBrowser(stats.fallback_reason);
                 return;
             }
@@ -87,7 +89,7 @@ class AITTSManager {
         this.useBrowserTTS = true;
         this.browserVoice = '';
         this.available = 'speechSynthesis' in window;
-        this._notice((reason ? reason.replace(/\.?$/, '. ') : '') + "Reading aloud with this browser's voice instead of ElevenLabs.");
+        this._notice((reason ? reason.replace(/\.?$/, '. ') : '') + "Reading aloud with this browser's voice instead of " + (this._addonName || 'the add-on voice') + '.');
     }
 
     extractPlainText(content) {
@@ -175,7 +177,7 @@ class AITTSManager {
             }
             const fellBack = response.headers.get('X-TTS-Fallback');
             if (fellBack) {
-                this._notice((response.headers.get('X-TTS-Fallback-Reason') || 'ElevenLabs is paused') + '. Kokoro is reading aloud instead.');
+                this._notice((response.headers.get('X-TTS-Fallback-Reason') || ((this._addonName || 'The add-on voice') + ' is paused')) + '. Kokoro is reading aloud instead.');
             }
 
             const audioBlob = await response.blob();
@@ -374,14 +376,14 @@ class AITTSManager {
     // ── Streaming TTS (sentence-by-sentence) ──
 
     // True when this sentence still fits the per-reply character budget
-    // (ElevenLabs only). Past it, auto-read stops for the rest of the reply.
+    // (add-on voices that set one). Past it, auto-read stops for the rest of the reply.
     _fitsBudget(sentence) {
         if (!this.maxReplyChars || this.useBrowserTTS) return true;
         if (this._streamCapped) return false;
         if (this._streamCharsQueued + sentence.length > this.maxReplyChars) {
             this._streamCapped = true;
             this._notice('Stopped reading this reply aloud after ' + this._streamCharsQueued.toLocaleString('en-US')
-                + ' characters to save ElevenLabs credits (Max per reply in Settings > AI Defaults > Voice call).');
+                + ' characters to save ' + (this._addonName || 'add-on') + ' credits (Max per reply, on the add-on\'s tab).');
             return false;
         }
         this._streamCharsQueued += sentence.length;

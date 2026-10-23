@@ -160,11 +160,11 @@ function renderMod(m) {
       ${btn('update', 'Update', 'Fetch the newest code from where it was installed (or another branch or tag)')}
       ${btn('rotate-token', 'New token', 'Give the mod a new API token; the old one stops working')}
       ${btn('remove', 'Remove')}
-      <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">Who can use it
+      ${m.admin_only ? '<span class="admin-toggle-sub" data-mod-admin-only title="Its manifest says admin_only: it gives admin powers, like a shell on this server">Admins only</span>' : `<label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">Who can use it
         <select class="settings-select" data-mod-access="${esc(m.id)}" style="width:auto">
           <option value="admins"${m.access !== 'users' ? ' selected' : ''}>Admins</option>
           <option value="users"${m.access === 'users' ? ' selected' : ''}>All users</option>
-        </select></label>
+        </select></label>`}
       <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:4px">
         <input type="checkbox" data-mod-mute="${esc(m.id)}"${m.notify_muted ? ' checked' : ''}> Mute notifications</label>
     </div>${placementRow(m)}${grantRow(m)}
@@ -211,6 +211,7 @@ function renderStaged() {
     <div class="admin-toggle-sub" style="margin-top:6px"><strong>It asks for:</strong></div>
     <ul class="admin-toggle-sub" style="margin:2px 0 0 18px;padding:0">${perms}</ul>
     ${capabilityLines(s.capabilities, { update: !!s.previous_version }) ? `<div class="admin-toggle-sub" style="margin-top:6px"><strong>Capabilities:</strong></div>${capabilityLines(s.capabilities, { update: !!s.previous_version })}` : ''}
+    ${s.admin_only ? '<div class="admin-toggle-sub" data-mod-admin-only style="margin-top:4px"><strong>Admins only.</strong> It gives admin powers (like a shell on this server), so only admins can ever use it.</div>' : ''}
     ${(s.warnings || []).map((w) => `<div class="admin-toggle-sub" style="color:var(--yellow, #d29922)">Note: ${esc(w)}</div>`).join('')}
     <div class="admin-toggle-sub" style="margin-top:6px">Adds ${(ui.tabs || []).length} tab(s), ${(ui.home_cards || []).length} home card(s)${s.tools ? ' and agent tools' : ''}.
       ${s.tutorial ? `It has a tutorial${s.tutorial.steps ? ` (${s.tutorial.steps} step${s.tutorial.steps > 1 ? 's' : ''})` : ''}, shown the first time someone opens it.` : '<strong>It has no tutorial.</strong>'}

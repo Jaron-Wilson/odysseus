@@ -9,9 +9,9 @@ would change something in the user's Google account does not run: it is held
 in src/action_approvals.py and the chat shows what it would do, with Approve
 and Deny. What counts:
 
-  Google Workspace   every google_* tool marked "mutates" in
-                     src/google_workspace/products.py (create, edit, write,
-                     append, upload, new folder, add task)
+  Google Workspace   (Drive, Docs, Sheets, Slides, Tasks) is the Google
+                     add-on's (mod `google`): its writing tools are
+                     `asks_first`, held by src/mods/tools.py the same way
   Google Meet        made by the Phone & Messages mod: its meet_create tool is
                      `asks_first`, so the mod tool flow asks (src/mods/tools.py)
   Google Calendar    manage_calendar create_event / update_event /
@@ -31,7 +31,7 @@ and Deny. What counts:
                      /api/caldav or /api/google are refused while this
                      is on: the named tools above are the way, and they ask
 
-Reads (google_*_read/search/list, google_status, list_events,
+Reads (list_events,
 list_calendars, list/read/search email, drafts saved in Odysseus) never ask.
 
 Company agent runs (src/company_executor.py) get a Company > Approvals request
@@ -124,22 +124,6 @@ def _short(s: Any, n: int = 160) -> str:
     s = re.sub(r"\s+", " ", str(s or "")).strip()
     return s if len(s) <= n else s[: n - 1] + "…"
 
-
-def _rows_text(rows: Any) -> str:
-    if not isinstance(rows, list):
-        return str(rows or "")
-    out = []
-    for r in rows[:200]:
-        if isinstance(r, list):
-            out.append(" | ".join(str(c) for c in r))
-        else:
-            out.append(str(r))
-    if len(rows) > 200:
-        out.append(f"... and {len(rows) - 200} more rows")
-    return "\n".join(out)
-
-
-# ── Gmail ────────────────────────────────────────────────────────────────
 
 def _email_rows() -> List[dict]:
     """The enabled mailboxes, in the order the email tools pick them
@@ -406,117 +390,6 @@ def _describe_calendar(owner: Optional[str], a: Dict) -> Optional[Dict]:
         db.close()
 
 
-# ── Google Workspace (google_* tools) ────────────────────────────────────
-
-async def _file_title(owner: Optional[str], raw: str) -> str:
-    """The file's name, best effort (a Drive metadata read, a few seconds at most)."""
-    try:
-        from src.google_workspace import common, drive
-        fid = common.file_id(raw)
-        meta = await asyncio.wait_for(drive.metadata(owner, fid), timeout=4)
-        return str((meta or {}).get("name") or "")
-    except Exception:
-        return ""
-
-
-def _link_of(kind: str, raw: str) -> str:
-    try:
-        from src.google_workspace import common
-        return common.link_for(kind, common.file_id(raw))
-    except Exception:
-        return ""
-
-
-async def _describe_workspace(owner: Optional[str], tool: str, a: Dict) -> Dict:
-    from src.google_workspace import products as P
-    label = P.PRODUCTS.get(P.TOOLS[tool]["product"], {}).get("label", "Google")
-    if tool == "google_doc_create":
-        t = str(a.get("title") or "Untitled")
-        return {"action": "Create a Google Doc", "title": f"Create a Google Doc \"{_short(t, 100)}\"",
-                "details": [("Title", t)], "body": str(a.get("content") or ""), "body_label": "Content",
-                "target": {"name": t}}
-    if tool == "google_doc_edit":
-        raw = str(a.get("document") or a.get("id") or "")
-        name = await _file_title(owner, raw) or raw
-        act = str(a.get("action") or "")
-        link = _link_of("doc", raw)
-        if act == "replace":
-            return {"action": "Edit a Google Doc",
-                    "title": f"In the Google Doc \"{_short(name, 100)}\", replace every \"{_short(a.get('find'), 60)}\" with \"{_short(a.get('replace'), 60)}\"",
-                    "details": [("Document", name), ("Find", str(a.get("find") or "")),
-                                ("Replace with", str(a.get("replace") or "(nothing: deletes it)"))],
-                    "body": "", "target": {"name": name, "url": link}}
-        where = "at the end of" if act == "append" else "at the start of" if act == "insert" and a.get("index") in (None, 1) \
-            else f"at position {a.get('index')} in" if act == "insert" else f"({act}) in"
-        return {"action": "Edit a Google Doc", "title": f"Add text {where} the Google Doc \"{_short(name, 100)}\"",
-                "details": [("Document", name), ("Edit", act or "(none given)")], "body": str(a.get("text") or ""),
-                "body_label": "Text to add", "target": {"name": name, "url": link}}
-    if tool in ("google_sheet_write", "google_sheet_append"):
-        raw = str(a.get("spreadsheet") or a.get("id") or "")
-        name = await _file_title(owner, raw) or raw
-        rows = a.get("rows") or a.get("values")
-        n = len(rows) if isinstance(rows, list) else 0
-        rng = str(a.get("range") or "")
-        verb = (f"Write {n} row{'s' if n != 1 else ''} into {rng or 'the sheet'} (replacing what is there)"
-                if tool == "google_sheet_write" else f"Add {n} row{'s' if n != 1 else ''} to the end of {rng or 'the first tab'}")
-        return {"action": "Change a Google Sheet", "title": f"{verb} in the Google Sheet \"{_short(name, 100)}\"",
-                "details": [("Spreadsheet", name), ("Range", rng or "(default)")], "body": _rows_text(rows),
-                "body_label": "Rows", "target": {"name": name, "url": _link_of("sheet", raw)}}
-    if tool == "google_sheet_create":
-        t = str(a.get("title") or "Untitled")
-        det = [("Title", t)]
-        if a.get("tabs"):
-            det.append(("Tabs", ", ".join(str(x) for x in a["tabs"]) if isinstance(a["tabs"], list) else str(a["tabs"])))
-        return {"action": "Create a Google Sheet", "title": f"Create a Google Sheet \"{_short(t, 100)}\"", "details": det,
-                "body": _rows_text(a.get("rows")) if a.get("rows") else "", "body_label": "Starting rows",
-                "target": {"name": t}}
-    if tool == "google_slides_create":
-        t = str(a.get("title") or "Untitled")
-        lines = []
-        if a.get("subtitle"):
-            lines.append(f"(subtitle) {a['subtitle']}")
-        for i, s in enumerate(a.get("slides") or [], 1):
-            if isinstance(s, dict):
-                lines.append(f"{i}. {s.get('title') or ''}")
-                for b in s.get("bullets") or []:
-                    lines.append(f"   - {b}")
-            else:
-                lines.append(f"{i}. {s}")
-        return {"action": "Create Google Slides", "title": f"Create a Google Slides deck \"{_short(t, 100)}\"",
-                "details": [("Title", t), ("Slides", str(len(a.get("slides") or []) + 1))],
-                "body": "\n".join(lines), "body_label": "Outline", "target": {"name": t}}
-    if tool == "google_drive_upload":
-        name = str(a.get("name") or (os.path.basename(str(a["path"])) if a.get("path") else "") or "file")
-        det = [("File name", name)]
-        if a.get("path"):
-            det.append(("From this server", str(a["path"])))
-        if a.get("folder_id"):
-            det.append(("Folder", str(a["folder_id"])))
-        conv = str(a.get("convert") or "").lower()
-        if conv in ("doc", "sheet"):
-            det.append(("Convert to", "Google Doc" if conv == "doc" else "Google Sheet"))
-        return {"action": "Upload to Google Drive", "title": f"Upload \"{_short(name, 100)}\" to your Google Drive",
-                "details": det, "body": str(a.get("content") or "") if a.get("content") is not None else "",
-                "body_label": "File content", "target": {"name": name}}
-    if tool == "google_drive_create_folder":
-        name = str(a.get("name") or "New folder")
-        det = [("Folder name", name)]
-        if a.get("parent_id"):
-            det.append(("Inside", str(a["parent_id"])))
-        return {"action": "New Drive folder", "title": f"Make a folder \"{_short(name, 100)}\" in your Google Drive",
-                "details": det, "body": "", "target": {"name": name}}
-    if tool == "google_task_create":
-        t = str(a.get("title") or "(untitled)")
-        det = [("Task", t)]
-        if a.get("due"):
-            det.append(("Due", str(a["due"])))
-        if a.get("tasklist"):
-            det.append(("List", str(a["tasklist"])))
-        return {"action": "Add a Google Task", "title": f"Add the task \"{_short(t, 100)}\" to your Google Tasks",
-                "details": det, "body": str(a.get("notes") or ""), "body_label": "Notes", "target": {"name": t}}
-    return {"action": f"Change {label}", "title": f"Use {tool} on your Google account",
-            "details": [("Tool", tool)], "body": json.dumps(a, indent=1)[:4000], "body_label": "Arguments",
-            "target": {}}
 
 
 # ── Deciding ─────────────────────────────────────────────────────────────
@@ -536,9 +409,8 @@ def _app_api_write(content: str) -> str:
 
 def is_candidate(tool: str, content: str = "") -> bool:
     """Cheap first look, no lookups: could this call be a Google write?"""
-    from src.google_workspace import products as P
     t = normalize(tool)
-    if t in P.WRITE_TOOLS or t in EMAIL_WRITE_TOOLS or t == "manage_calendar":
+    if t in EMAIL_WRITE_TOOLS or t == "manage_calendar":
         return True
     return t == "app_api" and bool(_app_api_write(content))
 
@@ -546,12 +418,9 @@ def is_candidate(tool: str, content: str = "") -> bool:
 async def classify(tool: str, content: str, owner: Optional[str]) -> Optional[Dict]:
     """What the call would do, in plain words, when it writes to the user's
     Google account; None when it does not (or is only a read)."""
-    from src.google_workspace import products as P
     t = normalize(tool)
     a = _args(content)
-    if t in P.WRITE_TOOLS:
-        info = await _describe_workspace(owner, t, a)
-    elif t == "manage_calendar":
+    if t == "manage_calendar":
         info = await asyncio.to_thread(_describe_calendar, owner, a)
     elif t in EMAIL_WRITE_TOOLS:
         info = await asyncio.to_thread(_describe_email, t, a)
@@ -612,7 +481,7 @@ async def intercept(tool: str, content: str, owner: Optional[str], session_id: O
         return ("app_api: refused", {
             "error": (f"Not done: {what} could change the user's Google account or mailbox, and app_api "
                       "cannot ask them first. Use the named tool instead (send_email, manage_calendar, "
-                      "google_*): it shows the change to the user for approval."),
+                      "manage_calendar): it shows the change to the user for approval."),
             "exit_code": 1})
     try:
         info = await classify(tool, content, owner)

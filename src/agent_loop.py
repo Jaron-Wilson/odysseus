@@ -580,25 +580,14 @@ TOOL_SECTIONS["ui_control"] = TOOL_SECTIONS["ui_control"].replace("{pages}", _to
 from src import company_tools as _company_tools  # noqa: E402
 TOOL_SECTIONS.update(_company_tools.PROMPT_SECTIONS)
 
-# Google products (src/google_workspace/products.py): one-line sections, a
-# domain and its rules. Tools of a product that is off are hidden per owner
-# in run_agent_loop.
-from src.google_workspace import products as _google_products  # noqa: E402
+# Ask before Google writes (src/google_write_gate.py): Gmail, Google
+# Calendar and Meet. Drive, Docs, Sheets, Slides, Tasks and Contacts are the
+# Google add-on's tools (mod `google`), which ask first themselves.
 from src import google_write_gate as _google_gate  # noqa: E402
-for _gname, _gsection in _google_products.prompt_sections().items():
-    TOOL_SECTIONS.setdefault(_gname, _gsection)
-_DOMAIN_TOOL_MAP["google"] = set(_google_products.ALL_TOOLS)
-_DOMAIN_RULES["google"] = _google_products.PROMPT_RULES
-_GOOGLE_DOMAIN_RE = re.compile(
-    r"\b(google (?:drive|docs?|sheets?|slides|tasks?|contacts?|account|workspace)|my drive|g ?docs?|"
-    r"g ?sheets?|spreadsheets?|slide deck|docs\.google\.com|drive\.google\.com)\b", re.IGNORECASE)
 
 # The user's Company from a chat (src/agent_tools/company_chat_tools.py).
 from src.agent_tools.company_chat_tools import TOOL_SECTIONS as _COMPANY_CHAT_SECTIONS  # noqa: E402
 TOOL_SECTIONS.update(_COMPANY_CHAT_SECTIONS)
-# Game streaming from the PC (src/agent_tools/game_tools.py).
-from src.agent_tools.game_tools import TOOL_SECTIONS as _GAME_SECTIONS  # noqa: E402
-TOOL_SECTIONS.update(_GAME_SECTIONS)
 
 def get_builtin_overrides() -> dict:
     """User overrides for built-in tool descriptions (TOOL_SECTIONS).
@@ -1041,9 +1030,6 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("web")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
-    # Google products (google_* tools): "find my google doc", a Sheets link.
-    if _GOOGLE_DOMAIN_RE.search(q):
-        domains.add("google")
     # What changed in Odysseus itself: the merged PRs (whats_new). "what
     # changed with the voice call?" otherwise reads as a plain chat message.
     if has(r"\b(what'?s new|what is new|what (?:has )?changed|changelog|change log|release notes|merged|"
@@ -2353,22 +2339,6 @@ async def stream_agent_loop(
             disabled_tools.update(_company_chat_tools.hidden_tools(owner))
     except Exception as _e:
         logger.debug("company chat tool gating skipped: %s", _e)
-    # Game streaming tools (src/agent_tools/game_tools.py): hidden until
-    # Sunshine has credentials, and never in a Company agent's run.
-    try:
-        from src.agent_tools import game_tools as _game_tools
-        if _company_run:
-            disabled_tools.update(_game_tools.ALL_TOOLS)
-        else:
-            disabled_tools.update(_game_tools.hidden_tools(owner))
-    except Exception as _e:
-        logger.debug("game tool gating skipped: %s", _e)
-    # Google products this owner has not connected: their tools stay hidden.
-    try:
-        from src.google_workspace import tools as _google_tools
-        disabled_tools.update(_google_tools.disabled_for(owner))
-    except Exception:
-        pass
 
     if plan_mode:
         # Plan mode: investigate read-only, propose a plan, don't execute. The
@@ -2528,12 +2498,6 @@ async def stream_agent_loop(
                 _relevant_tools.update(_company_chat_tools.relevant_tools(owner, _last_user) - disabled_tools)
             except Exception as _e:
                 logger.debug("company chat tool selection skipped: %s", _e)
-            # A message about games: the game streaming tools.
-            try:
-                from src.agent_tools import game_tools as _game_tools
-                _relevant_tools.update(_game_tools.relevant_tools(owner, _last_user) - disabled_tools)
-            except Exception as _e:
-                logger.debug("game tool selection skipped: %s", _e)
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
@@ -2628,14 +2592,6 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    if _endpoint_supports is False and not _is_api_model:
-        try:
-            from src.chatgpt_plan import is_chatgpt_plan_base as _is_cgp
-            if _is_cgp(endpoint_url or ""):
-                logger.info("[agent] native tools are switched off for the ChatGPT endpoint; "
-                            "tools go to %s as fenced blocks in the prompt", model)
-        except Exception:
-            pass
     # Tools a trimmed or reordered list keeps first: a Company run's own
     # tools and the coding agent.
     _tool_priority = sorted(_company_tools.TOOL_NAMES) + ["claude_code"] if _company_run else ["claude_code"]
@@ -3835,15 +3791,6 @@ async def stream_agent_loop(
                 if isinstance(_sm, dict) and str(_sm.get("link", "")).startswith("/api/device-media/"):
                     _line = f"\n\n[{_sm.get('name') or 'Play'}]({_sm['link']})\n"
                     yield f'data: {json.dumps({"delta": _line})}\n\n'
-
-            # A Google file made or edited (google_* tools): its link goes
-            # into the reply, so it is there after a reload whatever the
-            # model writes.
-            if block.tool_type.startswith("google_") and isinstance(result.get("google_link"), dict):
-                from src.google_workspace.common import link_line as _google_link_line
-                _gline = _google_link_line(result["google_link"])
-                if _gline:
-                    yield f'data: {json.dumps({"delta": _gline})}\n\n'
 
             # Native document tools open in the editor + carry the REAL doc id.
             # Emit a doc_update so the frontend opens/activates it and sends it
