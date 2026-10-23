@@ -90,10 +90,43 @@ function serverLine(s) {
   </div>`;
 }
 
+// Before any other computer is linked: why to, and how, in order. Nobody
+// should have to guess that each computer needs the helper installed once
+// ("if i were to install this today i would have no clue that in devices i
+// have to install something on all the computers", 2026-10-23). Also listed,
+// live, in Settings > Setup.
+function emptyHelp(ov) {
+  const linked = (ov.machines || []).some((m) => !m.is_self && (m.servers || []).length);
+  if (linked) return '';
+  return `<div class="admin-card setup-devices-empty" data-devices-empty-help style="margin:0 0 10px">
+    <h2>No computer is linked yet</h2>
+    <div class="admin-toggle-sub">Odysseus can open apps, play music and use the screen on your own computers, but only on ones that have
+      the small <strong>Odysseus helper</strong> installed. <strong>Each computer needs it installed once.</strong></div>
+    <ol>
+      <li>Install <a href="https://tailscale.com/download" target="_blank" rel="noopener" style="color:var(--accent, var(--red))">Tailscale</a> on the computer and sign in to the same account as this server.</li>
+      <li>Press <strong>Add a computer</strong> below. It shows one command that works for 20 minutes.</li>
+      <li>Paste that command into a terminal on the computer (PowerShell on Windows). It installs the helper and links the computer here.</li>
+    </ol>
+    <button type="button" class="admin-btn-add" data-devices-empty-add>Add a computer</button>
+    <button type="button" class="settings-btn" style="margin-left:6px" data-devices-empty-setup>See the whole setup list</button>
+  </div>`;
+}
+
+function wireEmptyHelp(box) {
+  const add = box.querySelector('[data-devices-empty-add]');
+  if (add) add.onclick = () => {
+    $('devices-add-card')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    document.querySelector('[data-enroll="computer"]')?.click();
+  };
+  const all = box.querySelector('[data-devices-empty-setup]');
+  if (all) all.onclick = () => window.setupGuide?.openSetup?.();
+}
+
 function renderMachines() {
   const box = $('devices-machines');
   if (!box) return;
   const ov = state.overview || {};
+  const help = emptyHelp(ov);
   if (!ov.tailscale) {
     // Machines come from the Tailscale add-on (it provides network.peers).
     const net = ov.network || {};
@@ -105,12 +138,13 @@ function renderMachines() {
     } else {
       msg = 'Machines on your tailnet are found by the Tailscale add-on. <button type="button" class="admin-btn-sm" data-install-tailscale>Install the Tailscale add-on</button> MCP servers you added still work and are listed below.';
     }
-    box.innerHTML = `<div class="admin-toggle-sub">${msg}</div>`;
+    box.innerHTML = help + `<div class="admin-toggle-sub">${msg}</div>`;
+    wireEmptyHelp(box);
     const b = box.querySelector('[data-install-tailscale]');
     if (b) b.onclick = () => window.modLinks && window.modLinks.browse && window.modLinks.browse('tailscale');
     return;
   }
-  box.innerHTML = (ov.machines || []).map((m) => {
+  box.innerHTML = help + ((ov.machines || []).map((m) => {
     const h = esc(m.host);
     const isPhone = ['android', 'ios', 'ipados'].includes((m.os || '').toLowerCase());
     const appsSrv = (m.servers || []).find((s) => s.apps && s.status === 'connected');
@@ -146,7 +180,8 @@ function renderMachines() {
           <input class="settings-select" data-pc-search="${esc(appsSrv.id)}" type="text" placeholder="Search apps…" style="width:100%;margin-bottom:6px" />
           <div data-pc-list="${esc(appsSrv.id)}" class="admin-toggle-sub"></div></div>` : ''}
       </div>`;
-  }).join('') || '<div class="admin-toggle-sub">No machines found on your tailnet.</div>';
+  }).join('') || '<div class="admin-toggle-sub">No machines found on your tailnet.</div>');
+  wireEmptyHelp(box);
 }
 
 function renderServices() {

@@ -38,6 +38,7 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
+      if (tab === 'setup') window.setupGuide?.load();
       if (tab === 'devices') window.devicesSettings?.load();
       if (tab === 'calls') window.devicesSettings?.loadCalls?.();
       if (tab === 'email') window.mailListenerSettings?.load();
@@ -5315,6 +5316,7 @@ export function open(tab) {
   // the same as when the tab is clicked.
   if (tab === 'calls') window.devicesSettings?.loadCalls?.();
   if (tab === 'mods') window.modsSettings?.load();
+  if (tab === 'setup') window.setupGuide?.load();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }

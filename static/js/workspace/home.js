@@ -13,6 +13,7 @@
 import { openEntityHash } from '../chatRenderer.js';
 import settingsNav from '../settingsNav.js';
 import ModPanel from '../modPanel.js';
+import SetupGuide from '../setupGuide.js';
 
 let _el = null;
 let _api = null;
@@ -101,6 +102,7 @@ function _build() {
           <button type="button" data-open="library">Library</button>
         </div>
       </div>
+      <div class="ws-setup" hidden></div>
       <div class="ws-grid">${_skeleton()}</div>
       <div class="ws-mod-grid" aria-label="Mods"></div>
     </div>`;
@@ -127,6 +129,8 @@ function _build() {
   });
   settingsNav.attachComposerChip(ta, form);
   _el.addEventListener('click', _onClick);
+  // "Setup: N steps left" until the essentials are done or it is hidden (setupGuide.js).
+  SetupGuide.mountCard(_el.querySelector('.ws-setup'));
 }
 
 // New chat tab, then send the text from the real composer once the new
@@ -288,6 +292,7 @@ function _renderMods(mods) {
 export async function load(force = false) {
   if (!_el) return;
   ModPanel.list().then(_renderMods);
+  SetupGuide.fetchStatus(60000).catch(() => {});
   if (_loading) return _loading;
   if (!force && Date.now() - _lastLoad < 30000) return;
   _lastLoad = Date.now();

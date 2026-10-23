@@ -469,6 +469,11 @@ def validate(raw: Any) -> Dict[str, Any]:
     out["tutorial"] = tutorial.check(raw.get("tutorial"), bool(out["ui"]["settings_path"]),
                                      lambda v, where, errs: _path(v, where, errs, None), errors, warnings)
 
+    # ── setup steps for Settings > Setup (src/mods/setup_steps.py) ──
+    from src.mods import setup_steps
+    out["setup"] = setup_steps.check(raw.get("setup"), bool(out["ui"]["settings_path"]),
+                                     lambda v, where, errs: _path(v, where, errs, None), errors)
+
     if errors:
         raise ManifestError(errors)
     out["warnings"] = warnings

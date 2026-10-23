@@ -467,6 +467,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `tutorial.version` | A whole number from 1, default 1. Raise it to show the tutorial again to everyone who saw it. |
 | `tutorial.steps[]` | 1 to 8 steps: `title` (up to 80 characters), `body` (short Markdown, up to 1200), optionally `image` (a PNG, JPEG, GIF or WebP file in the mod, a relative path, under 2 MB; a file that is not there is a warning) and `action` (`{"label", "path"}` to open a page of the mod, or `{"label", "settings": true}`, which needs `ui.settings_path`). |
 | `tutorial.path` | Optional: a page of the mod with a richer tutorial. Alone, it is the tutorial (shown in a sandboxed frame); with `steps`, it is offered as "Full tutorial" after the last step. |
+| `setup` | Optional: `{"steps": [...]}`, up to 6 steps added to Settings > Setup, each with `id`, `title`, `description`, optionally `status_path`, `optional` and `action`; see [Setup steps](#setup-steps). No permission needed. |
 
 ### Permissions
 
@@ -1091,6 +1092,50 @@ so it survives updates and is removed with the mod.
 | `GET /api/mods/<id>/tutorial` | `{tutorial: {mod, name, version, seen, steps: [{title, body_html, image_url, action}], url}}` |
 | `POST /api/mods/<id>/tutorial/seen` | Marks the current version seen for this user: `{ok, version}` |
 | `GET /api/mods/<id>/tutorial/image/<step>` | The step's image |
+
+#### Setup steps
+
+Settings > Setup is the checklist that tells a new person what to do, when and where (an admin
+account, an AI model, notifications, linking each computer, connecting accounts, mods). A mod can
+add steps of its own to it, for the things a person has to do before the mod is useful: connect a
+printer, pick a folder, paste a key.
+
+```json
+"setup": {
+  "steps": [
+    { "id": "connect-printer", "title": "Connect your printer",
+      "description": "Lets the agent watch your prints and tell you when one finishes.",
+      "status_path": "/setup/printer",
+      "optional": true,
+      "action": { "label": "Open the printer page", "path": "/printers" } }
+  ]
+}
+```
+
+- `id`: lowercase letters, digits, `-` and `_`, unique inside the mod. `title`: up to 80
+  characters, what to do, in plain words. `description`: up to 300 characters, what it gives the
+  person. At most 6 steps.
+- `action` (optional): the button, `{"label", "path"}` for a page of the mod or
+  `{"label", "settings": true}` for its settings page (needs `ui.settings_path`). It opens the mod's
+  first tab at that page. Without a tab there is no button.
+- `status_path` (optional): a page of the mod that answers `GET` with
+  `{"done": true|false, "detail": "short note"}`. The core calls it with the usual signed identity
+  headers, so the mod knows which user is looking, and only while the mod is **running**: the
+  checklist never starts a mod to draw itself. A mod that is stopped, does not answer in 3 seconds
+  or answers in another shape shows the step as not checked yet (with a hint to open the mod).
+  Without `status_path` the step stays open until the person presses **Not for me** (that is also
+  how someone says they will not do it).
+- `optional` (default `true`): `false` makes the step count as one that **needs you** ("Setup: N
+  steps left", and the Home card). An optional step shows as optional and never holds the
+  checklist open.
+- Only people who may use the mod see its steps, and no permission is needed: the core only reads
+  what the mod says about itself, and the button only goes to the mod's own pages.
+- Write the title and description for someone who has never configured anything. Keep a step to
+  one action; if there are many, the mod's own tutorial is the place for the rest.
+
+The checklist itself is `GET /api/setup/status` (signed-in user): groups of steps with `status`
+(`done`, `needs_you`, `optional`, `not_applicable`), `detail` (the live fact behind it) and an
+`action`, plus counts. Dismissals are saved per user. It is built in `src/setup_guide.py`.
 
 #### Following the Odysseus theme
 

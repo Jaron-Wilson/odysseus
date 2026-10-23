@@ -671,6 +671,9 @@ from routes.device_routes import setup_device_routes
 app.include_router(setup_device_routes())
 from routes.enroll_routes import setup_enroll_routes
 app.include_router(setup_enroll_routes())
+# The guided setup checklist (Settings > Setup), computed from real state.
+from routes.setup_routes import setup_setup_routes
+app.include_router(setup_setup_routes())
 # Sending a text through the phone's reply URL when no Phone & Messages mod
 # is installed (routes/sms_routes.py). Texting the agent, phone calls, the SIP
 # line and Google Meet are the Phone & Messages mod (Jaron-Wilson/odysseus-phone).

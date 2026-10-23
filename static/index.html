@@ -262,6 +262,7 @@
   <link rel="stylesheet" href="/static/css/actionApprovals.css">
   <link rel="stylesheet" href="/static/css/googleSettings.css">
   <link rel="stylesheet" href="/static/css/settingsNav.css">
+  <link rel="stylesheet" href="/static/css/setupGuide.css">
   <link rel="stylesheet" href="/static/css/whatsNew.css">
   <link rel="stylesheet" href="/static/css/chatThreads.css">
   <link rel="stylesheet" href="/static/css/chatThreadTabs.css">
@@ -1627,6 +1628,13 @@
       <div class="admin-toggle-sub" style="padding:0 12px 8px;opacity:0.6;font-size:11px;">Toggle on/off visibility of tools and modules across the interface.</div>
       <div class="settings-layout">
         <div class="settings-sidebar">
+          <!-- Section 0: the guided checklist, first so a new person sees what to do and where -->
+          <button class="settings-nav-item" data-goto-keywords="setup guide checklist get started first run help what do i do" data-settings-tab="setup">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span>Setup</span>
+            <span id="setup-nav-badge" hidden style="margin-left:auto;min-width:16px;padding:0 5px;border-radius:9px;background:#d29922;color:#fff;font-size:11px;line-height:16px;text-align:center"></span>
+          </button>
+          <div class="settings-sidebar-divider"></div>
           <!-- Section 1: AI plumbing (Add Models → AI Defaults → Search) -->
           <button class="settings-nav-item active" data-settings-tab="services">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
@@ -1705,6 +1713,11 @@
           </button>
         </div>
         <div class="settings-panels">
+
+        <!-- ═══ SETUP TAB: the guided checklist, GET /api/setup/status, drawn by setupGuide.js ═══ -->
+        <div data-settings-panel="setup" class="hidden">
+          <div id="setup-root"><div class="admin-toggle-sub">Checking what is set up…</div></div>
+        </div>
 
         <!-- ═══ AI TAB ═══ -->
 
@@ -2511,7 +2524,7 @@
               <div id="devices-others" style="margin-top:6px"></div>
             </details>
           </div>
-          <div class="admin-card">
+          <div class="admin-card" id="devices-add-card">
             <h2>Add a device</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">One command on a computer, or one scan on a phone. The code in it works once, for 20 minutes. The device needs Tailscale on and signed in first.</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -3186,6 +3199,7 @@
 <script type="module" src="/static/js/ui.js"></script>
 <!-- Before the built-in pages: it routes #mod/... and old page hashes first (docs/mods.md) -->
 <script type="module" src="/static/js/modLinks.js"></script>
+<script type="module" src="/static/js/setupGuide.js"></script>
 <script type="module" src="/static/js/devicesSettings.js"></script>
 <script type="module" src="/static/js/devicesPanel.js"></script>
 <script type="module" src="/static/js/mailListenerSettings.js"></script>

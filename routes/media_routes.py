@@ -16,6 +16,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+from src import setup_guide
+
 logger = logging.getLogger(__name__)
 
 
@@ -341,9 +343,10 @@ def setup_media_routes(mcp_manager) -> APIRouter:
         if not src or not dst or src_id == dst_id:
             raise HTTPException(400, "Pick two different computers")
         if "audio_stream_start" not in set(src.get("tools") or []):
-            raise HTTPException(409, f"{src.get('name')} cannot stream its sound yet (update its desktop MCP)")
+            raise HTTPException(409, setup_guide.helper_missing(src.get("name") or "That computer", "stream its sound"))
         if "play_stream" not in set(dst.get("tools") or []):
-            raise HTTPException(409, f"{dst.get('name')} cannot play a stream yet (update its desktop MCP)")
+            raise HTTPException(409, setup_guide.helper_missing(dst.get("name") or "That computer",
+                                                                 "play another computer's sound"))
         if not body.get("on", True):
             _payload(await _call(dst_id, "stop_stream", {}))
             _payload(await _call(src_id, "audio_stream_stop", {}))
@@ -425,8 +428,8 @@ def setup_media_routes(mcp_manager) -> APIRouter:
         if not dst or dst_id.startswith("device:"):
             raise HTTPException(400, "Pick a computer to hear it on")
         if "bluetooth_audio_receive" not in set(dst.get("tools") or []):
-            raise HTTPException(409, f"{dst.get('name') or dst_id} needs the updated desktop MCP "
-                                     "(tools/mcp/desktop_mcp_server.py) for this")
+            raise HTTPException(409, setup_guide.helper_missing(dst.get("name") or dst_id,
+                                                                 "play a phone's sound over Bluetooth"))
         name = ""
         if on:
             src = known.get(src_id)
