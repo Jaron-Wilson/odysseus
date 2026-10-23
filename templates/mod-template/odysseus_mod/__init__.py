@@ -356,6 +356,8 @@ class Request:
         self.session_id = handler.headers.get("X-Odysseus-Session") or ""
         # For a capability call (ModApp.provide): the mod that asked, through the core.
         self.caller = handler.headers.get("X-Odysseus-Caller") or ""
+        # True when the core relays a provider's callback (docs/mods.md, "callbacks").
+        self.callback = handler.headers.get("X-Odysseus-Callback") == "1"
         self.base_path = handler.headers.get("X-Forwarded-Prefix") or ""
         if "chunked" in (handler.headers.get("Transfer-Encoding") or "").lower():
             # The core streams bodies over 16 MB through its proxy, chunked.
@@ -473,7 +475,10 @@ class ModApp:
         user the call is for and `req.caller` the mod that asked ("" when the
         core itself asks). The core already checked the caller and applied the
         capability's rules; return a dict (the caller gets it), or
-        {"error": "..."}."""
+        {"error": "...", "status": 429} (`status` is optional, 400 to 599,
+        default 400), or a Response for full control. A mod that a provider
+        calls back (docs/mods.md, "callbacks") serves it the same way, and
+        `req.callback` is true."""
         def deco(fn):
             self._caps[(capability, action)] = fn
             return fn
@@ -535,8 +540,12 @@ class ModApp:
             req = Request(handler, user, {"capability": cap, "action": action})
             args = req.json() if handler.command == "POST" else dict(req.query)
             out = fn(req, args if isinstance(args, dict) else {})
+            if isinstance(out, Response):          # full control: status, headers
+                return out
             if isinstance(out, dict) and out.get("error"):
-                return json_response({"error": str(out["error"])}, 400)
+                st = out.get("status")
+                return json_response({"error": str(out["error"])},
+                                     st if isinstance(st, int) and 400 <= st < 600 else 400)
             return json_response(out if isinstance(out, dict) else {"result": out})
         if path == "/mod/events" and handler.command == "POST":
             req = Request(handler, user, {})
