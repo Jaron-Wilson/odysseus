@@ -78,3 +78,13 @@
 .mod-tut-dots i.on { background: var(--accent, #58a6ff); }
 .mod-btn.mod-tut-primary { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }
 .mod-tut-skip { opacity: .75; }
+
+/* @-mentions of mods in chat messages (modMentions.js) */
+.mod-mention-chip {
+  display: inline-block; padding: 0 6px; margin: 0 1px; border-radius: 6px; line-height: 1.45;
+  font-weight: 600; text-decoration: none; white-space: nowrap; cursor: pointer;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+}
+.mod-mention-chip:hover { background: color-mix(in srgb, var(--accent, var(--red)) 24%, transparent); text-decoration: none; }

@@ -12,7 +12,7 @@ from __future__ import annotations
 import html as _html
 import threading
 
-from odysseus_mod import CoreClient, ModApp, html, json_response, redirect
+from odysseus_mod import CoreClient, ModApp, html, json_response, redirect, themed
 
 app = ModApp(mod_id="my-mod")
 _lock = threading.Lock()
@@ -20,8 +20,9 @@ _state = {"clicks": 0, "events": []}
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>My Mod</title>
-<style>body{{font:14px system-ui,sans-serif;margin:0;padding:20px;background:#111;color:#ddd}}
-button{{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid #444;background:#222;color:#eee}}</style>
+<style>body{{font:14px var(--font,system-ui,sans-serif);margin:0;padding:20px;background:var(--bg);color:var(--fg)}}
+button{{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--fg)}}
+a{{color:var(--accent)}}</style>
 </head><body><h1 style="font-size:18px">My Mod</h1>
 <p>Hello, {user}. Clicks: <strong id="n">{clicks}</strong></p>
 <button id="b">Click</button> <span id="m"></span>
@@ -38,7 +39,8 @@ document.getElementById('b').onclick = async () => {{
 
 @app.get("/")
 def home(req):
-    return html(PAGE.format(user=_html.escape(req.user or ""), clicks=_state["clicks"]))
+    # themed(): the page follows the user's Odysseus theme (var(--bg), var(--fg), var(--accent), ...).
+    return themed(PAGE.format(user=_html.escape(req.user or ""), clicks=_state["clicks"]))
 
 
 @app.get("/cards/summary")

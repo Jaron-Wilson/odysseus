@@ -260,7 +260,6 @@
   <link rel="stylesheet" href="/static/css/plans.css">
   <link rel="stylesheet" href="/static/css/nativePlans.css">
   <link rel="stylesheet" href="/static/css/actionApprovals.css">
-  <link rel="stylesheet" href="/static/css/company.css">
   <link rel="stylesheet" href="/static/css/googleSettings.css">
   <link rel="stylesheet" href="/static/css/settingsNav.css">
   <link rel="stylesheet" href="/static/css/whatsNew.css">
@@ -1053,18 +1052,6 @@
               </svg>
               <span class="grow">Background</span>
               <span id="bg-tasks-count" class="bg-tasks-count" hidden></span>
-            </div>
-            <!-- Company: an org of AI agents on any Odysseus model (company.js, docs/company.md) -->
-            <div class="list-item" id="tool-company-btn" title="An organization of AI agents: org chart, goals, issues, approvals">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                style="flex-shrink:0;opacity:0.5;">
-                <rect x="9" y="2" width="6" height="5" rx="1"/>
-                <rect x="2" y="17" width="6" height="5" rx="1"/>
-                <rect x="16" y="17" width="6" height="5" rx="1"/>
-                <path d="M12 7v5M5 17v-3h14v3"/>
-              </svg>
-              <span class="grow">Company</span>
             </div>
             <!-- One chat for changes to Odysseus itself (specialChats.js) -->
             <div class="list-item" id="tool-odysseus-dev-btn" title="A chat for changing Odysseus itself: every change ends in a PR against dev">
@@ -2902,6 +2889,14 @@
             </div>
             <div id="mods-msg" class="admin-toggle-sub" style="margin-top:6px"></div>
           </div>
+          <!-- Mod styles: modStyles.js, src/mods/style.py (docs/mods.md, "Changing how Odysseus looks"). -->
+          <div class="admin-card" id="mods-styles-card">
+            <h2>Mod styles</h2>
+            <div class="admin-toggle-sub">A mod you approved for <code>ui.style</code> can change how Odysseus looks (colors, corners, text size). It is CSS only: no script from a mod runs in this page.</div>
+            <label class="admin-toggle-sub" style="display:flex;align-items:center;gap:6px;margin-top:8px"><input type="checkbox" id="mods-styles-off"> Safe mode: ignore all mod styles on this browser</label>
+            <div class="admin-toggle-sub" style="margin-top:4px">If a style ever makes the app hard to use, open Odysseus with <code>?safe=1</code> on the end of the address (for example <code>/?safe=1</code>) to load it without any mod style, then turn the mod off here.</div>
+            <div id="mods-styles-list" class="admin-toggle-sub" style="margin-top:8px"></div>
+          </div>
           <div class="admin-card" id="mods-approve" style="display:none;border-left:3px solid var(--accent, var(--red))"></div>
           <!-- Browse: modsBrowse.js, src/mods/catalog.py (docs/mods.md, "Finding mods"). -->
           <div id="mods-browse-view" style="display:none">
@@ -3197,9 +3192,9 @@
 <script type="module" src="/static/js/inboundMail.js"></script>
 <script type="module" src="/static/js/usagePage.js"></script>
 <script type="module" src="/static/js/modsSettings.js"></script>
+<script type="module" src="/static/js/modStyles.js"></script>
+<script type="module" src="/static/js/modMentions.js"></script>
 <script type="module" src="/static/js/plans.js"></script>
-<script type="module" src="/static/js/company.js"></script>
-<script type="module" src="/static/js/companyMentions.js"></script>
 <script type="module" src="/static/js/googleSettings.js"></script>
 <script type="module" src="/static/js/whatsNew.js"></script>
 <script type="module" src="/static/js/codePanel.js"></script>

@@ -470,3 +470,27 @@ def test_interactive_gate_ignores_mod_api_and_mod_page_polls():
     assert not track("/api/mods/v1/agent/runs/x", "GET")
     assert not track("/mods/company/api/companies/1/live", "GET")
     assert track("/mods/company/api/companies/1/issues", "POST")
+
+
+def test_usage_groups_a_mods_spend_by_its_scope_path_with_labels(client, db):
+    record("mod:company/c/1/a/1/run-x", 0.10)
+    record("mod:company/c/1/a/2", 0.20)
+    record("mod:company/c/10", 0.40)
+    record("mod:company", 0.05)                 # no path: only in by_mod
+    record("mod:other/solo", 0.80)
+    _, tok = add_mod(permissions=["budgets"], mod_id="company")
+    r = client.put("/api/mods/v1/usage/labels", headers=bearer(tok),
+                   json={"labels": {"c/1": "  Acme   Labs ", "c/10": "Beta", "bad path": "x"}})
+    assert r.status_code == 400
+    r = client.put("/api/mods/v1/usage/labels", headers=bearer(tok), json={"labels": {"c/1": "  Acme   Labs ", "c/10": "Beta"}})
+    assert r.status_code == 200 and r.json()["labels"] == {"c/1": "Acme Labs", "c/10": "Beta"}
+    rows = usage.summary(None, all_users=True)["by_mod_scope"]
+    got = {r["key"]: (round(r["metered_cost_usd"], 4), r["name"], r["calls"]) for r in rows}
+    assert got == {"mod:company/c/1": (0.30, "Acme Labs", 2), "mod:company/c/10": (0.40, "Beta", 1),
+                   "mod:other/solo": (0.80, "", 1)}
+    assert rows[0]["key"] == "mod:other/solo"                              # biggest first
+    # An empty label removes it; the labels need the budgets permission.
+    client.put("/api/mods/v1/usage/labels", headers=bearer(tok), json={"labels": {"c/10": ""}})
+    assert usage_api.load_labels("company") == {"c/1": "Acme Labs"}
+    _, tok2 = add_mod(permissions=[], mod_id="nolabels")
+    assert client.put("/api/mods/v1/usage/labels", headers=bearer(tok2), json={"labels": {}}).status_code == 403

@@ -153,6 +153,8 @@ in `src/mods/trust.py`, returned by `GET /api/mods/trust` as `always_ask`:
 | `stats.read` | server-wide activity: the admin powers an `admin_only` mod asks for |
 | `google.calendar` | creates events and emails invites from your Google account |
 
+`chat.mention` is deliberately not on the list: it only offers the mod's own tools when you @-mention it.
+
 The rule looks at what is **new**: an update only asks again for a permission it did not have, so a
 mod you approved `devices.control` for by hand keeps updating without a prompt until it asks for
 another one on the list. In **Update all** such a mod is listed as `needs_review` with the reason.
@@ -264,10 +266,12 @@ Start from the template, either the **New mod** button, `python -m src.mods new`
 - `my_mod/app.py`, a starter mod with a page, a card, settings, a tool, a notification and events.
 - `odysseus_mod/`, a small standard-library SDK:
   - `ModApp` (routes, tools, event handlers, the identity check, standalone login)
-  - `CoreClient` (the mod API, with local fallbacks when standalone)
+  - `CoreClient` (the mod API, with local fallbacks when standalone), including
+    `refresh_style()` for a mod with the `ui.style` permission (see [Changing how Odysseus looks](#changing-how-odysseus-looks))
   - `sign_identity` / `verify_identity`
 - `odysseus_mod/devcore.py`, a stand-in core. `python -m odysseus_mod.devcore` starts the mod
-  with the same environment, serves the mod API with the manifest's permissions enforced, proxies
+  with the same environment, serves the mod API with the manifest's permissions enforced (the
+  `ui.style` refresh fetches the mod's stylesheet like the core would), proxies
   `/mods/<id>/` with signed headers, delivers events and has a page for trying tools.
 - `tests/`, which run the mod under devcore.
 - `CLAUDE.md` and `.claude/skills/new-mod/SKILL.md`, so an AI assistant can build a mod from a
@@ -445,7 +449,11 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `ui.tabs[].replaces` | Optional: the key of a built-in page this tab takes over (`adsb`, `games`, `print`, `devops`, `company`, ...; see [Pages that moved to mods](#pages-that-moved-to-mods)). Its old links and saved Workspace tabs open this tab. A key not in the list is a warning and ignored; two tabs of one mod cannot replace the same key. |
 | `ui.home_cards[]` | `id`, `title` (optional), `path`, `height` (60 to 600 pixels, default 180). |
 | `ui.embeds[]` | `id`, `path` (a page of this server like `/play/stream.html`), `title` (optional), `allow` (browser features). Needs the `embed` permission; see [Embedding a page of this server](#embedding-a-page-of-this-server). |
+| `ui.style` | `{"path": "/mod/style.css"}`: where the mod's server serves the one CSS-only stylesheet it adds to the main page. Needs the `ui.style` permission; see [Changing how Odysseus looks](#changing-how-odysseus-looks). |
 | `ui.settings_path` | The mod's settings page, opened from its tab. |
+| `chat.mention` | `{label, description, handle, icon}`: the mod appears in the chat composer's `@` picker. Needs the `chat.mention` permission; see [Mentioning a mod in a chat](#mentioning-a-mod-in-a-chat). `handle` is what follows the `@` (default: the label in lowercase with `-`). |
+| `chat.mention_items` | Optional path: sub-items the picker lists after `@<handle>/` (`GET <path>?q=`). |
+| `chat.mention_context` | Optional path: a short note about what the user pointed at, added to that message (`POST <path>`). |
 | `tools.endpoint` | Default `/mod/tools`. |
 | `tools.keywords` | Words that make the agent offer the mod's tools. |
 | `events.emits` | Event types it may publish (`print.finished`). Needs `events.emit`. |
@@ -483,7 +491,9 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `public.http` | Requests to `/mods/<id>/public/...` reach the mod with no sign-in (see [Public paths](#public-paths)) |
 | `stats.read` | `GET stats` and `GET stats/transcripts/<run>`: server-wide activity (what is running, model speed, coder runs and their transcripts). Only for a mod that only admins may use: with **Who can use it** set to all users, these calls answer 403 |
 | `machines.read` | `GET machines`: the tailnet's machines (name, addresses, operating system, online), with the SSH user set for each in Settings > Devices. No keys and no commands |
+| `chat.mention` | Appear in the `@` picker of chats; when the user mentions the mod its tools are used for that message and it may add a short note to it (see [Mentioning a mod in a chat](#mentioning-a-mod-in-a-chat)) |
 | `embed` | Show a page of this server, named in the manifest's `ui.embeds`, in an unsandboxed frame inside the mod's window (see [Embedding a page of this server](#embedding-a-page-of-this-server)) |
+| `ui.style` | Change how Odysseus looks: one CSS-only stylesheet, named in the manifest's `ui.style`, linked into the main page (see [Changing how Odysseus looks](#changing-how-odysseus-looks)). The install review says "Change how Odysseus looks" |
 
 Settings (`GET/PUT settings`) and `GET me` need no permission.
 
@@ -656,8 +666,14 @@ POST /api/mods/v1/agent/runs
   `succeeded`, `failed`, `cancelled` or `interrupted` (Odysseus restarted).
 - **Limits.** 4 live runs per mod, 8 in all (`ODYSSEUS_MOD_RUNS_PER_MOD`,
   `ODYSSEUS_MOD_RUNS_TOTAL`); 1-200 rounds (default 20); a request up to 200 KB.
-- **Memory.** Runs are kept in memory for 6 hours after they end. After a restart the core no
-  longer knows them: `GET` answers 404, and a mod treats such a run as interrupted.
+- **Restarts.** Runs are kept on disk (`mods/runs.json`: each run's view, not its text) and
+  listed for 6 hours after they end. When the core starts, every run that was still `queued` or
+  `running` is marked `interrupted` (`error: "Odysseus restarted"`, `restarted: true`) and its mod
+  gets an `agent.run.finished` event for it, as soon as the mod's process is up, once per run. The
+  mod decides what to do: resume (start a new run for the same work, using the old run's `metadata`
+  and a note of what was done), re-queue it, or give up. A mod that was down for the notice finds
+  the same runs in `GET agent/runs` (look for `restarted: true`) when it starts, so it can
+  reconcile then. The run's chat (`session_id`) stays, so "Open as chat" still works.
 
 ### Usage scopes and budgets
 
@@ -665,7 +681,11 @@ Every model call of a mod (`llm/chat`, and every call of its agent runs) is reco
 with source `mod` and a **source scope**: `mod:<id>`, plus the `scope` path the mod gave, plus
 `run-<run id>` for an agent run. A path is up to 8 segments of letters, digits, `.`, `_` and `-`,
 joined by `/`. Scopes nest: `c/3f2a` covers `c/3f2a/a/91bc` and every run under it, so one path
-keeps per-company, per-agent and per-run spend apart. The Usage summary has a `by_mod` breakdown.
+keeps per-company, per-agent and per-run spend apart. The Usage summary has a `by_mod` breakdown, and `by_mod_scope`: a mod's spend grouped by the
+first two segments of its path (`mod:company/c/3f2a`, so one row per company), shown on the Usage
+page as "By mod and scope". The mod names its groups with `PUT usage/labels {"labels":
+{"c/3f2a": "Acme"}}` (permission `budgets`; an empty name removes one); without a name the page
+shows the path.
 
 `PUT budgets {scope, monthly_limit_cents, caps}` keeps a monthly budget in the core
 (`mods/<id>/budgets.json`, not the mod's own data). The checks are the core's budgets
@@ -866,6 +886,11 @@ message is about them: a mod's tools are offered when the message matches one of
 for the message. At most 12 per mod. A trivial message ("thanks", "ok") gets none. No message
 gets every mod's tools. In the mod's own agent runs its tools are always there.
 
+**Plan mode.** While the user has plan mode on, the agent may only read. A mod's tool is refused
+there unless the mod marked it `read_only` (an unmarked tool counts as a write, so a mod that
+wants its lookups to work in plan mode marks them). A tool marked `asks_first` or `controls_devices`
+is refused in plan mode even if it also says `read_only`.
+
 **Approval.** A tool marked `controls_devices`, and every tool of a mod with `devices.control`
 unless it is marked `read_only`, goes through the chat's approval flow: the user sees the mod,
 the tool and the arguments, with Approve and Deny, before it runs. `devices.control` is required
@@ -994,7 +1019,7 @@ list, in this order), and the built-in pages in each, which are what `after` may
 |---|---|---|
 | `organize` | Organize | `calendar`, `tasks`, `notes`, `plans`, `brain` |
 | `create` | Create & research | `library`, `gallery`, `research`, `compare` |
-| `build` | Build | `code`, `browser`, `background`, `company`, `odysseus-dev` |
+| `build` | Build | `code`, `browser`, `background`, `odysseus-dev` |
 | `system` | System | `devices`, `cookbook`, `theme`, `usage`, `whats-new` |
 | `mods` | Mods | None. The default; the group only appears when a tab is in it. |
 
@@ -1067,6 +1092,60 @@ so it survives updates and is removed with the mod.
 | `POST /api/mods/<id>/tutorial/seen` | Marks the current version seen for this user: `{ok, version}` |
 | `GET /api/mods/<id>/tutorial/image/<step>` | The step's image |
 
+#### Following the Odysseus theme
+
+A mod page is sandboxed, so it cannot read Odysseus's CSS variables. The core posts the user's
+theme to every mod frame (tabs, home cards, settings, tutorials) when the frame loads and again
+whenever the theme changes, and answers a request for it:
+
+```js
+// core -> mod page
+{ type: 'odysseus:theme', version: 1, mode: 'dark',          // or 'light'
+  vars: { '--bg': '#0f1115', '--fg': '#e6e8ec', '--panel': '#16191e', '--border': '#262a31',
+          '--accent': '#7c8cff', '--accent-ink': '#ffffff', '--font': 'Inter, sans-serif' } }
+// mod page -> core, to ask for it (the core answers at once)
+parent.postMessage({ type: 'odysseus:theme-request' }, '*');
+```
+
+Values are plain colors (and one font stack); anything else is dropped. In Python, the
+`odysseus_mod` helper does the receiving: return `themed(page)` instead of `html(page)`. It adds
+dark defaults, sets the variables on `:root` as messages arrive, sets `color-scheme` and
+`html[data-theme-mode]`, and fires an `odysseus-theme` event on `window`. Write the page's CSS with
+`var(--bg)`, `var(--fg)`, `var(--panel)`, `var(--border)` and `var(--accent)`. A mod not in Python
+copies `THEME_HEAD` (about 20 lines) into its pages.
+
+#### Mentioning a mod in a chat
+
+A mod with the `chat.mention` permission and a `chat.mention` entry in its manifest appears in the
+chat box's `@` picker (icon, name, what it is) for every user who may use it:
+
+```json
+"permissions": ["chat.mention"],
+"chat": { "mention": { "label": "Trove", "description": "Your collection", "icon": "box" },
+          "mention_items": "/mod/chat/items",      // optional
+          "mention_context": "/mod/chat/context" } // optional
+```
+
+Picking it writes `@trove` into the message (`@trove/lamp-1` for an item). That turn:
+
+- **The mod's tools are used.** All of its agent tools are offered, first, whatever the keyword
+  selection would have picked, and the system context says `The user addressed @Trove; use its
+  tools to answer`. A plain chat is promoted to agent mode for it. Several mods may be mentioned
+  in one message (at most 5). Plan mode still applies to the tools.
+- **Items.** After `@trove/` the picker calls `GET <mention_items>?q=<typed>` as the signed-in user
+  and shows `{"items": [{"ref": "lamp-1", "label": "Brass lamp", "help": "shelf 2"}]}` (20 at
+  most; `ref` has no spaces and is what lands in the message).
+- **A note.** If the mod has `mention_context`, the core POSTs `{text, handle, items: [refs]}`
+  and adds the `{"context": "..."}` it answers (2000 characters at most per mod, 6000 in all, 5
+  seconds to answer) to the end of the user's message for that turn only. A mod that is down or
+  slow is skipped. The model sees the note, so only return what the user may see.
+- **Chips.** The mention shows as a chip in the sent message and in history; it opens the mod.
+
+The message text is the only record, so nothing is stored: the core reads the mentions again from
+the text wherever it needs them. An `@` that is not a handle of a mod the user may use is ordinary
+text. Mods whose permission was not granted, that are turned off, or that the user may not use are
+not listed and are not mentioned.
+
 #### Links into a mod
 
 A link of the form `/#mod/<id>/<tab>` opens the mod's tab inside Odysseus (in the Workspace, as a
@@ -1128,12 +1207,94 @@ an embed its manifest lists and the user granted. The embedded page runs with th
 only list pages you trust: an `embed` mod can show them but cannot read them (the frames are siblings,
 not parent and child).
 
+#### Changing how Odysseus looks
+
+A mod page is sandboxed, so it cannot restyle Odysseus itself. A mod the admin approves for
+`ui.style` can still add **one stylesheet** to the main page. It is CSS only: **no script from a
+mod is ever injected into the main page** by this. The reference mod is
+`Jaron-Wilson/odysseus-retheme` (presets, accent, corner radius, text size, density).
+
+```json
+"permissions": ["ui.style"],
+"ui": { "style": { "path": "/mod/style.css" } }
+```
+
+How it works:
+
+1. The mod's server serves the stylesheet at `ui.style.path`. The core fetches it (signed like any
+   request to the mod, starting the mod if it is stopped) when the mod is enabled, updated, or tells
+   the core it changed, and **checks it** (below). The checked copy is kept in the core's own
+   folder (`mods/<id>/ui-style/`, not the mod's `data/`), and served from Odysseus's own origin at
+   `/api/mods/ui/style/<id>.css?v=<hash>`.
+2. The main page's `<head>` gets `<link rel="stylesheet" data-mod="<id>" href="...">` for every
+   enabled, approved mod, **after** the core's own styles and **ordered by mod id**. Disabling,
+   removing or refusing a mod removes its link at once.
+3. The mod tells the core its style changed with `POST /api/mods/v1/ui/style/refresh` (the SDK:
+   `app.core.refresh_style()`; needs `ui.style`). The core fetches it again. An open page checks
+   `GET /api/mods/ui/styles` every few seconds and when its window gets focus (`static/js/modStyles.js`),
+   and re-links a sheet whose `?v=` changed: the new sheet loads, then the old link is dropped, so
+   nothing flashes. A mod's own page can make that immediate by posting
+   `parent.postMessage({type: 'odysseus:style-changed'}, '*')` after saving.
+
+**What is checked.** The core refuses the **whole** stylesheet (it never trims silently; the
+reason is shown in Settings > Mods and written to the mod's log, and the page goes back to normal):
+
+- larger than **64 KB**
+- `@import` (and `@namespace`)
+- any `url()` that is not a `data:image/...` URI, a `#fragment`, or one of the mod's own proxied
+  files `/mods/<its id>/...` (so no off-origin URLs, no other mod's files, no `/api`);
+  `image-set()`, `src()`, `cross-fade()`, `element()` and `paint()` too, since they can hide a URL
+  in a string
+- `expression()`, `behavior:`, `-moz-binding`, `javascript:`, `vbscript:`
+- CSS escapes that spell any of those (`\75rl(` is read as `url(`), comments inserted to split
+  them, and `</` or `<!--`
+
+**Theme tokens.** Retheme with CSS custom properties on `:root` rather than selectors: the app's
+class names change between releases, the tokens do not.
+
+| Token | What it changes |
+|---|---|
+| `--bg` | page background |
+| `--fg` | main text |
+| `--panel` | raised surfaces: sidebar, cards, dialogs, inputs |
+| `--border` | lines and outlines, including the Workspace and Studio designs' lines |
+| `--accent` | links, active items, buttons, highlights, including the Workspace and Studio accent |
+| `--accent-ink` | text on top of `--accent` |
+| `--fg-muted` | secondary text, including the Workspace and Studio secondary text |
+| `--red` | the theme's brand color (loading screen, warnings) |
+| `--font-family` | the font stack for the whole app |
+| `--ody-radius` | corner radius of buttons, inputs, cards, dialogs and tabs, like `12px` (`0` for square) |
+| `--ody-font-scale` | text and spacing scale of the sidebar, Workspace pages, chat messages and dialogs: `0.9`, `1`, `1.15` |
+| `--ody-density` | spacing of chat messages, lists and the Home grid: `0.7` compact, `1` normal, `1.3` roomy |
+
+The color tokens are Odysseus's own variables, so the whole app (it uses them throughout) follows.
+The Workspace and Studio designs (the default) draw their lines, secondary text and accent from their
+own `--st-*` variables, so when a mod sets `--border`, `--fg-muted`, `--accent` or `--accent-ink` the core
+also points the matching `--st-*` variable at it (a `html.ui-studio { ... }` rule it appends).
+The user's own theme (Settings > Theme) sets them inline on `<html>`, which would beat a stylesheet,
+so **the core adds `!important` to every declaration of a color token** in a mod's sheet: while the
+mod is on, its colors win. The `--ody-*` tokens are applied by rules the core appends after the mod's
+sheet, **only for the tokens the mod set**: a sheet that sets none of them changes nothing it did not
+ask for. (The scale is a `zoom` on the sidebar's and pages' contents, never on the whole page: the
+Workspace measures the shell in screen pixels.) Selectors are allowed too, but they are the mod's
+risk when the app changes.
+
+**Keep it readable.** Check contrast (4.5:1 for body text) for each look and open the app with it
+on. A mod style can hide or mislead like any restyle, which is why the admin approves it.
+
+**Safe mode, in case a style makes the app unusable.** Open Odysseus with **`?safe=1`** on the
+address (for example `https://odysseus.example/?safe=1`): that page load has no mod stylesheet at
+all (the server leaves the links out, and the page does not add them back). **Settings > Mods >
+Mod styles > Safe mode** does the same for every load in that browser, until it is turned off (a
+`ody_mod_styles=off` cookie, which the server reads before it writes the page). Then turn the mod
+off or remove it. Both switches skip *all* mod styles.
+
 #### Pages that moved to mods
 
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
 receiver, now the ADS-B Receiver mod, `Jaron-Wilson/odysseus-adsb`), `games` (now the Games mod), `print` (3D print helper, now part of Print Hub), `terminal` and `claude-sessions`
 (now the Programming mod), `devops` (now the DevOps mod), `phone` (texting the agent, phone calls, the SIP line and
-Google Meet, which were Settings > Calls & Meetings; now the Phone & Messages mod, `/meet` opens it), `company`, and later `code`,
+Google Meet, which were Settings > Calls & Meetings; now the Phone & Messages mod, `/meet` opens it), `company` (now the Company mod, `Jaron-Wilson/odysseus-company`: its routes, agent tools, wake-up scheduler and `@` mentions left the core, and the old tables stay in `app.db`), and later `code`,
 `browser`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
 `src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,
 `/#games?play=...`) and saved Workspace tabs keep working:
@@ -1206,6 +1367,10 @@ Mods are **untrusted code**. What protects you:
   `postMessage`). Popups it opens escape the sandbox, so they run as an ordinary page of that
   address, with no access to Odysseus either. Odysseus's cookies and `Authorization` headers are
   never forwarded to a mod.
+- **A mod's stylesheet is CSS only and checked** (permission `ui.style`): the core fetches it, refuses
+  `@import`, off-origin `url()`s, script-like constructs and anything over 64 KB, and serves its own copy
+  from its own origin. No script from a mod runs in the main page. `?safe=1` and a Settings switch
+  load Odysseus without any mod style (see [Changing how Odysseus looks](#changing-how-odysseus-looks)).
 - **Tutorials are rendered by the core**: their Markdown is escaped before the few allowed
   formats are applied, and their images are served only from the mod's own folder.
 - **Device actions need the user.** Mod tools that control devices go through the chat's approval

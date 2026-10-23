@@ -50,7 +50,10 @@ The core runs `python` in `runtime.command` with the mod's `.venv` when one exis
 - `permissions`: only what the mod needs. The user sees and approves every one at install.
   `notify`, `events.emit`, `events.subscribe`, `devices.read`, `devices.control`, `network.lan`,
   `storage`, `llm.call`, `stats.read` (server-wide activity; only for a mod only admins may use),
-  `machines.read` (the tailnet's machines). Settings (`GET/PUT settings`) need none.
+  `machines.read` (the tailnet's machines), `ui.style` (change how Odysseus looks, below).
+  Settings (`GET/PUT settings`) need none.
+- `ui.style` (`{"path": "/mod/style.css"}`, needs the `ui.style` permission): where this mod's
+  server serves the one stylesheet it adds to Odysseus itself. See "Changing how Odysseus looks".
 - `ui.tabs[]` (`id`, `title`, `icon`, `path`, and where it goes in the sidebar: `section`, `after`,
   `order`), `ui.home_cards[]` (`id`, `title`, `path`, `height` 60 to 600), `ui.settings_path`.
 - `section` is a sidebar group: `organize` (Organize), `create` (Create & research), `build`
@@ -183,6 +186,42 @@ a sandboxed frame and cannot navigate Odysseus itself; it asks:
 parent.postMessage({ type: 'odysseus:open', link: '#mod/my-mod/main?path=/jobs/42' }, '*');
 ```
 
+## Changing how Odysseus looks (`ui.style`)
+
+A mod's pages are sandboxed and cannot touch Odysseus's own page, but an admin can approve one
+more thing: a stylesheet. Declare the permission and the path, and serve CSS there:
+
+```json
+"permissions": ["ui.style"],
+"ui": { "style": { "path": "/mod/style.css" } }
+```
+
+```python
+@app.get("/mod/style.css")
+def style(req):
+    return Response(build_css(app.core.settings()), content_type="text/css; charset=utf-8")
+# after the user changes a setting:
+app.core.refresh_style()      # the core fetches it again; the open page repaints at once
+```
+
+- CSS only. No script from a mod is ever injected into Odysseus's page. The core checks the
+  sheet and **refuses all of it** (and logs why in the mod's log, `style.error` in the
+  `refresh_style()` answer) for: more than 64 KB, `@import`, `image-set()`, `src()`, `expression`,
+  `behavior`, `-moz-binding`, and any `url()` that is not a `data:image/...` URI, a `#fragment` or
+  your own `/mods/<id>/...` file.
+- Retheme with the **theme tokens** (CSS custom properties on `:root`): `--bg` (page), `--fg`
+  (text), `--panel` (sidebar, cards, dialogs, inputs), `--border`, `--accent`, `--accent-ink`
+  (text on the accent), `--fg-muted`, `--red` (brand color), `--font-family`, and the layout
+  tokens `--ody-radius` (like `12px`), `--ody-font-size` (like `15px`), `--ody-density` (0.7
+  compact, 1 normal, 1.3 roomy). The core makes the color tokens win over the user's own theme,
+  and adds the rules that apply the layout tokens, but only for the ones you set. Prefer tokens
+  to selectors: the app's class names change between releases, the tokens do not.
+- Keep text readable: check contrast (4.5:1 for body text) for every preset, and look at the app
+  with it on. The user can always open `/?safe=1` (or turn on safe mode in Settings > Mods) to
+  load Odysseus without any mod style, so a mistake is never a lockout.
+- The stylesheet is only linked while the mod is enabled and approved; disabling or removing the
+  mod puts the old look back at once.
+
 ## Pages and cards
 
 - They are shown in sandboxed iframes with an opaque origin, under `/mods/<id>/~<token>/`.
@@ -245,3 +284,12 @@ review the permissions, Approve. Updates: the mod's Update button (a branch or t
 - To be marked Verified, open a pull request adding the mod to a mods index (for example
   `Jaron-Wilson/odysseus-mods-index`); see its README. A mod without a `tutorial` is never shown
   as Verified.
+
+## Following the user's theme and the chat @ picker
+
+Return pages with `themed(page)` (from `odysseus_mod`) and style with `var(--bg)`, `var(--fg)`,
+`var(--panel)`, `var(--border)`, `var(--accent)`: they hold the user's Odysseus colors and update
+when the theme changes (docs/mods.md, "Following the Odysseus theme"). To appear in the chat's `@`
+picker, ask for the `chat.mention` permission and add `chat.mention` (and optionally
+`chat.mention_items` and `chat.mention_context`) to the manifest ("Mentioning a mod in a chat").
+Mark read-only tools `read_only` so they still work in plan mode.

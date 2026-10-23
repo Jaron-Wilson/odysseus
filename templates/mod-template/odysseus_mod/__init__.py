@@ -46,8 +46,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
-__all__ = ["ModApp", "CoreClient", "Request", "Response", "html", "json_response", "redirect",
-           "sign_identity", "verify_identity", "CoreError", "SKEW_S"]
+__all__ = ["ModApp", "CoreClient", "Request", "Response", "html", "themed", "THEME_HEAD", "json_response",
+           "redirect", "sign_identity", "verify_identity", "CoreError", "SKEW_S"]
 __version__ = "0.1.0"
 
 SKEW_S = 300
@@ -245,6 +245,15 @@ class CoreClient:
             return {"ok": True, "standalone": True}
         return self.call("POST", "tools/refresh", {"wait": bool(wait)})
 
+    def refresh_style(self) -> Dict[str, Any]:
+        """Tell the core this mod's stylesheet (manifest `ui.style`, permission `ui.style`) changed, so it
+        fetches it again, checks it and re-links it in the page, which repaints at once. The core
+        rejects a sheet with @import, an off-origin url() or more than 64 KB; the answer's `style.error`
+        says why. Standalone there is no page to restyle."""
+        if self.standalone:
+            return {"ok": True, "standalone": True}
+        return self.call("POST", "ui/style/refresh", {})
+
     def capabilities(self) -> Dict[str, Any]:
         """The capabilities this mod declared (`requires`, `optional`) and
         whether each is available now: {"requires": [{id, available, provider}],
@@ -389,6 +398,44 @@ class Response:
 
 def html(text: str, status: int = 200) -> Response:
     return Response(text, status, "text/html; charset=utf-8")
+
+
+# The user's Odysseus theme for a mod page. The core posts {type: 'odysseus:theme', mode, vars}
+# to the page when it loads and whenever the theme changes (docs/mods.md, "Following the Odysseus
+# theme"). This head sets those variables on :root (--bg --fg --panel --border --accent
+# --accent-ink --font), the color-scheme and html[data-theme-mode]. Defaults are dark, so the
+# page also looks right standalone (python -m my_mod) or before the message arrives.
+THEME_HEAD = """<style id="odysseus-theme">
+:root{color-scheme:dark;--bg:#0f1115;--fg:#e6e8ec;--panel:#16191e;--border:#262a31;--accent:#7c8cff;--accent-ink:#fff;
+--font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+:root[data-theme-mode=light]{color-scheme:light}
+</style>
+<script>
+(function () {
+  var NAME = /^--[a-z-]{1,24}$/, VALUE = /^[#a-zA-Z0-9(),.% '"_-]{1,200}$/;
+  window.addEventListener('message', function (ev) {
+    var d = ev.data;
+    if (ev.source !== parent || !d || d.type !== 'odysseus:theme' || !d.vars) return;
+    var root = document.documentElement;
+    for (var k in d.vars) if (NAME.test(k) && VALUE.test(String(d.vars[k])) && !/url\(/i.test(String(d.vars[k]))) root.style.setProperty(k, d.vars[k]);
+    root.dataset.themeMode = d.mode === 'light' ? 'light' : 'dark';
+    window.dispatchEvent(new CustomEvent('odysseus-theme', {detail: d}));
+  });
+  try { parent.postMessage({type: 'odysseus:theme-request'}, '*'); } catch (e) {}
+})();
+</script>"""
+
+
+def themed(page: str, status: int = 200) -> Response:
+    """Like html(), for a page that follows the user's Odysseus theme: adds THEME_HEAD to the
+    <head> (or the start of the page) so `var(--bg)`, `var(--fg)`, `var(--panel)`, `var(--border)`
+    and `var(--accent)` hold the user's colors."""
+    low = page.lower()
+    i = low.find("</head>")
+    if i < 0:
+        i = low.find("<head>")
+        i = i + len("<head>") if i >= 0 else 0
+    return Response(page[:i] + THEME_HEAD + page[i:], status, "text/html; charset=utf-8")
 
 
 def json_response(obj: Any, status: int = 200) -> Response:

@@ -211,6 +211,8 @@ def test_always_ask_list_is_explicit():
     assert trust.UI_STYLE == "ui.style" and "ui.style" in trust.ALWAYS_ASK
     assert {"devices.control", "public.http"} <= trust.HIGH_RISK_PERMISSIONS <= trust.ALWAYS_ASK
     assert trust.HIGH_RISK_PERMISSIONS <= set(mf.PERMISSIONS)       # every one is a real permission
+    assert "ui.style" in mf.PERMISSIONS                            # now a real permission
+    assert "chat.mention" not in trust.ALWAYS_ASK                  # only offers the mod's own tools on an @-mention
 
 
 # ── Install ──────────────────────────────────────────────────────────────

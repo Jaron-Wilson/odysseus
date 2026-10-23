@@ -24,9 +24,8 @@ own page) can approve or deny a chat plan; nothing a model calls reaches
 approval once through `consume_for_execute`, so a model cannot start the same
 approved plan twice.
 
-Company agents' plan approvals (company_request_approval type "plan") are
-mirrored here too, with source "company", so every plan is in one place; their
-approval itself stays in the Company flow.
+Plans an old built-in Company agent proposed keep source "company" and are
+answered in the Company mod; they are listed here but not answerable.
 """
 from __future__ import annotations
 
@@ -162,7 +161,7 @@ def pending_for_chat(chat_id: str) -> Optional[dict]:
 
 
 def by_name(owner: Optional[str]) -> Dict[str, dict]:
-    """The owner's plans that came from a chat or Company, by file name, for
+    """The owner's plans that came from a chat (or the old built-in Company), by file name, for
     the Plans list's status badges."""
     own = _owner(owner)
     with _lock:
@@ -252,7 +251,7 @@ def _answerable(data: dict, plan_id: str, user: str) -> dict:
     if _owner(e.get("owner")) != _owner(user):
         raise Refused(404, "No such plan")
     if (e.get("source") or "chat") != "chat":
-        raise Refused(409, "This plan is answered in Company > Approvals")
+        raise Refused(409, "This plan belonged to the old built-in Company and is answered there")
     if e.get("status") == "superseded":
         raise Refused(409, "A newer plan in this chat replaced this one. Answer the newest plan.")
     if e.get("status") != "pending":
@@ -346,40 +345,6 @@ def renamed(owner: Optional[str], old: str, new: str) -> None:
         for e in data.values():
             if _owner(e.get("owner")) == _owner(owner) and e.get("name") == old:
                 e["name"] = new
-                hit = True
-        if hit:
-            _save(data)
-
-
-# ── Company agents' plans ────────────────────────────────────────────────
-
-def mirror_company_plan(owner: Optional[str], *, approval_id: str, title: str, plan: str,
-                        agent_name: str = "", issue: str = "") -> Optional[dict]:
-    """A Company agent's plan, kept as a Plans document too. Answered in
-    Company > Approvals, never here."""
-    head = f"_Company plan from {agent_name or 'an agent'}" + (f" for {issue}" if issue else "") \
-        + ". Approve or deny it in Company > Approvals._\n\n"
-    try:
-        return propose(owner, "", title or "Company plan", head + (plan or ""),
-                       source="company", extra={"company_approval_id": approval_id})
-    except Exception as ex:
-        logger.warning("[native_plans] could not mirror company plan %s: %s", approval_id, ex)
-        return None
-
-
-def company_decided(approval_id: str, decision: str, note: str = "") -> None:
-    status = {"approved": "approved", "rejected": "denied", "denied": "denied"}.get(decision)
-    if not approval_id or not status:
-        return
-    with _lock:
-        data = _load()
-        hit = False
-        for e in data.values():
-            if e.get("company_approval_id") == approval_id and e.get("status") == "pending":
-                e["status"] = status
-                e[f"{'approved' if status == 'approved' else 'denied'}_at"] = time.time()
-                if status == "denied":
-                    e["deny_note"] = str(note or "")[:MAX_NOTE]
                 hit = True
         if hit:
             _save(data)
