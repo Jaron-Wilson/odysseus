@@ -125,3 +125,52 @@ def test_scaffold_makes_a_working_mod(tmp_path):
     r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"],
                        cwd=folder, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+
+
+# ── ui.embeds: a same-origin page shown outside the sandbox (permission `embed`) ──
+
+def _embed(**kw):
+    e = {"id": "stream", "path": "/play/", "allow": ["fullscreen", "gamepad"]}
+    e.update(kw)
+    return _base(permissions=["embed"], ui={"embeds": [e]})
+
+
+def test_an_embed_is_validated_and_normalized():
+    m = mf.validate(_embed(title="Stream"))
+    assert m["ui"]["embeds"] == [{"id": "stream", "path": "/play/", "title": "Stream",
+                                  "allow": ["fullscreen", "gamepad"]}]
+    assert mf.validate(_base())["ui"]["embeds"] == []
+    assert "embed" in mf.PERMISSIONS
+
+
+def test_an_embed_defaults_to_fullscreen_only():
+    raw = _base(permissions=["embed"], ui={"embeds": [{"id": "stream", "path": "/play/"}]})
+    assert mf.validate(raw)["ui"]["embeds"][0]["allow"] == ["fullscreen"]
+
+
+def test_an_embed_needs_the_permission():
+    raw = _embed()
+    raw["permissions"] = []
+    with pytest.raises(mf.ManifestError) as e:
+        mf.validate(raw)
+    assert "embed permission" in str(e.value)
+
+
+@pytest.mark.parametrize("bad", [
+    {"path": "/"}, {"path": "/play"}, {"path": "//evil.example/"}, {"path": "/play/../"},
+    {"path": "https://evil.example/"}, {"path": "/mods/print-hub/"}, {"path": "/api/mods/"},
+    {"path": "/play/?x=1"}, {"path": "/pl ay/"}, {"allow": ["camera"]}, {"allow": "fullscreen"},
+    {"id": "Bad Id"},
+])
+def test_a_bad_embed_is_refused(bad):
+    with pytest.raises(mf.ManifestError):
+        mf.validate(_embed(**bad))
+
+
+def test_embeds_are_limited_and_unique():
+    ui = {"embeds": [{"id": f"e{i}", "path": f"/p{i}/"} for i in range(5)]}
+    with pytest.raises(mf.ManifestError):
+        mf.validate(_base(permissions=["embed"], ui=ui))
+    dup = {"embeds": [{"id": "a", "path": "/a/"}, {"id": "a", "path": "/b/"}]}
+    with pytest.raises(mf.ManifestError):
+        mf.validate(_base(permissions=["embed"], ui=dup))

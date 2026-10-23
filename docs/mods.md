@@ -337,6 +337,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `ui.tabs[].order` | A whole number from -1000 to 1000, default 0. Tabs in the same spot (after the same page, or at the end) are sorted by `order`, then by title. |
 | `ui.tabs[].replaces` | Optional: the key of a built-in page this tab takes over (`adsb`, `games`, `print`, `devops`, `company`, ...; see [Pages that moved to mods](#pages-that-moved-to-mods)). Its old links and saved Workspace tabs open this tab. A key not in the list is a warning and ignored; two tabs of one mod cannot replace the same key. |
 | `ui.home_cards[]` | `id`, `title` (optional), `path`, `height` (60 to 600 pixels, default 180). |
+| `ui.embeds[]` | `id`, `path` (a page of this server like `/play/`), `title` (optional), `allow` (browser features). Needs the `embed` permission; see [Embedding a page of this server](#embedding-a-page-of-this-server). |
 | `ui.settings_path` | The mod's settings page, opened from its tab. |
 | `tools.endpoint` | Default `/mod/tools`. |
 | `tools.keywords` | Words that make the agent offer the mod's tools. |
@@ -374,6 +375,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `public.http` | Requests to `/mods/<id>/public/...` reach the mod with no sign-in (see [Public paths](#public-paths)) |
 | `stats.read` | `GET stats` and `GET stats/transcripts/<run>`: server-wide activity (what is running, model speed, coder runs and their transcripts). Only for a mod that only admins may use: with **Who can use it** set to all users, these calls answer 403 |
 | `machines.read` | `GET machines`: the tailnet's machines (name, addresses, operating system, online), with the SSH user set for each in Settings > Devices. No keys and no commands |
+| `embed` | Show a page of this server, named in the manifest's `ui.embeds`, in an unsandboxed frame inside the mod's window (see [Embedding a page of this server](#embedding-a-page-of-this-server)) |
 
 Settings (`GET/PUT settings`) and `GET me` need no permission.
 
@@ -921,6 +923,43 @@ origin is `null`), only for `#mod/` links, and at most one every half second. Th
 has `CoreClient.link(mod_id, tab, path)` to build one. `static/js/modLinks.js` routes them; it
 loads before the built-in pages so a hash it takes is removed from the address bar before anything
 else reads it.
+
+#### Embedding a page of this server
+
+A mod page is sandboxed: an opaque origin, no cookies, no pointer lock. That is right for the mod's
+own code, and wrong for showing something that needs the user's own sign-in, like a game stream
+served by another app on this server. A mod granted the `embed` permission lists such pages in its
+manifest:
+
+```json
+"permissions": ["embed"],
+"ui": { "embeds": [{ "id": "stream", "path": "/play/", "title": "Stream",
+                     "allow": ["fullscreen", "gamepad", "autoplay", "keyboard-map", "pointer-lock"] }] }
+```
+
+`path` is a directory path on this server (letters, digits, `. _ ~ -`, a trailing `/`; not under
+`/mods/`, `/api/`, `/static/`, `/auth/`, `/login/`, `/ws/` or `/ide/`). `allow` lists browser features
+the frame may use (`fullscreen`, `gamepad`, `autoplay`, `keyboard-map`, `pointer-lock`,
+`clipboard-read`, `clipboard-write`; default `fullscreen`). At most four. The path is fixed here, in
+the manifest the user approved: the page can only add a query to it.
+
+The mod page asks with `postMessage`, and the core replaces the mod's page in its window with the
+embedded page under a bar with **Fullscreen** and **Back**:
+
+```js
+parent.postMessage({ type: 'odysseus:embed', action: 'open', id: 'stream', query: '?hostId=1&appId=2' }, '*');
+parent.postMessage({ type: 'odysseus:embed', action: 'fullscreen', mode: 'toggle' }, '*');   // enter | exit | toggle
+parent.postMessage({ type: 'odysseus:embed', action: 'send', data: { type: 'moonlight-web:pointer-lock', action: 'enter' } }, '*');
+parent.postMessage({ type: 'odysseus:embed', action: 'close' }, '*');
+```
+
+The core answers the mod page with `{type: 'odysseus:embed-event', id, data}` for each message the
+embedded page posts to its parent (same origin only), and `{..., closed: true}` when the user
+presses Back. `send` passes on only `moonlight-web:*` messages, and `query` is limited to
+`?` and URL-safe characters. Only the mod's own tab window can do this (not home cards), and only for
+an embed its manifest lists and the user granted. The embedded page runs with the user's cookies, so
+only list pages you trust: an `embed` mod can show them but cannot read them (the frames are siblings,
+not parent and child).
 
 #### Pages that moved to mods
 

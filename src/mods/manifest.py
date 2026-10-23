@@ -25,6 +25,11 @@ RESERVED_IDS = {"v1", "v2", "install", "settings", "events", "scaffold", "ui", "
 # Paths the core requests on the mod's server: absolute, no "..", no scheme.
 PATH_RE = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 SUB_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+# `ui.embeds`: a same-origin directory like /play/, and the browser features its frame may use.
+EMBED_PATH_RE = re.compile(r"^/(?:[A-Za-z0-9._~-]+/)+$")
+EMBED_DENIED = ("/mods/", "/api/", "/static/", "/auth/", "/login/", "/ws/", "/ide/")
+EMBED_ALLOW = ("fullscreen", "gamepad", "autoplay", "keyboard-map", "pointer-lock", "clipboard-read",
+               "clipboard-write")
 EVENT_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 # A subscription pattern: "<mod id or *>/<event type glob>" or a bare type glob.
 EVENT_PATTERN_RE = re.compile(r"^(?:[a-z0-9*][a-z0-9*-]{0,31}/)?[a-z0-9*][a-z0-9_.*-]{0,63}$")
@@ -69,6 +74,9 @@ PERMISSIONS: Dict[str, str] = {
     "stats.read": "Read server-wide activity: model speed, coder runs and their transcripts, what is running "
                   "(only for a mod that only admins may use)",
     "machines.read": "See the machines on your tailnet: names, addresses, operating system, online or not",
+    "embed": ("Show a page of this server that its manifest names (`ui.embeds`, for example /play/) in a frame "
+              "inside its window, outside the mod sandbox and with your sign-in, so it can stream or show "
+              "something a sandboxed page cannot"),
 }
 
 # What a mod needs to reach the agent like a built-in feature (the mod API in
@@ -142,6 +150,43 @@ def _path(v: Any, where: str, errors: List[str], default: Optional[str] = None) 
         errors.append(f"{where} must be a path starting with / (got {v!r})")
         return default
     return v
+
+
+def _embeds(raw: Any, errors: List[str]) -> List[Dict[str, Any]]:
+    """`ui.embeds`: pages of this server a mod may show in a frame in its window.
+    The frame is not sandboxed (it needs this server's cookies), so the path is
+    fixed here, in the manifest the user approved, never taken from the page."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        errors.append("`ui.embeds` must be a list")
+        return []
+    out: List[Dict[str, Any]] = []
+    for i, e in enumerate(raw):
+        where = f"`ui.embeds[{i}]`"
+        if not isinstance(e, dict) or not SUB_ID_RE.match(str(e.get("id", ""))):
+            errors.append(f"{where} needs an `id` (lowercase letters, digits, - and _)")
+            continue
+        path = e.get("path")
+        if not isinstance(path, str) or not EMBED_PATH_RE.match(path) or ".." in path.split("/"):
+            errors.append(f"{where}.path must be a directory path on this server like /play/ (letters, digits, . _ ~ -)")
+            continue
+        if path.startswith(EMBED_DENIED):
+            errors.append(f"{where}.path can't be under {', '.join(EMBED_DENIED)}")
+            continue
+        allow = e.get("allow", ["fullscreen"])
+        if not isinstance(allow, list) or not all(isinstance(a, str) and a in EMBED_ALLOW for a in allow):
+            errors.append(f"{where}.allow must list some of: {', '.join(EMBED_ALLOW)}")
+            continue
+        if any(x["id"] == e["id"] for x in out):
+            errors.append(f"{where}.id is used twice")
+            continue
+        title = e.get("title") if isinstance(e.get("title"), str) else ""
+        out.append({"id": e["id"], "path": path, "title": title.strip()[:40],
+                    "allow": [a for a in EMBED_ALLOW if a in allow]})
+    if len(out) > 4:
+        errors.append("a mod can have at most 4 embeds")
+    return out[:4]
 
 
 def _discovery(raw: Dict[str, Any], errors: List[str]) -> Dict[str, Any]:
@@ -326,7 +371,10 @@ def validate(raw: Any) -> Dict[str, Any]:
                       "path": _path(c.get("path"), f"`ui.home_cards[{i}].path`", errors, "/")})
     if len(tabs) > 8 or len(cards) > 8:
         errors.append("a mod can have at most 8 tabs and 8 home cards")
-    out["ui"] = {"tabs": tabs[:8], "home_cards": cards[:8],
+    embeds = _embeds(ui.get("embeds"), errors)
+    if embeds and "embed" not in out["permissions"]:
+        errors.append("`ui.embeds` needs the embed permission")
+    out["ui"] = {"tabs": tabs[:8], "home_cards": cards[:8], "embeds": embeds,
                  "settings_path": _path(ui.get("settings_path"), "`ui.settings_path`", errors, None)}
 
     # ── tools ──
