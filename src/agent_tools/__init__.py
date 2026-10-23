@@ -26,6 +26,7 @@ from .claude_code_tool import ClaudeCodeTool
 from .notify_tool import NotifyDeviceTool
 from .devices_tool import ManageDevicesTool
 from .bg_job_tools import ManageBgJobsTool
+from .services_tools import ManageServicesTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -47,6 +48,7 @@ TOOL_HANDLERS = {
     "suggest_document": SuggestDocumentTool().execute,
     "manage_documents": ManageDocumentTool().execute,
     "manage_bg_jobs": ManageBgJobsTool().execute,
+    "manage_services": ManageServicesTool().execute,
 }
 
 # ---------------------------------------------------------------------------

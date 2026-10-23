@@ -382,6 +382,7 @@ def _promote_image_fields(result: Dict) -> None:
 
 
 _BG_MARKERS = {"#!bg", "#bg", "# bg", "#background", "# background", "@background", "# @background"}
+_SERVICE_MARKERS = {"#!service", "#service", "# service", "#!hosting", "#hosting", "# hosting", "@service", "#!server", "#server"}
 
 
 def _split_bg_marker(content: str):
@@ -392,6 +393,19 @@ def _split_bg_marker(content: str):
     while i < len(lines) and not lines[i].strip():
         i += 1
     if i < len(lines) and lines[i].strip().lower() in _BG_MARKERS:
+        del lines[i]
+        return True, "\n".join(lines).strip()
+    return False, content
+
+
+def _split_service_marker(content: str):
+    """If the bash content's first non-empty line is a service marker
+    (e.g. `#!service`), return (True, command_without_marker); else (False, content)."""
+    lines = content.split("\n")
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and lines[i].strip().lower() in _SERVICE_MARKERS:
         del lines[i]
         return True, "\n".join(lines).strip()
     return False, content
@@ -803,6 +817,30 @@ async def execute_tool_block(
         }
         logger.info("Tool executed: %s", desc)
         return desc, result
+
+    # Background hosting service: a `bash` block prefixed with `#!service` runs
+    # as a long-lived service, registered with the hosting tracker for port discovery
+    # and PID-reuse-safe process lifecycle control.
+    if tool == "bash" and session_id:
+        _is_svc, _svc_cmd = _split_service_marker(content)
+        if _is_svc and _svc_cmd:
+            from src import hosting_tracker
+            svc = hosting_tracker.launch_service(
+                _svc_cmd, cwd=_AGENT_WORKDIR, owner=owner or "", session_id=session_id
+            )
+            short = _svc_cmd.strip().split(chr(10))[0][:80]
+            desc = f"bash (service): {short}"
+            result = {
+                "output": (
+                    f"Started background hosting service `{svc['id']}` ({svc['name']}). It is running detached. "
+                    f"Status: {svc['status']}. Inspect, monitor, or stop it via the manage_services tool."
+                ),
+                "service_id": svc["id"],
+                "service": svc,
+                "exit_code": 0,
+            }
+            logger.info("Tool executed: %s -> service %s", desc, svc["id"])
+            return desc, result
 
     # Background execution: a `bash` block whose first line is the `#!bg`
     # marker runs DETACHED — returns a job id immediately so the chat stream
