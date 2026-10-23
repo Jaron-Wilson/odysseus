@@ -16,7 +16,8 @@ to the end, and posts the result into its chat (claude_code_tool.reattach_runs).
 Seen live: a restart during an approved run left the chat asking again, and
 approving again started another CLI doing the same work beside the first.
 
-Finished runs are kept in memory for a while so their output can still be read.
+Finished runs are kept in memory for 24 hours (not on disk: a restart drops
+their output, leaving only the history line) so their output can still be read.
 """
 
 import asyncio
@@ -35,7 +36,7 @@ from src.constants import DATA_DIR
 logger = logging.getLogger(__name__)
 
 MAX_LINES = 2000            # full transcript kept per run
-KEEP_FINISHED_S = 6 * 3600
+KEEP_FINISHED_S = 24 * 3600
 MAX_FINISHED = 50
 RUNS_DIR = os.path.join(DATA_DIR, "claude_code_runs")
 JOBS_FILE = os.path.join(DATA_DIR, "claude_code_jobs.json")
@@ -357,3 +358,22 @@ def _add_history(job: Job) -> None:
             f.write(json.dumps(rec) + "\n")
     except Exception as e:
         logger.warning("Could not note the finished Claude Code run: %s", e)
+
+
+def recent_history(max_age_s: float) -> List[Dict]:
+    """Finished-run lines from the history file within `max_age_s`, newest
+    first. Metadata only (no output); covers runs lost from memory by a restart."""
+    out: List[Dict] = []
+    cutoff = time.time() - max_age_s
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            for line in f.readlines()[-500:]:
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(r, dict) and (r.get("finished") or 0) >= cutoff:
+                    out.append(r)
+    except (FileNotFoundError, PermissionError):
+        return []
+    return sorted(out, key=lambda r: r.get("finished") or 0, reverse=True)

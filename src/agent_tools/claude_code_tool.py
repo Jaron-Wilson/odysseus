@@ -247,6 +247,78 @@ def _summarize_opencode(event: dict) -> Optional[str]:
     return None
 
 
+RECENT_RUNS_S = 24 * 3600
+MAX_RUNS_SHOWN = 15
+CLI_SECTION_TITLE = ("Claude Code CLI sessions on this host (separate from Odysseus runs; "
+                     "not OpenCode)")
+_RUNS_KEPT_NOTE = ("Odysseus keeps finished runs in memory for 24 hours, so runs older than that, "
+                   "or from before a server restart, are not listed in detail.")
+_BRANCH_RE = re.compile(
+    r"(https://github\.com/[\w.-]+/[\w.-]+/pull/\d+|"
+    r"(?:branch|pushed(?: to)?|checked out|on branch)\s+[`'\"]?([\w][\w./-]{2,})[`'\"]?)",
+    re.IGNORECASE)
+
+
+def _ago(secs: float) -> str:
+    secs = max(0, int(secs))
+    if secs < 90:
+        return "just now"
+    if secs < 5400:
+        return f"{secs // 60} min ago"
+    return f"{round(secs / 3600, 1)} h ago"
+
+
+def _run_refs(text: str) -> list:
+    """Pull request URLs and branch names a run's output mentions."""
+    seen, out = set(), []
+    for m in _BRANCH_RE.finditer(text or ""):
+        ref = m.group(1) if m.group(1).startswith("https://") else m.group(2)
+        if ref and ref.lower() not in ("to", "the", "a", "and") and ref not in seen:
+            seen.add(ref)
+            out.append(ref)
+    return out[:3]
+
+
+def _run_lines(j, chat_id: str = "") -> list:
+    now = time.time()
+    took = round(((j.finished or now) - j.started) / 60, 1)
+    st = claude_code_jobs.shown_status(j.status, j.agent_status) or {}
+    on = f" on {j.model}" if j.model else ""
+    mine = " (this chat)" if chat_id and j.chat_session_id == chat_id else ""
+    when = f", finished {_ago(now - j.finished)}" if j.finished else ""
+    detail = f" \u00b7 {st['detail']}" if st.get("detail") else ""
+    lines = [f"- `{j.id}` {j.status} - {engine_label(j.engine)} {j.action}{on}, "
+             f"{'ran ' if j.finished else ''}{took} min{when}{mine}{detail}"]
+    if j.cwd:
+        lines.append(f"  cwd: {j.cwd}")
+    res = j.result or {}
+    body = (res.get("output") or "").strip()
+    err = (res.get("error") or "").strip()
+    if j.status == "running":
+        tail = [l for l in list(j.lines)[-6:] if l.strip()]
+        if tail:
+            lines.append("  last output: " + " | ".join(t.strip()[:160] for t in tail))
+    else:
+        why = err or body
+        if not why:
+            tail = [l for l in list(j.lines)[-4:] if l.strip()]
+            why = " | ".join(t.strip() for t in tail)
+        if j.status in ("failed", "timed_out") and res.get("exit_code") not in (None, 0):
+            lines.append(f"  exit code {res.get('exit_code')}")
+        if why:
+            why = " ".join(why.split())
+            why = why if len(why) <= 400 else "..." + why[-400:]
+            label = {"done": "result", "failed": "error", "stopped": "stopped",
+                     "timed_out": "timed out"}.get(j.status, "result")
+            lines.append(f"  {label}: " + why)
+        elif j.status == "stopped":
+            lines.append("  stopped before it produced a result")
+    refs = _run_refs("\n".join([body, err] + list(j.lines)[-60:]))
+    if refs:
+        lines.append("  mentions: " + ", ".join(refs))
+    return lines
+
+
 def engine_label(engine: str) -> str:
     """What the user sees for a run: the engine that actually ran it. The
     tool is named claude_code for history's sake, but most runs are OpenCode,
@@ -440,39 +512,48 @@ class ClaudeCodeTool:
         }
 
     async def _job_status(self, job_id: Optional[str], chat_id: str = "") -> Dict:
-        """Report on background sessions, so the user can just ask how it is going.
+        """Report on coding runs (the `status` and `list` actions).
 
-        Odysseus's own runs first (the job ids its cards, Background tasks and
-        "Bring back" use): asked about job fd81af50, this said "no background
-        session matching fd81af50", because it only read the Claude CLI's
-        sessions (2026-09-29). Then the CLI's own view, whose ids are the ones
-        `claude attach` / `logs` / `stop` accept.
+        Odysseus's own runs come first, for every engine (OpenCode, Claude
+        Code, Antigravity): running ones, then recent finished, failed and
+        stopped ones. Only after that, in a section of its own, the Claude Code
+        CLI's separate background sessions on this host. Before, a chat asking
+        about its OpenCode runs got "no active job" and an unrelated CLI
+        session presented as the answer (2026-10-23).
         """
         own = self._own_job_status(job_id, chat_id)
-        if own:
-            return own
-        listing = await self._list_agents()
-        if listing.get("exit_code") != 0:
-            return listing
-        sessions = [s for s in listing.get("sessions") or []
-                    if s.get("kind") == "background"]
+        sessions: list = []
+        if shutil.which("claude"):
+            listing = await self._list_agents()
+            if listing.get("exit_code") == 0:
+                sessions = [s for s in listing.get("sessions") or []
+                            if s.get("kind") == "background"]
         if job_id:
             sessions = [s for s in sessions
                         if str(s.get("id", "")).startswith(job_id)
                         or str(s.get("sessionId", "")).startswith(job_id)]
-            if not sessions:
-                return {"error": f"no background session matching {job_id}", "exit_code": 1}
-        if not sessions:
-            return {"output": "No background Claude Code sessions are running.", "exit_code": 0}
+            if not own and not sessions:
+                return {"error": (f"no coding run or Claude Code CLI session matching {job_id}. "
+                                  f"{_RUNS_KEPT_NOTE}"), "exit_code": 1}
+        out = dict(own) if own else {"exit_code": 0, "jobs": []}
+        parts = [out["output"]] if own else []
+        if not own:
+            parts.append("No coding runs (OpenCode, Claude Code or Antigravity) started from "
+                         "Odysseus in the last 24 hours. " + _RUNS_KEPT_NOTE)
+        if sessions:
+            parts.append(await self._cli_sessions_text(sessions))
+            out["cli_sessions"] = sessions
+        out["output"] = "\n".join(parts)
+        return out
 
+    async def _cli_sessions_text(self, sessions: list) -> str:
         cli = shutil.which("claude")
         env = _cli_env()
-
-        lines = []
+        lines = [CLI_SECTION_TITLE + ":"]
         for s in sessions:
             sid = s.get("id") or ""
             state = s.get("state") or s.get("status") or "?"
-            lines.append(f"- `{sid}` {state} — {s.get('name') or '?'} ({s.get('cwd')})")
+            lines.append(f"- `{sid}` {state} - {s.get('name') or '?'} ({s.get('cwd')})")
             if cli and sid:
                 try:
                     p = await asyncio.create_subprocess_exec(
@@ -481,8 +562,6 @@ class ClaudeCodeTool:
                         stderr=asyncio.subprocess.DEVNULL)
                     o, _ = await asyncio.wait_for(p.communicate(), timeout=30)
                     clean = _strip_ansi((o or b"").decode("utf-8", "replace"))
-                    # Cursor-positioning leftovers and spinner frames survive
-                    # escape-stripping as junk lines; keep only real text.
                     # `claude logs` replays a TUI buffer, so most lines are
                     # spinner frames and cursor droppings. Keep lines that look
                     # like prose rather than animation.
@@ -497,7 +576,7 @@ class ClaudeCodeTool:
                 except Exception:
                     pass
         lines.append("Attach with `claude attach <id>`, stop with `claude stop <id>`.")
-        return {"output": "\n".join(lines), "sessions": sessions, "exit_code": 0}
+        return "\n".join(lines)
 
     def _chat_agents(self, chat_id: str) -> Dict:
         """The Claude Code agents chats have used, so a chat can carry one on
@@ -567,37 +646,60 @@ class ClaudeCodeTool:
             for s in sessions
         ]
         return {
-            "output": "\n".join(lines) or "No Claude Code sessions running.",
+            "output": "\n".join(lines) or "The Claude Code CLI has no sessions on this host.",
             "sessions": sessions,
             "count": len(sessions),
             "exit_code": 0,
         }
 
     @staticmethod
-    def _own_job_status(job_id: Optional[str], chat_id: str) -> Optional[Dict]:
+    def _own_job_status(job_id: Optional[str], chat_id: str = "") -> Optional[Dict]:
+        """Odysseus's own runs of every engine: running first, then recent
+        finished ones (newest first, capped). None when there are none."""
+        now = time.time()
         if job_id:
             job = claude_code_jobs.get(job_id)
+            if not job:
+                for k in claude_code_jobs.list_jobs(""):
+                    if k.id.startswith(job_id):
+                        job = k
+                        break
             jobs = [job] if job else []
         else:
             jobs = [j for j in claude_code_jobs.list_jobs("")
-                    if j.status == "running" and (not chat_id or j.chat_session_id == chat_id)]
-        if not jobs:
+                    if j.status == "running"
+                    or (j.finished and now - j.finished <= RECENT_RUNS_S)]
+            jobs.sort(key=lambda j: (j.status != "running", -(j.finished or j.started)))
+            jobs = jobs[:MAX_RUNS_SHOWN]
+        # Finished runs no longer in memory (after a restart) still have a
+        # metadata line in the history file.
+        hist = []
+        if not job_id:
+            have = {j.id for j in jobs}
+            hist = [r for r in claude_code_jobs.recent_history(RECENT_RUNS_S)
+                    if r.get("id") not in have][:max(0, MAX_RUNS_SHOWN - len(jobs))]
+        elif not jobs:
+            hist = [r for r in claude_code_jobs.recent_history(7 * 86400)
+                    if str(r.get("id", "")).startswith(job_id)][:1]
+        if not jobs and not hist:
             return None
         lines = []
         for j in jobs:
-            took = round(((j.finished or time.time()) - j.started) / 60, 1)
-            st = claude_code_jobs.shown_status(j.status, j.agent_status) or {}
-            on = f" on {j.model}" if j.model else ""
-            detail = f" \u00b7 {st['detail']}" if st.get("detail") else ""
-            lines.append(f"- `{j.id}` {j.status} \u2014 {engine_label(j.engine)} {j.action}{on}, {took} min{detail}")
-            tail = [l for l in list(j.lines)[-6:] if l.strip()]
-            if tail:
-                lines.append("  last output: " + " | ".join(t.strip()[:160] for t in tail))
+            lines.extend(_run_lines(j, chat_id))
+        for r in hist:
+            took = round(((r.get("finished") or now) - (r.get("started") or now)) / 60, 1)
+            lines.append(f"- `{r.get('id')}` {r.get('status')} - {engine_label(r.get('engine'))} "
+                         f"{r.get('action')}"
+                         + (f" on {r['model']}" if r.get("model") else "")
+                         + f", ran {took} min, finished {_ago(now - (r.get('finished') or now))}"
+                         + " (details not kept after a server restart)")
         running = [j for j in jobs if j.status == "running"]
-        hint = (" To follow one here, call claude_code with action 'attach' and its job_id. "
-                "Do not start it again." if running else "")
-        return {"output": "\n".join(lines) + ("\n" + hint.strip() if hint else ""), "exit_code": 0,
-                "jobs": [j.public() for j in jobs]}
+        head = ("Coding runs started from Odysseus (all engines: OpenCode, Claude Code, "
+                "Antigravity), running first, then recent finished ones:")
+        hint = ("\nTo follow a running one here, call claude_code with action 'attach' and its "
+                "job_id. Do not start it again." if running else "")
+        return {"output": head + "\n" + "\n".join(lines) + hint, "exit_code": 0,
+                "jobs": [j.public() for j in jobs], "history": hist}
 
     async def _attach(self, job_id: str, ctx: dict) -> Dict:
         """Follow a background run in this chat turn again ("bring it back"):
@@ -683,7 +785,7 @@ class ClaudeCodeTool:
 
         # Reads: no prompt, no directory, nothing spawned.
         if action == "list":
-            return await self._list_agents()
+            return await self._job_status(None, "")
         if action == "agents":
             return self._chat_agents((ctx or {}).get("session_id") or "")
         if action == "status":
