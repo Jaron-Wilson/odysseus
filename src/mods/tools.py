@@ -216,6 +216,19 @@ def prompt_lines(names: Iterable[str], owner: Optional[str] = None) -> str:
             + "\n".join(lines))
 
 
+def writes(t: Dict[str, Any]) -> bool:
+    """A tool counts as a write unless the mod said it only reads. `asks_first`
+    and `controls_devices` tools are writes whatever else they say."""
+    return not t.get("read_only") or bool(t.get("asks_first") or t.get("controls_devices"))
+
+
+def plan_mode_blocked() -> Set[str]:
+    """Qualified names of every mod tool plan mode must refuse: all that are
+    not marked read_only (fail closed), across every enabled mod and user, as
+    the core's own write tools are (src/tool_security.py plan_mode_disabled_tools)."""
+    return {qualified(entry["id"], t["name"]) for entry, t in enabled_tools(owner=None) if writes(t)}
+
+
 def _needs_approval(entry: Dict[str, Any], t: Dict[str, Any]) -> bool:
     # `asks_first`: the mod wants the user's Approve for this tool (a write to
     # an account, say). It only adds a check, so it needs no permission.

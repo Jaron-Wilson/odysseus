@@ -376,6 +376,9 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `ui.home_cards[]` | `id`, `title` (optional), `path`, `height` (60 to 600 pixels, default 180). |
 | `ui.embeds[]` | `id`, `path` (a page of this server like `/play/stream.html`), `title` (optional), `allow` (browser features). Needs the `embed` permission; see [Embedding a page of this server](#embedding-a-page-of-this-server). |
 | `ui.settings_path` | The mod's settings page, opened from its tab. |
+| `chat.mention` | `{label, description, handle, icon}`: the mod appears in the chat composer's `@` picker. Needs the `chat.mention` permission; see [Mentioning a mod in a chat](#mentioning-a-mod-in-a-chat). `handle` is what follows the `@` (default: the label in lowercase with `-`). |
+| `chat.mention_items` | Optional path: sub-items the picker lists after `@<handle>/` (`GET <path>?q=`). |
+| `chat.mention_context` | Optional path: a short note about what the user pointed at, added to that message (`POST <path>`). |
 | `tools.endpoint` | Default `/mod/tools`. |
 | `tools.keywords` | Words that make the agent offer the mod's tools. |
 | `events.emits` | Event types it may publish (`print.finished`). Needs `events.emit`. |
@@ -413,6 +416,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `public.http` | Requests to `/mods/<id>/public/...` reach the mod with no sign-in (see [Public paths](#public-paths)) |
 | `stats.read` | `GET stats` and `GET stats/transcripts/<run>`: server-wide activity (what is running, model speed, coder runs and their transcripts). Only for a mod that only admins may use: with **Who can use it** set to all users, these calls answer 403 |
 | `machines.read` | `GET machines`: the tailnet's machines (name, addresses, operating system, online), with the SSH user set for each in Settings > Devices. No keys and no commands |
+| `chat.mention` | Appear in the `@` picker of chats; when the user mentions the mod its tools are used for that message and it may add a short note to it (see [Mentioning a mod in a chat](#mentioning-a-mod-in-a-chat)) |
 | `embed` | Show a page of this server, named in the manifest's `ui.embeds`, in an unsandboxed frame inside the mod's window (see [Embedding a page of this server](#embedding-a-page-of-this-server)) |
 
 Settings (`GET/PUT settings`) and `GET me` need no permission.
@@ -586,8 +590,14 @@ POST /api/mods/v1/agent/runs
   `succeeded`, `failed`, `cancelled` or `interrupted` (Odysseus restarted).
 - **Limits.** 4 live runs per mod, 8 in all (`ODYSSEUS_MOD_RUNS_PER_MOD`,
   `ODYSSEUS_MOD_RUNS_TOTAL`); 1-200 rounds (default 20); a request up to 200 KB.
-- **Memory.** Runs are kept in memory for 6 hours after they end. After a restart the core no
-  longer knows them: `GET` answers 404, and a mod treats such a run as interrupted.
+- **Restarts.** Runs are kept on disk (`mods/runs.json`: each run's view, not its text) and
+  listed for 6 hours after they end. When the core starts, every run that was still `queued` or
+  `running` is marked `interrupted` (`error: "Odysseus restarted"`, `restarted: true`) and its mod
+  gets an `agent.run.finished` event for it, as soon as the mod's process is up, once per run. The
+  mod decides what to do: resume (start a new run for the same work, using the old run's `metadata`
+  and a note of what was done), re-queue it, or give up. A mod that was down for the notice finds
+  the same runs in `GET agent/runs` (look for `restarted: true`) when it starts, so it can
+  reconcile then. The run's chat (`session_id`) stays, so "Open as chat" still works.
 
 ### Usage scopes and budgets
 
@@ -595,7 +605,11 @@ Every model call of a mod (`llm/chat`, and every call of its agent runs) is reco
 with source `mod` and a **source scope**: `mod:<id>`, plus the `scope` path the mod gave, plus
 `run-<run id>` for an agent run. A path is up to 8 segments of letters, digits, `.`, `_` and `-`,
 joined by `/`. Scopes nest: `c/3f2a` covers `c/3f2a/a/91bc` and every run under it, so one path
-keeps per-company, per-agent and per-run spend apart. The Usage summary has a `by_mod` breakdown.
+keeps per-company, per-agent and per-run spend apart. The Usage summary has a `by_mod` breakdown, and `by_mod_scope`: a mod's spend grouped by the
+first two segments of its path (`mod:company/c/3f2a`, so one row per company), shown on the Usage
+page as "By mod and scope". The mod names its groups with `PUT usage/labels {"labels":
+{"c/3f2a": "Acme"}}` (permission `budgets`; an empty name removes one); without a name the page
+shows the path.
 
 `PUT budgets {scope, monthly_limit_cents, caps}` keeps a monthly budget in the core
 (`mods/<id>/budgets.json`, not the mod's own data). The checks are the core's budgets
@@ -795,6 +809,11 @@ message is about them: a mod's tools are offered when the message matches one of
 `tools.keywords` or a tool's own keywords (whole words), or when tool retrieval ranks one of them
 for the message. At most 12 per mod. A trivial message ("thanks", "ok") gets none. No message
 gets every mod's tools. In the mod's own agent runs its tools are always there.
+
+**Plan mode.** While the user has plan mode on, the agent may only read. A mod's tool is refused
+there unless the mod marked it `read_only` (an unmarked tool counts as a write, so a mod that
+wants its lookups to work in plan mode marks them). A tool marked `asks_first` or `controls_devices`
+is refused in plan mode even if it also says `read_only`.
 
 **Approval.** A tool marked `controls_devices`, and every tool of a mod with `devices.control`
 unless it is marked `read_only`, goes through the chat's approval flow: the user sees the mod,
@@ -996,6 +1015,60 @@ so it survives updates and is removed with the mod.
 | `GET /api/mods/<id>/tutorial` | `{tutorial: {mod, name, version, seen, steps: [{title, body_html, image_url, action}], url}}` |
 | `POST /api/mods/<id>/tutorial/seen` | Marks the current version seen for this user: `{ok, version}` |
 | `GET /api/mods/<id>/tutorial/image/<step>` | The step's image |
+
+#### Following the Odysseus theme
+
+A mod page is sandboxed, so it cannot read Odysseus's CSS variables. The core posts the user's
+theme to every mod frame (tabs, home cards, settings, tutorials) when the frame loads and again
+whenever the theme changes, and answers a request for it:
+
+```js
+// core -> mod page
+{ type: 'odysseus:theme', version: 1, mode: 'dark',          // or 'light'
+  vars: { '--bg': '#0f1115', '--fg': '#e6e8ec', '--panel': '#16191e', '--border': '#262a31',
+          '--accent': '#7c8cff', '--accent-ink': '#ffffff', '--font': 'Inter, sans-serif' } }
+// mod page -> core, to ask for it (the core answers at once)
+parent.postMessage({ type: 'odysseus:theme-request' }, '*');
+```
+
+Values are plain colors (and one font stack); anything else is dropped. In Python, the
+`odysseus_mod` helper does the receiving: return `themed(page)` instead of `html(page)`. It adds
+dark defaults, sets the variables on `:root` as messages arrive, sets `color-scheme` and
+`html[data-theme-mode]`, and fires an `odysseus-theme` event on `window`. Write the page's CSS with
+`var(--bg)`, `var(--fg)`, `var(--panel)`, `var(--border)` and `var(--accent)`. A mod not in Python
+copies `THEME_HEAD` (about 20 lines) into its pages.
+
+#### Mentioning a mod in a chat
+
+A mod with the `chat.mention` permission and a `chat.mention` entry in its manifest appears in the
+chat box's `@` picker (icon, name, what it is) for every user who may use it:
+
+```json
+"permissions": ["chat.mention"],
+"chat": { "mention": { "label": "Trove", "description": "Your collection", "icon": "box" },
+          "mention_items": "/mod/chat/items",      // optional
+          "mention_context": "/mod/chat/context" } // optional
+```
+
+Picking it writes `@trove` into the message (`@trove/lamp-1` for an item). That turn:
+
+- **The mod's tools are used.** All of its agent tools are offered, first, whatever the keyword
+  selection would have picked, and the system context says `The user addressed @Trove; use its
+  tools to answer`. A plain chat is promoted to agent mode for it. Several mods may be mentioned
+  in one message (at most 5). Plan mode still applies to the tools.
+- **Items.** After `@trove/` the picker calls `GET <mention_items>?q=<typed>` as the signed-in user
+  and shows `{"items": [{"ref": "lamp-1", "label": "Brass lamp", "help": "shelf 2"}]}` (20 at
+  most; `ref` has no spaces and is what lands in the message).
+- **A note.** If the mod has `mention_context`, the core POSTs `{text, handle, items: [refs]}`
+  and adds the `{"context": "..."}` it answers (2000 characters at most per mod, 6000 in all, 5
+  seconds to answer) to the end of the user's message for that turn only. A mod that is down or
+  slow is skipped. The model sees the note, so only return what the user may see.
+- **Chips.** The mention shows as a chip in the sent message and in history; it opens the mod.
+
+The message text is the only record, so nothing is stored: the core reads the mentions again from
+the text wherever it needs them. An `@` that is not a handle of a mod the user may use is ordinary
+text. Mods whose permission was not granted, that are turned off, or that the user may not use are
+not listed and are not mentioned.
 
 #### Links into a mod
 

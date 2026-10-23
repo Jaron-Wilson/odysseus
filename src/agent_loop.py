@@ -2327,6 +2327,12 @@ async def stream_agent_loop(
         # the loop is safe regardless of caller. MCP stays available but is
         # filtered to read-only tools below (after the disabled map is loaded).
         disabled_tools.update(plan_mode_disabled_tools())
+        # A mod's tools stay only if the mod marked them read_only (src/mods/tools.py).
+        try:
+            from src.mods import tools as _plan_mod_tools
+            disabled_tools.update(_plan_mod_tools.plan_mode_blocked())
+        except Exception as _e:
+            logger.warning("plan mode could not list mod tools: %s", _e)
 
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
@@ -2507,6 +2513,28 @@ async def stream_agent_loop(
         except Exception as _e:
             logger.debug("mod tool selection skipped: %s", _e)
 
+    # Mods the user @-mentioned in this message (src/mods/chat_mentions.py): all of their tools,
+    # first, whatever the keyword selection picked; the system context says so below.
+    _mention_labels: List[str] = []
+    if not _mod_run and not guide_only and isinstance(_last_user, str) and "@" in _last_user:
+        try:
+            from src.mods import chat_mentions as _cm
+            from src.mods import tools as _mod_tools
+            _m_names, _mention_labels = _cm.mentioned_tools(_last_user, owner)
+            _m_names = [n for n in _m_names if n not in disabled_tools]
+            if _m_names:
+                _mod_tool_schemas = _mod_tools.schemas(_m_names, owner) + [
+                    s for s in _mod_tool_schemas if s["function"]["name"] not in _m_names]
+                _mod_forced = _m_names + [n for n in _mod_forced if n not in _m_names]
+                if _relevant_tools is not None:
+                    _relevant_tools = set(_relevant_tools) | set(_m_names)
+                logger.info("[tool-rag] @-mentioned mod tools: %s", _m_names)
+            else:
+                _mention_labels = []
+        except Exception as _e:
+            logger.debug("mod mention tool selection skipped: %s", _e)
+            _mention_labels = []
+
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
@@ -2604,6 +2632,9 @@ async def stream_agent_loop(
         from src.mods import tools as _mod_tools
         messages[0]["content"] = (messages[0].get("content") or "") + _mod_tools.prompt_lines(
             [s["function"]["name"] for s in _mod_tool_schemas], owner)
+        if _mention_labels:
+            from src.mods import chat_mentions as _cm
+            messages[0]["content"] += "\n\n" + _cm.system_note(_mention_labels)
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
         # every write path except shell; this directive is what keeps the

@@ -52,8 +52,18 @@ its runs, so a tool knows which run (and so which agent) is calling.
 
 When a run ends the core POSTs an `agent.run.finished` event to the mod's
 events webhook (as other events, src/mods/events.py), with the run's view
-as data. Runs live in memory: after a restart the core no longer knows them,
-so GET answers 404 and a mod treats such a run as interrupted.
+as data.
+
+Runs survive a restart of the core. They are kept in DATA_DIR/mods/runs.json
+(the view of each, not its text). When the core starts, every run that was
+still queued or running is marked `interrupted` ("Odysseus restarted": the
+agent loop died with the process), and each mod that owns one gets
+`agent.run.finished` with that run's view plus `"restarted": true`, as soon as
+its process is up. The mod decides: resume (start a new run for the same work,
+usually with the old run's `metadata` and a note of what was done), re-queue it,
+or give up. A mod that was down for the notice reads the same thing from
+GET /api/mods/v1/agent/runs (the interrupted runs stay listed for six hours),
+so it can reconcile when it starts. The run's chat (`session_id`) is kept.
 """
 from __future__ import annotations
 
@@ -131,6 +141,9 @@ class ModRun:
         self.metadata: Dict[str, Any] = {}
         self.req: Dict[str, Any] = {}
         self.task: Optional[asyncio.Task] = None
+        self.restarted = False         # interrupted because Odysseus restarted (src/mods/runs.py recover)
+        self.notified = False          # the mod was told so after the restart
+        self.tool_calls_before = 0     # a recovered run: how many tool calls it made (the calls are not kept)
 
     @property
     def run_scope(self) -> str:
@@ -140,8 +153,11 @@ class ModRun:
         out = {"id": self.id, "status": self.status, "error": self.error, "stop_reason": self.stop_reason,
                "session_id": self.session_id, "workspace_id": self.workspace_id, "model": self.spec,
                "local": self.local, "scope": self.scope, "rounds": self.round,
-               "tool_calls": len(self.tools), "usage": self.usage, "metadata": self.metadata,
-               "created": self.created, "started": self.started, "finished": self.finished}
+               "tool_calls": len(self.tools) or self.tool_calls_before, "usage": self.usage,
+               "metadata": self.metadata, "created": self.created, "started": self.started,
+               "finished": self.finished}
+        if self.restarted:
+            out["restarted"] = True
         if full:
             out["text"] = self.text[-20000:]
             out["tools"] = [dict(t, output=(str(t.get("output") or "")[:2000])) for t in self.tools[-100:]]
@@ -342,6 +358,94 @@ def _make_sessions(run: ModRun, req: Dict[str, Any]) -> None:
         pass
 
 
+# ── Keeping runs across a restart ────────────────────────────────────────
+
+def _store_path() -> str:
+    from src.mods import paths
+    return os.path.join(paths.mods_root(), "runs.json")
+
+
+def _record(r: ModRun) -> Dict[str, Any]:
+    return dict(r.view(full=False), mod_id=r.mod_id, owner=r.owner, model_id=r.model_id, restarted=r.restarted,
+                notified=r.notified)
+
+
+def persist() -> None:
+    """Write every kept run to disk (a small file; runs change a few times each)."""
+    rows = sorted(_RUNS.values(), key=lambda r: r.created)[-MAX_KEPT:]
+    path = _store_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"runs": [_record(r) for r in rows]}, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        logger.warning("[mods] could not save agent runs: %s", e)
+
+
+def _from_record(d: Dict[str, Any]) -> Optional[ModRun]:
+    if not isinstance(d, dict) or not isinstance(d.get("id"), str) or not isinstance(d.get("mod_id"), str):
+        return None
+    r = ModRun(d["mod_id"], str(d.get("owner") or ""))
+    r.id = d["id"]
+    r.status = str(d.get("status") or "interrupted")
+    r.error, r.stop_reason = d.get("error"), d.get("stop_reason")
+    r.session_id, r.workspace_id = str(d.get("session_id") or ""), d.get("workspace_id")
+    r.spec, r.model_id, r.local = str(d.get("model") or ""), str(d.get("model_id") or ""), bool(d.get("local"))
+    r.scope = str(d.get("scope") or "")
+    r.round = int(d.get("rounds") or 1)
+    r.usage = d.get("usage") if isinstance(d.get("usage"), dict) else {}
+    r.metadata = d.get("metadata") if isinstance(d.get("metadata"), dict) else {}
+    r.created = float(d.get("created") or time.time())
+    r.started, r.finished = d.get("started"), d.get("finished")
+    r.tool_calls_before = int(d.get("tool_calls") or 0)
+    r.restarted, r.notified = bool(d.get("restarted")), bool(d.get("notified"))
+    return r
+
+
+def load_saved() -> List[ModRun]:
+    try:
+        with open(_store_path(), encoding="utf-8") as f:
+            rows = json.load(f).get("runs") or []
+    except (OSError, ValueError):
+        return []
+    return [r for r in (_from_record(d) for d in rows) if r]
+
+
+def recover() -> List[ModRun]:
+    """At core start: load the saved runs, mark those that were still queued or
+    running as interrupted, and tell each owning mod (`agent.run.finished`, with
+    `restarted: true`). Returns the runs it told about. Safe to call once per start;
+    a run is told about once (`notified`)."""
+    told: List[ModRun] = []
+    now = time.time()
+    for r in load_saved():
+        if r.id in _RUNS:
+            continue
+        if r.status in LIVE:
+            r.status, r.error, r.finished, r.restarted = "interrupted", "Odysseus restarted", now, True
+            r.notified = False
+        elif r.status == "interrupted" and r.error == "Odysseus restarted":
+            r.restarted = True
+        _RUNS[r.id] = r
+        if r.restarted and not r.notified:
+            told.append(r)
+    _prune()
+    for r in told:
+        r.notified = True
+        try:
+            from src.mods import events
+            events.send_to(r.mod_id, "agent.run.finished", r.view())
+        except Exception:
+            logger.debug("restart notice not delivered", exc_info=True)
+    if told or _RUNS:
+        persist()
+    if told:
+        logger.info("[mods] %d agent run(s) interrupted by the restart; their mods were told", len(told))
+    return told
+
+
 # ── Starting, the loop, finishing ────────────────────────────────────────
 
 def _live(mod_id: Optional[str] = None) -> List[ModRun]:
@@ -411,6 +515,7 @@ async def start(entry: Dict[str, Any], owner: str, body: Dict[str, Any]) -> ModR
     _make_sessions(run, req)
     _RUNS[run.id] = run
     _prune()
+    persist()
     task = asyncio.get_running_loop().create_task(_execute(run))
     run.task = task
     _tasks.add(task)
@@ -561,6 +666,7 @@ async def _execute(run: ModRun) -> None:
             run.status, run.error = "cancelled", "Stopped before it started"
             return
         run.status, run.started = "running", time.time()
+        persist()
         with usage_scope(source="mod", owner=run.owner or None, session_id=run.session_id,
                          source_scope=usage_api.full_scope(run.mod_id, run.run_scope)), \
                 run_context(mod_id=run.mod_id, run_id=run.id, tools=run.req["own_tools"],
@@ -596,6 +702,8 @@ async def _execute(run: ModRun) -> None:
                          "output_tokens": s["output_tokens"], "unpriced_calls": s["unpriced_calls"]}
         except Exception:
             pass
+        run.restarted = bool(agent_runs.restarting and run.status == "interrupted")
+        persist()
         try:
             from src.mods import events
             events.send_to(run.mod_id, "agent.run.finished", run.view())
@@ -621,7 +729,7 @@ def setup(router: APIRouter, mod_for, owner_for) -> None:
     def _get(e: Dict[str, Any], run_id: str) -> ModRun:
         r = _RUNS.get(run_id)
         if r is None or r.mod_id != e["id"]:
-            raise HTTPException(404, "No such run (runs are kept in memory: it may be from before a restart)")
+            raise HTTPException(404, "No such run (finished runs are forgotten after six hours)")
         return r
 
     @router.post("/api/mods/v1/agent/runs")

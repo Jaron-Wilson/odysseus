@@ -265,3 +265,46 @@ def test_tool_calls_are_signed_as_the_user(two_mods, monkeypatch, owner, auth_en
         assert srv.calls[-1][2] == want
     finally:
         srv.srv.shutdown()
+
+
+# ── Plan mode (src/mods/tools.py plan_mode_blocked, src/agent_loop.py) ───
+
+def test_plan_mode_blocks_every_mod_tool_that_is_not_read_only(two_mods):
+    add_mod({"tools": {"keywords": ["mixed"]}}, mod_id="mixed")
+    write_tools_cache("mixed", [
+        {"name": "look", "description": "d", "parameters": {"type": "object"}, "keywords": [],
+         "controls_devices": False, "read_only": True, "asks_first": False},
+        {"name": "change", "description": "d", "parameters": {"type": "object"}, "keywords": [],
+         "controls_devices": False, "read_only": False, "asks_first": False},
+        {"name": "unmarked", "description": "d", "parameters": {"type": "object"}, "keywords": []},
+        {"name": "asks", "description": "d", "parameters": {"type": "object"}, "keywords": [],
+         "controls_devices": False, "read_only": True, "asks_first": True},
+    ])
+    blocked = tools.plan_mode_blocked()
+    assert blocked == {"mod__print-hub__pause_print", "mod__mixed__change", "mod__mixed__unmarked", "mod__mixed__asks"}
+    assert "mod__print-hub__print_status" not in blocked and "mod__mixed__look" not in blocked
+    assert "mod__rook__rook_say" not in blocked
+
+
+def test_a_blocked_mod_tool_is_refused_before_it_reaches_the_mod(two_mods, monkeypatch):
+    from src.tool_execution import execute_tool_block
+    from src.tool_parsing import ToolBlock
+    called = []
+    orig = tools.execute
+
+    async def spy(*a, **k):
+        called.append(a)
+        return await orig(*a, **k)
+    monkeypatch.setattr(tools, "execute", spy)
+    desc, res = asyncio.run(execute_tool_block(
+        ToolBlock("mod__print-hub__pause_print", "{}"), session_id="s", owner="alice",
+        disabled_tools=tools.plan_mode_blocked()))
+    assert res["exit_code"] == 1 and "disabled" in res["error"] and not called
+
+
+def test_the_agent_loop_adds_the_blocked_mod_tools_in_plan_mode():
+    import inspect
+    from src import agent_loop
+    src = inspect.getsource(agent_loop)
+    i = src.index("if plan_mode:\n        # Plan mode: investigate read-only")
+    assert "plan_mode_blocked()" in src[i:i + 1200]

@@ -1357,6 +1357,9 @@ async def _startup_event():
     try:
         from src.mods import runtime as _mods_runtime
         _startup_tasks.append(asyncio.create_task(_mods_runtime.startup()))
+        # Agent runs a mod had going when the last process ended: mark them interrupted and tell their mods.
+        from src.mods import runs as _mods_runs
+        _mods_runs.recover()
         # Which mods have an update: a check soon after start, then every 6 hours.
         from src.mods import updates as _mods_updates
         _startup_tasks.append(asyncio.create_task(_mods_updates.run_forever()))

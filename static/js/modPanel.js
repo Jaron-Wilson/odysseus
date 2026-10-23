@@ -19,6 +19,7 @@
 // which calls open() with a `path`.
 
 import { needsTutorial, safeSubPath } from './modLinksCore.js';
+import './modTheme.js';   // the user's theme for every mod frame
 
 // The same flags as the CSP sandbox the proxy sends (SANDBOX_CSP in
 // src/mods/proxy.py; tests/test_mods_proxy.py keeps them equal). A browser

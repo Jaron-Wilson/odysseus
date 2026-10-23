@@ -245,3 +245,12 @@ review the permissions, Approve. Updates: the mod's Update button (a branch or t
 - To be marked Verified, open a pull request adding the mod to a mods index (for example
   `Jaron-Wilson/odysseus-mods-index`); see its README. A mod without a `tutorial` is never shown
   as Verified.
+
+## Following the user's theme and the chat @ picker
+
+Return pages with `themed(page)` (from `odysseus_mod`) and style with `var(--bg)`, `var(--fg)`,
+`var(--panel)`, `var(--border)`, `var(--accent)`: they hold the user's Odysseus colors and update
+when the theme changes (docs/mods.md, "Following the Odysseus theme"). To appear in the chat's `@`
+picker, ask for the `chat.mention` permission and add `chat.mention` (and optionally
+`chat.mention_items` and `chat.mention_context`) to the manifest ("Mentioning a mod in a chat").
+Mark read-only tools `read_only` so they still work in plan mode.
