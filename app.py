@@ -71,6 +71,10 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
+# Redact URL-embedded secrets (MCP tokens, ?token=...) from every log record,
+# including uvicorn.access and httpx request lines.
+from core.log_safety import install_log_redaction
+install_log_redaction()
 
 # ========= APP =========
 # Lifespan is defined below (after all helpers it references are in scope)
@@ -1063,6 +1067,7 @@ async def runtime_info() -> Dict[str, object]:
 async def _lifespan(app):
     """Modern lifespan context manager replacing deprecated @app.on_event."""
     # ── STARTUP ──
+    install_log_redaction()  # uvicorn may have attached its handlers since import
     await _startup_event()
     yield
     # ── SHUTDOWN ──
