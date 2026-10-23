@@ -656,6 +656,8 @@ def setup_mods_routes(auth_manager=None) -> APIRouter:
                 "base": base,
                 "tabs": [dict(t, url=base + t["path"], **placement.resolve(t, override)) for t in ui.get("tabs") or []],
                 "home_cards": [dict(c, url=base + c["path"]) for c in ui.get("home_cards") or []],
+                # Pages of this server the mod may show unsandboxed in its window (permission `embed`).
+                "embeds": ui.get("embeds") or [] if "embed" in (entry.get("granted_permissions") or []) else [],
                 "settings_url": base + ui["settings_path"] if ui.get("settings_path") else None,
                 "tutorial": tutorial.summary(entry, user),
             })

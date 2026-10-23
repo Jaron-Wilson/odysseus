@@ -330,6 +330,123 @@ export async function showTutorial(modId, opts = {}) {
   return true;
 }
 
+// ── Embeds: a page of this server (a game stream) inside the tab's window ──
+//
+// A mod page is sandboxed (opaque origin, no cookies, no pointer lock), so it
+// cannot show a page that needs the user's own sign-in. A mod with the `embed`
+// permission lists such pages in its manifest (`ui.embeds`: id, path, allow)
+// and asks for one with postMessage; the core shows it in an unsandboxed frame
+// that replaces the mod's page inside the window, under a bar with Fullscreen
+// and Back. The page is the manifest's path plus a query the mod supplies
+// (never another path), and messages between the mod page and the embedded
+// page are passed on:
+//
+//   mod page -> core  {type: 'odysseus:embed', action: 'open', id, query: '?a=b'}
+//                     {type: 'odysseus:embed', action: 'close'}
+//                     {type: 'odysseus:embed', action: 'send', data: {type: 'moonlight-web:...'}}
+//                     {type: 'odysseus:embed', action: 'fullscreen', mode: 'enter' | 'exit' | 'toggle'}
+//   core -> mod page  {type: 'odysseus:embed-event', id, data: {...}}   (what the embedded page posts)
+//                     {type: 'odysseus:embed-event', id, opened: true}   (the embed is showing)
+//                     {type: 'odysseus:embed-event', id, closed: true}   (the user pressed Back)
+
+const EMBED_QUERY_RE = /^\?[A-Za-z0-9._~%=&+,:-]{0,2000}$/;
+const EMBED_FS_WAIT_MS = 700;
+
+function _toModFrame(el, msg) {
+  const f = el.querySelector('iframe.mod-frame');
+  try { if (f && f.contentWindow) f.contentWindow.postMessage(msg, '*'); } catch (_) { /* frame gone */ }
+}
+
+function _embedClose(el, notify = true) {
+  const box = el.querySelector('.mod-embed');
+  if (!box) return;
+  const id = box.dataset.embedId;
+  if (document.fullscreenElement && box.contains(document.fullscreenElement)) {
+    try { document.exitFullscreen(); } catch (_) { /* already out */ }
+  }
+  box.querySelector('iframe').src = 'about:blank';
+  box.remove();
+  el.classList.remove('mod-embedding');
+  if (notify) _toModFrame(el, { type: 'odysseus:embed-event', id, closed: true });
+}
+
+function _embedFullscreen(el, mode) {
+  const box = el.querySelector('.mod-embed');
+  const frame = box && box.querySelector('iframe');
+  if (!frame) return;
+  let heard = false;
+  const onState = (ev) => { if (ev.source === frame.contentWindow && ev.data && ev.data.type === 'moonlight-web:state') heard = true; };
+  window.addEventListener('message', onState);
+  try { frame.contentWindow.postMessage({ type: 'moonlight-web:fullscreen', action: mode }, location.origin); } catch (_) { /* not loaded */ }
+  // The embedded page did not answer (still loading, or not one that knows
+  // the message): make the frame itself fullscreen as a last resort.
+  setTimeout(() => {
+    window.removeEventListener('message', onState);
+    if (heard || mode === 'exit') return;
+    if (document.fullscreenElement) { if (mode !== 'enter') document.exitFullscreen().catch(() => {}); return; }
+    try { frame.requestFullscreen({ navigationUI: 'hide' }).catch(() => {}); } catch (_) { /* refused */ }
+  }, EMBED_FS_WAIT_MS);
+}
+
+function _embedOpen(el, m, d) {
+  const spec = (m.embeds || []).find((e) => e.id === d.id);
+  if (!spec) return;
+  const query = typeof d.query === 'string' ? d.query : '';
+  if (query && !EMBED_QUERY_RE.test(query)) return;
+  _embedClose(el, false);
+  const box = document.createElement('div');
+  box.className = 'mod-embed';
+  box.dataset.embedId = spec.id;
+  const title = spec.title || m.name;
+  box.innerHTML = `
+    <div class="mod-embed-bar"><span class="mod-embed-title">${esc(title)}</span>
+      <button type="button" class="mod-btn mod-embed-fs" title="Fullscreen: the stream takes the whole screen. Hold Esc to leave it">Fullscreen</button>
+      <button type="button" class="mod-btn mod-embed-back" title="Back to the page">Back</button></div>
+    <iframe class="mod-embed-frame" title="${esc(title)}" referrerpolicy="no-referrer"
+      allow="${esc((spec.allow || []).join('; '))}"></iframe>`;
+  const frame = box.querySelector('iframe');
+  frame.src = spec.path + query;
+  box.addEventListener('click', (ev) => {
+    if (ev.target.closest('.mod-embed-back')) _embedClose(el);
+    else if (ev.target.closest('.mod-embed-fs')) _embedFullscreen(el, 'toggle');
+  });
+  el.querySelector('.mod-panel').appendChild(box);
+  el.classList.add('mod-embedding');
+  frame.focus();
+  // Tells the mod page its request was understood (an older core says nothing, and a mod falls back).
+  _toModFrame(el, { type: 'odysseus:embed-event', id: spec.id, opened: true });
+}
+
+window.addEventListener('message', (ev) => {
+  const d = ev.data;
+  if (!d || typeof d !== 'object') return;
+  for (const [k, el] of _panels) {
+    if (!el.isConnected) continue;
+    const modFrame = el.querySelector('iframe.mod-frame');
+    const embedFrame = el.querySelector('.mod-embed iframe');
+    if (modFrame && ev.source === modFrame.contentWindow && d.type === 'odysseus:embed') {
+      // Only from the mod's own page (an opaque origin), for an embed its manifest lists.
+      if (ev.origin !== 'null') return;
+      const [modId, tabId] = k.split(':');
+      const hit = find(modId, tabId);
+      if (!hit) return;
+      if (d.action === 'open') _embedOpen(el, hit.m, d);
+      else if (d.action === 'close') _embedClose(el, false);
+      else if (d.action === 'fullscreen') _embedFullscreen(el, ['enter', 'exit', 'toggle'].includes(d.mode) ? d.mode : 'toggle');
+      else if (d.action === 'send' && embedFrame && d.data && typeof d.data === 'object'
+               && typeof d.data.type === 'string' && d.data.type.startsWith('moonlight-web:')) {
+        try { embedFrame.contentWindow.postMessage(d.data, location.origin); } catch (_) { /* not loaded */ }
+      }
+      return;
+    }
+    if (embedFrame && ev.source === embedFrame.contentWindow && ev.origin === location.origin
+        && typeof d.type === 'string' && d.type.startsWith('moonlight-web:')) {
+      _toModFrame(el, { type: 'odysseus:embed-event', id: el.querySelector('.mod-embed').dataset.embedId, data: d });
+      return;
+    }
+  }
+});
+
 // Settings > Mods says when mods change.
 window.addEventListener('odysseus:mods-changed', () => { list(true); });
 

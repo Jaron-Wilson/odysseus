@@ -182,6 +182,15 @@ def test_ui_list_gives_frame_urls_only_for_mods_the_user_may_use(client):
     assert tab["url"].startswith("/mods/test-mod/~") and tab["url"].endswith("/")
 
 
+def test_ui_list_gives_embeds_only_with_the_permission(client):
+    ui = {"tabs": [{"id": "main", "path": "/"}], "embeds": [{"id": "stream", "path": "/play/stream.html", "allow": ["fullscreen"]}]}
+    add_mod({"ui": ui}, permissions=["embed"])
+    add_mod({"ui": {"tabs": ui["tabs"]}}, mod_id="plain-mod")
+    mods = {m["id"]: m for m in client.get("/api/mods/ui", headers={"x-test-user": "alice"}).json()["mods"]}
+    assert mods["test-mod"]["embeds"] == [{"id": "stream", "path": "/play/stream.html", "title": "", "allow": ["fullscreen"]}]
+    assert mods["plain-mod"]["embeds"] == []
+
+
 # ── Read-only core APIs: stats (stats.read) and machines (machines.read) ──
 
 def test_stats_reads_the_devops_snapshot(client, monkeypatch):
