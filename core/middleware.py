@@ -123,10 +123,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # proxied: it brings its own CSP (a meta tag in its workbench), and the
         # Code panel frames it, so it can't get the app's strict one.
         is_ide = path == "/ide" or path.startswith("/ide/")
-        # A chat's thread side by side with it (static/js/chatThreadTabs.js)
-        # is the app page in an iframe of the app page: framed by this origin
-        # only, and only at the path that serves it.
-        is_thread_pane = path == "/thread-pane"
+        # A chat's thread side by side with it (static/js/chatThreadTabs.js),
+        # or a second, independently chosen chat in the workspace split view
+        # (static/js/workspace/shell.js), is the app page in an iframe of the
+        # app page: framed by this origin only, and only at the path that
+        # serves it.
+        is_pane_page = path in ("/thread-pane", "/chat-pane")
         # Mod pages (src/mods/proxy.py) carry their own CSP: a sandbox that
         # gives them an opaque origin, framed by this origin only.
         is_mod = path.startswith("/mods/")
@@ -172,7 +174,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'self'"
             )
         else:
-            response.headers["X-Frame-Options"] = "SAMEORIGIN" if is_thread_pane else "DENY"
+            response.headers["X-Frame-Options"] = "SAMEORIGIN" if is_pane_page else "DENY"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.
             # `static/index.html` and `static/login.html` ship inline <style>
             # blocks, and several JS modules build runtime `style=""` attrs.
@@ -193,7 +195,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 # receiver's map is framed inside its mod's page, whose own CSP is
                 # the mod sandbox; Games is a mod too.)
                 "frame-src 'self' https://www.youtube-nocookie.com; "
-                + ("frame-ancestors 'self'" if is_thread_pane else "frame-ancestors 'none'")
+                + ("frame-ancestors 'self'" if is_pane_page else "frame-ancestors 'none'")
             )
         return response
 
