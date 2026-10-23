@@ -11,11 +11,13 @@
 // "Browse" (modsBrowse.js) finds mods on GitHub and in curated indexes; its
 // Install fills in the install form below and goes through the same review
 // and approve step. Installed mods with a newer version out get an "Update
-// available" badge (src/mods/catalog.py).
+// available" badge (src/mods/catalog.py). The "Needs update" section above the
+// list (modsUpdates.js, src/mods/updates.py) checks every mod's repository.
 //
 // settings.js calls load() whenever the Mods tab is opened.
 
 import { initBrowse, loadBrowse, setBrowseCapability } from './modsBrowse.js';
+import { initUpdates, load as loadUpdates } from './modsUpdates.js';
 
 const $ = (id) => document.getElementById(id);
 const API = '/api/mods';
@@ -234,6 +236,7 @@ async function loadLog(id) {
 
 async function load() {
   if (!$('mods-settings')) return;
+  loadUpdates();
   try {
     const d = await api('GET', API);
     _mods = d.mods || [];
@@ -499,6 +502,8 @@ function init() {
     panel.addEventListener('change', onChange);
     panel.dataset.ready = '1';
     initBrowse({ api, esc, say, prefillInstall, startUpdate });
+    // "Needs update" at the top of Installed (modsUpdates.js).
+    initUpdates({ api, say, startUpdate: (id) => startUpdate(id), reload: () => load() });
     // Browse found newer versions: badge the installed mods.
     window.addEventListener('odysseus:mods-updates', (ev) => {
       const ups = ev.detail || {};

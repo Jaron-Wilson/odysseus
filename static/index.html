@@ -1705,6 +1705,7 @@
           <button class="settings-nav-item admin-only" data-goto-keywords="mods mod plugins add-ons extensions install" data-settings-tab="mods">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
             <span>Mods</span>
+            <span id="mods-nav-badge" hidden style="margin-left:auto;min-width:16px;padding:0 5px;border-radius:9px;background:#d29922;color:#fff;font-size:11px;line-height:16px;text-align:center"></span>
           </button>
           <button class="settings-nav-item admin-only" data-settings-tab="users">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -2942,6 +2943,8 @@
             </div>
           </div>
           <div id="mods-installed-view">
+          <!-- Needs update: modsUpdates.js, src/mods/updates.py (docs/mods.md, "Updates"). -->
+          <div id="mods-updates"></div>
           <div id="mods-list"><div class="admin-card"><div class="admin-toggle-sub">Loading…</div></div></div>
           <div class="admin-card">
             <h2>Install a mod</h2>

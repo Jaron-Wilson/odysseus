@@ -146,7 +146,7 @@ def test_token_adds_private_repos_and_only_goes_to_api_github(gh, monkeypatch):
     r = by_name(res)
     assert "jaron/print-hub" in r and "jaron/notes" not in r
     ph = r["jaron/print-hub"]
-    assert ph["yours"] and ph["private"] and ph["install_source"] == "git@github.com:jaron/print-hub.git"
+    assert ph["yours"] and ph["private"] and ph["install_source"] == "https://github.com/jaron/print-hub.git"
     assert res["token_source"] == "environment" and res["viewer"] == "jaron"
     for url, headers in gh.calls:
         if "Authorization" in headers:

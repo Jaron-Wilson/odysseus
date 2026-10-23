@@ -24,7 +24,6 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from core.platform_compat import safe_chmod
 from src.constants import APP_KEY_FILE
 
 logger = logging.getLogger(__name__)
@@ -38,6 +37,9 @@ def _load_or_create_key() -> bytes:
     if _KEY_PATH.exists():
         return _KEY_PATH.read_bytes()
     _KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Imported here, not at the top: importing `core` pulls in core.database,
+    # which imports this module while it is still half loaded (circular import).
+    from core.platform_compat import safe_chmod
     key = Fernet.generate_key()
     _KEY_PATH.write_bytes(key)
     # POSIX: lock the key to 0o600. Windows: no-op (the user-profile data dir is
