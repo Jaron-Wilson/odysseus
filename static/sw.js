@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v365';
+const CACHE_NAME = 'odysseus-v366';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -63,7 +63,6 @@ const PRECACHE = [
   '/static/js/callHandoff.js',
   '/static/js/callPresenceWorker.js',
   '/static/js/ttsEngines.js',
-  '/static/js/ttsElevenLabs.js',
   '/static/js/settingsNav.js',
   '/static/js/toolPages.js',
   '/static/js/toolGroups.js',
@@ -82,7 +81,7 @@ const PRECACHE = [
   '/static/js/censor.js',
   '/static/js/settings.js',
   '/static/js/admin.js',
-  '/static/js/chatgptPlan.js',
+  '/static/js/chatgptAddon.js',
   '/static/js/init.js',
   '/static/js/slashCommands.js',
   '/static/js/emailInbox.js',
@@ -99,12 +98,6 @@ const PRECACHE = [
   '/static/js/sidebar-layout.js',
   '/static/js/section-management.js',
   '/static/lib/highlight.min.js',
-  '/static/css/terminal.css',
-  '/static/js/terminal.js',
-  '/static/lib/xterm/xterm.mjs',
-  '/static/lib/xterm/xterm.css',
-  '/static/lib/xterm/addon-fit.mjs',
-  '/static/lib/xterm/addon-web-links.mjs',
   // Math turns up in ordinary answers and KaTeX is small, so precaching it and
   // its fonts keeps formulas typeset offline. Mermaid is deliberately NOT
   // precached: at 3.5 MB it would re-download on every CACHE_NAME bump, a poor

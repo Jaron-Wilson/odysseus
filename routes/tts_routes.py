@@ -1,6 +1,6 @@
 # routes/tts_routes.py
 """
-TTS API routes: multi-provider (local Kokoro, API endpoint, browser).
+TTS API routes: multi-provider (local Kokoro, API endpoint, an add-on voice, browser).
 """
 
 import base64
@@ -31,10 +31,6 @@ class PreviewRequest(BaseModel):
     text: Optional[str] = None
 
 
-class ElevenLabsKeyRequest(BaseModel):
-    api_key: str
-
-
 def _tts_error(e: TTSError) -> HTTPException:
     detail = {"message": e.message}
     if getattr(e, "fallback", None):
@@ -43,7 +39,7 @@ def _tts_error(e: TTSError) -> HTTPException:
 
 
 def _fallback_headers(tts_service) -> dict:
-    """A short note for the app when ElevenLabs was paused for this audio."""
+    """A short note for the app when an add-on voice was paused for this audio."""
     fb = tts_service.current_fallback() if hasattr(tts_service, "current_fallback") else None
     if not fb:
         return {}
@@ -74,7 +70,7 @@ def setup_tts_routes(tts_service):
         Also starts loading the local Kokoro model in the background, so a
         voice call that checks this on start speaks its first sentence sooner."""
         try:
-            # The ElevenLabs credit numbers may need a (cached) API call.
+            # An add-on voice's status is a (cached) call to the add-on.
             stats = await run_in_threadpool(tts_service.get_stats)
             if warm and hasattr(tts_service, "warm") and stats.get("available") and stats.get("engine") == "kokoro" \
                     and not stats.get("model_loaded"):
@@ -138,39 +134,15 @@ def setup_tts_routes(tts_service):
             raise _tts_error(e)
         return _audio_response(audio_data, _fallback_headers(tts_service))
 
-    # ── ElevenLabs ──
-    # The key goes in through POST /elevenlabs/key and never comes back out:
-    # status answers only whether one is set and a masked hint.
+    # ── Add-on voices (mods that provide tts.voice, like ElevenLabs) ──
+    # The add-on keeps its own key and settings on its own page.
 
-    @router.get("/elevenlabs/status")
-    async def elevenlabs_status(refresh: bool = False):
-        """Key set (masked hint), models, credits used/limit/reset, the
-        local tally, the credit guard and the last fallback."""
-        return await run_in_threadpool(tts_service.elevenlabs_status, refresh)
-
-    @router.post("/elevenlabs/key")
-    async def elevenlabs_set_key(request: Request, body: ElevenLabsKeyRequest):
-        """Admin: check the key with ElevenLabs and store it encrypted."""
-        require_admin(request)
+    @router.get("/voices")
+    async def addon_voices(provider: str = "", refresh: bool = False):
+        """The voices of an add-on voice provider ("mod:<id>"): id, name,
+        category, labels. Empty for the other providers."""
         try:
-            out = await run_in_threadpool(tts_service.set_elevenlabs_key, body.api_key)
-        except TTSError as e:
-            raise _tts_error(e)
-        return out
-
-    @router.delete("/elevenlabs/key")
-    async def elevenlabs_delete_key(request: Request):
-        """Admin: forget the stored ElevenLabs key."""
-        require_admin(request)
-        await run_in_threadpool(tts_service.delete_elevenlabs_key)
-        return {"deleted": True}
-
-    @router.get("/elevenlabs/voices")
-    async def elevenlabs_voices(refresh: bool = False):
-        """The account's voices (premade and the user's own clones): id,
-        name, category, labels."""
-        try:
-            voices = await run_in_threadpool(tts_service.elevenlabs.voices, refresh)
+            voices = await run_in_threadpool(tts_service.mod_voices, provider, refresh)
         except TTSError as e:
             raise _tts_error(e)
         return {"voices": voices}

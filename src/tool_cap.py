@@ -36,6 +36,12 @@ def tool_name(schema: Any) -> str:
 
 def needs_tool_cap(url: Optional[str]) -> bool:
     """True for endpoints that enforce OpenAI's function tool limit."""
+    from src.mods import llm_endpoints
+    if llm_endpoints.is_mod_url(url):
+        try:
+            return llm_endpoints.meta(llm_endpoints.mod_id_of(url) or "")["tool_cap"]
+        except Exception:
+            return False
     try:
         host = (urlparse(url or "").hostname or "").lower().rstrip(".")
     except Exception:

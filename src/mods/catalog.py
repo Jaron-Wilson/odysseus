@@ -37,6 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, urljoin, urlparse
 
+from src.mods import capabilities
 from src.mods import manifest as mf
 from src.mods import paths
 
@@ -402,7 +403,15 @@ def summarize(raw: Optional[Dict[str, Any]], min_core_override: Optional[str] = 
         perms = sorted({p for p in (raw.get("permissions") or []) if isinstance(p, str) and p in mf.PERMISSIONS}) \
             if isinstance(raw.get("permissions"), list) else []
     ui = (man or {}).get("ui") or {}
+    caps = {}
+    for k in capabilities.KINDS:
+        v = (man or {}).get(k)
+        if v is None:
+            v = [c for c in (raw.get(k) or []) if isinstance(c, str) and capabilities.CAP_RE.match(c)][
+                :capabilities.MAX_PER_LIST] if isinstance(raw.get(k), list) else []
+        caps[k] = v
     return {
+        **caps,
         "valid": not errors,
         "compatible": not errors and mf.core_satisfies(min_core),
         "errors": errors[:10],
@@ -583,9 +592,15 @@ def parse_index(data: Any, source: str) -> Tuple[Dict[str, Dict[str, Any]], List
             subdir = None
         tags = [t for t in (e.get("tags") or []) if isinstance(t, str) and mf.TAG_RE.match(t)][:mf.MAX_TAGS] \
             if isinstance(e.get("tags"), list) else []
+        caps: Dict[str, List[str]] = {}
+        for kind in capabilities.KINDS:
+            errs: List[str] = []
+            caps[kind] = capabilities._check_list(e.get(kind), kind, errs)
+            if errs:
+                problems.append(f"{where}: {errs[0]}")
         out[key] = {"repo": key, "id": mid, "verified": e.get("verified", True) is True,
                     "notes": _text(e.get("notes"), 500), "blocked_versions": [_norm_version(v) for v in blocked],
-                    "min_core": min_core, "subdir": subdir, "tags": tags, "index": name}
+                    "min_core": min_core, "subdir": subdir, "tags": tags, "index": name, **caps}
     return out, problems
 
 
@@ -816,6 +831,11 @@ def _refresh(old: Optional[Dict[str, Any]], fp: str) -> Dict[str, Any]:
         ix = index.get(k)
         summary = summarize(raw, (ix or {}).get("min_core"))
         tags = list(dict.fromkeys((summary.get("tags") or []) + ((ix or {}).get("tags") or [])))[:mf.MAX_TAGS]
+        # An index may also say what a mod provides, needs and may use (so a
+        # capability search finds it even when its manifest could not be read).
+        for kind in capabilities.KINDS:
+            summary[kind] = list(dict.fromkeys((summary.get(kind) or []) + ((ix or {}).get(kind) or [])))[
+                :capabilities.MAX_PER_LIST]
         listed = bool(ix) or "topic" in r["found_by"] or "yours" in r["found_by"]
         verified, dropped = verified_status(bool(ix and ix.get("verified")), summary)
         entries[k] = dict(r, raw_manifest=raw, manifest_error=err, manifest=summary, tags=tags,
@@ -944,6 +964,8 @@ def _public_entry(e: Dict[str, Any], installed_by_repo, installed_by_id) -> Dict
         "version_blocked": bool(version) and _norm_version(version) in (ix.get("blocked_versions") or []),
         "install_source": install_source(e),
         "has_tutorial": bool(man.get("has_tutorial")),
+        "provides": man.get("provides") or [], "requires": man.get("requires") or [],
+        "optional": man.get("optional") or [],
     })
     # Judged again from this manifest (details may be of another version).
     verified, dropped = verified_status(bool(ix.get("verified")) if ix else bool(e.get("verified")), man)
@@ -968,7 +990,9 @@ def _truthy(v: Optional[str]) -> Optional[bool]:
 
 
 def query(q: str = "", tag: str = "", verified: Optional[str] = None, compatible: Optional[str] = None,
-          refresh: bool = False) -> Dict[str, Any]:
+          refresh: bool = False, capability: str = "") -> Dict[str, Any]:
+    """The Browse list. `capability` keeps only mods that provide it (the
+    install review's "find a provider")."""
     from src.mods import registry
     c = build(force=refresh)
     mods = registry.list_mods()
@@ -990,9 +1014,11 @@ def query(q: str = "", tag: str = "", verified: Optional[str] = None, compatible
             continue
         if want_compat is not None and p["compatible"] != want_compat:
             continue
+        if capability and capability not in (p.get("provides") or []):
+            continue
         if words:
             hay = " ".join([p["name"] or "", p["id"], p["summary"], p["full_name"], p["author"],
-                            " ".join(p.get("tags") or [])]).lower()
+                            " ".join(p.get("tags") or []), " ".join(p.get("provides") or [])]).lower()
             if not all(w in hay for w in words):
                 continue
         results.append(p)
@@ -1009,7 +1035,7 @@ def query(q: str = "", tag: str = "", verified: Optional[str] = None, compatible
     return {"results": results, "tags": tags, "fetched_at": c.get("fetched_at"), "stale": bool(c.get("stale")),
             "warnings": c.get("warnings") or [], "token_source": c.get("token_source") or "",
             "viewer": c.get("viewer") or "", "index_count": c.get("index_count") or 0, "updates": upd,
-            "core_api": mf.CORE_API_VERSION, "settings": settings()}
+            "core_api": mf.CORE_API_VERSION, "settings": settings(), "capability": capability or ""}
 
 
 # ── Details ──────────────────────────────────────────────────────────────
@@ -1154,6 +1180,8 @@ def details(owner: str, repo: str, ref: Optional[str] = None) -> Dict[str, Any]:
                     "setup": (man.get("runtime") or {}).get("setup") or [],
                     "start": (man.get("runtime") or {}).get("start")},
         "permissions": mf.describe_permissions(man.get("permissions") or []),
+        # What it provides, needs and may use, and whether this Odysseus has a provider now.
+        "capabilities": capabilities.availability({k2: man.get(k2) or [] for k2 in capabilities.KINDS}),
         "tabs": tabs,
         "versions": d.get("versions") or [],
         "versions_error": d.get("versions_error"),

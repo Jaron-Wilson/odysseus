@@ -1,6 +1,7 @@
-"""The one Google account connection each user has, shared by every Google
-product Odysseus uses (Calendar for Meet, Drive, Docs, Sheets, Slides, Tasks,
-Contacts).
+"""The one Google account connection each user has, for the Google products
+the core uses (Calendar, with Meet). Drive, Docs, Sheets, Slides, Tasks and
+Contacts are the Google add-on's (mod `google`), which keeps its own
+connection.
 
 It uses the server's Google OAuth client (src/google_oauth.py, the one Sign
 in with Google uses) and comes back through the same callback,
@@ -432,8 +433,22 @@ async def disconnect(user: Optional[str], product: Optional[str] = None) -> None
             return
     refresh = _refresh_token(user)
     _forget(user)
+    if _addon_installed():
+        # The Google add-on may hold a copy of this grant (its import, or a
+        # connect with the same OAuth client): revoking at Google would cut
+        # it off too, so only forget it here.
+        logger.info("[google] disconnected for %s (not revoked: the Google add-on is installed)", user or "-")
+        return
     await _revoke(refresh)
     logger.info("[google] disconnected for %s", user or "-")
+
+
+def _addon_installed() -> bool:
+    try:
+        from src.mods import registry
+        return registry.get(P.ADDON_ID) is not None
+    except Exception:
+        return False
 
 
 # ── calling Google ──
@@ -511,11 +526,7 @@ def explain(r: httpx.Response, product: str, what: str = "") -> GoogleError:
     if r.status_code == 401 or "insufficient" in why.lower() or "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in why:
         return GoogleError(f"Google did not accept the saved access to {p.get('label', 'Google')}. " + RECONNECT)
     if r.status_code == 404:
-        hint = ""
-        if product in ("drive", "drive_all", "docs", "sheets", "slides"):
-            hint = (" Check the link. With Drive's narrow access Odysseus only sees files it made or you "
-                    "opened with it; 'Read all my Drive files' in Settings > Google widens that.")
-        return GoogleError(f"Google could not find that {what or 'item'}, or this account cannot open it.{hint}")
+        return GoogleError(f"Google could not find that {what or 'item'}, or this account cannot open it.")
     if r.status_code == 403:
         return GoogleError(f"Google refused: this account is not allowed to {what or 'do that'} "
                            f"({why.strip()[:160] or 'forbidden'}).")

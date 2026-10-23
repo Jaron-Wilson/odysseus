@@ -498,6 +498,10 @@ def _detect_provider(url: str) -> str:
     Unknown hosts fall back to the OpenAI-compatible default, which the
     majority of providers implement.
     """
+    from src.mods.llm_endpoints import is_mod_url, provider_name
+    if is_mod_url(url):
+        # An add-on's models (src/mods/llm_endpoints.py): OpenAI-compatible.
+        return provider_name(url)
     if _is_ollama_native_url(url):
         return "ollama"
     if _host_match(url, "anthropic.com"):
@@ -515,9 +519,6 @@ def _detect_provider(url: str) -> str:
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url):
         return "chatgpt-subscription"
-    from src.chatgpt_plan import is_chatgpt_plan_base
-    if is_chatgpt_plan_base(url):
-        return "chatgpt-plan"
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"
@@ -562,7 +563,7 @@ def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[st
 
 
 def _request_scoped_headers(url: str, headers, owner: Optional[str]):
-    """Fresh bearer for ChatGPT plan / Subscription, resolved at send time.
+    """Fresh bearer for ChatGPT Subscription, resolved at send time.
 
     Their tokens are short-lived and never persisted on the session, so the
     headers a caller got from ``sess.headers`` are usually empty by the time
@@ -606,8 +607,12 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "anthropic.com"): return "Anthropic"
     if _host_match(url, "ollama.com"): return "Ollama Cloud"
     if _host_match(url, "x.ai"): return "xAI"
-    from src.chatgpt_plan import is_chatgpt_plan_base
-    if is_chatgpt_plan_base(url): return "ChatGPT"
+    from src.mods.llm_endpoints import is_mod_url, meta as _mod_meta, mod_id_of
+    if is_mod_url(url):
+        try:
+            return _mod_meta(mod_id_of(url) or "")["label"]
+        except Exception:
+            return "add-on"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
@@ -725,6 +730,10 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
             err = j.get("error") or j
             if isinstance(err, dict):
                 detail = (err.get("message") or err.get("detail") or "").strip()
+                if err.get("type") == "add_on" and detail:
+                    # An add-on's own sentence ("Sign in on the ChatGPT tab"),
+                    # already written for the user (src/mods/llm_endpoints.py).
+                    return detail[:400]
             elif isinstance(err, str):
                 detail = err.strip()
     except Exception:
@@ -1241,6 +1250,8 @@ def list_model_ids(
             from src.endpoint_resolver import build_models_url
 
             models_url = build_models_url(base_chat_url)
+        if _is_mod_url(models_url):
+            models_url, h = _mod_target(models_url, h, owner)
         r = httpx.get(models_url, headers=h, timeout=timeout)
         r.raise_for_status()
         data = r.json()
@@ -1292,7 +1303,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
 
     ``owner`` is whose ChatGPT sign-in to use for request-scoped providers.
     """
-    if _detect_provider(url) in ("chatgpt-plan", "chatgpt-subscription"):
+    if _detect_provider(url) == "chatgpt-subscription":
         headers = _request_scoped_headers(url, headers, owner)
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -1331,11 +1342,6 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
-    if provider == "chatgpt-plan":
-        response = _chatgpt_plan_call_sync(model, messages_copy, headers if isinstance(headers, dict) else None, timeout)
-        _set_cached_response(cache_key, response)
-        return response
-
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
@@ -1363,6 +1369,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+        if _is_mod_url(url):
+            target_url, h = _mod_target(url, h, owner)
     try:
         note_model_activity(target_url, model)
         r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
@@ -1492,7 +1500,7 @@ async def llm_call_async(
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
-    if provider in ("chatgpt-subscription", "chatgpt-plan"):
+    if provider == "chatgpt-subscription":
         # ChatGPT/Codex requires streamed Responses requests even for callers
         # that want a plain string (auto-title, memory extraction, etc.).
         # Reuse stream_llm's validated Codex SSE path and collect deltas.
@@ -1573,6 +1581,8 @@ async def llm_call_async(
         if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
             payload["think"] = False
         _apply_local_cache_affinity(payload, url, session_id)
+        if _is_mod_url(url):
+            target_url, h = await _mod_target_async(url, h, owner)
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
@@ -1631,88 +1641,27 @@ async def llm_call_async(
                 raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
 
-async def _stream_chatgpt_plan(target_url: str, payload: Dict, h: Dict, stream_timeout):
-    """POST /v1/responses for a ChatGPT plan and translate its events."""
-    from src import chatgpt_plan as _cgp
+def _is_mod_url(url: str) -> bool:
+    from src.mods.llm_endpoints import is_mod_url
+    return is_mod_url(url)
 
-    if not any(k.lower() == "authorization" for k in h):
-        yield _cgp._sse_error("Sign in with ChatGPT in Settings > Add Models to use ChatGPT models.", 401, "not_signed_in")
-        return
-    translator = _cgp.StreamTranslator()
+
+def _mod_target(url: str, h: Dict, owner: Optional[str]):
+    """The real address and signed headers of an add-on's endpoint
+    (mod://<id>/v1/..., src/mods/llm_endpoints.py), from sync code."""
+    from src.mods import llm_endpoints
     try:
-        client = _get_http_client()
-        async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
-            _clear_host_dead(target_url)
-            if r.status_code != 200:
-                raw = (await r.aread()).decode(errors="replace")
-                yield _cgp.error_chunk_for_http(r.status_code, raw)
-                return
-            event_name = ""
-            async for line in r.aiter_lines():
-                if line.startswith("event:"):
-                    event_name = line[6:].strip()
-                    continue
-                event = _cgp.parse_data_line(line, event_name)
-                if not line:
-                    event_name = ""
-                if event is None:
-                    continue
-                for chunk in translator.feed(event):
-                    yield chunk
-                if translator.done:
-                    return
-            for chunk in translator.finish():
-                yield chunk
-    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-        _mark_host_dead(target_url)
-        logger.warning("ChatGPT plan stream connect failed: %s", type(e).__name__)
-        yield _cgp._sse_error(f"Cannot reach {_host_key(target_url)}", 503)
-    except httpx.ReadTimeout:
-        yield _cgp._sse_error("Read timeout", 504)
-    except httpx.NetworkError:
-        yield _cgp._sse_error("Network error", 502)
-    except Exception as e:
-        logger.error("ChatGPT plan stream error: %s", _cgp.redact(e))
-        yield _cgp._sse_error(_cgp.redact(e), 502)
+        return llm_endpoints.resolve(url, h, owner)
+    except llm_endpoints.ModEndpointUnavailable as e:
+        raise HTTPException(e.status, e.message)
 
 
-def _chatgpt_plan_call_sync(model: str, messages: List[Dict], headers: Optional[Dict], timeout: int) -> str:
-    """Blocking ChatGPT plan call for llm_call: stream and collect the text."""
-    from src import chatgpt_plan as _cgp
-
-    h = _provider_headers("chatgpt-plan", headers)
-    h["Accept"] = "text/event-stream"
-    if not any(k.lower() == "authorization" for k in h):
-        raise HTTPException(401, "Sign in with ChatGPT in Settings > Add Models to use ChatGPT models.")
-    payload = _cgp.build_payload(model, messages)
-    translator = _cgp.StreamTranslator()
-    parts: List[str] = []
-    chunks: List[str] = []
+async def _mod_target_async(url: str, h: Dict, owner: Optional[str]):
+    from src.mods import llm_endpoints
     try:
-        with httpx.stream("POST", _cgp.RESPONSES_URL, json=payload, headers=h, timeout=timeout) as r:
-            if r.status_code != 200:
-                chunks.append(_cgp.error_chunk_for_http(r.status_code, r.read().decode(errors="replace")))
-            else:
-                for event in _cgp.iter_sse_events(r.iter_lines()):
-                    chunks.extend(translator.feed(event))
-                    if translator.done:
-                        break
-                chunks.extend(translator.finish())
-    except httpx.HTTPError as e:
-        raise HTTPException(502, f"ChatGPT request failed ({type(e).__name__})")
-    for chunk in chunks:
-        for line in chunk.splitlines():
-            if not line.startswith("data: "):
-                continue
-            try:
-                data = json.loads(line[6:])
-            except json.JSONDecodeError:
-                continue
-            if isinstance(data, dict) and (data.get("error") or data.get("text")) and data.get("status"):
-                raise HTTPException(int(data.get("status") or 502), data.get("text") or data.get("error"))
-            if isinstance(data, dict) and isinstance(data.get("delta"), str) and not data.get("thinking"):
-                parts.append(data["delta"])
-    return "".join(parts)
+        return await llm_endpoints.resolve_async(url, h, owner)
+    except llm_endpoints.ModEndpointUnavailable as e:
+        raise HTTPException(e.status, e.message)
 
 
 async def stream_llm(url: str, model: str, messages: List[Dict], *args, **kwargs):
@@ -1813,7 +1762,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
       - data: [DONE]                       — end of stream
     """
     provider = _detect_provider(url)
-    if provider in ("chatgpt-plan", "chatgpt-subscription"):
+    if provider == "chatgpt-subscription":
         headers = _request_scoped_headers(url, headers, owner)
     native_ollama = _ollama_compat_as_native(url)
     if native_ollama:
@@ -1853,14 +1802,6 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
-    elif provider == "chatgpt-plan":
-        from src import chatgpt_plan as _cgp
-        # Every ChatGPT plan request goes to the real Responses endpoint; the
-        # configured URL is only Odysseus's routing marker.
-        target_url = _cgp.RESPONSES_URL
-        h = _provider_headers(provider, headers)
-        h["Accept"] = "text/event-stream"
-        payload = _cgp.build_payload(model, messages_copy, tools=tools)
     else:
         target_url = url
         payload = {
@@ -1888,6 +1829,15 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
+        if _is_mod_url(url):
+            # An add-on's models: its real address and the user's signed
+            # identity, resolved now (src/mods/llm_endpoints.py).
+            try:
+                target_url, h = await _mod_target_async(url, h, owner)
+            except HTTPException as e:
+                _err = {"error": e.detail, "text": e.detail, "status": e.status_code}
+                yield f"event: error\ndata: {json.dumps(_err)}\n\n"
+                return
 
     # Short connect timeout: a reachable peer answers SYN in <100ms even on
     # Tailscale. 3s is plenty; 30s let one dead upstream wedge the UI.
@@ -1897,12 +1847,6 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
         return
     note_model_activity(target_url, model)
-
-    # ── Sign in with ChatGPT (plan usage) Responses streaming ──
-    if provider == "chatgpt-plan":
-        async for _chunk in _stream_chatgpt_plan(target_url, payload, h, stream_timeout):
-            yield _chunk
-        return
 
     # ── ChatGPT Subscription / Codex Responses streaming ──
     if provider == "chatgpt-subscription":

@@ -56,7 +56,7 @@ def test_legacy_keys_are_built_in_page_keys_today():
     from src import tool_pages
     keys = {p["key"] for p in tool_pages.PAGES}
     moved = {p["key"] for p in tool_pages.MOVED}
-    assert moved == {"print", "devops"}
+    assert moved == {"print", "adsb", "terminal", "claude-sessions", "devops"}
     assert not keys & moved
     shell = _read("static", "js", "workspace", "shell.js")
     for key in placement.LEGACY_PAGES:
@@ -84,10 +84,23 @@ def test_parse_hash():
       L.parseHash('#mod/print-hub/printer?path=javascript:alert(1)'),
       L.parseHash('#toString'), L.parseHash('#__proto__'),
     ];""")
+    more = js("""return [
+      L.parseHash('#claude-sessions?project=-home-jaron-x&id=7238cfa3-1111-4222-8333-444455556666'),
+      L.parseHash('#claude-sessions/-home-jaron-x/7238cfa3'),
+      L.parseHash('#games?play=<script>'),
+      L.parseHash('#nope?x=1'),
+    ];""")
+    assert more[0] == {"kind": "legacy", "key": "claude-sessions",
+                       "query": "project=-home-jaron-x&id=7238cfa3-1111-4222-8333-444455556666"}
+    # A link from before the page moved opens the tab; a query it can't
+    # pass on safely is dropped.
+    assert more[1] == {"kind": "legacy", "key": "claude-sessions"}
+    assert more[2] == {"kind": "legacy", "key": "games"} and more[3] is None
     assert got[0] == {"kind": "mod", "mod": "print-hub", "tab": "printer", "path": None}
     assert got[1] == {"kind": "mod", "mod": "print-hub", "tab": "printer", "path": "/jobs/42?x=1"}
     assert got[2] == {"kind": "mod", "mod": "print-hub", "tab": None, "path": None}
-    assert got[3] == {"kind": "legacy", "key": "adsb"} and got[4] == {"kind": "legacy", "key": "games"}
+    assert got[3] == {"kind": "legacy", "key": "adsb"}
+    assert got[4] == {"kind": "legacy", "key": "games", "query": "play=elden"}
     assert got[5:] == [None] * (len(got) - 5)
 
 
@@ -235,7 +248,7 @@ def test_notifications_may_link_into_a_mod_tab():
 def test_mod_links_load_before_the_built_in_pages():
     html = _read("static", "index.html")
     order = [m.group(1) for m in re.finditer(r'<script type="module" src="/static/js/([^"?]+)', html)]
-    first_page = min(order.index(p) for p in ("adsbPanel.js", "gamesPanel.js",
+    first_page = min(order.index(p) for p in ("gamesPanel.js",
                                               "company.js", "sessions.js"))
     assert order.index("modLinks.js") < first_page
 

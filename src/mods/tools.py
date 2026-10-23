@@ -76,7 +76,7 @@ def _clean_schema(raw: Any) -> Optional[Dict[str, Any]]:
     kws = [str(k).strip().lower() for k in (x.get("keywords") or []) if isinstance(k, str) and k.strip()][:16]
     return {"name": name, "description": str(fn.get("description") or "")[:1000], "parameters": params,
             "keywords": kws, "controls_devices": bool(x.get("controls_devices")),
-            "read_only": bool(x.get("read_only"))}
+            "read_only": bool(x.get("read_only")), "asks_first": bool(x.get("asks_first"))}
 
 
 def parse_tool_list(payload: Any) -> List[Dict[str, Any]]:
@@ -143,10 +143,8 @@ def generation() -> int:
 
 
 def _user_allowed(entry: Dict[str, Any], owner: Optional[str]) -> bool:
-    if entry.get("access") == "users":
-        return True
     from src.mods import access
-    return access.is_admin_name(owner)
+    return access.may_use(entry, owner)
 
 
 def enabled_tools(owner: Optional[str] = None) -> Iterable[Tuple[Dict[str, Any], Dict[str, Any]]]:
@@ -219,7 +217,9 @@ def prompt_lines(names: Iterable[str], owner: Optional[str] = None) -> str:
 
 
 def _needs_approval(entry: Dict[str, Any], t: Dict[str, Any]) -> bool:
-    if t.get("controls_devices"):
+    # `asks_first`: the mod wants the user's Approve for this tool (a write to
+    # an account, say). It only adds a check, so it needs no permission.
+    if t.get("controls_devices") or t.get("asks_first"):
         return True
     return "devices.control" in (entry.get("granted_permissions") or []) and not t.get("read_only")
 
@@ -259,9 +259,10 @@ async def execute(tool: str, content: str, owner: Optional[str], session_id: Opt
                         (str(k), json.dumps(v) if not isinstance(v, str) else v) for k, v in list(args.items())[:10]],
                     "body": json.dumps(args, indent=1)[:4000], "body_label": "Arguments"}
             e = AA.create(owner, session_id or "", tool, content, info, source="chat")
+            why = "controls a device" if t.get("controls_devices") else "changes something for the user"
             return f"{tool}: waiting for approval", {
                 "action_approval": {"id": e["id"], "title": e["title"], "status": e["status"]},
-                "output": (f"Not run yet: \"{e['title']}\" controls a device, so it needs the user's approval "
+                "output": (f"Not run yet: \"{e['title']}\" {why}, so it needs the user's approval "
                            f"first (approval id {e['id']}). It is shown in the chat with Approve and Deny. Your "
                            "turn ends here: do not call it again or try another way, and do not say it is done. "
                            "If they approve, it runs exactly as you asked and you get its result."),

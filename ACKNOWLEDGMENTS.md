@@ -65,7 +65,6 @@ Vendored in `static/lib/` and served directly:
 | [jsPDF](https://github.com/parallax/jsPDF) (bundled in html2pdf) | PDF generation | MIT |
 | [html2canvas](https://github.com/niklasvh/html2canvas) (bundled in html2pdf) | DOM → canvas rasterization | MIT |
 | [node-qrcode](https://github.com/soldair/node-qrcode) (`qrcode.min.js`) | QR-code rendering (2FA setup) | MIT |
-| [xterm.js](https://github.com/xtermjs/xterm.js) v6.0.0 with addon-fit 0.11.0 and addon-web-links 0.12.0 (`lib/xterm/`, licenses beside them) | The Terminal | MIT |
 | [KaTeX](https://github.com/KaTeX/KaTeX) 0.16.22 (`lib/katex/`) | Math typesetting, works offline | MIT, [full text](licenses/KaTeX-MIT-LICENSE.txt) |
 | [Mermaid](https://github.com/mermaid-js/mermaid) 11 (`lib/mermaid.min.js`) | Diagrams from text, works offline | MIT, [full text](licenses/Mermaid-MIT-LICENSE.txt) |
 

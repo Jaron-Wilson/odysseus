@@ -558,7 +558,7 @@ def _safe_build_headers(api_key: Optional[str], base_url: str) -> dict:
 
 
 def _is_discovery_only_provider(provider: str) -> bool:
-    return provider in ("chatgpt-subscription", "chatgpt-plan")
+    return provider == "chatgpt-subscription"
 
 
 def _resolve_probe_key(ep) -> Optional[str]:
@@ -575,7 +575,8 @@ def _resolve_probe_key(ep) -> Optional[str]:
 def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 10, with_tools: bool = False) -> dict:
     """Send a realistic completion request to a single model. Returns {status, latency_ms, error?}."""
     provider = _safe_detect_provider(base)
-    if _is_discovery_only_provider(provider):
+    from src.mods.llm_endpoints import is_mod_url
+    if _is_discovery_only_provider(provider) or is_mod_url(base):
         return {"status": "ok", "latency_ms": 0, "skipped": True}
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
@@ -696,13 +697,15 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             return fetch_available_models(api_key, timeout=timeout)
         return []
-    if provider == "chatgpt-plan":
-        from src.chatgpt_plan import ChatGPTPlanError, fetch_models as _plan_models
-        if not api_key:
-            return []
+    from src.mods import llm_endpoints as _mod_eps
+    if _mod_eps.is_mod_url(base):
+        # An add-on's models: ask the add-on (none when it is missing or off).
         try:
-            return [m["slug"] for m in _plan_models(api_key, timeout=max(timeout, 5))]
-        except ChatGPTPlanError:
+            url, headers = _mod_eps.resolve(base.rstrip("/") + "/models")
+            r = httpx.get(url, headers=headers, timeout=max(timeout, 5))
+            r.raise_for_status()
+            return [m.get("id") for m in (r.json().get("data") or []) if isinstance(m, dict) and m.get("id")]
+        except Exception:
             return []
     if provider == "anthropic":
         # Try Anthropic's /v1/models endpoint first

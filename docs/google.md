@@ -1,11 +1,14 @@
-# Google products in Odysseus
+# Google in Odysseus
 
-Odysseus can use your Google account for Calendar (your Google calendars in Organize >
-Calendar, and making Meet meetings), Drive, Docs, Sheets, Slides, Tasks and Contacts. All of them share **one Google connection per Odysseus user**, made
-with the same OAuth client as Sign in with Google and Google Meet. You turn each product on
-separately in **Settings > Google**; Odysseus asks Google for a product's permission when you
-connect it (incremental authorization), and the product's chat tools only appear while it is
-connected.
+The core uses your Google account for **Google Calendar** (your Google calendars in Organize >
+Calendar, and making Meet meetings), through **one Google connection per Odysseus user**, made
+with the same OAuth client as Sign in with Google. You connect it in **Settings > Google**.
+
+**Drive, Docs, Sheets, Slides, Tasks and Contacts are the Google add-on** (mod `google`,
+`Jaron-Wilson/odysseus-google`; Settings > Mods > Browse, search "google"). It has its own Google
+connection, its own chat tools and asks before each of its writes; its README has its setup,
+including the redirect URI to add for it and how to carry an existing connection over. Without
+the add-on, Settings > Google shows an **Install the Google add-on** card for them.
 
 Gmail is not here on purpose: mail already works through the Email integration (IMAP/SMTP,
 Settings > Email), which covers Gmail with an app password.
@@ -16,22 +19,15 @@ Use the Google Cloud project that already holds Odysseus's OAuth client (the one
 ID is in Settings > Google, or `GOOGLE_OAUTH_CLIENT_ID`). If there is no client yet, the setup
 box on the Google account card walks through making one: a **Web application** client whose
 authorized redirect URI is exactly the one the card shows, ending in
-`/api/auth/google/callback` (for this server, the Tailscale Serve URL, for example
-`https://jaron-dev-server.tail90b62a.ts.net/api/auth/google/callback`).
+`/api/auth/google/callback` (on the address you open Odysseus at, for example
+`https://odysseus.example.ts.net/api/auth/google/callback`).
 
-1. **Enable the APIs.** Console > APIs & Services > Library. Search for and Enable each API for
-   the products you want:
+1. **Enable the APIs.** Console > APIs & Services > Library. Search for and Enable:
    - Google Calendar API (Calendar / Meet; probably already on)
    - Google Meet REST API (optional, lets new meetings open to guests)
-   - Google Drive API
-   - Google Docs API
-   - Google Sheets API
-   - Google Slides API
-   - Google Tasks API
-   - People API (Contacts)
+   (The Google add-on's README lists the APIs for Drive, Docs, Sheets, Slides, Tasks and Contacts.)
 2. **Add the scopes to the consent screen.** Console > Google Auth Platform (or APIs & Services
-   > OAuth consent screen) > Data Access > Add or remove scopes. Paste these (add the ones for the
-   products you will use):
+   > OAuth consent screen) > Data Access > Add or remove scopes. Paste these:
 
    | Product | Scope | Google's class |
    | --- | --- | --- |
@@ -39,13 +35,6 @@ authorized redirect URI is exactly the one the card shows, ending in
    | Calendar | `https://www.googleapis.com/auth/calendar.events` | sensitive |
    | Calendar (optional) | `https://www.googleapis.com/auth/calendar.calendarlist.readonly` (lists your calendars for Organize > Calendar) | sensitive |
    | Calendar (optional) | `https://www.googleapis.com/auth/meetings.space.settings` | sensitive |
-   | Drive | `https://www.googleapis.com/auth/drive.file` | non-sensitive |
-   | Read all my Drive files | `https://www.googleapis.com/auth/drive.readonly` | restricted |
-   | Docs | `https://www.googleapis.com/auth/documents` | sensitive |
-   | Sheets | `https://www.googleapis.com/auth/spreadsheets` | sensitive |
-   | Slides | `https://www.googleapis.com/auth/presentations` | sensitive |
-   | Tasks | `https://www.googleapis.com/auth/tasks` | sensitive |
-   | Contacts | `https://www.googleapis.com/auth/contacts.readonly` | sensitive |
 
    Save.
 3. **Testing or In production.** Console > Google Auth Platform > Audience.
@@ -54,11 +43,9 @@ authorized redirect URI is exactly the one the card shows, ending in
    - **In production** without verification is fine for your own account: Google shows an
      "unverified app" screen once (Advanced > Go to ... (unsafe)) and limits the app to 100
      users. Sensitive and restricted scopes work this way for personal use.
-4. **Reconnect in Odysseus.** Settings > Google > press **Connect** on each product card. Google's
-   page lists that product's permission together with the ones of every product already on;
-   **keep every box ticked** (see below). The card turns **Connected** when you come back to the
-   Odysseus tab. Your existing Google Calendar / Meet
-   connection carries over: it shows up as Google Calendar, Connected.
+4. **Connect in Odysseus.** Settings > Google > press **Connect** on the Google Calendar card.
+   **Keep every box ticked** on Google's page (see below). The card turns **Connected** when you
+   come back to the Odysseus tab.
 
 Nothing else changes: the same client ID, client secret and redirect URI are used.
 
@@ -134,48 +121,11 @@ If Google cannot be asked right after a connect, Odysseus keeps the permissions 
 account had before plus the new ones, and checks them the next time Settings > Google loads. It
 never carries permissions over from a different Google account.
 
-## Drive: narrow access or read everything
-
-- **Google Drive** (`drive.file`) lets Odysseus create and upload files and folders, and open
-  the files it made or that you opened with it. It cannot see the rest of your Drive, so
-  search only finds those files.
-- **Read all my Drive files** (`drive.readonly`, a sub-option on the Drive card) lets it search
-  and read every file in your Drive. It is read only: it still cannot change or delete files it
-  did not make. Google classes this as restricted, hence the unverified-app warning.
-
-Docs, Sheets and Slides have their own scopes, which let Odysseus read and edit any Doc, Sheet
-or deck you point it at by link or ID, even with Drive's narrow access.
-
 ## What the agent can do
 
-Each tool exists only while its product is connected (`google_status` is always there and says
-what is connected).
-
-| Tool | Product | Does | Changes things |
-| --- | --- | --- | --- |
-| `google_status` | | what is connected, how to connect the rest | no |
-| `google_drive_search` | Drive | search or list files (name/text, kind, folder), newest first | no |
-| `google_drive_read` | Drive | details plus content as text: Docs as Markdown, Sheets as CSV, Slides as text, PDF/Word/Excel/PowerPoint extracted | no |
-| `google_drive_upload` | Drive | upload text or a server file (admins only for files), optionally converted to a Doc or Sheet | yes |
-| `google_drive_create_folder` | Drive | make a folder | yes |
-| `google_doc_read` | Docs | a Doc as Markdown-ish text (headings, bullets, tables) | no |
-| `google_doc_create` | Docs | a new Doc; `# ` headings, `- ` bullets, `1. ` lists and `**bold**` become Docs formatting | yes |
-| `google_doc_edit` | Docs | append, insert, or replace text everywhere | yes |
-| `google_sheet_read` | Sheets | tabs, or a range (A1 notation) | no |
-| `google_sheet_write` | Sheets | write rows at a range; formulas work | yes |
-| `google_sheet_append` | Sheets | add rows after the table | yes |
-| `google_sheet_create` | Sheets | a new spreadsheet with tabs and starting rows | yes |
-| `google_slides_read` | Slides | a deck's text slide by slide, with speaker notes | no |
-| `google_slides_create` | Slides | a deck from an outline: title slide plus title-and-bullets slides | yes |
-| `google_tasks_list` | Tasks | task lists, or the tasks in one | no |
-| `google_task_create` | Tasks | add a task with notes and a due date | yes |
-| `google_contacts_search` | Contacts | look someone up by name, email or phone | no |
-| `google_meet` | Calendar | make or join a Meet (see docs/google-meet.md) | yes |
-
-Long results are cut down (12,000 characters by default, 100 rows for sheets) with a note
-saying which `offset` or `range` reads on. After a create or edit, the chat reply always gets a
-link to the file. In plan mode the read tools stay available and the ones that change things are
-blocked.
+`google_meet` (with Google Calendar connected) makes or joins a Meet (see docs/google-meet.md),
+and `manage_calendar` works on the Google calendars you linked in Organize > Calendar. The
+Google add-on adds the Drive, Docs, Sheets, Slides, Tasks and Contacts tools.
 
 ## Ask before writing to my Google account (and Gmail)
 
@@ -190,7 +140,7 @@ What asks first:
 
 | Where | Asks before | Never asks |
 | --- | --- | --- |
-| Drive, Docs, Sheets, Slides, Tasks | every tool in the table above marked "Changes things": `google_drive_upload`, `google_drive_create_folder`, `google_doc_create`, `google_doc_edit`, `google_sheet_write`, `google_sheet_append`, `google_sheet_create`, `google_slides_create`, `google_task_create` | `google_status` and every `*_read`, `*_search`, `*_list` tool |
+| Drive, Docs, Sheets, Slides, Tasks | the Google add-on's own: its writing tools are marked `asks_first`, so the same chat card holds them (its settings have the switch) | its reads |
 | Google Meet | `google_meet` start, now, create, schedule (each makes a Calendar event and a Meet space, and may email invites) | join, status |
 | Google Calendar | `manage_calendar` create_event, update_event, delete_event, or a batch of events, on a Google calendar linked through this connection (Organize > Calendar), or on a CalDAV calendar whose account URL is Google's (`apidata.googleusercontent.com`, `google.com/calendar/dav`) | list_events, list_calendars; local calendars and other CalDAV servers (Fastmail, iCloud, Nextcloud...); your own create/edit/delete on the Calendar page |
 | Gmail | `send_email`, `reply_to_email`, `archive_email`, `delete_email`, `mark_email_read`, `bulk_email` on a mailbox whose IMAP or SMTP server is Google's (`imap.gmail.com`, `smtp.gmail.com`, so Google Workspace mail counts) or whose address is `@gmail.com` | list, read and search email; drafts (`draft_email`, `draft_email_reply`, `ai_draft_email_reply` save a draft in Odysseus, not in Gmail); other mailboxes |
@@ -249,12 +199,11 @@ expired) is logged with the time, chat, tool, target and outcome in
   the whole grant at Google and deletes the stored token. You can also remove Odysseus at
   [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 - Connecting a different Google account replaces the old one and revokes its token.
-- Scopes are the narrowest that do the job: Drive starts at `drive.file`, Contacts is read
-  only, and nothing asks for Gmail or full Drive write access.
+- Scopes are the narrowest that do the job, and nothing asks for Gmail.
 
 ## Troubleshooting
 
-- **"The Google Docs API is not enabled in the Google Cloud project"**: enable it (step 1),
+- **"The Google Calendar API is not enabled in the Google Cloud project"**: enable it (step 1),
   wait a minute, try again.
 - **"Google did not accept the saved access"**: the scope is missing from the grant. Press
   Connect on the card again.
@@ -267,7 +216,6 @@ expired) is logged with the time, chat, tool, target and outcome in
 - **The Calendar page says Google is not connected or no longer gives access**: open Settings >
   Google and connect Google Calendar again. If it was disconnected at
   myaccount.google.com/permissions, Odysseus forgot the saved connection on the next sync.
-- **Search finds nothing in Drive**: Drive is on narrow access. Turn on Read all my Drive files.
 - **"Google did not send a refresh token"**: remove Odysseus at
   myaccount.google.com/permissions, then connect again.
 - **Redirect URI mismatch**: the URI in the Google console must match the one on the card
@@ -275,10 +223,10 @@ expired) is logged with the time, chat, tool, target and outcome in
 
 ## For developers
 
-Code: `src/google_workspace/` (connection, products and scopes, one module per API, the tools),
-routes in `routes/google_routes.py`, the card in `static/js/googleSettings.js`, tests in
-`tests/test_google_workspace.py`. The OAuth client and callback are shared in
-`src/google_oauth.py`.
+Code: `src/google_workspace/` (the connection, and the products the core uses with their
+scopes), routes in `routes/google_routes.py`, the card in `static/js/googleSettings.js`. The
+OAuth client and callback are shared in `src/google_oauth.py`. Disconnecting does not revoke the
+grant at Google while the Google add-on is installed, since the add-on may hold a copy of it.
 
 Google Calendar on the Calendar page: `src/google_calendar_sync.py` (calendar list, picking
 calendars, events.list with sync tokens, writes, the problem notice), wired into
@@ -291,9 +239,8 @@ Ask before writing: `src/google_write_gate.py` decides what is a Google write an
 (`intercept` is called from `execute_tool_block` in `src/tool_execution.py`, so every caller
 goes through it); `src/action_approvals.py` holds the pinned call, runs it once when approved
 and writes the log; routes in `routes/action_approvals_routes.py`; the chat card in
-`static/js/actionApprovalCard.js`; tests in `tests/test_google_write_approval.py`. A new tool
-that writes to Google needs a line in `google_write_gate.classify` (Workspace tools marked
-`mutates` in `products.py` are picked up automatically).
+`static/js/actionApprovalCard.js`; tests in `tests/test_google_write_approval.py`. A new core tool
+that writes to Google needs a line in `google_write_gate.classify`.
 
 For tests and local UI checks only, `ODYSSEUS_GOOGLE_API_BASE=http://127.0.0.1:PORT` sends
 every Google call (consent page, token endpoint, APIs) to a fake at

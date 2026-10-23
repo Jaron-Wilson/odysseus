@@ -40,8 +40,8 @@ _TAXONOMY = json.loads(re.search(r"/\*\s*tool-pages:begin\s*\*/(.*?)/\*\s*tool-p
 
 _TOOL_IDS = ["tool-memory-btn", "tool-calendar-btn", "tool-compare-btn", "tool-cookbook-btn", "tool-research-btn",
              "tool-gallery-btn", "tool-library-btn", "tool-notes-btn", "tool-plans-btn", "tool-tasks-btn", "tool-bg-btn", "tool-company-btn",
-             "tool-code-btn", "tool-browser-btn", "tool-devices-btn", "tool-terminal-btn",
-             "tool-claude-sessions-btn", "tool-adsb-btn", "tool-games-btn",
+             "tool-code-btn", "tool-browser-btn", "tool-devices-btn",
+             "tool-games-btn",
              "tool-odysseus-dev-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]
 
 
@@ -223,9 +223,9 @@ def test_the_groups_render_in_every_design(make_page, design):
     assert [g["items"] for g in gs] == [
         ["tool-calendar-btn", "tool-tasks-btn", "tool-notes-btn", "tool-plans-btn", "tool-memory-btn"],
         ["tool-library-btn", "tool-gallery-btn", "tool-research-btn", "tool-compare-btn"],
-        ["tool-code-btn", "tool-terminal-btn", "tool-browser-btn", "tool-bg-btn", "tool-company-btn", "tool-claude-sessions-btn",
+        ["tool-code-btn", "tool-browser-btn", "tool-bg-btn", "tool-company-btn",
          "tool-odysseus-dev-btn"],
-        ["tool-devices-btn", "tool-adsb-btn", "tool-games-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]]
+        ["tool-devices-btn", "tool-games-btn", "tool-cookbook-btn", "tool-theme-btn", "tool-usage-btn", "tool-whats-new-btn"]]
     assert all(not g["folded"] and g["expanded"] == "true" and g["shown"] == g["items"] for g in gs)
     # Headers are on screen, in order, each above its own rows.
     tops = pg.evaluate("""() => [...document.querySelectorAll('.tool-group')].map(g => {
@@ -235,8 +235,8 @@ def test_the_groups_render_in_every_design(make_page, design):
     assert all(h >= 20 and ht < ft for h, ht, ft in tops)
     assert [t[1] for t in tops] == sorted(t[1] for t in tops)
     # The rows still open their tools.
-    pg.click("#tool-terminal-btn")
-    assert "tool-terminal-btn" in pg.evaluate("calls")
+    pg.click("#tool-code-btn")
+    assert "tool-code-btn" in pg.evaluate("calls")
 
 
 def test_a_group_folds_says_whats_inside_and_stays_folded(make_page, browser):
@@ -244,7 +244,7 @@ def test_a_group_folds_says_whats_inside_and_stays_folded(make_page, browser):
     pg.click('.tool-group[data-tool-group="system"] .tool-group-head')
     g = {x["id"]: x for x in _groups(pg)}["system"]
     assert g["folded"] and g["expanded"] == "false" and g["shown"] == []
-    assert g["summary"] == "Devices, ADS-B receiver, Games, Cookbook, Theme, Usage, What's new"
+    assert g["summary"] == "Devices, Games, Cookbook, Theme, Usage, What's new"
     assert pg.is_visible('.tool-group[data-tool-group="system"] .tool-group-summary')
     assert json.loads(pg.evaluate("localStorage.getItem('odysseus-tool-groups')")) == {"system": "closed"}
     pg.reload()
@@ -295,7 +295,7 @@ def test_admin_status_arriving_late_still_applies(make_page):
     pg.evaluate("() => { window._isAdmin = false; document.dispatchEvent(new CustomEvent('odysseus:auth', { detail: {} })); }")
     pg.wait_for_timeout(100)
     g = {x["id"]: x for x in _groups(pg)}
-    assert "tool-terminal-btn" not in g["build"]["items"] and g["build"]["folded"]
+    assert "tool-code-btn" not in g["build"]["items"] and g["build"]["folded"]
 
 
 def test_narrow_screens_get_the_groups_with_bigger_headers(make_page):
@@ -317,8 +317,8 @@ def test_the_new_tab_menu_lists_the_tools_in_the_same_groups(make_page):
     assert menu["groups"] == [
         ["Organize", ["Calendar", "Tasks", "Notes", "Plans", "Brain"]],
         ["Create & research", ["Library", "Gallery", "Deep Research", "Compare"]],
-        ["Build", ["Code", "Terminal", "Browser", "Background", "Company", "Claude sessions", "Odysseus dev"]],
-        ["System", ["Devices", "ADS-B receiver", "Games", "Cookbook", "Theme", "Usage", "What's new"]]]
+        ["Build", ["Code", "Browser", "Background", "Company", "Odysseus dev"]],
+        ["System", ["Devices", "Games", "Cookbook", "Theme", "Usage", "What's new"]]]
     pg.click(".ws-menu-group button:has-text('Devices')")
     pg.wait_for_function("() => [...document.querySelectorAll('.ws-tab')].some(t => t.dataset.tab === 'tool:devices')")
     assert "tool-devices-btn" in pg.evaluate("calls")
@@ -328,7 +328,7 @@ def test_the_new_tab_menu_leaves_out_what_a_non_admin_cant_open(make_page):
     pg = make_page("workspace", admin=False)
     pg.click(".ws-new-btn")
     names = pg.evaluate("[...document.querySelectorAll('.ws-menu button')].map(b => b.textContent.trim())")
-    for gone in ("Code", "Terminal", "DevOps", "Odysseus dev", "Devices", "ADS-B receiver", "Games"):
+    for gone in ("Code", "DevOps", "Odysseus dev", "Devices", "ADS-B receiver", "Games"):
         assert gone not in names
     assert "Browser" in names and "Calendar" in names
 
@@ -381,18 +381,18 @@ def test_words_alone_go_to_the_page_and_settings_words_to_settings(make_page):
 def test_ctrl_k_lists_pages_above_settings_and_enter_opens_it(make_page):
     pg = make_page("classic")
     pg.evaluate("window.__search.openSearch()")
-    pg.fill("#search-input", "terminal")
+    pg.fill("#search-input", "calendar")
     pg.wait_for_timeout(150)
     rows = pg.evaluate("[...document.querySelectorAll('#search-results .search-group-header, #search-results .search-result-item')].map(e => e.textContent.replace(/\\s+/g, ' ').trim())")
-    assert rows[0] == "Pages" and rows[1] == "Open Terminal page"
+    assert rows[0] == "Pages" and rows[1] == "Open Calendar page"
     pg.press("#search-input", "Enter")
-    pg.wait_for_function("() => calls.includes('tool-terminal-btn')")
+    pg.wait_for_function("() => calls.includes('tool-calendar-btn')")
 
 
 @pytest.mark.parametrize("panel,clicked", [
-    ("devices", "tool-devices-btn"), ("terminal", "tool-terminal-btn"), ("code", "tool-code-btn"),
+    ("devices", "tool-devices-btn"), ("code", "tool-code-btn"),
     ("browser", "tool-browser-btn"), ("background", "tool-bg-btn"),
-    ("claude sessions", "tool-claude-sessions-btn"), ("company", "tool-company-btn"), ("org chart", "tool-company-btn"),
+    ("company", "tool-company-btn"), ("org chart", "tool-company-btn"),
     ("usage", "tool-usage-btn"), ("cost", "tool-usage-btn"),
     ("odysseus-dev", "tool-odysseus-dev-btn"), ("calendar", "tool-calendar-btn"), ("tasks", "tool-tasks-btn"),
     ("compare", "tool-compare-btn"), ("research", "tool-research-btn"), ("theme", "tool-theme-btn"),
@@ -407,11 +407,15 @@ def test_the_agents_open_panel_opens_any_page(make_page, panel, clicked):
 
 
 @pytest.mark.parametrize("panel, key", [("print", "print"), ("3d print", "print"), ("print helper", "print"),
+                                        ("adsb", "adsb"), ("ads-b receiver", "adsb"), ("tar1090", "adsb"),
+                                        ("terminal", "terminal"), ("command line", "terminal"),
+                                        ("claude sessions", "claude-sessions"),
                                         ("devops", "devops"), ("tokens per second", "devops")])
 def test_open_panel_for_a_page_that_moved_to_a_mod_shows_the_moved_card(make_page, panel, key):
-    # The 3D print helper is now the Print Hub mod, DevOps the DevOps mod. With no
-    # mod that `replaces` the key, "take me to 3D print" opens the "now a mod" card
-    # (modLinks.openLegacy), never nothing.
+    # The 3D print helper is now the Print Hub mod, the ADS-B receiver the
+    # ADS-B Receiver mod, the Terminal and Claude sessions the Programming mod,
+    # DevOps the DevOps mod. With no mod that `replaces` the key, "take me to
+    # 3D print" opens the "now a mod" card (modLinks.openLegacy), never nothing.
     pg = make_page("classic")
     pg.evaluate(f"""() => import('/static/js/chatStream.js').then(m =>
         m.handleUIControl({{ ui_event: 'open_panel', panel: {json.dumps(panel)} }}))""")
