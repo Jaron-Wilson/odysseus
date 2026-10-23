@@ -638,10 +638,15 @@ html.ui-workspace .ws-grid.ready:not(.ws-settled) > .ws-card:nth-child(5) { anim
    Geometrically it is a docked page (.ws-docked, data-ws-pane), like the
    tool pages; the pane's own page hides its sidebar (ody-pane,
    chatThreadTabs.css), so the header is its one way to pick a chat. */
-html.ui-workspace .chat-pane-page {
+/* The :is(.ws-docked, #ws-boost) matches the docked-page rule's specificity
+   (it counts an id): without it that rule's display:block won, the header and
+   iframe stacked as blocks, and the iframe kept its default 150px height, so
+   the pane showed a cut-off chat with no composer at the bottom. */
+html.ui-workspace .chat-pane-page.ws-docked:is(.ws-docked, #ws-boost) {
   display: flex !important; flex-direction: column !important;
   background: var(--bg) !important;
 }
+html.ui-workspace .chat-pane-page.ws-docked[hidden]:is(.ws-docked, #ws-boost) { display: none !important; }
 html.ui-workspace .chat-pane-page .cp-head {
   flex: none; display: flex; align-items: center; gap: 6px; box-sizing: border-box;
   min-height: 48px; padding: 0 10px 0 16px;
