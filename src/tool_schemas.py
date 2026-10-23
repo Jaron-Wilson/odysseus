@@ -1039,27 +1039,6 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "call_me",
-            "description": (
-                "Phone the user and talk with them out loud. Rings the softphone registered on their "
-                "free SIP line (over Tailscale) when there is one, otherwise their first allowed number "
-                "through Twilio. The call opens with `message`, then it is a normal voice call in its own "
-                "chat. Use when they ask you to call or ring them, now or when something finishes. If it "
-                "cannot call, say the reason the tool gives."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string", "description": "What to say first when they answer, short and spoken, e.g. 'Your build finished: all tests pass.'"},
-                    "via": {"type": "string", "enum": ["auto", "sip", "phone"], "description": "auto (default): the SIP line if a softphone is registered, else the phone number."},
-                },
-                "required": ["message"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "notify_device",
             "description": (
                 "Send a notification, or a command, to one of the user's own devices "
@@ -1085,40 +1064,6 @@ FUNCTION_TOOL_SCHEMAS = [
                     "command_arg": {"type": "string", "description": "Argument for the command, e.g. the app package name"},
                 },
                 "required": ["message"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "google_meet",
-            "description": (
-                "The way to join or make a Google Meet. 'join' initiates joining: by phone "
-                "(dial-in number and PIN from the invite) when available, or through the cloud browser as a "
-                "fallback. Phone is the default and most reliable way. IMPORTANT: 'join' only initiates "
-                "the connection; you have NOT joined yet. NEVER falsely claim you have joined. If the meeting has no dial-in "
-                "(free personal Meet links usually do not), tell the user their options: admit Odysseus (AI) "
-                "from the lobby in their own browser, or share the dial-in number and PIN. 'start' makes a "
-                "meeting now from the user's Google account (Google Calendar connected in Settings > Calls & "
-                "Meetings > Google Meet), invites attendees and joins it; 'schedule' puts one in their "
-                "calendar for later; 'status' says what is set up. Give the user the link."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "enum": ["start", "schedule", "join", "status"],
-                               "description": "'start' (now), 'schedule' (later), 'join' a link, or 'status'."},
-                    "title": {"type": "string", "description": "The meeting's title."},
-                    "start": {"type": "string", "description": "For schedule: when, like 'tomorrow at 3pm' or an ISO time."},
-                    "minutes": {"type": "integer", "description": "How long, in minutes (default 60)."},
-                    "attendees": {"type": "array", "items": {"type": "string"},
-                                  "description": "Email addresses to invite. Google sends the invites."},
-                    "url": {"type": "string", "description": "For join: the Meet link."},
-                    "dial_in": {"type": "string", "description": "For join by phone: the US dial-in number from the invite."},
-                    "pin": {"type": "string", "description": "For join by phone: the meeting PIN from the invite."},
-                    "join": {"type": "boolean", "description": "For start: whether the agent joins (default true)."},
-                },
-                "required": []
             }
         }
     },
@@ -1474,19 +1419,9 @@ FUNCTION_TOOL_SCHEMAS = [
 from src.company_tools import SCHEMAS as _COMPANY_SCHEMAS  # noqa: E402
 FUNCTION_TOOL_SCHEMAS.extend(_COMPANY_SCHEMAS)
 
-
-# Google products: Drive, Docs, Sheets, Slides, Tasks, Contacts
-# (src/google_workspace/products.py). Hidden per turn when the product is off.
-from src.google_workspace import products as _google_products  # noqa: E402
-FUNCTION_TOOL_SCHEMAS.extend(_google_products.function_schemas())
-
 # The user's Company from a chat, acting as the user (src/agent_tools/company_chat_tools.py).
 from src.agent_tools.company_chat_tools import SCHEMAS as _COMPANY_CHAT_SCHEMAS  # noqa: E402
 FUNCTION_TOOL_SCHEMAS.extend(_COMPANY_CHAT_SCHEMAS)
-
-# Game streaming from the PC (src/agent_tools/game_tools.py).
-from src.agent_tools.game_tools import SCHEMAS as _GAME_SCHEMAS  # noqa: E402
-FUNCTION_TOOL_SCHEMAS.extend(_GAME_SCHEMAS)
 
 
 # ---------------------------------------------------------------------------

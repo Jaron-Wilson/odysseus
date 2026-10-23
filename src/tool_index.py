@@ -154,12 +154,10 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "app_api": "Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
     "edit_image": "Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.",
     "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
-    "google_meet": "The way to join or make a Google Meet. Join a meeting by phone (preferred, with dial-in number and PIN from the invite) or through the cloud browser; calling join initiates the connection (it has not joined yet — never claim joined); start one now from the user's own Google account; schedule one with invites Google sends; or check what is set up. It never needs the user's desktop, Chrome or screen tools. Returns the meeting link.",
     "whats_new": "The pull requests merged into Odysseus (this app) and what each changed, newest first: list (with an optional query) or get one by number, with its description, files and whether the running server has it yet. Use for 'what changed with the voice call', 'what's new', 'what did PR 127 do', 'changelog', 'release notes', 'is that fix deployed'.",
     "chat_memory": "This chat's 'Needs to know' list, like memory but per chat, shown to you on every turn. Suggest an item when something worth keeping comes up (the task, a decision, who you are waiting on); the user decides. Add directly when the user says 'remember for this chat' or 'put it in needs to know'. Remove items that are done.",
     "manage_devices": "List, register, control or remove the user's devices (phone, tablet, desktop) and see what each one can be told to do. Use for 'what devices do I have', 'register my phone', 'add a device', or before sending a command so you know the device supports it. To make a device DO something, use action 'control': {\"action\":\"control\",\"name\":\"phone\",\"command\":\"open_app\",\"params\":{\"package\":\"com.bambulab.bambuhandy\"}}. Commands: open_app, open_url, list_apps, install_app, set_timer, set_alarm, speak. Use list_apps first if you do not know the exact package name, rather than guessing one. install_app only opens the store page; the user still has to tap install.",
     "notify_device": "Send a notification or a command to one of the user's own devices (phone, tablet, desktop) as a browser push notification. Use for 'send it to my phone', 'notify me', 'text me when it is done', 'remind me on my phone', 'push this to my phone', or to tell a device to do something it already knows how to do. This only SHOWS a notification. To OPEN a link or an app on a device, use manage_devices action 'control' (open_url / open_app) instead: it acts immediately, with no tap. Pass device to pick which one; omitting it sends to every device.",
-    "call_me": "Phone the user and talk out loud: rings the softphone on their free SIP line (Linphone or Zoiper over Tailscale), else their phone number through Twilio, and opens the call with your message, then listens and answers like a voice call. Use for 'call me', 'ring me', 'phone me when it is done', 'give me a call'. Each call is its own chat. Only the user's own devices and numbers are ever called.",
     "claude_code": "Hand a CODING or SOFTWARE task to the Claude Code agent on this host: writing code, editing code, adding a feature, fixing a bug, refactoring, rebuilding or rebranding a website, building a new project, debugging failing tests, reviewing a codebase, explaining how code works. It reads the project, edits files, runs commands and uses its own subagents, streaming its console live. Use for 'claude code', 'claude agent', 'use claude', 'code this', 'build me', 'fix the bug', 'refactor', 'rebrand the site', 'work on my repo'. Changes only run once the user approves a plan you wrote yourself with propose_plan.",
     "branch_thread": "Branch this chat into a new thread holding the conversation so far, which the user carries on separately. Use for 'branch this out', 'branch off', 'make a branch', 'try another direction in a branch', 'fork this into a thread'.",
     "spawn_subagent": "Hand a task to a subagent: a thread of this chat where the agent works on it in the background with the same tools, posting its report back here when done, while the user keeps chatting. Use for 'subagent this out', 'subagent out', 'have a subagent', 'spin off an agent', 'do it in the background', 'in parallel'.",
@@ -169,9 +167,6 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
 # pulled in by src/agent_loop.py when a message mentions the Company.
 from src.agent_tools.company_chat_tools import TOOL_DESCRIPTIONS as _COMPANY_CHAT_DESCRIPTIONS  # noqa: E402
 BUILTIN_TOOL_DESCRIPTIONS.update(_COMPANY_CHAT_DESCRIPTIONS)
-# Game streaming from the PC (src/agent_tools/game_tools.py).
-from src.agent_tools.game_tools import TOOL_DESCRIPTIONS as _GAME_DESCRIPTIONS  # noqa: E402
-BUILTIN_TOOL_DESCRIPTIONS.update(_GAME_DESCRIPTIONS)
 
 
 class ToolIndex:
@@ -443,31 +438,17 @@ class ToolIndex:
                    "branch the chat", "branch this chat", "make a branch", "new thread",
                    "spin off", "in parallel"}):
             {"branch_thread", "spawn_subagent"},
-        # Being phoned: the call_me tool rings the SIP line or the Twilio number.
-        frozenset({"call me", "ring me", "phone me", "give me a call", "call my phone", "softphone"}):
-            {"call_me"},
         # What changed in Odysseus itself: the merged PRs (src/whats_new.py).
         frozenset({"what's new", "whats new", "what is new", "what changed", "changelog",
                    "release notes", "merged pr", "merged prs", "pull request", "pull requests",
                    "pr #", "deployed yet", "is it live", "new features", "latest changes"}):
             {"whats_new"},
-        # Game streaming from the PC (src/agent_tools/game_tools.py).
-        frozenset({"game", "games", "my games", "steam", "sunshine", "moonlight", "gaming",
-                   "game streaming", "stream a game", "big picture", "gaming pc"}):
-            {"games_list", "game_status", "game_launch", "game_stop", "game_sync_steam"},
         # Shopping means looking things up on the web.
         frozenset({"amazon", "buy", "shop", "shopping", "product", "products",
                    "price", "prices", "order", "deal", "deals"}):
             {"web_search", "web_fetch"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
-            {"manage_calendar", "google_meet"},
-        # Making or joining a Google Meet (src/meet/tool.py).
-        frozenset({"google meet", "a meet", "the meet", "meet link", "meet with", "video call",
-                   "video meeting", "meeting link", "start a meeting", "set up a meeting",
-                   "schedule a meeting", "join the meeting", "join this meeting", "join a meeting",
-                   "meet.google.com", "rejoin", "join again", "joining again", "try joining",
-                   "join the call", "through my browser", "google meet"}):
-            {"google_meet"},
+            {"manage_calendar"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
             {"manage_notes"},
         # Detached background `bash` jobs (#!bg): check on / read output / kill.
@@ -685,9 +666,3 @@ def reset_tool_index() -> None:
     _tool_index = None
     _last_attempt = 0.0
 
-
-# Google products (src/google_workspace/products.py): their descriptions for
-# retrieval and their phrases for the keyword fallback.
-from src.google_workspace import products as _google_products  # noqa: E402
-BUILTIN_TOOL_DESCRIPTIONS.update(_google_products.index_descriptions())
-ToolIndex._KEYWORD_HINTS.update(_google_products.KEYWORD_HINTS)

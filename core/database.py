@@ -1039,14 +1039,32 @@ def _migrate_add_usage_source_scope():
         logging.getLogger(__name__).warning(f"usage_events source_scope migration failed: {e}")
 
 
-def _migrate_chatgpt_plan_native_tools():
-    """Sign in with ChatGPT endpoints first shipped with supports_tools=False;
-    turn native tools on for them once (src/chatgpt_plan.py)."""
+# Sign in with ChatGPT moved to the ChatGPT add-on (Jaron-Wilson/odysseus-chatgpt).
+_OLD_CHATGPT_PLAN_BASE = "https://api.openai.com/v1/chatgpt-plan"
+_CHATGPT_MOD_BASE = "mod://chatgpt/v1"
+
+
+def _migrate_chatgpt_plan_to_mod():
+    """Point the old Sign in with ChatGPT endpoint rows (and the chats on them)
+    at the ChatGPT add-on, keeping their ids, owners and model lists, so
+    pickers, defaults and subscription plans keyed by endpoint id carry over.
+    Without the add-on the rows say "Install the ChatGPT add-on"; its tokens
+    are moved by the add-on's migrate command (its README). Idempotent."""
     try:
-        from src.chatgpt_plan import enable_native_tools_once
-        enable_native_tools_once(SessionLocal)
+        with engine.connect() as conn:
+            n = conn.execute(text(
+                "UPDATE model_endpoints SET base_url = :new, provider_auth_id = NULL, "
+                "supports_tools = COALESCE(supports_tools, 1) WHERE base_url = :old"),
+                {"new": _CHATGPT_MOD_BASE, "old": _OLD_CHATGPT_PLAN_BASE}).rowcount
+            m = conn.execute(text(
+                "UPDATE sessions SET endpoint_url = :new WHERE endpoint_url LIKE :old"),
+                {"new": _CHATGPT_MOD_BASE + "/chat/completions", "old": _OLD_CHATGPT_PLAN_BASE + "%"}).rowcount
+            conn.commit()
+        if n or m:
+            logging.getLogger(__name__).info(
+                f"Migrated: {n} ChatGPT endpoint(s) and {m} chat(s) now use the ChatGPT add-on")
     except Exception as e:
-        logging.getLogger(__name__).warning(f"chatgpt plan native tools migration failed: {e}")
+        logging.getLogger(__name__).warning(f"chatgpt plan -> add-on migration failed: {e}")
 
 
 def _migrate_add_supports_tools_column():
@@ -2127,7 +2145,7 @@ def init_db():
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_provider_auth_id_column()
     _migrate_add_supports_tools_column()
-    _migrate_chatgpt_plan_native_tools()
+    _migrate_chatgpt_plan_to_mod()
     _migrate_add_task_run_model_column()
     _migrate_add_company_agent_pause_reason()
     _migrate_add_usage_source_scope()

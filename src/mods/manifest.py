@@ -66,7 +66,26 @@ PERMISSIONS: Dict[str, str] = {
     "agent.run": ("Run the agent on your models in chats it creates for you, with the core tools it picks "
                   "(this can include the shell, files and the web, with your account's rights)"),
     "budgets": "See what its own model calls and agent runs cost, and set monthly budgets for them",
+    "stats.read": "Read server-wide activity: model speed, coder runs and their transcripts, what is running "
+                  "(only for a mod that only admins may use)",
+    "machines.read": "See the machines on your tailnet: names, addresses, operating system, online or not",
 }
+
+# What a mod needs to reach the agent like a built-in feature (the mod API in
+# src/mods/host_api.py), and webhooks that reach it without a sign-in
+# (src/mods/proxy.py, "Public paths" in docs/mods.md).
+PERMISSIONS.update({
+    "chats": ("Read the names of your chats, start chats, and send messages to the agent in them "
+              "(it answers with its tools and memory, as if you typed them)"),
+    "speech": "Use the server's speech to text and text to speech engines",
+    "browser": ("Drive the cloud browser on the server (it opens its own tabs; the browser's profile "
+                "holds whatever accounts are signed in there)"),
+    "google.calendar": "Make events with a Google Meet link in your Google Calendar, which emails the invites",
+    "calendar.read": "Read your calendar events that have a Google Meet link",
+    "users": "See whether a user is an admin",
+    "public.http": ("Receive requests from anyone who can reach Odysseus, without a sign-in, at "
+                    "/mods/<id>/public/ (webhooks; the mod must check its own secrets)"),
+})
 
 RUNTIME_TYPES = ("process", "docker")
 START_MODES = ("lazy", "boot")
@@ -198,6 +217,14 @@ def validate(raw: Any) -> Dict[str, Any]:
         errors.append("`min_core` must look like 0.1")
     elif not core_satisfies(out["min_core"]):
         errors.append(f"this mod needs mod API {out['min_core']}; this Odysseus has {CORE_API_VERSION}")
+
+    # Only admins may ever use it (a shell on the server, say): the "Who can
+    # use it" setting is fixed to admins (src/mods/access.py).
+    admin_only = raw.get("admin_only", False)
+    if not isinstance(admin_only, bool):
+        errors.append("`admin_only` must be true or false")
+        admin_only = False
+    out["admin_only"] = admin_only
 
     # ── runtime ──
     rt = raw.get("runtime")
@@ -336,6 +363,10 @@ def validate(raw: Any) -> Dict[str, Any]:
         errors.append("`events.emits` needs the events.emit permission")
     if out["events"]["subscribes"] and "events.subscribe" not in out["permissions"]:
         errors.append("`events.subscribes` needs the events.subscribe permission")
+
+    # ── capabilities (src/mods/capabilities.py) ──
+    from src.mods import capabilities
+    out.update(capabilities.check(raw, out["events"], errors, warnings))
 
     # ── tutorial (src/mods/tutorial.py) ──
     from src.mods import tutorial

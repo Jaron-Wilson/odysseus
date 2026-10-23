@@ -203,8 +203,6 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
-        # A redirect to Moonlight Web at /play/ (see play_redirect).
-        "/play",
     }
     # /sw.js is the service worker, served from the root so it gets root scope.
     # It has to be fetchable before anyone is logged in: redirecting it to
@@ -229,19 +227,12 @@ if AUTH_ENABLED:
         # on a device that is not logged in. The one-time code in the path is
         # the credential; routes/enroll_routes.py checks it and 404s otherwise.
         _re.compile(r"^/enroll/[a-z2-9]{16}/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)?/?$"),
-        # The phone's SMS forwarder posts each text here. The secret in the
-        # path is the credential; routes/sms_routes.py checks it and the
-        # sender's number, and 404s otherwise.
-        _re.compile(r"^/api/sms/inbound/[A-Za-z0-9_-]{32,64}/?$"),
-        # Twilio's phone call webhooks. routes/telephony_routes.py checks the
-        # X-Twilio-Signature of each against the called user's auth token
-        # (and the WebSockets a one-time token) and 404s otherwise.
-        # /meet answers the agent's own call into a Google Meet (src/meet/dialin.py).
-        _re.compile(r"^/api/telephony/twilio/(voice|pin|done|recording|health|meet)/?$"),
-        # Linphone fetching its account file from the SIP line's setup QR
-        # code. The one-time token in the path is the credential;
-        # routes/sip_routes.py 404s anything else.
-        _re.compile(r"^/api/telephony/sip/provision/[A-Za-z0-9_-]{32,64}\.xml$"),
+        # A mod's webhooks (the Phone & Messages mod's texts from the phone,
+        # Twilio's calls, Linphone's provisioning): /mods/<id>/public/...
+        # reaches the mod without a sign-in only when it was granted
+        # public.http; src/mods/proxy.py checks that and the mod checks its
+        # own secrets (docs/mods.md, "Public paths").
+        _re.compile(r"^/mods/[a-z][a-z0-9-]{1,31}/public/.*$"),
         # A mod's page and its requests, loaded in a sandboxed frame that
         # sends no cookie. The signed frame token after "~" is the
         # credential; src/mods/proxy.py checks it and refuses anything else.
@@ -676,14 +667,11 @@ from routes.device_routes import setup_device_routes
 app.include_router(setup_device_routes())
 from routes.enroll_routes import setup_enroll_routes
 app.include_router(setup_enroll_routes())
+# Sending a text through the phone's reply URL when no Phone & Messages mod
+# is installed (routes/sms_routes.py). Texting the agent, phone calls, the SIP
+# line and Google Meet are the Phone & Messages mod (Jaron-Wilson/odysseus-phone).
 from routes.sms_routes import setup_sms_routes
-app.include_router(setup_sms_routes(session_manager))
-from routes.telephony_routes import setup_telephony_routes
-app.include_router(setup_telephony_routes())
-from routes.sip_routes import setup_sip_routes
-app.include_router(setup_sip_routes())
-from routes.meet_routes import setup_meet_routes
-app.include_router(setup_meet_routes())
+app.include_router(setup_sms_routes())
 # Google products behind one Google connection (routes/google_routes.py, docs/google.md)
 from routes.google_routes import setup_google_routes
 app.include_router(setup_google_routes())
@@ -715,8 +703,8 @@ app.include_router(setup_settings_locate_routes())
 
 from routes.deploy_routes import setup_deploy_routes
 app.include_router(setup_deploy_routes())
-from routes.devops_routes import setup_devops_routes
-app.include_router(setup_devops_routes())
+# DevOps is the DevOps mod now (github.com/Jaron-Wilson/odysseus-devops); its numbers stay here,
+# for mods with stats.read: GET /api/mods/v1/stats?scope=devops (src/mods/routes.py, src/devops_stats.py).
 # Usage and cost: the price table, per-user spend, budgets (routes/usage_routes.py).
 from routes.usage_routes import setup_usage_routes
 app.include_router(setup_usage_routes())
@@ -726,18 +714,12 @@ app.include_router(setup_whats_new_routes(session_manager))
 # The integrated IDE: /ide/ proxies code-server, /api/ide/* backs the Code panel.
 from routes.ide_routes import setup_ide_routes
 app.include_router(setup_ide_routes())
-# The Terminal: a live shell over a WebSocket, admin only (routes/terminal_routes.py).
-from routes.terminal_routes import setup_terminal_routes
-app.include_router(setup_terminal_routes())
-# Claude Code sessions on this host, read-only, admin only (routes/claude_sessions_routes.py).
+# /claude attach and Claude direct: a chat carries on a Claude Code session, admin only
+# (routes/claude_sessions_routes.py). The Claude sessions page is the Programming mod now.
 from routes.claude_sessions_routes import setup_claude_sessions_routes
 app.include_router(setup_claude_sessions_routes())
-# The ADS-B receiver (a Pi on the tailnet): status and its live map, admin only (routes/adsb_routes.py).
-from routes.adsb_routes import setup_adsb_routes
-app.include_router(setup_adsb_routes())
-# PC game streaming: the Games page (Sunshine on the PC, Moonlight Web at /play/), admin only (routes/games_routes.py).
-from routes.games_routes import setup_games_routes
-app.include_router(setup_games_routes())
+# PC game streaming is the Games mod now (github.com/Jaron-Wilson/odysseus-games): its tab replaces
+# the `games` page, and it finds the PC through GET /api/mods/v1/machines (machines.read).
 
 # Mods: /mods/<id>/ (the proxy), /api/mods (manage), /api/mods/v1 (the mod API).
 from src.mods.routes import setup_mods_routes
@@ -794,9 +776,8 @@ app.include_router(setup_copilot_routes())
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
 app.include_router(setup_chatgpt_subscription_routes())
 
-# Sign in with ChatGPT (official ChatGPT plan usage, Responses API)
-from routes.chatgpt_plan_routes import setup_chatgpt_plan_routes
-app.include_router(setup_chatgpt_plan_routes())
+# Sign in with ChatGPT is the ChatGPT add-on now (Jaron-Wilson/odysseus-chatgpt):
+# its models are an endpoint mod://chatgpt/v1 (src/mods/llm_endpoints.py).
 
 # TTS
 from routes.tts_routes import setup_tts_routes
@@ -981,16 +962,6 @@ async def serve_index(request: Request):
 async def serve_thread_pane(request: Request):
     return await serve_index(request)
 
-# Moonlight Web (the browser game client, src/games.py) is published at
-# /play/ by Tailscale Serve, beside Odysseus at /. Its pages use relative
-# asset paths, so a bare /play breaks; once Serve mounts it at /play/ (see
-# docs/games.md), the bare /play comes here and gets the slash. Exempt from
-# the login redirect: it is only a redirect, and Moonlight Web has its own.
-@app.get("/play", include_in_schema=False)
-async def play_redirect(request: Request):
-    q = request.url.query
-    return RedirectResponse(url="/play/" + (f"?{q}" if q else ""), status_code=302)
-
 @app.get("/notes")
 async def serve_notes(request: Request):
     return await serve_index(request)
@@ -1154,14 +1125,6 @@ async def _startup_event():
             _startup_tasks.append(asyncio.create_task(_caldav_sync_loop()))
         except Exception as _e:
             logger.warning("Failed to start the periodic CalDAV sync: %s", _e)
-    # The free SIP line (src/telephony/sip_line.py): listens on the Tailscale
-    # addresses only, and only while someone has it turned on.
-    try:
-        from src.telephony import sip_line as _sip_line
-        _sip_line.LINE.app = app
-        _startup_tasks.append(asyncio.create_task(_sip_line.LINE.run_forever()))
-    except Exception as _e:
-        logger.warning("Failed to start the SIP line: %s", _e)
     # Claude Code runs that outlived the previous server process: follow them
     # to the end and post their results (src/claude_code_jobs.py).
     try:
@@ -1390,12 +1353,6 @@ async def _startup_event():
     # removes the feature.
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
-    # Games: the Steam sync once a night, when switched on (src/games.py).
-    try:
-        from src import games as _games
-        _startup_tasks.append(asyncio.create_task(_games.nightly_loop()))
-    except Exception as _e:
-        logger.warning("Could not start the nightly Steam sync: %s", _e)
     # What's new: refresh the merged-PR list from git and GitHub now and then.
     try:
         from src import whats_new
@@ -1446,18 +1403,6 @@ async def _shutdown_event():
         await webhook_manager.close()
     except Exception as e:
         logger.warning(f"Webhook manager shutdown error: {e}")
-    # Hang up SIP calls and close the SIP line's sockets.
-    try:
-        from src.telephony import sip_line as _sip_line
-        await asyncio.wait_for(_sip_line.LINE.shutdown(), 5)
-    except Exception as e:
-        logger.warning(f"SIP line shutdown error: {e}")
-    # Hang up any open Terminal sessions (src/terminal.py).
-    try:
-        from src import terminal as _terminal
-        _terminal.manager.close_all()
-    except Exception as e:
-        logger.warning(f"Terminal shutdown error: {e}")
     # Stop running mods (src/mods).
     try:
         from src.mods import runtime as _mods_runtime

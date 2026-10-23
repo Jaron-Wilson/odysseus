@@ -1,6 +1,8 @@
 // static/js/googleSettings.js
-// Settings > Google: the user's one Google connection and a card per
-// product (routes/google_routes.py, src/google_workspace/). Connect opens
+// Settings > Google: the user's Google connection for Calendar (with Meet)
+// and a card pointing to the Google add-on (mod `google`) for Drive, Docs,
+// Sheets, Slides, Tasks and Contacts (routes/google_routes.py,
+// src/google_workspace/). Connect opens
 // Google's consent page in a new tab asking for that product plus the ones
 // already on; the cards refresh when this tab gets focus back. Loading the
 // status asks Google what the grant holds (cached server-side for a few
@@ -45,14 +47,45 @@ function shortScope(s) {
   return s.replace('https://www.googleapis.com/auth/', '');
 }
 
-const TOOL_LABELS = {
-  google_drive_search: 'search', google_drive_read: 'read', google_drive_upload: 'upload',
-  google_drive_create_folder: 'new folder', google_doc_read: 'read', google_doc_create: 'create',
-  google_doc_edit: 'edit', google_sheet_read: 'read', google_sheet_write: 'write',
-  google_sheet_append: 'append', google_sheet_create: 'create', google_slides_read: 'read',
-  google_slides_create: 'create', google_tasks_list: 'list', google_task_create: 'add',
-  google_contacts_search: 'search', google_meet: 'make or join a Meet',
-};
+const TOOL_LABELS = {};
+
+// Drive, Docs, Sheets, Slides, Tasks and Contacts are the Google add-on's
+// (mod `google`). Installed and usable: a link to it; otherwise how to get it.
+const ADDON_ID = 'google';
+
+async function addonCard() {
+  let mod = null;
+  try {
+    const ui = await api('GET', '/api/mods/ui');
+    mod = (ui.mods || []).find(m => m.id === ADDON_ID) || null;
+  } catch (_) { /* mods unavailable: show the install card */ }
+  const card = el('div', { class: 'admin-card google-product google-addon', 'data-google-addon': mod ? 'installed' : 'missing' },
+    el('div', { class: 'google-product-head' },
+      el('h2', { text: 'Drive, Docs, Sheets, Slides, Tasks and Contacts' }),
+      el('span', { class: 'google-pill' + (mod ? ' on' : ''), text: mod ? 'Add-on installed' : 'Add-on' })),
+    el('div', { class: 'admin-toggle-sub', text: mod
+      ? 'These are in the Google add-on, with its own Google connection and its own Ask before writing. Connect them there.'
+      : 'These moved out of Odysseus into the Google add-on. Install the Google add-on to search, read and write your Drive, Docs, Sheets and Slides, and use Google Tasks and Contacts from chats.' }));
+  const row = el('div', { class: 'settings-row google-actions' });
+  if (mod) {
+    row.append(el('a', { class: 'admin-btn-add', href: `#mod/${ADDON_ID}`, 'data-google-addon-open': '1', text: 'Open the Google add-on' }));
+  } else if (window._isAdmin !== false) {
+    row.append(el('button', { class: 'admin-btn-add', type: 'button', 'data-google-addon-install': '1', text: 'Install the Google add-on' }));
+  } else {
+    row.append(el('span', { class: 'admin-toggle-sub', text: 'Ask an admin to install the Google add-on (Settings > Mods > Browse).' }));
+  }
+  card.append(row);
+  return card;
+}
+
+async function openBrowse() {
+  try {
+    const s = await import('./settings.js');
+    (s.open || (s.default && s.default.open))('mods');
+  } catch (_) { /* settings did not load */ }
+  const go = () => window.modsSettings && window.modsSettings.browse && window.modsSettings.browse('google');
+  if (!go()) setTimeout(go, 300);
+}
 
 let state = {};
 
@@ -149,6 +182,7 @@ function render(s) {
     cards.push(productCard(p, kids));
   }
   $('google-products').replaceChildren(...cards);
+  addonCard().then(c => { if ($('google-products')) $('google-products').append(c); });
 }
 
 // "Ask before writing to my Google account (and Gmail)": the switch, the
@@ -218,8 +252,9 @@ async function load() {
 }
 
 async function onClick(ev) {
-  const t = ev.target.closest('[data-google-off],#google-disconnect-all,#google-recheck,#google-save-client,#google-copy,[data-google-connect]');
+  const t = ev.target.closest('[data-google-off],#google-disconnect-all,#google-recheck,#google-save-client,#google-copy,[data-google-connect],[data-google-addon-install]');
   if (!t) return;
+  if (t.dataset.googleAddonInstall) { ev.preventDefault(); openBrowse(); return; }
   if (t.dataset.googleConnect) {
     say('Finish on Google\'s page in the new tab, then come back here.');
     return;                                  // the link opens the consent page
@@ -237,7 +272,7 @@ async function onClick(ev) {
       if (r.message) say(r.message, true);
       else say(r.checked ? 'Checked with Google just now.' : 'Could not reach Google to check; showing what was saved.', !r.checked);
     } else if (t.id === 'google-disconnect-all') {
-      if (!confirm('Disconnect Google? Odysseus loses every Google product and Google revokes its access.')) return;
+      if (!confirm('Disconnect Google? Odysseus loses Google Calendar and Meet, and Google revokes its access (unless the Google add-on is installed, which keeps its own connection).')) return;
       render(await api('POST', '/api/google/disconnect'));
       say('Disconnected, and Google revoked the access.');
     } else if (t.id === 'google-save-client') {

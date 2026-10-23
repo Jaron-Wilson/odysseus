@@ -5,21 +5,38 @@ A Company Engineer on a ChatGPT plan model was sent 252 tools (every
 connected desktop MCP tool, none of its Company tools as native schemas)
 and replied that it had no Company tools or claude_code. The loop now sends
 only the run's selected tools, Company tools first, and never more than
-tool_cap.SAFE_TOOL_CAP to OpenAI or the ChatGPT plan.
+tool_cap.SAFE_TOOL_CAP to OpenAI or the ChatGPT plan (now an add-on whose
+manifest asks for the cap; tests/mod_llm_helpers.py fakes it).
 
 Everything is mocked: no request leaves the machine.
 """
+import asyncio
 import json
 
 import pytest
 
-from src import chatgpt_plan as cgp
 from src import company_executor as cx
 from src import company_tools as ct
 from src import tool_cap
-from tests.test_chatgpt_plan_request_auth import (  # noqa: F401  (signed_in is a fixture)
-    ACCESS, MODEL, PLAN_URL, _agent_common, _collect, _drop_endpoint, _plan_endpoint, signed_in,
+from tests.mod_llm_helpers import (  # noqa: F401  (mod_llm and mods_dir are fixtures)
+    MODEL, MOD_URL, drop_endpoint as _drop_endpoint, mod_endpoint as _plan_endpoint, mod_llm, mods_dir,
 )
+
+PLAN_URL = MOD_URL
+
+
+def _agent_common(monkeypatch):
+    import src.agent_loop as al
+    monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
+    monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
+    monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    return al
+
+
+def _collect(agen):
+    async def go():
+        return [c async for c in agen]
+    return asyncio.run(go())
 
 
 from tests.helpers.sqlite_db import make_temp_sqlite  # noqa: E402
@@ -107,20 +124,12 @@ def test_cap_leaves_short_lists_alone():
     assert tool_cap.cap_tools(schemas, 120) == schemas
 
 
-def test_needs_tool_cap():
+def test_needs_tool_cap(mod_llm):
     assert tool_cap.needs_tool_cap(PLAN_URL)
     assert tool_cap.needs_tool_cap("https://api.openai.com/v1/chat/completions")
     assert tool_cap.needs_tool_cap("https://chatgpt.com/backend-api/codex/responses")
     assert not tool_cap.needs_tool_cap("http://127.0.0.1:11434/v1")
     assert not tool_cap.needs_tool_cap("https://openrouter.ai/api/v1")
-
-
-def test_chatgpt_plan_payload_never_exceeds_the_cap():
-    tools = [_schema(f"mcp__x__t{i}") for i in range(200)] + [_schema(n) for n in sorted(ct.TOOL_NAMES)]
-    payload = cgp.build_payload(MODEL, [{"role": "user", "content": "hi"}], tools=tools)
-    names = [t["name"] for t in payload["tools"]]
-    assert len(names) <= tool_cap.SAFE_TOOL_CAP < tool_cap.OPENAI_MAX_TOOLS
-    assert set(ct.TOOL_NAMES) <= set(names)
 
 
 # ── What the agent loop sends in a Company run ───────────────────────────
@@ -132,10 +141,6 @@ def _plan_run(signed_in, monkeypatch, *, supports_tools, message, relevant, mcp=
     monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set())  # an admin
     ep_id = _plan_endpoint(supports_tools=supports_tools)
     signed_in.calls.clear()
-    signed_in.lines = [
-        'data: {"type":"response.output_text.delta","delta":"Working on it."}',
-        'data: {"type":"response.completed","response":{}}',
-    ]
     try:
         with ct.agent_context(owner="alice", company_id="c1", agent_id="a1", run_id="r1"):
             _collect(al.stream_agent_loop(
@@ -146,17 +151,17 @@ def _plan_run(signed_in, monkeypatch, *, supports_tools, message, relevant, mcp=
             ))
     finally:
         _drop_endpoint(ep_id)
-    calls = [c for c in signed_in.calls if c["url"] == cgp.RESPONSES_URL]
-    assert calls
-    return [t.get("name") for t in (calls[0]["json"].get("tools") or [])]
+    calls = signed_in.chat_calls()
+    assert calls and calls[0]["user"] == "alice"
+    return [tool_cap.tool_name(t) for t in (calls[0]["json"].get("tools") or [])]
 
 
 WAKE = ("Why you are awake:\n- You were assigned JAR-3 \"Review the browser screenshot flow\"\n"
         "- You were assigned JAR-5 \"Fix the calendar event click\"")
 
 
-def test_company_run_sends_its_focused_tools_first(signed_in, monkeypatch):
-    names = _plan_run(signed_in, monkeypatch, supports_tools=True, message=WAKE,
+def test_company_run_sends_its_focused_tools_first(mod_llm, monkeypatch):
+    names = _plan_run(mod_llm, monkeypatch, supports_tools=True, message=WAKE,
                       relevant=cx.run_tools("claude", None, {"ask_user"}))
     assert names, "native tools expected"
     assert set(ct.TOOL_NAMES) <= set(names) and "claude_code" in names
@@ -167,32 +172,33 @@ def test_company_run_sends_its_focused_tools_first(signed_in, monkeypatch):
     assert "google_meet" not in names and "ui_control" not in names and "manage_calendar" not in names
 
 
-def test_fenced_mode_does_not_send_every_mcp_tool(signed_in, monkeypatch):
+def test_fenced_mode_does_not_send_every_mcp_tool(mod_llm, monkeypatch):
     """The live bug: native tools off for the endpoint, so tools went as
     fenced blocks, but a keyword ("screenshot", "click") made the loop send
     every MCP tool as a native schema; the model took that list as its
     whole tool set."""
-    names = _plan_run(signed_in, monkeypatch, supports_tools=False, message=WAKE,
+    names = _plan_run(mod_llm, monkeypatch, supports_tools=False, message=WAKE,
                       relevant=cx.run_tools("claude", None, {"ask_user"}))
     assert not any(n.startswith("mcp__") for n in names)
 
 
-def test_selected_mcp_tools_still_go_in_fenced_mode(signed_in, monkeypatch):
-    names = _plan_run(signed_in, monkeypatch, supports_tools=False, message=WAKE,
+def test_selected_mcp_tools_still_go_in_fenced_mode(mod_llm, monkeypatch):
+    names = _plan_run(mod_llm, monkeypatch, supports_tools=False, message=WAKE,
                       relevant=cx.run_tools(None, ["mcp__19d772b0__tool_3"], {"ask_user"}))
     assert names == ["mcp__19d772b0__tool_3"]
 
 
-def test_chat_with_many_tools_is_capped_for_chatgpt_plan(signed_in, monkeypatch, caplog):
+def test_chat_with_many_tools_is_capped_for_chatgpt_plan(mod_llm, monkeypatch, caplog):
     many = set(ct.TOOL_NAMES) | {"claude_code", "bash"} | {f"mcp__19d772b0__tool_{i}" for i in range(200)}
     with caplog.at_level("WARNING"):
-        names = _plan_run(signed_in, monkeypatch, supports_tools=True, message=WAKE, relevant=many)
+        names = _plan_run(mod_llm, monkeypatch, supports_tools=True, message=WAKE, relevant=many)
     assert len(names) <= tool_cap.SAFE_TOOL_CAP
     assert set(ct.TOOL_NAMES) <= set(names) and "claude_code" in names and "bash" in names
     assert "[tool-cap]" in caplog.text
 
 
-def test_low_signal_chat_mcp_schemas_are_kept_in_fenced_mode(signed_in, monkeypatch):
+def test_low_signal_chat_mcp_schemas_are_kept_in_fenced_mode(mod_llm, monkeypatch):
+    signed_in = mod_llm
     """Outside Company runs nothing changes when retrieval was skipped: the
     prompt lists every MCP tool, so their schemas still go out (capped)."""
     al = _agent_common(monkeypatch)
@@ -201,7 +207,6 @@ def test_low_signal_chat_mcp_schemas_are_kept_in_fenced_mode(signed_in, monkeypa
     monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set())  # an admin
     ep_id = _plan_endpoint(supports_tools=False)
     signed_in.calls.clear()
-    signed_in.lines = ['data: {"type":"response.completed","response":{}}']
     try:
         _collect(al.stream_agent_loop(
             PLAN_URL, MODEL, [{"role": "user", "content": "ok take a screenshot"}],
@@ -209,9 +214,9 @@ def test_low_signal_chat_mcp_schemas_are_kept_in_fenced_mode(signed_in, monkeypa
         ))
     finally:
         _drop_endpoint(ep_id)
-    calls = [c for c in signed_in.calls if c["url"] == cgp.RESPONSES_URL]
+    calls = signed_in.chat_calls()
     assert calls
-    names = [t.get("name") for t in (calls[0]["json"].get("tools") or [])]
+    names = [tool_cap.tool_name(t) for t in (calls[0]["json"].get("tools") or [])]
     assert len(names) <= tool_cap.SAFE_TOOL_CAP
 
 

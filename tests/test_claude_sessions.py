@@ -1,9 +1,10 @@
-"""The Claude sessions page (src/claude_code_sessions.py,
-routes/claude_sessions_routes.py): Claude Code's own transcripts under
-~/.claude/projects, read in the browser.
+"""Claude Code's own transcripts under ~/.claude/projects
+(src/claude_code_sessions.py), which /claude attach and the claude_code tool
+read. The page that showed them moved to the Programming mod
+(Jaron-Wilson/odysseus-programming, which has its own copy of these tests
+for its routes); the reader stays here for /claude attach.
 
-Asked for: browse and read his Claude Code sessions in Odysseus instead of
-opening the Terminal. What matters:
+What matters:
 
   * a transcript becomes readable turns: prompts, replies, tool calls with a
     one-line summary, results cut short, and none of the bookkeeping;
@@ -12,7 +13,7 @@ opening the Terminal. What matters:
   * big files are paged from the end and followed from an offset, never
     read whole, and a half-written last line waits for the next poll;
   * the list has titles, branch, message counts and live sessions first;
-  * only an admin gets any of it.
+  * the page's routes are gone from the core (the mod serves them).
 """
 import json
 import os
@@ -258,60 +259,26 @@ def test_a_symlink_out_of_the_projects_dir_is_refused(home, tmp_path):
 
 # ── The routes ──────────────────────────────────────────────────────────
 
-class _Auth:
-    is_configured = True
-
-    def __init__(self, admins):
-        self.admins = admins
-
-    def is_admin(self, user):
-        return user in self.admins
-
-
-def _app(user=None, admins=()):
+def _app():
     app = FastAPI()
-    app.state.auth_manager = _Auth(set(admins))
 
     @app.middleware("http")
     async def _who(request, call_next):
-        request.state.current_user = user
+        request.state.current_user = "jaron"
         return await call_next(request)
 
     app.include_router(claude_sessions_routes.setup_claude_sessions_routes())
     return app
 
 
-def test_only_an_admin_gets_anything(home, monkeypatch):
-    monkeypatch.setenv("AUTH_ENABLED", "true")
+def test_the_page_routes_moved_to_the_programming_mod(home, monkeypatch):
+    """Only /claude attach's routes are left here; listing and reading
+    sessions is the Programming mod's (its tab replaces claude-sessions)."""
+    monkeypatch.setenv("AUTH_ENABLED", "false")
     _transcript(home)
-    for user in (None, "guest"):
-        c = TestClient(_app(user=user, admins={"jaron"}))
-        assert c.get("/api/claude_sessions").status_code == 403
-        assert c.get(f"/api/claude_sessions/{PROJ}/{SID}").status_code == 403
-        assert c.get(f"/api/claude_sessions/{PROJ}/{SID}/updates?after=0").status_code == 403
-    c = TestClient(_app(user="jaron", admins={"jaron"}))
-    assert c.get("/api/claude_sessions").json()["sessions"][0]["id"] == SID
-
-
-def test_the_routes_page_and_follow(home, monkeypatch):
-    monkeypatch.setenv("AUTH_ENABLED", "true")
-    path = _transcript(home)
-    c = TestClient(_app(user="jaron", admins={"jaron"}))
-    d = c.get(f"/api/claude_sessions/{PROJ}/{SID}?limit=2").json()
-    assert [t["kind"] for t in d["turns"]] == ["tool_result", "assistant"] and d["start"] > 0
-    assert d["session"]["title"] == "Fix the login page" and d["end"] == os.path.getsize(path)
-    older = c.get(f"/api/claude_sessions/{PROJ}/{SID}?before={d['start']}").json()
-    assert older["turns"][0]["text"] == "please fix the login page" and older["start"] == 0
-    with open(path, "a") as f:
-        f.write(json.dumps(_user("next"), separators=(",", ":")) + "\n")
-    up = c.get(f"/api/claude_sessions/{PROJ}/{SID}/updates?after={d['end']}").json()
-    assert [t["text"] for t in up["turns"]] == ["next"] and up["session"]["live"]
-
-
-def test_the_routes_refuse_unknown_sessions(home, monkeypatch):
-    monkeypatch.setenv("AUTH_ENABLED", "true")
-    _transcript(home)
-    c = TestClient(_app(user="jaron", admins={"jaron"}))
-    for url in (f"/api/claude_sessions/{PROJ}/{SID2}", f"/api/claude_sessions/-nope/{SID}",
-                f"/api/claude_sessions/{PROJ}/..%2F..%2Fetc", f"/api/claude_sessions/..%2F/{SID}/updates"):
-        assert c.get(url).status_code == 404, url
+    c = TestClient(_app())
+    for url in ("/api/claude_sessions", f"/api/claude_sessions/{PROJ}/{SID}",
+                f"/api/claude_sessions/{PROJ}/{SID}/updates?after=0"):
+        assert c.get(url).status_code in (404, 405), url
+    paths = {r.path for r in claude_sessions_routes.setup_claude_sessions_routes().routes}
+    assert "/api/claude_sessions/resolve" in paths and "/api/claude_attach/{chat_id}" in paths

@@ -25,8 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 def _is_admin(request: Request, owner: Optional[str]) -> bool:
-    from routes.telephony_routes import _is_admin as tel_is_admin
-    return tel_is_admin(request.app, owner)
+    try:
+        from src.auth_helpers import _auth_disabled
+        if _auth_disabled():
+            return True
+        mgr = getattr(request.app.state, "auth_manager", None)
+        return bool(owner and mgr is not None and mgr.is_admin(owner))
+    except Exception:
+        return False
 
 
 def view(request: Request, user: Optional[str]) -> Dict:

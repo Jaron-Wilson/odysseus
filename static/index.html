@@ -254,10 +254,7 @@
   <link rel="stylesheet" href="/static/css/studio-pages-b.css">
   <link rel="stylesheet" href="/static/css/workspace.css">
   <link rel="stylesheet" href="/static/css/codePanel.css">
-  <link rel="stylesheet" href="/static/css/terminal.css">
-  <link rel="stylesheet" href="/static/css/claudeSessions.css">
-  <link rel="stylesheet" href="/static/css/adsbPanel.css">
-  <link rel="stylesheet" href="/static/css/gamesPanel.css">
+  <link rel="stylesheet" href="/static/css/claudeAttach.css">
   <link rel="stylesheet" href="/static/css/mods.css">
   <link rel="stylesheet" href="/static/css/plans.css">
   <link rel="stylesheet" href="/static/css/nativePlans.css">
@@ -1032,17 +1029,6 @@
               </svg>
               <span class="grow">Code</span>
             </div>
-            <!-- A live shell on the server, admin only (terminal.js) -->
-            <div class="list-item" id="tool-terminal-btn" title="A live command line on the server: run commands, ssh to other machines">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                style="flex-shrink:0;opacity:0.5;">
-                <rect x="2" y="4" width="20" height="16" rx="2"/>
-                <polyline points="6 9 10 12 6 15"/>
-                <line x1="12" y1="15" x2="17" y2="15"/>
-              </svg>
-              <span class="grow">Terminal</span>
-            </div>
             <!-- Cloud browser: watch the agent's browser and take over (cloudBrowser.js) -->
             <div class="list-item" id="tool-browser-btn" title="The browser the agent uses: watch it live, or take over to log in">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1079,27 +1065,6 @@
               </svg>
               <span class="grow">Company</span>
             </div>
-            <!-- Claude Code sessions on this host, to read like chats (claudeSessions.js). Admin only. -->
-            <div class="list-item" id="tool-claude-sessions-btn" title="Read your Claude Code sessions on this host: live ones first">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                style="flex-shrink:0;opacity:0.5;">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                <polyline points="8 8 11 10 8 12"/>
-                <line x1="13" y1="12" x2="16" y2="12"/>
-              </svg>
-              <span class="grow">Claude sessions</span>
-            </div>
-            <!-- DevOps: what is running, model speed, coder stats (devopsPage.js) -->
-            <div class="list-item" id="tool-devops-btn" title="What is running, tokens per second and per hour, and which coder does best">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                style="flex-shrink:0;opacity:0.5;">
-                <polyline points="3 17 9 11 13 15 21 7"/>
-                <polyline points="15 7 21 7 21 13"/>
-              </svg>
-              <span class="grow">DevOps</span>
-            </div>
             <!-- One chat for changes to Odysseus itself (specialChats.js) -->
             <div class="list-item" id="tool-odysseus-dev-btn" title="A chat for changing Odysseus itself: every change ends in a PR against dev">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1125,25 +1090,6 @@
                 <rect x="17" y="8" width="5" height="12" rx="1"/>
               </svg>
               <span class="grow">Devices</span>
-            </div>
-            <!-- The ADS-B receiver (a Pi on the tailnet): status and its live map (adsbPanel.js). Admin only. -->
-            <div class="list-item" id="tool-adsb-btn" title="Your ADS-B receiver: what it hears and its live map">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                style="flex-shrink:0;opacity:0.5;">
-                <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
-              </svg>
-              <span class="grow">ADS-B receiver</span>
-            </div>
-            <!-- PC game streaming: Sunshine's games, played in Moonlight Web at /play/ (gamesPanel.js). Admin only. -->
-            <div class="list-item" id="tool-games-btn" title="Your PC games: play them here in the browser">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                style="flex-shrink:0;opacity:0.5;">
-                <rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3"/>
-                <circle cx="15.5" cy="11.5" r=".9"/><circle cx="17.5" cy="13.8" r=".9"/>
-              </svg>
-              <span class="grow">Games</span>
             </div>
             <div class="list-item" id="tool-cookbook-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1929,48 +1875,13 @@
                 <select id="set-vcTts" class="settings-select" data-goto-keywords="tts text to speech read aloud engine kokoro voice output">
                   <option value="browser">Browser (built-in)</option>
                   <option value="local">Local: Kokoro</option>
-                  <option value="elevenlabs">ElevenLabs (API)</option>
                 </select>
               </div>
-              <!-- ElevenLabs: key, model, credits and the credit guard (static/js/ttsElevenLabs.js). -->
-              <div id="set-elWrap" class="settings-col" hidden style="display:none">
-                <div class="settings-row">
-                  <label class="settings-label" for="set-elKey">API key</label>
-                  <input id="set-elKey" class="settings-select" type="password" placeholder="Paste your ElevenLabs API key" autocomplete="off" spellcheck="false" data-goto-keywords="elevenlabs api key eleven labs">
-                  <button type="button" id="set-elKeySave" class="admin-btn-sm" style="flex-shrink:0">Save key</button>
-                  <button type="button" id="set-elKeyRemove" class="admin-btn-sm" style="flex-shrink:0;display:none" hidden>Remove</button>
-                </div>
-                <div class="settings-row">
-                  <span class="settings-label"></span>
-                  <span id="set-elKeyStatus" style="flex:1;font-size:12px;opacity:0.75;overflow-wrap:anywhere"></span>
-                  <button type="button" id="set-elTest" class="admin-btn-sm" style="flex-shrink:0" title="Speak a short sample with ElevenLabs (about 20 credits, then cached)">Test</button>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="set-elModel">Model</label>
-                  <select id="set-elModel" class="settings-select" data-goto-keywords="elevenlabs model flash multilingual v3 v4 turbo"></select>
-                </div>
-                <div class="settings-row">
-                  <span class="settings-label">Credits</span>
-                  <span id="set-elCredits" style="flex:1;font-size:12px;opacity:0.85;overflow-wrap:anywhere">Not read yet</span>
-                  <button type="button" id="set-elCreditsRefresh" class="admin-btn-sm" style="flex-shrink:0" title="Read the credit numbers from ElevenLabs now">Refresh</button>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="set-elMinPct">Keep in reserve</label>
-                  <input id="set-elMinPct" class="settings-select" type="number" min="0" max="100" step="1" style="width:70px;flex:0 0 auto" data-goto-keywords="elevenlabs credits reserve guard fallback quota">
-                  <span style="font-size:12px;opacity:0.7">% or</span>
-                  <input id="set-elMinCredits" class="settings-select" type="number" min="0" step="500" style="width:100px;flex:0 0 auto" title="0 means only the percent counts">
-                  <span style="font-size:12px;opacity:0.7">credits</span>
-                </div>
-                <div class="settings-row">
-                  <span class="settings-label"></span>
-                  <span style="flex:1;font-size:12px;opacity:0.65">Below this, Kokoro speaks instead (or the browser voice when Kokoro is not downloaded) until the credits reset.</span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="set-elMaxChars">Max per reply</label>
-                  <input id="set-elMaxChars" class="settings-select" type="number" min="0" max="5000" step="100" style="width:100px;flex:0 0 auto" data-goto-keywords="elevenlabs characters per reply read aloud limit">
-                  <span style="font-size:12px;opacity:0.7">characters read aloud per reply (0 = no limit)</span>
-                </div>
-                <div id="set-elNotice" style="font-size:12px;display:none" hidden></div>
+              <!-- Add-on voices (mods that provide tts.voice, like ElevenLabs): listed in
+                   "Speaks with" by static/js/voiceCall.js; their key and limits are on the add-on's page. -->
+              <div class="settings-row" id="set-vcTtsAddonRow">
+                <span class="settings-label"></span>
+                <span id="set-vcTtsAddon" style="flex:1;font-size:12px;opacity:0.7;overflow-wrap:anywhere" data-goto-keywords="elevenlabs eleven labs voice add-on api key credits">More voices: install the <strong>ElevenLabs voice</strong> add-on (Settings &gt; Mods &gt; Browse).</span>
               </div>
               <!-- Local voice model + download (static/js/ttsEngines.js). -->
               <div class="settings-row" id="set-vcTtsModelRow" hidden style="display:none">
@@ -2592,95 +2503,13 @@
              test both ways of reaching it. Filled in by devicesSettings.js. -->
         <div data-settings-panel="devices" class="hidden">
           <div class="admin-card" style="border-left:3px solid var(--accent, var(--red))">
-            <div class="admin-toggle-sub"><strong>Tip:</strong> install and sign in to <a href="https://tailscale.com/download" target="_blank" rel="noopener" style="color:var(--accent, var(--red))">Tailscale</a> on every device you want Odysseus to reach: PC, laptop and phone. It is how devices are found here, how their MCP servers are reached from anywhere, and how Ping restarts them, without opening anything to the internet.</div>
+            <div class="admin-toggle-sub"><strong>Tip:</strong> install and sign in to <a href="https://tailscale.com/download" target="_blank" rel="noopener" style="color:var(--accent, var(--red))">Tailscale</a> on every device you want Odysseus to reach: PC, laptop and phone, and the Tailscale add-on here (Settings &gt; Mods &gt; Browse). It is how devices are found here, how their MCP servers are reached from anywhere, and how Ping restarts them, without opening anything to the internet.</div>
           </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Your machines<span style="flex:1"></span><button class="settings-btn" style="padding:2px 10px;font-size:12px;float:right" id="devices-refresh" type="button">Refresh</button></h2>
             <div class="admin-toggle-sub" style="margin-bottom:4px">Every machine on your tailnet, with the MCP servers running on it and any phone registered to it. Odysseus reconnects a machine's servers by itself when it comes online; <strong>Ping</strong> does it now, and starts the servers over SSH if they are down. <br><strong>Use first</strong>: the computer the agent picks first for heavy jobs, like a Resolve render; when it is off, another computer that can do the job is used. <strong>GPU</strong>: whether a computer has a strong graphics card, so video and AI work go to it (set automatically when a computer is added with the install command). <strong>Check QR</strong> (phones): scan it with the phone to check its connection.</div>
             <div id="devices-machines"><div class="admin-toggle-sub">Loading…</div></div>
             <div id="devices-msg" class="admin-toggle-sub" style="margin-top:6px"></div>
-          </div>
-          <!-- Game streaming: Sunshine on the PC, Moonlight Web here (src/games.py), filled in by gamesSettings.js. -->
-          <div class="admin-card" id="games-settings-card" data-goto-keywords="games game streaming sunshine moonlight steam play pc games">
-            <h2>Game streaming<span style="flex:1"></span><button class="settings-btn" style="padding:2px 10px;font-size:12px;float:right" id="games-health-refresh" type="button">Check</button></h2>
-            <div class="admin-toggle-sub" style="margin-bottom:6px">Play your PC's games in the browser from the <strong>Games</strong> page. <strong>Sunshine</strong> on the PC hosts the games; <strong>Moonlight Web</strong> on this server is the player, at <code>/play/</code>. The login is Sunshine's web UI account. Setup and firewall notes: docs/games.md.</div>
-            <div id="games-health" class="settings-col" style="gap:2px"><div class="admin-toggle-sub">Loading…</div></div>
-            <div class="settings-col" style="margin-top:8px">
-              <div class="settings-row">
-                <label class="settings-label" for="games-urls">Sunshine addresses</label>
-                <textarea id="games-urls" class="settings-select" rows="2" spellcheck="false" placeholder="https://192.168.1.50:47990 (LAN first)&#10;https://100.x.y.z:47990 (then the tailnet; blank: found on the tailnet)" style="flex:1;font-family:inherit"></textarea>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-user">Sunshine username</label>
-                <input id="games-user" class="settings-select" type="text" autocomplete="off" spellcheck="false" placeholder="blank: from the credentials file" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-pass">Sunshine password</label>
-                <input id="games-pass" class="settings-select" type="password" autocomplete="new-password" placeholder="Not set" />
-                <button class="settings-btn" id="games-pass-clear" type="button" title="Remove the saved password">Clear</button>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-credfile">Credentials file</label>
-                <input id="games-credfile" class="settings-select" type="text" spellcheck="false" placeholder="~/.secrets/sunshine.env (SUNSHINE_USER, SUNSHINE_PASS)" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-moonlight">Moonlight Web</label>
-                <input id="games-moonlight" class="settings-select" type="text" spellcheck="false" placeholder="/play/" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-moonlight-health">Moonlight Web check</label>
-                <input id="games-moonlight-health" class="settings-select" type="text" spellcheck="false" placeholder="http://127.0.0.1:8090/play/" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="games-play-in">Play opens in</label>
-                <select id="games-play-in" class="settings-select">
-                  <option value="odysseus">The Games page (this tab)</option>
-                  <option value="new_tab">A new browser tab</option>
-                </select>
-              </div>
-              <details>
-                <summary class="admin-toggle-sub" style="cursor:pointer">Covers, Steam sync and certificate</summary>
-                <div class="settings-col" style="margin-top:6px">
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-covers">Covers folder here</label>
-                    <input id="games-covers" class="settings-select" type="text" spellcheck="false" placeholder="blank: Odysseus's own cache (data/game-covers)" />
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-pc-host">The PC</label>
-                    <input id="games-pc-host" class="settings-select" type="text" spellcheck="false" placeholder="blank: the machine a Sunshine address points at" />
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-pc-covers">Covers folder on the PC</label>
-                    <input id="games-pc-covers" class="settings-select" type="text" spellcheck="false" placeholder="blank: where the other covers are, or C:\Users\you\sunshine-covers" />
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-libs">Steam libraries</label>
-                    <textarea id="games-libs" class="settings-select" rows="2" spellcheck="false" style="flex:1;font-family:inherit"></textarea>
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-nightly">Sync Steam games nightly</label>
-                    <input id="games-nightly" type="checkbox" />
-                    <span class="admin-toggle-sub">At 04:30, adds newly installed games to Sunshine.</span>
-                  </div>
-                  <div class="settings-row">
-                    <label class="settings-label" for="games-tls">Sunshine certificate</label>
-                    <select id="games-tls" class="settings-select">
-                      <option value="pin">Remember it on first contact, refuse a different one</option>
-                      <option value="off">Don't check it</option>
-                    </select>
-                    <button class="settings-btn" id="games-forget-cert" type="button" title="After reinstalling Sunshine: accept its new certificate on the next contact">Forget certificates</button>
-                  </div>
-                  <div id="games-certs" class="admin-toggle-sub"></div>
-                </div>
-              </details>
-              <div class="settings-row">
-                <span class="admin-toggle-sub" id="games-cred-state"></span>
-                <button class="admin-btn-add" id="games-save" type="button">Save</button>
-                <button class="settings-btn" id="games-test" type="button">Test</button>
-              </div>
-              <div id="games-pairings" class="settings-col"></div>
-              <div id="games-msg" class="admin-toggle-sub"></div>
-            </div>
           </div>
           <div class="admin-card">
             <h2>Services</h2>
@@ -2741,15 +2570,25 @@
         </div>
 
         <!-- ═══ CALLS & MEETINGS TAB ═══
-             Reaching the agent by text, phone, SIP softphone and Google Meet.
-             Not devices, so not on the Devices tab (moved out 2026-10-02).
-             Filled in by devicesSettings.js, which loads these cards when
-             this tab opens. -->
+             Texting the agent, phone calls, the SIP line and Google Meet are
+             the Phone & Messages mod (Jaron-Wilson/odysseus-phone) since
+             2026-10-22: its tab replaces the "phone" page (docs/mods.md,
+             "Pages that moved to mods"). What stays is the core's own way to
+             send you a text when no such mod is installed (routes/sms_routes.py),
+             filled in by devicesSettings.js when this tab opens. -->
         <div data-settings-panel="calls" class="hidden">
-          <!-- Phone SMS: routes/sms_routes.py, filled in by devicesSettings.js. -->
-          <div class="admin-card" id="sms-card" data-goto-keywords="sms text message texting phone gateway">
-            <h2>Phone SMS</h2>
-            <div class="admin-toggle-sub">Text Odysseus from your number. Your Android phone forwards each text it gets to this server, which answers: <strong>new [model]</strong> or <strong>chat &lt;n&gt;</strong> (start talking to a chat; then just text it), <strong>end</strong>, <strong>models</strong> and <strong>model &lt;n|name&gt;</strong> (pick its model), <strong>list</strong> (your recent chats, numbered), <strong>say &lt;n&gt; &lt;text&gt;</strong> (one text to chat n), <strong>status</strong>, <strong>help</strong>. Only texts from your numbers, sent with the secret below, are acted on.</div>
+          <div class="admin-card" id="phone-mod-card" data-goto-keywords="phone call calling sip softphone linphone twilio google meet meeting mod">
+            <h2>Phone &amp; Messages</h2>
+            <div class="admin-toggle-sub">Texting the agent from your phone, phone calls (the free SIP line on your tailnet, or a Twilio number) and bringing the agent into a Google Meet are the <strong>Phone &amp; Messages</strong> mod. Its settings are on its own page.</div>
+            <div class="settings-row">
+              <span class="admin-toggle-sub" id="phone-mod-state"></span>
+              <button class="admin-btn-add" id="phone-mod-open" type="button">Open Phone &amp; Messages</button>
+            </div>
+          </div>
+          <!-- Text messages: routes/sms_routes.py, filled in by devicesSettings.js. -->
+          <div class="admin-card" id="sms-card" data-goto-keywords="sms text message texting phone reply url">
+            <h2>Text messages</h2>
+            <div class="admin-toggle-sub">Where Odysseus texts you (mod notifications at the level you pick in Settings &gt; Mods) when no Phone &amp; Messages mod is installed. With the mod installed, its own texting settings are used instead.</div>
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label" for="sms-numbers">Your numbers</label>
@@ -2760,378 +2599,12 @@
                 <input id="sms-reply-url" class="settings-select" type="text" placeholder="http://user:password@phone-tailnet-ip:8080/message (blank: web push)" />
               </div>
               <div class="settings-row">
-                <span class="admin-toggle-sub">Replies are texted back through the phone's send endpoint, or sent as a notification when the reply URL is blank.</span>
+                <span class="admin-toggle-sub">Texts go through the phone's send endpoint (SMS Gate for Android), or as a notification when the reply URL is blank.</span>
                 <button class="admin-btn-add" id="sms-save" type="button">Save</button>
+                <button class="settings-btn" id="sms-test" type="button">Send test text</button>
               </div>
-              <div class="settings-row">
-                <span class="admin-toggle-sub" id="sms-secret-state">Loading…</span>
-                <button class="settings-btn" id="sms-generate" type="button">Generate secret</button>
-                <button class="settings-btn" id="sms-test" type="button">Send test reply</button>
-                <button class="settings-btn" id="sms-disable" type="button">Turn off</button>
-              </div>
-              <div id="sms-secret-once" class="settings-col" hidden></div>
               <div id="sms-msg" class="admin-toggle-sub"></div>
             </div>
-            <details>
-              <summary class="admin-toggle-sub">Setup guide</summary>
-              <ol class="admin-toggle-sub">
-                <li>Save your number(s) above: the phone(s) you will text from.</li>
-                <li>Click <strong>Generate secret</strong> and copy the forward URL. It is shown once; generating again replaces it.</li>
-                <li>On the Android phone that gets the texts, install <strong>SMS Forwarder</strong> ("SMS to URL Forwarder", <code>tech.bogomolov.incomingsmsgateway</code>) from F-Droid.</li>
-                <li>Add a rule: sender = your number, URL = the forward URL, keep the default JSON template (<code>{"from":"%from%","text":"%text%",...}</code>). Allow SMS permission and turn off battery optimization for it.</li>
-                <li>Texts must arrive as SMS, not RCS: turn off RCS chats in Google Messages on that phone (or on the phone you text from).</li>
-                <li>For texted replies, install <strong>SMS Gateway for Android</strong> (GitHub release, <code>me.capcom.smsgateway</code>), turn on its Local server, and put <code>http://USER:PASSWORD@PHONE_IP:8080/message</code> in Reply URL. Leave it blank for notification replies.</li>
-                <li>Text <strong>help</strong> to the phone. Full steps: docs/sms-gateway.md.</li>
-              </ol>
-            </details>
-          </div>
-          <!-- Phone calls: routes/telephony_routes.py, filled in by devicesSettings.js. -->
-          <div class="admin-card" id="phone-card" data-goto-keywords="phone call calling twilio dial ring number google">
-            <h2>Phone calls</h2>
-            <div class="admin-toggle-sub">Call a phone number and talk to the agent, the way a call in the app works: you talk, a pause ends your turn, and the answer is read back to you. You can talk over it. Each call is saved as a chat. A Twilio number answers the call and streams it to this server; only your numbers get through.</div>
-            <div class="admin-toggle-row">
-              <div>
-                <div class="admin-toggle-label">Answer calls</div>
-                <div class="admin-toggle-sub" id="phone-state">Loading…</div>
-              </div>
-              <label class="admin-switch"><input type="checkbox" id="phone-enabled"><span class="admin-slider"></span></label>
-            </div>
-            <div class="settings-col">
-              <div class="settings-row">
-                <label class="settings-label" for="phone-number">Agent's number</label>
-                <input id="phone-number" class="settings-select" type="text" placeholder="+15550109999 (the Twilio number)" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-sid">Account SID</label>
-                <input id="phone-sid" class="settings-select" type="text" autocomplete="off" placeholder="AC... (Twilio Console > Account info)" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-token">Auth token</label>
-                <input id="phone-token" class="settings-select" type="password" autocomplete="new-password" placeholder="Twilio auth token" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-allowed">Your numbers</label>
-                <input id="phone-allowed" class="settings-select" type="text" placeholder="+15550102000 (comma-separated, up to 5)" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-public">Public URL</label>
-                <input id="phone-public" class="settings-select" type="text" placeholder="https://server.tailnet.ts.net:8443" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-greeting">Greeting</label>
-                <input id="phone-greeting" class="settings-select" type="text" maxlength="300" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-model">Model</label>
-                <select id="phone-model" class="settings-select"><option value="">Default model</option></select>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-engine">Speech</label>
-                <select id="phone-engine" class="settings-select">
-                  <option value="odysseus">Odysseus engines (Voice call settings)</option>
-                  <option value="relay">Twilio hears and speaks (ConversationRelay, costs more)</option>
-                </select>
-              </div>
-              <div class="settings-row" id="phone-voice-row" style="display:none">
-                <label class="settings-label" for="phone-voice">Twilio voice</label>
-                <input id="phone-voice" class="settings-select" type="text" placeholder="Twilio's default voice" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-unknown">Other callers</label>
-                <select id="phone-unknown" class="settings-select">
-                  <option value="reject">Say it only takes your calls, and hang up</option>
-                  <option value="message">Take a message (transcribed into a Phone messages chat)</option>
-                </select>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-delay">Ring first</label>
-                <select id="phone-delay" class="settings-select">
-                  <option value="0">Answer right away</option>
-                  <option value="10">10 seconds</option>
-                  <option value="15">15 seconds</option>
-                  <option value="20">20 seconds</option>
-                </select>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="phone-pin">PIN</label>
-                <input id="phone-pin" class="settings-select" type="password" inputmode="numeric" autocomplete="off" placeholder="Optional, 4 to 8 digits, asked before the agent answers" />
-                <button class="settings-btn" id="phone-clear-pin" type="button">Clear PIN</button>
-              </div>
-              <div class="settings-row">
-                <span class="admin-toggle-sub" id="phone-webhook"></span>
-                <button class="admin-btn-add" id="phone-save" type="button">Save</button>
-              </div>
-              <div class="settings-row">
-                <span class="admin-toggle-sub">Test checks the account, the number's webhook, the public URL, the speech engines and the model. Call me rings your first number.</span>
-                <button class="settings-btn" id="phone-test" type="button">Test</button>
-                <button class="settings-btn" id="phone-call-me" type="button">Call me</button>
-              </div>
-              <div id="phone-checks" class="settings-col" hidden></div>
-              <div id="phone-msg" class="admin-toggle-sub"></div>
-            </div>
-            <!-- Free SIP line: routes/sip_routes.py, src/telephony/sip_line.py, filled in by devicesSettings.js. -->
-            <div id="sip-section" data-goto-keywords="sip softphone linphone zoiper free tailnet tailscale voip" style="margin-top:14px;padding-top:12px;border-top:1px solid color-mix(in srgb, var(--fg) 12%, transparent)">
-              <div class="admin-toggle-label" style="font-size:14px">Free SIP line (tailnet)</div>
-              <div class="admin-toggle-sub">Call the agent for free from a SIP app (Linphone or Zoiper) on any device on your tailnet. No phone number, no provider, nothing public: Odysseus answers the call itself, on its Tailscale address only, and asks for this username and password. It uses the Greeting, Model and PIN above and the Voice call speech engines.</div>
-              <div class="admin-toggle-row">
-                <div>
-                  <div class="admin-toggle-label">Answer SIP calls</div>
-                  <div class="admin-toggle-sub" id="sip-state">Loading…</div>
-                </div>
-                <label class="admin-switch"><input type="checkbox" id="sip-enabled"><span class="admin-slider"></span></label>
-              </div>
-              <div class="settings-col">
-                <div class="settings-row">
-                  <span class="settings-label">Dial</span>
-                  <span class="admin-toggle-sub" id="sip-dial" style="flex:1"></span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="sip-username">Username</label>
-                  <input id="sip-username" class="settings-select" type="text" autocomplete="off" placeholder="jaron (what the softphone signs in as)" />
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="sip-password">Password</label>
-                  <input id="sip-password" class="settings-select" type="password" autocomplete="new-password" placeholder="At least 10 characters" />
-                  <button class="settings-btn" id="sip-generate" type="button">Generate</button>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="sip-devices">Allowed devices</label>
-                  <input id="sip-devices" class="settings-select" type="text" placeholder="Any device on your tailnet (or Tailscale IPs, comma-separated)" />
-                </div>
-                <div class="admin-toggle-sub" id="sip-device-list"></div>
-                <div class="settings-row">
-                  <label class="settings-label" for="sip-require-pin">PIN</label>
-                  <label class="admin-toggle-sub" style="flex:1"><input type="checkbox" id="sip-require-pin"> Ask for the PIN above on SIP calls too (type it on the keypad, then #)</label>
-                </div>
-                <div class="settings-row">
-                  <span class="admin-toggle-sub">Test checks the listener, the account, the speech engines and the model. Call me rings your registered softphone.</span>
-                  <button class="admin-btn-add" id="sip-save" type="button">Save</button>
-                </div>
-                <div class="settings-row">
-                  <button class="settings-btn" id="sip-test" type="button">Test</button>
-                  <button class="settings-btn" id="sip-call-me" type="button">Call me</button>
-                  <button class="settings-btn" id="sip-qr" type="button">Linphone QR code</button>
-                </div>
-                <div id="sip-checks" class="settings-col" hidden></div>
-                <div id="sip-qr-box"></div>
-                <div id="sip-msg" class="admin-toggle-sub"></div>
-              </div>
-              <details>
-                <summary class="admin-toggle-sub">Softphone setup (Android, over Tailscale)</summary>
-                <ol class="admin-toggle-sub">
-                  <li>Here: pick a username, Generate a password (copy it), turn on Answer SIP calls, Save, then Test.</li>
-                  <li>On the phone, have Tailscale connected, and install <strong>Linphone</strong> (Play Store or F-Droid) or <strong>Zoiper</strong>.</li>
-                  <li><strong>Linphone</strong>: open Settings here through your Tailscale name on the phone or another screen, tap Linphone QR code, and in Linphone choose "Scan QR code" (remote provisioning) and scan it. Or by hand: "Use a SIP account", username and password from above, domain = the server address shown under Dial, transport UDP.</li>
-                  <li><strong>Zoiper</strong>: Add account, "I have an account", username = <code>username@server address</code>, password, then "Skip" the provider search and pick UDP.</li>
-                  <li>In the app's audio codecs, keep <strong>PCMU</strong> (G.711 mu-law) on. Turn off battery optimization for the app so "Call me" can ring it.</li>
-                  <li>Dial <code>odysseus</code> (or the full address under Dial). Talk, pause, listen; press * to interrupt; say "bye" to hang up. Full steps and troubleshooting: docs/sip-line.md.</li>
-                </ol>
-              </details>
-            </div>
-            <details>
-              <summary class="admin-toggle-sub">Setup guide</summary>
-              <ol class="admin-toggle-sub">
-                <li>Make a Twilio account and buy a local voice number (about $1.15 a month). Copy the account SID and auth token from the Console into the fields above.</li>
-                <li>Make the phone path public, and only it: <code>tailscale funnel --bg --https=8443 --set-path=/api/telephony http://127.0.0.1:7000/api/telephony</code>. Put <code>https://&lt;server&gt;.&lt;tailnet&gt;.ts.net:8443</code> in Public URL.</li>
-                <li>In Twilio, open the number, and under Voice set "A call comes in" to Webhook, the address shown above, HTTP POST.</li>
-                <li>Pick Speech: Odysseus engines uses "Hears with" and "Speaks with" from AI Defaults > Voice call (they must be server engines, not the browser's). Or let Twilio do the speech.</li>
-                <li>Turn on Answer calls, Save, then Test. Save the agent's number as a contact and call it. Full steps, costs and Google Voice: docs/phone-calls.md.</li>
-              </ol>
-            </details>
-          </div>
-          <!-- Google Meet: routes/meet_routes.py, filled in by devicesSettings.js. -->
-          <div class="admin-card" id="meet-card" data-goto-keywords="google meet meeting video call join notes transcript summary assistant bot">
-            <h2>Google Meet</h2>
-            <div class="admin-toggle-sub">Bring the agent into a Google Meet. Talk with it there like a call, or let it sit in as a meeting assistant: it transcribes the meeting into a chat, answers only when someone says its name, and posts notes with action items when the meeting ends. It joins as "Odysseus (AI)" and says out loud that an AI is listening and transcribing.</div>
-            <div class="admin-toggle-row">
-              <div>
-                <div class="admin-toggle-label">Join meetings</div>
-                <div class="admin-toggle-sub" id="meet-state">Loading…</div>
-              </div>
-              <label class="admin-switch"><input type="checkbox" id="meet-enabled"><span class="admin-slider"></span></label>
-            </div>
-            <div class="settings-col">
-              <div class="admin-toggle-label">Join a Meet</div>
-              <div class="settings-row">
-                <label class="settings-label" for="meet-url">Meet link</label>
-                <input id="meet-url" class="settings-select" type="text" autocomplete="off" placeholder="https://meet.google.com/abc-defg-hij" />
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="meet-mode">Mode</label>
-                <select id="meet-mode" class="settings-select">
-                  <option value="assistant">Meeting assistant (transcribes, answers when called by name, notes after)</option>
-                  <option value="talk">Talk with me (answers every turn, like a call)</option>
-                </select>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label" for="meet-via">Join by</label>
-                <select id="meet-via" class="settings-select">
-                  <option value="browser">The cloud browser (any Meet link)</option>
-                  <option value="phone">Phone dial-in (the Twilio number from Phone calls)</option>
-                </select>
-              </div>
-              <div class="settings-row" id="meet-dial-row" style="display:none">
-                <label class="settings-label" for="meet-dial">Dial-in</label>
-                <input id="meet-dial" class="settings-select" type="text" autocomplete="off" placeholder="+1 650-555-0123 (Join by phone in the invite)" />
-                <input id="meet-pin" class="settings-select" type="text" inputmode="numeric" autocomplete="off" placeholder="PIN" />
-              </div>
-              <div class="settings-row">
-                <span class="admin-toggle-sub">Someone in the meeting may have to let it in from the lobby.</span>
-                <button class="admin-btn-add" id="meet-join" type="button">Join</button>
-              </div>
-              <div class="admin-toggle-label">Make a meeting</div>
-              <div class="admin-toggle-sub">From your own Google account, through Google Calendar: Google makes the Meet link and emails the invites. Making a meeting does not need Join meetings switched on; having Odysseus join it does. The same Google connection covers Drive, Docs, Sheets and the rest in Settings &gt; Google.</div>
-              <div class="settings-row">
-                <span class="admin-toggle-sub" id="meet-google-state">Loading…</span>
-                <a class="admin-btn-add" id="meet-google-connect" href="/api/meet/google/connect" target="_blank" rel="noopener" hidden>Connect Google Calendar</a>
-                <button class="settings-btn" id="meet-google-disconnect" type="button" style="padding:3px 10px;font-size:12px" hidden>Disconnect</button>
-              </div>
-              <div id="meet-google-setup" class="settings-col" hidden>
-                <div class="admin-toggle-sub">No Google OAuth client is set up on this server yet. One free client covers this and Sign in with Google:</div>
-                <ol class="admin-toggle-sub" style="margin:0;padding-left:18px">
-                  <li>In the <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud Console</a>, make a project (free).</li>
-                  <li>APIs &amp; Services &gt; Library: enable the <strong>Google Calendar API</strong>, and the <strong>Google Meet REST API</strong> (it lets Odysseus set a new meeting's access to Open).</li>
-                  <li>OAuth consent screen: External. Set the publishing status to In production (click past the "unverified app" warning when you connect), or Google drops the connection every 7 days.</li>
-                  <li>Credentials &gt; Create credentials &gt; OAuth client ID &gt; Web application. Under Authorized redirect URIs add exactly: <code id="meet-google-redirect"></code> <button class="settings-btn" id="meet-google-copy" type="button" style="padding:1px 8px;font-size:11px">Copy</button></li>
-                  <li>Paste the client ID and secret here (they are saved in this server's settings, where Sign in with Google reads them too), then press Connect Google Calendar.</li>
-                </ol>
-              </div>
-              <div id="meet-google-client" class="settings-col" hidden>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-google-cid">Client ID</label>
-                  <input id="meet-google-cid" class="settings-select" type="text" autocomplete="off" placeholder="1234-abc.apps.googleusercontent.com" />
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-google-secret">Client secret</label>
-                  <input id="meet-google-secret" class="settings-select" type="password" autocomplete="new-password" placeholder="Saved on the server, never shown again" />
-                  <button class="admin-btn-add" id="meet-google-save" type="button">Save client</button>
-                </div>
-              </div>
-              <div id="meet-create" class="settings-col" hidden>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-create-title">Title</label>
-                  <input id="meet-create-title" class="settings-select" type="text" maxlength="200" placeholder="Meeting" />
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-create-people">Invite</label>
-                  <input id="meet-create-people" class="settings-select" type="text" autocomplete="off" placeholder="bob@example.com, amy@example.com (optional)" />
-                </div>
-                <div class="settings-row">
-                  <label><input type="checkbox" id="meet-create-open" checked> Set meeting access to Open (anyone with the link can join)</label>
-                </div>
-                <div class="settings-row">
-                  <span class="admin-toggle-sub">Makes the meeting now and Odysseus joins it.</span>
-                  <button class="admin-btn-add" id="meet-create-now" type="button">Start a meeting now</button>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-create-start">Schedule for</label>
-                  <input id="meet-create-start" class="settings-select" type="datetime-local" />
-                  <select id="meet-create-minutes" class="settings-select">
-                    <option value="15">15 minutes</option>
-                    <option value="30" selected>30 minutes</option>
-                    <option value="45">45 minutes</option>
-                    <option value="60">1 hour</option>
-                    <option value="90">1.5 hours</option>
-                    <option value="120">2 hours</option>
-                  </select>
-                  <button class="admin-btn-add" id="meet-create-schedule" type="button">Schedule a meeting</button>
-                </div>
-                <div id="meet-created" class="admin-toggle-sub"></div>
-              </div>
-              <div class="admin-toggle-label">Coming up (from your calendar)</div>
-              <div id="meet-upcoming" class="settings-col"><div class="admin-toggle-sub">No meetings with a Meet link in the next day.</div></div>
-              <div class="admin-toggle-label">Meetings</div>
-              <div id="meet-active" class="settings-col"><div class="admin-toggle-sub">Not in a meeting.</div></div>
-              <div id="meet-msg" class="admin-toggle-sub"></div>
-            </div>
-            <details>
-              <summary class="admin-toggle-sub">Settings</summary>
-              <div class="settings-col">
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-name">Display name</label>
-                  <input id="meet-name" class="settings-select" type="text" maxlength="60" placeholder="Odysseus (AI)" />
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-owner">Your name</label>
-                  <input id="meet-owner" class="settings-select" type="text" maxlength="60" placeholder="Said in the announcement: here for ..." />
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-joinas">Join as</label>
-                  <select id="meet-joinas" class="settings-select">
-                    <option value="guest">Guest (asks to join with the display name; nothing to sign in to)</option>
-                    <option value="signed_in">Signed in (the Google account signed in to the cloud browser)</option>
-                  </select>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-wake">Wake words</label>
-                  <input id="meet-wake" class="settings-select" type="text" placeholder="odysseus (comma-separated, up to 5)" />
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-announcement">Announcement</label>
-                  <input id="meet-announcement" class="settings-select" type="text" maxlength="400" />
-                </div>
-                <div class="settings-row">
-                  <label><input type="checkbox" id="meet-announce"> Say it out loud when it joins</label>
-                  <label><input type="checkbox" id="meet-chat-notice"> Post it in the meeting chat</label>
-                  <label><input type="checkbox" id="meet-summary"> Notes and action items after (assistant)</label>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-max">Leave after</label>
-                  <select id="meet-max" class="settings-select">
-                    <option value="30">30 minutes</option>
-                    <option value="60">1 hour</option>
-                    <option value="120">2 hours</option>
-                    <option value="240">4 hours</option>
-                    <option value="480">8 hours</option>
-                    <option value="1440">24 hours (Meet's limit)</option>
-                  </select>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-idle">Leave when quiet for</label>
-                  <select id="meet-idle" class="settings-select">
-                    <option value="5">5 minutes</option>
-                    <option value="15">15 minutes</option>
-                    <option value="30">30 minutes</option>
-                    <option value="60">1 hour</option>
-                  </select>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-lobby">Wait in the lobby</label>
-                  <select id="meet-lobby" class="settings-select">
-                    <option value="5">5 minutes</option>
-                    <option value="10">10 minutes</option>
-                    <option value="20">20 minutes</option>
-                  </select>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-dial-wait">PIN after</label>
-                  <select id="meet-dial-wait" class="settings-select">
-                    <option value="2">2 seconds</option>
-                    <option value="4">4 seconds</option>
-                    <option value="6">6 seconds</option>
-                    <option value="8">8 seconds</option>
-                  </select>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="meet-model">Model</label>
-                  <select id="meet-model" class="settings-select"><option value="">Default model</option></select>
-                </div>
-                <div class="settings-row">
-                  <span class="admin-toggle-sub">Speech uses "Hears with" and "Speaks with" from AI Defaults > Voice call (server engines, not the browser's).</span>
-                  <button class="admin-btn-add" id="meet-save" type="button">Save</button>
-                </div>
-              </div>
-            </details>
-            <details>
-              <summary class="admin-toggle-sub">Setup guide</summary>
-              <ol class="admin-toggle-sub">
-                <li>Pick server speech engines in AI Defaults > Voice call (Whisper or Parakeet to hear, Kokoro to speak).</li>
-                <li>Turn on Join meetings and Save. Paste a Meet link and Join, or use <code>/meet https://meet.google.com/...</code> in a chat. Let "Odysseus (AI)" in from the lobby.</li>
-                <li>Meetings that only admit signed-in accounts: sign the cloud browser in to a Google account (a separate one named "Odysseus (AI)" is best) and pick Signed in. Invite that account to skip the lobby.</li>
-                <li>Join by phone instead: set up Phone calls (Twilio) first, then use the dial-in number and PIN from the invite. Meet has dial-in numbers only when the organizer's plan includes them.</li>
-                <li>Say "Odysseus, leave the meeting", press Leave here, or end the meeting. Full steps, costs and what your plan unlocks: docs/google-meet.md.</li>
-              </ol>
-            </details>
           </div>
         </div>
 
@@ -3139,7 +2612,7 @@
         <div data-settings-panel="google" class="hidden">
           <div class="admin-card" id="google-account-card" data-goto-keywords="google account connect disconnect oauth client scopes permissions">
             <h2>Google account</h2>
-            <div class="admin-toggle-sub">One Google account connection for every Google product below. Each product asks Google for its permission when you connect it (keep every box ticked on Google's page), and its tools appear in chats only while it is connected.</div>
+            <div class="admin-toggle-sub">The Google account connection for Google Calendar and Meet. Connecting asks Google for their permission (keep every box ticked on Google's page). Drive, Docs, Sheets, Slides, Tasks and Contacts are in the Google add-on, below.</div>
             <div class="settings-row">
               <span class="admin-toggle-sub" id="google-account-state">Loading…</span>
               <button class="settings-btn" id="google-recheck" type="button" style="padding:3px 10px;font-size:12px" title="Ask Google which permissions it holds now" hidden>Recheck</button>
@@ -3151,7 +2624,7 @@
               <div class="admin-toggle-sub">Turning off one product stops Odysseus using it; Google keeps the permission until you press Disconnect Google, which revokes everything.</div>
             </details>
             <div id="google-setup" class="settings-col" hidden>
-              <div class="admin-toggle-sub">No Google OAuth client is set up on this server yet. One free client covers Sign in with Google, Meet and every product here (full steps in docs/google.md):</div>
+              <div class="admin-toggle-sub">No Google OAuth client is set up on this server yet. One free client covers Sign in with Google, Calendar, Meet and the Google add-on (full steps in docs/google.md):</div>
               <ol class="admin-toggle-sub" style="margin:0;padding-left:18px">
                 <li>In the <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud Console</a>, make a project (free) and enable the APIs of the products you want (APIs &amp; Services &gt; Library).</li>
                 <li>OAuth consent screen: External, add the scopes listed on each card, and set the publishing status to In production (Testing mode drops the connection every 7 days).</li>
@@ -3177,7 +2650,7 @@
             <div class="admin-toggle-row">
               <div>
                 <div class="admin-toggle-label">Ask before writing to my Google account (and Gmail)</div>
-                <div class="admin-toggle-sub">Anything that would create, change, send or delete in your Google account (Docs, Sheets, Slides, Drive, Tasks, Meet, Google Calendar) or a Gmail mailbox waits in the chat for your Approve. Reading never asks. Only an admin can turn this off.</div>
+                <div class="admin-toggle-sub">Anything that would send, change or delete in a Gmail mailbox, Google Calendar or Meet waits in the chat for your Approve. Reading never asks. Only an admin can turn this off. The Google add-on (Drive, Docs, Sheets, Slides, Tasks) asks before its own writes.</div>
               </div>
               <label class="admin-switch"><input type="checkbox" id="google-approval-toggle"><span class="admin-slider"></span></label>
             </div>
@@ -3349,31 +2822,13 @@
               </div>
             </div>
           </div>
-          <!-- Sign in with ChatGPT (static/js/chatgptPlan.js, routes/chatgpt_plan_routes.py) -->
+          <!-- Sign in with ChatGPT: the ChatGPT add-on (static/js/chatgptAddon.js) -->
           <div class="admin-card" id="cgp-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>Sign in with ChatGPT</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:10px">Use OpenAI models on your ChatGPT Plus or Pro plan, no API key needed. Usage counts against your ChatGPT plan's limits: see <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">ChatGPT Settings &gt; Usage</a>.</div>
-            <div id="cgp-status" class="admin-toggle-sub" style="opacity:1;margin-bottom:8px">Checking sign-in...</div>
+            <div id="cgp-status" class="admin-toggle-sub" style="opacity:1;margin-bottom:8px">Checking for the ChatGPT add-on...</div>
             <div class="admin-model-form-row">
-              <button class="admin-btn-add" id="cgp-signin-btn">Sign in with ChatGPT</button>
-              <span style="flex:1"></span>
-              <button class="admin-btn-sm hidden" style="display:none" id="cgp-refresh-btn" title="Fetch the models your ChatGPT plan offers">Refresh models</button>
-              <button class="admin-btn-sm hidden" style="display:none" id="cgp-signout-btn" title="Delete the ChatGPT tokens stored for you">Sign out</button>
+              <button class="admin-btn-add" id="cgp-addon-btn" style="display:none">Install the ChatGPT add-on</button>
             </div>
-            <div id="cgp-paste" class="hidden" style="display:none;margin-top:10px">
-              <ol class="admin-toggle-sub" style="margin:0 0 8px 18px;padding:0;line-height:1.5">
-                <li>In the ChatGPT tab that opened (<a id="cgp-auth-link" href="#" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">open it again</a>), sign in and approve Odysseus.</li>
-                <li>ChatGPT then sends that tab to <code id="cgp-redirect-uri">http://127.0.0.1:1455/auth/callback</code>, which won't load when Odysseus runs on another machine. That's expected.</li>
-                <li>Copy the whole address from that tab's address bar and paste it here.</li>
-              </ol>
-              <div class="admin-model-form-row">
-                <input id="cgp-redirect-input" type="text" placeholder="http://127.0.0.1:1455/auth/callback?code=...&amp;state=..." autocomplete="off" spellcheck="false" style="flex:1">
-                <button class="admin-btn-add" id="cgp-complete-btn">Finish sign-in</button>
-              </div>
-              <div id="cgp-auto-note" class="admin-toggle-sub hidden" style="display:none;margin-top:4px">If this browser is on the Odysseus server itself, sign-in finishes on its own.</div>
-            </div>
-            <div id="cgp-models" class="admin-toggle-sub" style="margin-top:8px"></div>
-            <div id="cgp-msg" class="adm-ep-inline-msg"></div>
           </div>
           <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span>
@@ -3607,17 +3062,6 @@
             </div>
           </div>
 
-          <!-- The Terminal (terminal.js fills this in; removed for non-admins) -->
-          <div class="admin-card" id="terminal-settings-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="6 9 10 12 6 15"/><line x1="12" y1="15" x2="17" y2="15"/></svg>Terminal</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:6px">A full shell on this server, as the user Odysseus runs as, for admins only (Tools, Terminal).</div>
-            <div class="admin-toggle-sub" id="terminal-settings-info">Loading…</div>
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px">
-              <span class="admin-toggle-sub" style="margin:0">Copy text as soon as it is selected (this browser only). Otherwise select, then Ctrl+C or right-click, Copy.</span>
-              <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="terminal-copy-on-select" aria-label="Copy on select" /><span class="admin-slider"></span></label>
-            </div>
-          </div>
-
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Data Backup</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Export or import your user data (memories, presets, settings, skills, preferences) as a JSON file.</div>
@@ -3727,12 +3171,7 @@
 <script type="module" src="/static/js/devicesPanel.js"></script>
 <script type="module" src="/static/js/mailListenerSettings.js"></script>
 <script type="module" src="/static/js/inboundMail.js"></script>
-<script type="module" src="/static/js/devopsPage.js"></script>
 <script type="module" src="/static/js/usagePage.js"></script>
-<script type="module" src="/static/js/claudeSessions.js"></script>
-<script type="module" src="/static/js/adsbPanel.js"></script>
-<script type="module" src="/static/js/gamesPanel.js"></script>
-<script type="module" src="/static/js/gamesSettings.js"></script>
 <script type="module" src="/static/js/modsSettings.js"></script>
 <script type="module" src="/static/js/plans.js"></script>
 <script type="module" src="/static/js/company.js"></script>
@@ -3741,7 +3180,6 @@
 <script type="module" src="/static/js/whatsNew.js"></script>
 <script type="module" src="/static/js/codePanel.js"></script>
 <script type="module" src="/static/js/cloudBrowser.js"></script>
-<script type="module" src="/static/js/terminal.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
 <script type="module" src="/static/js/sessions.js"></script>
@@ -3776,7 +3214,6 @@
 <script type="module" src="/static/js/sttEngines.js"></script>
 <script type="module" src="/static/js/callHandoff.js"></script>
 <script type="module" src="/static/js/ttsEngines.js"></script>
-<script type="module" src="/static/js/ttsElevenLabs.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>

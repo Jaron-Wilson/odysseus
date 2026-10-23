@@ -17,6 +17,12 @@
     }
   },
   "$defs": {
+    "capabilities": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "type": "string", "maxLength": 64, "pattern": "^[a-z][a-z0-9-]{0,31}(?:\\.[a-z][a-z0-9-]{0,31}){1,4}$" }
+    },
     "entry": {
       "type": "object",
       "required": ["repo", "id"],
@@ -59,7 +65,10 @@
           "maxItems": 10,
           "items": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,31}$" },
           "description": "Extra tags, added to the ones in the mod's manifest."
-        }
+        },
+        "provides": { "$ref": "#/$defs/capabilities", "description": "Capabilities it provides (like messaging.sms), added to the manifest's; Browse's \"find a provider\" searches these." },
+        "requires": { "$ref": "#/$defs/capabilities", "description": "Capabilities it needs, added to the manifest's." },
+        "optional": { "$ref": "#/$defs/capabilities", "description": "Capabilities it works better with, added to the manifest's." }
       }
     }
   }

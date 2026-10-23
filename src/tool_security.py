@@ -49,12 +49,6 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "stop_served_model",
     "cancel_download",
     "adopt_served_model",
-    # Game streaming: Sunshine's account controls the PC (src/agent_tools/game_tools.py).
-    "games_list",
-    "game_status",
-    "game_launch",
-    "game_stop",
-    "game_sync_steam",
 }
 
 
@@ -94,9 +88,6 @@ PLAN_MODE_READONLY_TOOLS = {
     "company_issue_list",
     "company_issue_get",
     "company_agent_status",
-    # Game streaming, read-only (src/agent_tools/game_tools.py READ_TOOLS).
-    "games_list",
-    "game_status",
     # Writing the plan itself is how plan mode ends: it only saves a Plans
     # document and waits for the user's answer (src/native_plans.py).
     "propose_plan",
@@ -139,17 +130,8 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     # The user's Company (src/agent_tools/company_chat_tools.py WRITE_TOOLS).
     "company_issue_create", "company_issue_update", "company_issue_comment",
     "company_agent_wake", "company_approval_decide",
-    # Game streaming (src/agent_tools/game_tools.py WRITE_TOOLS): stopping the
-    # running game, adding apps to Sunshine, and the launch link.
-    "game_stop", "game_sync_steam", "game_launch",
 }
 
-
-# Google products (src/google_workspace/products.py): reads stay usable in
-# plan mode like list_emails/read_email; creates and edits are mutators.
-from src.google_workspace.products import READ_TOOLS as _GOOGLE_READ, WRITE_TOOLS as _GOOGLE_WRITE  # noqa: E402
-PLAN_MODE_READONLY_TOOLS.update(_GOOGLE_READ)
-_PLAN_MODE_KNOWN_MUTATORS.update(_GOOGLE_WRITE)
 
 
 def plan_mode_disabled_tools() -> Set[str]:

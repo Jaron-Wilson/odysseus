@@ -1,6 +1,6 @@
 // Settings > Devices: the registry behind "my phone", editable by hand.
-// Also the cards on Settings > Calls & Meetings (Phone SMS, Phone calls, the
-// free SIP line, Google Meet), which used to sit on the Devices tab.
+// Also the cards on Settings > Calls & Meetings (Text messages and the Phone &
+// Messages mod card), which used to sit on the Devices tab.
 //
 // Loaded as its own module and driven by settings.js, which calls load()
 // whenever the Devices tab is opened and loadCalls() whenever Calls &
@@ -95,7 +95,19 @@ function renderMachines() {
   if (!box) return;
   const ov = state.overview || {};
   if (!ov.tailscale) {
-    box.innerHTML = '<div class="admin-toggle-sub">Tailscale is not running on this server, so machines cannot be found. Install it and sign in to the same tailnet.</div>';
+    // Machines come from the Tailscale add-on (it provides network.peers).
+    const net = ov.network || {};
+    let msg;
+    if (net.provider) {
+      msg = `${esc(net.provider.name)} found no machines${net.error ? ': ' + esc(net.error) : ''}. Is Tailscale running on this server and signed in to your tailnet?`;
+    } else if (net.installed_off) {
+      msg = 'The Tailscale add-on is installed but turned off. Turn it on in Settings &gt; Mods to see your machines here.';
+    } else {
+      msg = 'Machines on your tailnet are found by the Tailscale add-on. <button type="button" class="admin-btn-sm" data-install-tailscale>Install the Tailscale add-on</button> MCP servers you added still work and are listed below.';
+    }
+    box.innerHTML = `<div class="admin-toggle-sub">${msg}</div>`;
+    const b = box.querySelector('[data-install-tailscale]');
+    if (b) b.onclick = () => window.modLinks && window.modLinks.browse && window.modLinks.browse('tailscale');
     return;
   }
   box.innerHTML = (ov.machines || []).map((m) => {
@@ -237,11 +249,13 @@ function toolsLine(t) {
     <button ${BTN} data-m-update="${esc(t.server_id)}" data-m-host="${esc(t.host || '')}" ${t.online ? '' : 'disabled title="Offline"'}>${toolsButton(t)}</button></div>`;
 }
 
-// ── Phone SMS: text the server from your phone (routes/sms_routes.py) ─────
+// ── Calls & Meetings: the Phone & Messages mod, and texts without it ──────
 //
-// Per user, not admin only, so it loads on its own: the registry calls above
-// fail for a non-admin. The secret is shown once, when it is made; the server
-// keeps only its hash.
+// Texting the agent, phone calls, the SIP line and Google Meet are the Phone
+// & Messages mod (its tab replaces the "phone" page, modLinks.js). This tab
+// points at it, and keeps the core's own way to text you (routes/sms_routes.py),
+// which mod notifications use when no such mod is installed. Per user, not
+// admin only, so it loads on its own.
 
 function smsSay(text, isError) {
   const el = $('sms-msg');
@@ -254,11 +268,6 @@ function renderSms(cfg) {
   if (!$('sms-card')) return;
   $('sms-numbers').value = (cfg.numbers || []).join(', ');
   $('sms-reply-url').value = cfg.reply_url || '';
-  const when = cfg.secret_created ? new Date(cfg.secret_created * 1000).toLocaleString() : '';
-  $('sms-secret-state').textContent = cfg.has_secret
-    ? `A secret is set${when ? ` (made ${when})` : ''}. Generating a new one stops the old forward URL.`
-    : 'No secret yet: the gateway is off until you generate one.';
-  $('sms-disable').disabled = !cfg.has_secret;
 }
 
 async function loadSms() {
@@ -266,12 +275,12 @@ async function loadSms() {
   try {
     renderSms(await api('GET', '/api/sms/config'));
   } catch (e) {
-    smsSay(`Could not load the SMS settings: ${e.message}`, true);
+    smsSay(`Could not load the text settings: ${e.message}`, true);
   }
 }
 
 async function onSmsClick(ev) {
-  const t = ev.target.closest('#sms-save,#sms-generate,#sms-test,#sms-disable');
+  const t = ev.target.closest('#sms-save,#sms-test');
   if (!t) return;
   ev.preventDefault();
   try {
@@ -279,580 +288,52 @@ async function onSmsClick(ev) {
       const numbers = $('sms-numbers').value.split(/[,;\n]/).map((n) => n.trim()).filter(Boolean);
       renderSms(await api('PUT', '/api/sms/config', { numbers, reply_url: $('sms-reply-url').value.trim() }));
       smsSay('Saved.');
-    } else if (t.id === 'sms-generate') {
-      if (!confirm('Make a new secret? The forward URL on your phone stops working until you paste the new one.')) return;
-      const r = await api('POST', '/api/sms/secret');
-      renderSms(r);
-      const url = `${location.origin}${r.inbound_path}${r.secret}`;
-      const once = $('sms-secret-once');
-      once.innerHTML = `
-        <div class="admin-toggle-sub">Paste this forward URL into the phone app now. It is shown only this once.</div>
-        <div class="settings-row"><code class="sms-url">${esc(url)}</code>${copyBtn(url)}</div>
-        <div class="settings-row"><span class="admin-toggle-sub">Secret alone:</span><code class="sms-url">${esc(r.secret)}</code>${copyBtn(r.secret)}</div>`;
-      once.hidden = false;
-      smsSay('New secret made. The old forward URL no longer works.');
     } else if (t.id === 'sms-test') {
       const r = await api('POST', '/api/sms/test');
       const results = r.results || [];
       if (results.length <= 1) {
         const via = results[0] && results[0].via === 'push' ? 'web push' : 'reply URL';
-        smsSay(r.ok ? `Test reply sent (${via}).`
-          : 'The test reply did not go through. Check the reply URL, or turn on notifications.', !r.ok);
+        smsSay(r.ok ? `Test text sent (${via}).`
+          : 'The test text did not go through. Check the reply URL, or turn on notifications.', !r.ok);
       } else {
         const lines = results.map((x) => `${x.ok ? 'sent to' : 'FAILED for'} ${x.to}`);
-        smsSay(`Test replies: ${lines.join(', ')}.`, !r.ok);
+        smsSay(`Test texts: ${lines.join(', ')}.`, !r.ok);
       }
-    } else if (t.id === 'sms-disable') {
-      if (!confirm('Turn the SMS gateway off? Texts are ignored until you generate a new secret.')) return;
-      renderSms(await api('DELETE', '/api/sms/secret'));
-      $('sms-secret-once').hidden = true;
-      $('sms-secret-once').innerHTML = '';
-      smsSay('Turned off.');
     }
   } catch (e) {
     smsSay(e.message, true);
   }
 }
 
-// ── Phone calls: call the agent on a phone number (routes/telephony_routes.py) ──
-//
-// Per user, like the SMS card. The auth token and PIN are write-only: the
-// server says only whether one is saved, and a blank field keeps it.
-
-function phoneSay(text, isError) {
-  const el = $('phone-msg');
+// Whether a mod tab takes over the "phone" page (GET /api/mods/ui `replaces`).
+async function loadPhoneMod() {
+  const el = $('phone-mod-state');
   if (!el) return;
-  el.textContent = text || '';
-  el.classList.toggle('sms-error', !!isError);
-}
-
-function renderPhone(cfg) {
-  if (!$('phone-card')) return;
-  $('phone-enabled').checked = !!cfg.enabled;
-  $('phone-number').value = cfg.phone_number || '';
-  $('phone-sid').value = cfg.account_sid || '';
-  $('phone-token').value = '';
-  $('phone-token').placeholder = cfg.has_auth_token ? 'Saved (type a new one to replace it)' : 'Twilio auth token';
-  $('phone-allowed').value = (cfg.numbers || []).join(', ');
-  $('phone-allowed').placeholder = cfg.numbers_from_sms && (cfg.allowed || []).length
-    ? `${cfg.allowed.join(', ')} (your Phone SMS numbers)` : '+15550102000 (comma-separated, up to 5)';
-  $('phone-public').value = cfg.public_url || '';
-  $('phone-greeting').value = cfg.greeting || '';
-  $('phone-greeting').placeholder = cfg.default_greeting || '';
-  const sel = $('phone-model');
-  sel.innerHTML = '<option value="">Default model</option>' + (cfg.models || []).map((m) => {
-    const v = `${m.endpoint_id}|${m.model}`;
-    const where = m.endpoint_name ? ` (${m.endpoint_name})` : '';
-    return `<option value="${esc(v)}">${esc(m.name)}${esc(where)}</option>`;
-  }).join('');
-  const cur = cfg.model && cfg.endpoint_id ? `${cfg.endpoint_id}|${cfg.model}` : '';
-  if (cur && ![...sel.options].some((o) => o.value === cur)) {
-    sel.insertAdjacentHTML('beforeend', `<option value="${esc(cur)}">${esc(cfg.model)} (not available now)</option>`);
-  }
-  sel.value = cur;
-  $('phone-engine').value = cfg.engine || 'odysseus';
-  $('phone-voice').value = cfg.relay_voice || '';
-  showVoiceRow($('phone-engine').value);
-  $('phone-unknown').value = cfg.unknown || 'reject';
-  const delay = String(cfg.answer_delay || 0);
-  if (![...$('phone-delay').options].some((o) => o.value === delay)) {
-    $('phone-delay').insertAdjacentHTML('beforeend', `<option value="${esc(delay)}">${esc(delay)} seconds</option>`);
-  }
-  $('phone-delay').value = delay;
-  $('phone-pin').value = '';
-  $('phone-pin').placeholder = cfg.has_pin ? 'A PIN is set (type a new one to replace it)' : 'Optional, 4 to 8 digits, asked before the agent answers';
-  $('phone-clear-pin').disabled = !cfg.has_pin;
-  const engines = (cfg.engines || []).join(' ');
-  const parts = [cfg.enabled ? 'On.' : 'Off: calls hear "turned off" and hang up.'];
-  if (cfg.active_calls) parts.push(`${cfg.active_calls} call${cfg.active_calls === 1 ? '' : 's'} on the line now.`);
-  if (engines) parts.push(engines);
-  $('phone-state').textContent = parts.join(' ');
-  $('phone-webhook').innerHTML = cfg.webhook_url
-    ? `Twilio webhook ("A call comes in", HTTP POST): <code class="sms-url">${esc(cfg.webhook_url)}</code> ${copyBtn(cfg.webhook_url)}`
-    : 'Save the public URL to see the webhook address for Twilio.';
-}
-
-// .settings-row sets display, which beats the hidden attribute.
-function showVoiceRow(engine) {
-  $('phone-voice-row').style.display = engine === 'relay' ? '' : 'none';
-}
-
-function phoneBody() {
-  const [endpoint_id, ...rest] = ($('phone-model').value || '').split('|');
-  const body = {
-    enabled: $('phone-enabled').checked,
-    phone_number: $('phone-number').value.trim(),
-    account_sid: $('phone-sid').value.trim(),
-    numbers: $('phone-allowed').value.split(/[,;\n]/).map((n) => n.trim()).filter(Boolean),
-    public_url: $('phone-public').value.trim(),
-    greeting: $('phone-greeting').value.trim(),
-    model: rest.join('|'),
-    endpoint_id: rest.length ? endpoint_id : '',
-    engine: $('phone-engine').value,
-    relay_voice: $('phone-voice').value.trim(),
-    unknown: $('phone-unknown').value,
-    answer_delay: Number($('phone-delay').value) || 0,
-  };
-  const token = $('phone-token').value.trim();
-  if (token) body.auth_token = token;
-  const pin = $('phone-pin').value.trim();
-  if (pin) body.pin = pin;
-  return body;
-}
-
-async function loadPhone() {
-  if (!$('phone-card')) return;
   try {
-    renderPhone(await api('GET', '/api/telephony/config'));
-  } catch (e) {
-    phoneSay(`Could not load the phone call settings: ${e.message}`, true);
+    const ui = await api('GET', '/api/mods/ui');
+    const hit = (ui.replaces || {}).phone;
+    el.textContent = hit ? `Installed: ${hit.title || 'Phone & Messages'}.`
+      : 'Not installed. An admin can add it from Settings > Mods > Browse.';
+  } catch (_) {
+    el.textContent = '';
   }
 }
 
-async function onPhoneClick(ev) {
-  const t = ev.target.closest('#phone-save,#phone-test,#phone-call-me,#phone-clear-pin');
-  if (!t) return;
+async function onPhoneModClick(ev) {
+  if (!ev.target.closest('#phone-mod-open')) return;
   ev.preventDefault();
   try {
-    if (t.id === 'phone-save') {
-      renderPhone(await api('PUT', '/api/telephony/config', phoneBody()));
-      phoneSay('Saved.');
-    } else if (t.id === 'phone-clear-pin') {
-      renderPhone(await api('PUT', '/api/telephony/config', { clear_pin: true }));
-      phoneSay('PIN cleared.');
-    } else if (t.id === 'phone-test') {
-      phoneSay('Testing…');
-      const r = await api('POST', '/api/telephony/test');
-      const box = $('phone-checks');
-      box.innerHTML = (r.checks || []).map((c) => `<div class="admin-toggle-sub"${c.ok ? '' : ' style="color:var(--red, #d33)"'}>` +
-        `${c.ok ? 'OK' : 'Not yet'}: <strong>${esc(c.name)}</strong>${c.detail ? `. ${esc(c.detail)}` : ''}</div>`).join('');
-      box.hidden = false;
-      phoneSay(r.ok ? 'Everything checks out. Call the agent\'s number.' : 'Some checks did not pass; see above.', !r.ok);
-    } else if (t.id === 'phone-call-me') {
-      if (!confirm('Have the agent call your first number now?')) return;
-      const r = await api('POST', '/api/telephony/call-me', {});
-      phoneSay(`Calling ${r.to}…`);
-    }
+    const links = await import('./modLinks.js');
+    await links.openLegacy('phone');
   } catch (e) {
-    phoneSay(e.message, true);
+    smsSay(`Could not open Phone & Messages: ${e.message}`, true);
   }
 }
 
-function onPhoneChange(ev) {
-  if (ev.target && ev.target.id === 'phone-engine') showVoiceRow(ev.target.value);
-}
-
-// ── Free SIP line: a softphone on the tailnet calls Odysseus (routes/sip_routes.py) ──
-//
-// The password is write-only like the Twilio token: the server says only
-// whether one is saved. Generate makes one here, in the browser, and shows
-// it once so it can go into the softphone; the server never echoes it.
-
-function sipSay(text, isError) {
-  const el = $('sip-msg');
-  if (!el) return;
-  el.textContent = text || '';
-  el.classList.toggle('sms-error', !!isError);
-}
-
-function renderSip(cfg) {
-  if (!$('sip-section')) return;
-  $('sip-enabled').checked = !!cfg.enabled;
-  $('sip-username').value = cfg.username || '';
-  $('sip-password').value = '';
-  $('sip-password').type = 'password';
-  $('sip-password').placeholder = cfg.has_password ? 'Saved (type or Generate a new one to replace it)' : 'At least 10 characters';
-  $('sip-devices').value = (cfg.devices || []).join(', ');
-  $('sip-require-pin').checked = !!cfg.require_pin;
-  $('sip-require-pin').disabled = !cfg.has_pin && !cfg.require_pin;
-  const parts = [];
-  if (!cfg.enabled) parts.push('Off: the line does not listen.');
-  else if (cfg.running) parts.push(`On, listening on ${(cfg.addresses || []).join(', ')} port ${cfg.port} (UDP and TCP)${cfg.test_mode ? ', test mode: loopback only' : ''}.`);
-  else parts.push(`On, but not listening: ${cfg.error || 'starting'}`);
-  const regs = cfg.registered || [];
-  if (cfg.enabled) parts.push(regs.length ? `Softphone registered from ${regs[0].ip} (${regs[0].transport.toUpperCase()}).` : 'No softphone registered yet.');
-  if (cfg.active_calls) parts.push(`${cfg.active_calls} call${cfg.active_calls === 1 ? '' : 's'} on the line now.`);
-  if (cfg.enabled && (cfg.engines || []).length) parts.push(cfg.engines.join(' '));
-  $('sip-state').textContent = parts.join(' ');
-  const dial = cfg.dial || [];
-  $('sip-dial').innerHTML = dial.length
-    ? dial.map((d) => `<code class="sms-url">${esc(d)}</code> ${copyBtn(d)}`).join('<br>') +
-      `<br>Server (domain) for the softphone: <code>${esc(cfg.server_host)}${cfg.port === 5060 ? '' : `:${cfg.port}`}</code> ${copyBtn(cfg.server_host)}, UDP or TCP, codec PCMU.`
-    : 'Turn the line on and Save to see the address to dial.';
-  const have = new Set(cfg.devices || []);
-  const devs = (cfg.tailnet_devices || []).filter((d) => !have.has(d.ip));
-  $('sip-device-list').innerHTML = devs.length
-    ? 'Add a device: ' + devs.slice(0, 12).map((d) => `<button ${BTN} data-sip-add="${esc(d.ip)}" title="${esc(d.os)}${d.online ? ', online' : ', offline'}">+ ${esc(d.name || d.ip)} (${esc(d.ip)})</button>`).join(' ')
-    : '';
-}
-
-function sipBody() {
-  const body = {
-    enabled: $('sip-enabled').checked,
-    username: $('sip-username').value.trim(),
-    devices: $('sip-devices').value.split(/[,;\s]+/).map((d) => d.trim()).filter(Boolean),
-    require_pin: $('sip-require-pin').checked,
-  };
-  const pw = $('sip-password').value;
-  if (pw) body.password = pw;
-  return body;
-}
-
-function newSipPassword() {
-  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-  const bytes = new Uint8Array(20);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => abc[b % abc.length]).join('');
-}
-
-async function loadSip() {
-  if (!$('sip-section')) return;
-  try {
-    renderSip(await api('GET', '/api/telephony/sip'));
-  } catch (e) {
-    sipSay(`Could not load the SIP line settings: ${e.message}`, true);
-  }
-}
-
-async function onSipClick(ev) {
-  const t = ev.target.closest('#sip-save,#sip-test,#sip-call-me,#sip-qr,#sip-generate,[data-sip-add]');
-  if (!t) return;
-  ev.preventDefault();
-  try {
-    if (t.id === 'sip-generate') {
-      const f = $('sip-password');
-      f.value = newSipPassword();
-      f.type = 'text';
-      sipSay('New password filled in. Copy it into the softphone, then Save.');
-    } else if (t.dataset.sipAdd) {
-      const cur = $('sip-devices').value.split(/[,;\s]+/).filter(Boolean);
-      if (!cur.includes(t.dataset.sipAdd)) cur.push(t.dataset.sipAdd);
-      $('sip-devices').value = cur.join(', ');
-      t.remove();
-    } else if (t.id === 'sip-save') {
-      renderSip(await api('PUT', '/api/telephony/sip', sipBody()));
-      sipSay('Saved.');
-    } else if (t.id === 'sip-test') {
-      sipSay('Testing…');
-      const r = await api('POST', '/api/telephony/sip/test');
-      const box = $('sip-checks');
-      box.innerHTML = (r.checks || []).map((c) => `<div class="admin-toggle-sub"${c.ok || c.optional ? '' : ' style="color:var(--red, #d33)"'}>` +
-        `${c.ok ? 'OK' : (c.optional ? 'Not yet (optional)' : 'Not yet')}: <strong>${esc(c.name)}</strong>${c.detail ? `. ${esc(c.detail)}` : ''}</div>`).join('');
-      box.hidden = false;
-      sipSay(r.ok ? 'Everything checks out. Dial odysseus from the softphone.' : 'Some checks did not pass; see above.', !r.ok);
-    } else if (t.id === 'sip-call-me') {
-      const r = await api('POST', '/api/telephony/sip/call-me', {});
-      sipSay(`Ringing your softphone (${r.device})…`);
-    } else if (t.id === 'sip-qr') {
-      const r = await api('POST', '/api/telephony/sip/provision');
-      $('sip-qr-box').innerHTML = `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-        <div style="background:#fff;padding:6px;border-radius:8px;width:180px">${r.qr_svg}</div>
-        <div class="admin-toggle-sub" style="flex:1;min-width:200px">In Linphone, choose <strong>Scan QR code</strong> (remote provisioning) and scan this.
-          It sets up the account (no password inside, only its digest) and works once, for ${Math.round((r.expires_in || 600) / 60)} minutes.
-          ${r.warning ? `<div style="color:var(--red, #d33);margin-top:6px">${esc(r.warning)}</div>` : ''}
-          <div style="margin-top:6px"><code style="word-break:break-all">${esc(r.url)}</code> ${copyBtn(r.url)}</div></div></div>`;
-    }
-  } catch (e) {
-    sipSay(e.message, true);
-  }
-}
-
-// ── Google Meet: the agent joins a meeting (routes/meet_routes.py) ──
-//
-// Per user. The join panel takes a pasted link or a calendar event with a
-// Meet link; the meeting list polls while the agent is in one.
-
-let meetPoll = 0;
-let meetUpcoming = [];
-
-function meetSay(text, isError) {
-  const el = $('meet-msg');
-  if (!el) return;
-  el.textContent = text || '';
-  el.classList.toggle('sms-error', !!isError);
-}
-
-// .settings-row sets display, which beats the hidden attribute.
-function showDialRow(via) {
-  $('meet-dial-row').style.display = via === 'phone' ? '' : 'none';
-}
-
-function pickOption(sel, value, label) {
-  const v = String(value);
-  if (![...sel.options].some((o) => o.value === v)) {
-    sel.insertAdjacentHTML('beforeend', `<option value="${esc(v)}">${esc(label)}</option>`);
-  }
-  sel.value = v;
-}
-
-const MEET_STATES = {
-  starting: 'Starting', joining: 'Opening Meet', dialing: 'Calling the dial-in number', lobby: 'In the lobby, waiting to be let in',
-  in: 'In the meeting', leaving: 'Leaving', summarizing: 'Writing the notes', ended: 'Left', failed: 'Did not get in',
-};
-
-function renderMeetings(list) {
-  const box = $('meet-active');
-  if (!box) return;
-  if (!list || !list.length) {
-    box.innerHTML = '<div class="admin-toggle-sub">Not in a meeting.</div>';
-    return;
-  }
-  box.innerHTML = list.map((m) => {
-    const live = !['ended', 'failed', 'leaving', 'summarizing'].includes(m.state);
-    const what = m.title || m.url || 'by phone';
-    const tail = (m.transcript_tail || []).slice(-3).map((l) => `<div class="admin-toggle-sub">${esc(l.text)}</div>`).join('');
-    const why = m.error || (m.state === 'ended' && m.reason ? m.reason : '');
-    return `<div class="settings-col" data-meet-id="${esc(m.id)}">
-      <div class="settings-row"><span><strong>${esc(what)}</strong> · ${esc(MEET_STATES[m.state] || m.state)}` +
-      `${m.mode === 'assistant' ? ' · assistant' : ' · talk'}${m.lines ? ` · ${m.lines} line${m.lines === 1 ? '' : 's'}` : ''}` +
-      `${why ? ` · ${esc(why)}` : ''}${m.summary_posted ? ' · notes posted' : ''}</span>
-      ${m.sid ? `<button ${BTN} data-meet-open="${esc(m.sid)}">Open chat</button>` : ''}
-      ${live && m.via === 'browser' ? `<button ${BTN} data-meet-watch="1">Watch</button>` : ''}
-      ${live ? `<button ${BTN} data-meet-leave="${esc(m.id)}">Leave</button>` : ''}</div>${tail}</div>`;
-  }).join('');
-  if (list.some((m) => !['ended', 'failed'].includes(m.state))) scheduleMeetPoll();
-}
-
-function scheduleMeetPoll() {
-  if (meetPoll) return;
-  meetPoll = setTimeout(async () => {
-    meetPoll = 0;
-    if (!$('meet-card') || !$('meet-card').offsetParent) return;      // Settings closed
-    try {
-      renderMeetings((await api('GET', '/api/meet/meetings')).meetings);
-    } catch (_) { /* next open reloads */ }
-  }, 3000);
-}
-
-function renderUpcoming(list) {
-  meetUpcoming = list || [];
-  const box = $('meet-upcoming');
-  if (!box) return;
-  if (!meetUpcoming.length) {
-    box.innerHTML = '<div class="admin-toggle-sub">No meetings with a Meet link in the next day.</div>';
-    return;
-  }
-  box.innerHTML = meetUpcoming.map((m, i) => {
-    const when = m.start ? new Date(m.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
-    return `<div class="settings-row"><span>${esc(when)} <strong>${esc(m.summary)}</strong>` +
-      `${m.dial_in ? ' · has dial-in' : ''}</span><button ${BTN} data-meet-pick="${i}">Use</button></div>`;
-  }).join('');
-}
-
-function renderMeet(cfg) {
-  if (!$('meet-card')) return;
-  $('meet-enabled').checked = !!cfg.enabled;
-  $('meet-mode').value = cfg.mode || 'assistant';
-  $('meet-via').value = cfg.via || 'browser';
-  showDialRow($('meet-via').value);
-  $('meet-name').value = cfg.display_name === 'Odysseus (AI)' ? '' : (cfg.display_name || '');
-  $('meet-owner').value = cfg.owner_name || '';
-  $('meet-joinas').value = cfg.join_as || 'guest';
-  $('meet-wake').value = (cfg.wake_words || []).join(', ');
-  $('meet-announcement').value = cfg.announcement || '';
-  $('meet-announcement').placeholder = (cfg.default_announcement || '').replace('{owner}', cfg.owner_name || 'you');
-  $('meet-announce').checked = cfg.announce !== false;
-  $('meet-chat-notice').checked = cfg.chat_notice !== false;
-  $('meet-summary').checked = cfg.summary !== false;
-  pickOption($('meet-max'), cfg.max_minutes || 120, `${cfg.max_minutes} minutes`);
-  pickOption($('meet-idle'), cfg.idle_minutes || 15, `${cfg.idle_minutes} minutes`);
-  pickOption($('meet-lobby'), cfg.lobby_minutes || 10, `${cfg.lobby_minutes} minutes`);
-  pickOption($('meet-dial-wait'), cfg.dial_wait ?? 4, `${cfg.dial_wait} seconds`);
-  const sel = $('meet-model');
-  sel.innerHTML = '<option value="">Default model</option>' + (cfg.models || []).map((m) => {
-    const where = m.endpoint_name ? ` (${m.endpoint_name})` : '';
-    return `<option value="${esc(`${m.endpoint_id}|${m.model}`)}">${esc(m.name)}${esc(where)}</option>`;
-  }).join('');
-  const cur = cfg.model && cfg.endpoint_id ? `${cfg.endpoint_id}|${cfg.model}` : '';
-  if (cur) pickOption(sel, cur, `${cfg.model} (not available now)`);
-  sel.value = cur;
-  const ready = cfg.ready || {};
-  const parts = [cfg.enabled ? 'On.' : 'Off: it joins nothing until you turn this on.'];
-  if (!ready.browser) parts.push('No cloud browser on this server, so only joining by phone works.');
-  if ((ready.engines || []).length) parts.push(ready.engines.join(' '));
-  $('meet-state').textContent = parts.join(' ');
-  renderMeetings(cfg.meetings || []);
-}
-
-function meetBody() {
-  const [endpoint_id, ...rest] = ($('meet-model').value || '').split('|');
-  return {
-    enabled: $('meet-enabled').checked,
-    mode: $('meet-mode').value,
-    via: $('meet-via').value,
-    display_name: $('meet-name').value.trim(),
-    owner_name: $('meet-owner').value.trim(),
-    join_as: $('meet-joinas').value,
-    wake_words: $('meet-wake').value,
-    announcement: $('meet-announcement').value.trim(),
-    announce: $('meet-announce').checked,
-    chat_notice: $('meet-chat-notice').checked,
-    summary: $('meet-summary').checked,
-    max_minutes: Number($('meet-max').value),
-    idle_minutes: Number($('meet-idle').value),
-    lobby_minutes: Number($('meet-lobby').value),
-    dial_wait: Number($('meet-dial-wait').value),
-    model: rest.join('|'),
-    endpoint_id: rest.length ? endpoint_id : '',
-  };
-}
-
-// ── Making a meeting: Google Calendar for this user (src/meet/google_calendar.py) ──
-
-let meetGoogle = {};
-
-function renderGoogle(g) {
-  meetGoogle = g || {};
-  if (!$('meet-google-state')) return;
-  const connected = !!g.connected;
-  $('meet-google-state').textContent = !g.configured
-    ? 'Not set up: this server has no Google OAuth client yet.'
-    : connected ? `Google Calendar connected as ${g.email || 'your Google account'}.`
-      : 'Google Calendar is not connected.';
-  $('meet-google-connect').hidden = !g.configured || connected;
-  $('meet-google-disconnect').hidden = !connected;
-  $('meet-google-setup').hidden = !!g.configured;
-  $('meet-google-redirect').textContent = g.redirect_uri || '';
-  // The client form: admins only, open while nothing is set up.
-  $('meet-google-client').hidden = !(g.can_edit_client && !g.configured);
-  if (g.can_edit_client && g.client_id && !$('meet-google-cid').value) $('meet-google-cid').value = g.client_id;
-  if (!g.can_edit_client && !g.configured) {
-    $('meet-google-state').textContent += ' Ask an admin of this server to add one.';
-  }
-  $('meet-create').hidden = !connected;
-  if (connected && g.can_open_access === false) {
-    $('meet-create-open').checked = false;
-    $('meet-create-open').disabled = true;
-    $('meet-create-open').parentElement.title = 'Connect Google Calendar again and allow Meet settings to use this.';
-  }
-}
-
-async function loadGoogle() {
-  try {
-    renderGoogle(await api('GET', '/api/meet/google'));
-  } catch (e) {
-    $('meet-google-state').textContent = `Could not check Google Calendar: ${e.message}`;
-  }
-}
-
-function meetCreated(made) {
-  const box = $('meet-created');
-  box.innerHTML = '';
-  const link = document.createElement('a');
-  link.href = made.url;
-  link.target = '_blank';
-  link.rel = 'noopener';
-  link.textContent = made.url;
-  box.append(`${made.title}: `, link, ` ${(made.message || '').replace(/^Made "[^"]*": \S+\s*/, '')}`);
-}
-
-async function loadMeet() {
-  if (!$('meet-card')) return;
-  loadGoogle();
-  try {
-    renderMeet(await api('GET', '/api/meet/config'));
-  } catch (e) {
-    meetSay(`Could not load the Google Meet settings: ${e.message}`, true);
-    return;
-  }
-  try {
-    renderUpcoming((await api('GET', '/api/meet/upcoming')).meetings);
-  } catch (_) { /* no calendar */ }
-}
-
-async function openChat(sid) {
-  const [sessions, settings] = await Promise.all([import('./sessions.js'), import('./settings.js')]);
-  settings.close();
-  await sessions.loadSessions();   // made on the server: not in the list yet
-  await sessions.selectSession(sid);
-}
-
-async function onMeetClick(ev) {
-  const t = ev.target.closest('#meet-save,#meet-join,[data-meet-leave],[data-meet-open],[data-meet-pick],[data-meet-watch],' +
-    '#meet-google-disconnect,#meet-google-save,#meet-google-copy,#meet-create-now,#meet-create-schedule');
-  if (!t) return;
-  ev.preventDefault();
-  try {
-    if (t.id === 'meet-save') {
-      renderMeet(await api('PUT', '/api/meet/config', meetBody()));
-      meetSay('Saved.');
-    } else if (t.id === 'meet-join') {
-      const body = { url: $('meet-url').value.trim(), mode: $('meet-mode').value, via: $('meet-via').value,
-                     dial_in: $('meet-dial').value.trim(), pin: $('meet-pin').value.trim(),
-                     title: $('meet-url').dataset.title || '' };
-      meetSay('Joining…');
-      const m = await api('POST', '/api/meet/join', body);
-      meetSay(m.via === 'phone' ? 'Calling the meeting…' : 'Opening Meet in the cloud browser…');
-      $('meet-url').dataset.title = '';
-      renderMeetings((await api('GET', '/api/meet/meetings')).meetings);
-    } else if (t.id === 'meet-google-disconnect') {
-      renderGoogle(await api('POST', '/api/meet/google/disconnect'));
-      meetSay('Disconnected from Google Calendar.');
-    } else if (t.id === 'meet-google-save') {
-      renderGoogle(await api('PUT', '/api/meet/google/client', {
-        client_id: $('meet-google-cid').value.trim(), client_secret: $('meet-google-secret').value.trim() }));
-      $('meet-google-secret').value = '';
-      meetSay('Saved. Now press Connect Google Calendar.');
-    } else if (t.id === 'meet-google-copy') {
-      await navigator.clipboard.writeText($('meet-google-redirect').textContent);
-      meetSay('Copied the redirect URI.');
-    } else if (t.id === 'meet-create-now' || t.id === 'meet-create-schedule') {
-      const now = t.id === 'meet-create-now';
-      const when = $('meet-create-start').value;
-      if (!now && !when) { meetSay('Pick when it starts.', true); return; }
-      const body = {
-        title: $('meet-create-title').value.trim(),
-        attendees: $('meet-create-people').value.trim(),
-        open_access: $('meet-create-open').checked,
-        start: now ? 'now' : new Date(when).toISOString(),
-        minutes: now ? 60 : Number($('meet-create-minutes').value),
-        join: now,
-      };
-      meetSay(now ? 'Making the meeting…' : 'Scheduling…');
-      const made = await api('POST', '/api/meet/create', body);
-      meetCreated(made);
-      meetSay(made.join_error ? `Made it, but Odysseus did not join: ${made.join_error}` : '', !!made.join_error);
-      if (made.joined) renderMeetings((await api('GET', '/api/meet/meetings')).meetings);
-    } else if (t.dataset.meetLeave) {
-      await api('POST', `/api/meet/meetings/${encodeURIComponent(t.dataset.meetLeave)}/leave`);
-      meetSay('Leaving…');
-      renderMeetings((await api('GET', '/api/meet/meetings')).meetings);
-    } else if (t.dataset.meetOpen) {
-      await openChat(t.dataset.meetOpen);
-    } else if (t.dataset.meetWatch) {
-      // The meeting's tab is in the cloud browser: watch it, or take over.
-      if (window.cloudBrowser) window.cloudBrowser.open();
-    } else if (t.dataset.meetPick !== undefined) {
-      const m = meetUpcoming[Number(t.dataset.meetPick)];
-      if (!m) return;
-      $('meet-url').value = m.url || '';
-      $('meet-url').dataset.title = m.summary || '';
-      $('meet-dial').value = m.dial_in ? m.dial_in.number : '';
-      $('meet-pin').value = m.dial_in ? m.dial_in.pin : '';
-      meetSay(`Picked ${m.summary}. Press Join when it starts.`);
-    }
-  } catch (e) {
-    meetSay(e.message, true);
-  }
-}
-
-window.addEventListener('focus', () => {
-  if ($('meet-card') && $('meet-card').offsetParent) {
-    loadGoogle();
-  }
-});
-
-function onMeetChange(ev) {
-  if (ev.target && ev.target.id === 'meet-via') showDialRow(ev.target.value);
-}
-
-// The Calls & Meetings tab: each card loads on its own, so a slow one does
-// not hold up the rest.
+// The Calls & Meetings tab.
 function loadCalls() {
+  loadPhoneMod();
   loadSms();
-  loadPhone();
-  loadSip();
-  loadMeet();
 }
 
 async function load(refresh = false) {
@@ -945,18 +426,6 @@ async function copyFrom(t) {
   await navigator.clipboard.writeText(t.dataset.copy);
   const old = t.textContent; t.textContent = 'Copied';
   setTimeout(() => { t.textContent = old; }, 1500);
-}
-
-// Copy buttons on the Calls & Meetings cards (webhook URLs, the SMS secret).
-async function onCallsCopyClick(ev) {
-  const t = ev.target.closest('[data-copy]');
-  if (!t) return;
-  ev.preventDefault();
-  try {
-    await copyFrom(t);
-  } catch (_) {
-    t.textContent = 'Copy failed';
-  }
 }
 
 async function onEnrollClick(ev) {
@@ -1185,12 +654,7 @@ function init() {
   const calls = document.querySelector('[data-settings-panel="calls"]');
   if (calls && !calls.dataset.callsReady) {
     calls.addEventListener('click', onSmsClick);
-    calls.addEventListener('click', onPhoneClick);
-    calls.addEventListener('click', onSipClick);
-    calls.addEventListener('change', onPhoneChange);
-    calls.addEventListener('click', onMeetClick);
-    calls.addEventListener('change', onMeetChange);
-    calls.addEventListener('click', onCallsCopyClick);
+    calls.addEventListener('click', onPhoneModClick);
     calls.dataset.callsReady = '1';
   }
 }

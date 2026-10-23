@@ -318,6 +318,7 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `description`, `author`, `license`, `homepage` | Optional text. |
 | `min_core` | The oldest mod API it works with. The core is `0.1`; a mod asking for more is refused. |
 | `tags` | Optional, up to 10 lowercase slugs like `3d-printing` (see [Tags](#tags)). Unknown tags are allowed. |
+| `admin_only` | Optional, default `false`. `true` for a mod that gives admin powers (a shell on the server, its files, other users' sessions): only admins can ever use it. Its **Who can use it** setting is fixed to Admins (setting it to All users is refused), and the install review says so. |
 | `icon_url` | Optional https URL of a square image, shown in Browse (only from GitHub's hosts). |
 | `screenshots` | Optional list of up to 8 https image URLs, shown on the details (only from GitHub's hosts). |
 | `runtime.type` | `process` (needs `command`) or `docker` (needs `compose`, and optionally `service`). |
@@ -342,6 +343,9 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `events.emits` | Event types it may publish (`print.finished`). Needs `events.emit`. |
 | `events.subscribes` | Patterns it wants (`print-hub/print.*`, `*.failed`, `*/*.finished`). Needs `events.subscribe`. |
 | `events.webhook` | Where events are delivered. Default `/mod/events`. |
+| `provides` | Optional, up to 16 capability ids it serves for other mods and for the core, like `messaging.sms`, `tts.voice`, or its own API, `<its id>.<name>`. See [Capabilities](#capabilities) and [Capability providers](#capability-providers). |
+| `requires` | Optional capability ids it does not work without. Installing it while nothing provides one asks first and offers to find a provider. |
+| `optional` | Optional capability ids it works better with. Nothing is asked; its card says "Works better with ...". An id cannot be in both `requires` and `optional`. |
 | `tutorial` | Expected of every mod; missing is a warning, and such a mod is never Verified. `{"version", "steps"}` (recommended) or `{"version", "path"}`; see [Tutorials](#tutorials). |
 | `tutorial.version` | A whole number from 1, default 1. Raise it to show the tutorial again to everyone who saw it. |
 | `tutorial.steps[]` | 1 to 8 steps: `title` (up to 80 characters), `body` (short Markdown, up to 1200), optionally `image` (a PNG, JPEG, GIF or WebP file in the mod, a relative path, under 2 MB; a file that is not there is a warning) and `action` (`{"label", "path"}` to open a page of the mod, or `{"label", "settings": true}`, which needs `ui.settings_path`). |
@@ -361,6 +365,15 @@ it, on its card in Settings > Mods and by `python -m src.mods validate`.
 | `llm.call` | `POST llm/chat` through the user's model routing, and `GET llm/models` |
 | `agent.run` | `agent/runs`: running the agent loop on the user's models in chats the core creates, with the core tools the mod names (see [Agent runs](#agent-runs)) |
 | `budgets` | `GET usage` and `budgets`: what its own calls and runs cost, and monthly budgets for them (see [Usage scopes and budgets](#usage-scopes-and-budgets)) |
+| `chats` | The user's chats: list them, start one, switch its model, send a message and get (or stream) the agent's answer, stop it, add a note; the models they can pick; what is running for them (see [The agent, speech and Google](#the-agent-speech-and-google)) |
+| `speech` | The server's speech to text and text to speech engines |
+| `browser` | The cloud browser's CDP address and X11 display |
+| `google.calendar` | Make an event with a Google Meet in the user's Google Calendar |
+| `calendar.read` | The user's calendar events that have a Google Meet link |
+| `users` | Whether a user is an admin |
+| `public.http` | Requests to `/mods/<id>/public/...` reach the mod with no sign-in (see [Public paths](#public-paths)) |
+| `stats.read` | `GET stats` and `GET stats/transcripts/<run>`: server-wide activity (what is running, model speed, coder runs and their transcripts). Only for a mod that only admins may use: with **Who can use it** set to all users, these calls answer 403 |
+| `machines.read` | `GET machines`: the tailnet's machines (name, addresses, operating system, online), with the SSH user set for each in Settings > Devices. No keys and no commands |
 
 Settings (`GET/PUT settings`) and `GET me` need no permission.
 
@@ -407,6 +420,20 @@ seconds off. The user is never empty:
 
 The health check is sent without identity headers.
 
+### Public paths
+
+A mod granted `public.http` gets webhooks: anything under `/mods/<id>/public/` (without a
+frame token) reaches it with no sign-in, HTTP and WebSocket, signed as the user
+`odysseus-public`. The mod must accept that user on its `/public/` routes only, and check its
+own secrets there (a secret in the path, a provider's signature). Without the permission those
+paths need a sign-in like any other. They are the only paths a request that arrives through
+Tailscale Funnel may reach (`FunnelGuardMiddleware` in `core/middleware.py`), so a mod can
+expose exactly one of them to the internet:
+
+```
+tailscale funnel --bg --https=8443 --set-path=/mods/phone/public/twilio http://127.0.0.1:7000/mods/phone/public/twilio
+```
+
 Responses: a `Location` inside the mod is rewritten to the proxied path, and cookies the mod sets
 are scoped to its path (cookie names starting `odysseus` are dropped). Every response gets a CSP
 `sandbox` (scripts, forms, popups, popups that escape the sandbox, downloads and modals allowed, no
@@ -426,13 +453,13 @@ CORS rules, which reject `Origin: null`. So a mod page can send JSON `POST`, `PU
 requests and custom headers to its own routes.
 
 Only the user's own mods are reachable: a mod with access `admins` is for admins, `users` for every
-signed-in user. A disabled mod answers 404, and a lazy one is started on first use.
+signed-in user. A mod whose manifest says `admin_only` is for admins whatever its access says. A disabled mod answers 404, and a lazy one is started on first use.
 
 ### The mod API: `/api/mods/v1/` with `Authorization: Bearer <ODYSSEUS_MOD_TOKEN>`
 
 | Call | Permission | Body / answer |
 |---|---|---|
-| `GET me` | | `{id, name, version, permissions, core_api, base_path}` |
+| `GET me` | | `{id, name, version, permissions, core_api, base_path, admin_only, access}` (`access` is who can use it: `admins` or `users`) |
 | `POST notify` | `notify` | `{title, body, level, url, tag, image_url, user}`. `level` is `info` (default), `success`, `warning`, `error` or `critical`. `url` must be a relative path in Odysseus; a tab link (`/#mod/<id>/<tab>?path=/jobs/42`, see [Links into a mod](#links-into-a-mod)) opens the mod's tab inside Odysseus. `user` picks who gets it (default: the admins). Answers `{ok, channels}` |
 | `POST events` | `events.emit` | `{type, data}`; `type` must be in `events.emits`; `data` up to 64 KB. Answers `{ok, id, delivered_to}` |
 | `GET events/subscriptions` | `events.subscribe` | The mod's subscriptions |
@@ -451,10 +478,15 @@ signed-in user. A disabled mod answers 404, and a lazy one is started on first u
 | `GET usage?scope=&user=&month=` | `budgets` | What a scope (and everything under it) cost this month: `{cost_usd, input_tokens, output_tokens, ...}` |
 | `GET budgets`, `PUT budgets`, `DELETE budgets?scope=` | `budgets` | The mod's monthly budgets: `{scope, monthly_limit_cents, caps}`. Listed with a check each |
 | `GET budgets/check?scope=&limit_cents=` | `budgets` | Where a scope stands: `state` (`ok`, `warn`, `hard_stop`), `spent_cents`, `limit_cents`, subscription allocation and caps |
+| `GET stats?scope=devops&hours=24` | `stats.read` | `{scope, now, hours, windows, live, chat, coders}`: `src/devops_stats.py`'s snapshot (`hours` is 1, 24, 168 or 720). `live` is what is running (replies, coder runs, shell jobs, queued messages), `chat` the model speed per model with a series for a chart, `coders` each coder's runs, success rate and the recent runs. Another `scope` is a 400 |
+| `GET stats/transcripts/<run>` | `stats.read` | One coder run's parsed transcript, as `/api/transcript/runs/<run>` answers its owner: `{id, engine, model, status, counts, blocks, final_text, resume_command, ...}`; 404 when it has none |
+| `GET machines?refresh=1` | `machines.read` | `{machines: [{host, name, dns, ips, os, online, last_seen, is_self, shared, ssh_user}]}` (`refresh` asks Tailscale again instead of the 15 second cache) |
+| `GET cap` | | The capabilities it declared and who provides each now: `{provides, requires, optional, missing, missing_optional}` |
+| `POST cap/<capability>/<action>?provider=` | it is in `requires` or `optional` | A capability call, brokered by the core (see [Capabilities](#capabilities)). The body is the arguments, plus `user`. Answers the provider's JSON object with `ok`, `capability`, `action` and `provider` set |
 | `POST tools/refresh` | | The mod's tools changed: the core reads `GET <tools.endpoint>` again. Answers `{ok, queued}` at once and refreshes in the background; `{"wait": true}` waits and answers `{ok, tools: [names]}` (only from a server that serves requests in parallel). 400 for a mod without `tools` |
 
 Calls are rate limited per mod: notify 30 a minute, llm 20, events 240, device commands 30, tool
-refreshes 6, agent run calls 120, budget calls 120. A missing permission answers 403, a bad token
+refreshes 6, stats 120, agent run calls 120, budget calls 120. A missing permission answers 403, a bad token
 401.
 
 Mod API calls never count as the user being active, so they do not hold back runs that wait for
@@ -530,6 +562,39 @@ warn and hard stop thresholds of Settings. The core enforces them itself: `llm/c
 and an agent run stops between rounds (or does not start) once any budget at or above its scope is
 at hard stop.
 
+### The agent, speech and Google
+
+What a mod needs to reach the agent the way a built-in feature does (`src/mods/host_api.py`).
+Phone & Messages uses them: a text conversation, a phone call and a Google Meet are each a
+chat, and each thing said is a turn in it, heard and spoken through the server's engines.
+
+Every call that is about a person names them, `user` (a query parameter, or in the body):
+the `X-Odysseus-User` the mod was given, or the owner it saved with its settings for a webhook
+that comes in with no one signed in. It must be a user who may use the mod (with sign-in
+turned off, any name, usually `local`). There is no fallback to the primary admin: a chat is
+someone's.
+
+| Call | Permission | Body / answer |
+|---|---|---|
+| `GET chats?user=&q=&limit=` | `chats` | `{chats: [{id, name, model, last_activity, busy}]}`, newest first, archived left out, `q` matches the name |
+| `GET chats/<id>?user=` | `chats` | One chat, or 404 when it is not theirs |
+| `POST chats` | `chats` | `{user, name, model, endpoint_id}` (no model: the user's default chat model). Answers the chat |
+| `POST chats/<id>/model` | `chats` | `{user, model, endpoint_id}`: a model from `GET models` |
+| `POST chats/<id>/turn` | `chats` | `{user, message, source, voice_call, note, interrupt, stream}`. The message goes into the chat and the agent answers with its tools and memory, as a detached run (the path a queued message takes). `voice_call` adds the voice call note (short, spoken replies), `note` is added to the system prompt for this turn, `interrupt` (default true) stops a reply still running first, else a busy chat answers `{code: "busy"}`. With `stream`, server-sent events `{delta}`, `{error, message}`, then `{done, text, ok}`; without, `{ok, text, error}`. 60 a minute |
+| `POST chats/<id>/stop` | `chats` | `{user}`: stop the reply (it keeps what it said) |
+| `POST chats/<id>/note` | `chats` | `{user, text, source, meta}`: a line in the chat that is not a turn; `meta.excluded` shows it without the model reading it |
+| `GET models?user=` | `chats` | `{models: [{model, name, endpoint_id, endpoint_name, url}], default: {model, endpoint_id}}` |
+| `GET activity?user=` | `chats` | `{lines}`: coding agents, background jobs and chats replying |
+| `GET speech/status` | `speech` | `{problems}`: why it cannot hear or speak without a browser (empty when it can) |
+| `POST speech/transcribe` | `speech` | A WAV as the body (up to 25 MB). Answers `{text}` |
+| `POST speech/synthesize` | `speech` | `{text}` (up to 4000 characters). Answers `audio/wav` |
+| `GET browser` | `browser` | `{available, running}` |
+| `POST browser/session` | `browser` | Starts the cloud browser if needed: `{cdp_url, x11_display}`. The mod connects over CDP itself and opens its own tabs |
+| `GET google/calendar?user=` | `google.calendar` | `{configured, connected, email, can_open_access}` (connecting is in Settings > Google) |
+| `POST google/meet` | `google.calendar` | `{user, title, start ("now", ISO or words), minutes, attendees, description, open_access}`: a Calendar event with a new Meet; Google emails the invites. Answers `{url, title, start, end, attendees, event_id, open_access, access_hint, starts_now, ...}`, or 400 with the reason. 20 a minute |
+| `GET calendar/meetings?user=&hours=` | `calendar.read` | `{events: [{uid, summary, dtstart, dtend, location, description}]}`: each occurrence from an hour ago to `hours` ahead whose text has a Meet link |
+| `GET users/<name>` | `users` | `{user, admin}` |
+
 ### Events
 
 `POST events` records the event (the last 200 are kept) and delivers it to every enabled mod whose
@@ -543,6 +608,94 @@ identity of `odysseus-core`, `X-Odysseus-Event: <type>` and the body:
 Patterns are `type` globs (`*.finished`, matching any source) or `source/type` globs
 (`print-hub/print.*`). A mod is never sent its own events. Each event is also fired on the core's
 event bus as `mod:<id>:<type>`, so automations can react to it.
+
+### Capabilities
+
+A capability is a namespaced id, `<namespace>.<name>[.<more>]` (lowercase letters, digits and
+hyphens; up to 64 characters), for something one mod can do for others: `messaging.sms`,
+`home.lights`, `print-hub.jobs`. A mod says what it serves and what it needs:
+
+```json
+"provides": ["home.lights"],
+"requires": ["messaging.sms"],
+"optional": ["storage.s3"]
+```
+
+**Mods never talk to each other directly.** A mod that listed a capability in `requires` or
+`optional` calls `POST /api/mods/v1/cap/<capability>/<action>` with its token, and the core:
+
+1. checks that the calling mod declared it (that is what the user approved when installing it), that
+   the user the call is for (`user` in the body, as for `notify`) may use the calling mod, and that
+   they may use the provider;
+2. applies the capability's own rules (below), and a rate limit per calling mod;
+3. routes it to the provider: the first enabled mod (by id) that lists it in `provides`, else the
+   core's own built-in provider; `?provider=<mod id>` (or `core`) picks one by name;
+4. logs it in `mods/capability-log.jsonl` (0600, rotated at 1 MB; the arguments' sizes, never a
+   message's words) and in the caller's log. Admins read it at `GET /api/mods/capabilities/log`.
+
+The provider gets `POST /mod/cap/<capability>/<action>` on its own server, with the arguments as
+JSON, the signed identity of that user and `X-Odysseus-Caller: <calling mod>`. The core also calls
+providers itself for its own features (a voice, a model provider), the same way without
+`X-Odysseus-Caller`. The proxy never forwards a browser to `/mod/cap/...` (404), so only the core
+reaches it. Unknown capabilities are allowed: their actions are whatever the provider answers.
+
+**A mod's own API.** A capability whose namespace is an installed mod's id (`print-hub.jobs`) is
+served only by that mod, so no other mod can answer in its name. That is how a mod offers an API to
+other mods: list `"provides": ["print-hub.jobs"]`, serve `/mod/cap/print-hub.jobs/<action>`, and
+callers list it in `requires` or `optional`. The core's own capabilities (below) belong to no mod.
+
+**Events.** Inbound things are events on the [events API](#events). A capability's events (like
+`messaging.sms.received`) can only be listed in `events.emits` by a mod that provides it, and are
+delivered only to mods that declare the capability (and hold `events.subscribe`) and that the user
+it is for may use. The Mods page's event history keeps a text's size, not its words.
+
+**Install, disable and remove.** The install review lists what the mod provides, needs and may use,
+and who provides each now. A `requires` nobody provides is shown in red with **Find a provider**
+(Browse, filtered to mods that provide it), and **Approve** asks before installing anyway
+(`allow_missing` on `install/confirm`, else 409 with `missing_requires`). An update marks newly used
+capabilities. Disabling or removing a mod that is the only provider of something an enabled mod
+uses answers 409 with `dependents` and is done only with `?force=true` (the UI asks first). Each
+installed mod's card lists its capabilities and the mods that use it.
+
+**Browse** shows "provides, needs, works better with" on each result and in the details (with
+whether this Odysseus has a provider), searches `provides` with the words typed, and
+`GET /api/mods/catalog?capability=<id>` keeps only mods that provide it. An index entry may list
+`provides`, `requires` and `optional` too (added to the manifest's).
+
+#### messaging.sms
+
+The core's built-in provider is the [SMS gateway](sms-gateway.md) (SMS Forwarder inbound, the SMS
+Gate reply URL). When a "Phone & Messages" mod lists `messaging.sms` in `provides`, calls go to it
+instead, with the same rules, so callers do not change.
+
+| Action | Body | Answers |
+|---|---|---|
+| `send` | `{text, to}`: `to` is optional (the user's own number); up to 1600 characters, sent as numbered parts | `{ok, to (masked), parts, via}`; 403 for a number that is not allowed, 409 when the gateway has no number or reply URL |
+| `status` | `{}` | `{available, can_send, can_receive, targets (masked)}`; `available` is whether a text sent now would go out |
+
+| Event | Data |
+|---|---|
+| `messaging.sms.received` | `{from, text, user, provider}`, for every text the gateway accepts (its commands still run as before). Its source is `core` |
+
+Rules, whoever provides it:
+
+- **Only the user's own allowed numbers** (Settings > Calls & Meetings > Text messages), unless the
+  user granted the mod more: Settings > Mods, the mod's card, **Text messages** (per user and per
+  mod; `POST /api/mods/<id>/grants` with `{"capability": "messaging.sms", "numbers": [...]}`).
+- **Rate limit**: 10 sends a minute and 100 a day per calling mod (`status`: 60 a minute).
+- **Every send is logged** (who, for whom, to which number, how long, through which provider).
+
+In the template SDK: `app.core.send_text("Print done")`, `app.core.cap("print-hub.jobs", "list")`,
+`app.core.capabilities()`, and `@app.provide("my-mod.jobs", "list")` to serve one. devcore brokers
+them too, with a fake `messaging.sms` (texts to `+15550100000` are printed) and **Text in** to try
+`messaging.sms.received`.
+
+| Admin call | Answers |
+|---|---|
+| `GET /api/mods/capabilities` | The capabilities the core knows, with their providers now |
+| `GET /api/mods/capabilities/log?mod=&limit=` | The newest log lines |
+| `GET /api/mods/<id>/dependents` | The enabled mods that would lose a capability without it |
+| `POST /api/mods/<id>/grants` | This admin's grant to the mod (above) |
 
 ### Tools
 
@@ -577,7 +730,56 @@ gets every mod's tools. In the mod's own agent runs its tools are always there.
 **Approval.** A tool marked `controls_devices`, and every tool of a mod with `devices.control`
 unless it is marked `read_only`, goes through the chat's approval flow: the user sees the mod,
 the tool and the arguments, with Approve and Deny, before it runs. `devices.control` is required
-for a `controls_devices` tool to run at all.
+for a `controls_devices` tool to run at all. A tool marked `asks_first` (a write to the user's
+account, like a Google Drive upload) goes through the same flow; it needs no permission, since it
+only adds a check.
+
+### Capability providers
+
+Some add-ons plug into a feature of the core rather than adding a page: a text to speech voice, a
+model provider, the machines on a tailnet. Such a mod lists the capability in `provides`, and the
+core calls it at `POST /mod/cap/<capability>/<action>` (`GET` for reads), with the signed identity
+of the user the call is for (`odysseus-core` for none), only while the mod is enabled
+(`src/mods/providers.py`). The core works without any provider: it falls back to its built-in
+behavior and points to the add-on (`GET /api/mods/providers?cap=tts.voice` tells a page whether
+one is installed).
+
+| Capability | Actions the core calls | Used by |
+|---|---|---|
+| `tts.voice` | `status`, `voices`, `synthesize` | Text to speech: the add-on is a voice next to the built-in Kokoro |
+| `llm.provider` | An OpenAI-compatible API under `v1/` (`v1/models`, `v1/chat/completions`) | Model endpoints: an endpoint whose URL is `mod://<id>/v1` |
+| `network.peers` | `peers`, `resolve` | Machines, model discovery and host names on a private network |
+
+#### Models from a mod (`llm.provider`)
+
+A mod that offers models (like the [ChatGPT add-on](https://github.com/Jaron-Wilson/odysseus-chatgpt))
+serves an OpenAI-compatible API at `/mod/cap/llm.provider/v1/` (`GET models`, `POST chat/completions`,
+streamed or not, with tool calls). Its endpoint rows have the base URL `mod://<id>/v1`, which stays the
+same across restarts; the core turns it into the mod's real address only when it sends a request
+(`src/mods/llm_endpoints.py`), with the signed identity of the user the chat belongs to, so the mod
+uses that user's own sign-in. The core never sees the mod's credentials. Without the mod, such a row
+answers "Install the add-on" instead of a connection error.
+
+The mod keeps its rows itself, one per user, so its models show in that user's model picker:
+
+| Call | Body / answer |
+|---|---|
+| `PUT /api/mods/v1/llm/endpoint` | `{user, models, name}`: adds or updates the user's row (`user` from the identity headers; with sign-in off, `local`). Answers `{ok, endpoint}` |
+| `DELETE /api/mods/v1/llm/endpoint?user=` | Removes it. Answers `{ok, removed}` |
+
+An error the mod answers as `{"error": {"type": "add_on", "message": "..."}}` (any HTTP status) is
+shown to the user as written, instead of the generic "rejected the API key" text.
+
+Only a mod whose manifest `provides` `llm.provider` may call them, and a row only ever points at that
+mod. Optional metadata in the manifest:
+
+```json
+"llm_provider": { "label": "ChatGPT", "usage_provider": "chatgpt-plan", "billing": "subscription", "tool_cap": true }
+```
+
+`usage_provider` is the provider name in usage rows and subscription plans (never one of the core's
+own, like `openai`); `billing` is `subscription`, `metered` or `local_free` (System > Usage);
+`tool_cap` keeps requests under OpenAI's 128 function tools (`src/tool_cap.py`).
 
 ### UI
 
@@ -599,8 +801,8 @@ list, in this order), and the built-in pages in each, which are what `after` may
 |---|---|---|
 | `organize` | Organize | `calendar`, `tasks`, `notes`, `plans`, `brain` |
 | `create` | Create & research | `library`, `gallery`, `research`, `compare` |
-| `build` | Build | `code`, `terminal`, `browser`, `background`, `company`, `claude-sessions`, `devops`, `odysseus-dev` |
-| `system` | System | `devices`, `adsb`, `games`, `cookbook`, `theme`, `usage`, `whats-new` |
+| `build` | Build | `code`, `browser`, `background`, `company`, `odysseus-dev` |
+| `system` | System | `devices`, `cookbook`, `theme`, `usage`, `whats-new` |
 | `mods` | Mods | None. The default; the group only appears when a tab is in it. |
 
 For example, Print Hub's Printer tab, which also takes over the old 3D print helper page
@@ -617,7 +819,7 @@ For example, Print Hub's Printer tab, which also takes over the old 3D print hel
 ```
 
 That gives Create & research: Library, Gallery, Deep Research, Compare, Printer, Print queue. A page
-that moved to a mod (like `print`) is not a built-in page any more, so `after` can't name it (a
+that moved to a mod (like `print` or `adsb`) is not a built-in page any more, so `after` can't name it (a
 warning). A built-in page that is hidden (admin only, or turned off in Customize UI) keeps its
 place, so the tab stays where it would be.
 
@@ -697,14 +899,18 @@ else reads it.
 #### Pages that moved to mods
 
 Some pages that used to be built in are moving out of the core into mods: `adsb` (ADS-B
-receiver), `games`, `print` (3D print helper, now part of Print Hub), `devops`, `company`, and later `code`, `terminal`,
-`browser`, `claude-sessions`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
+receiver, now the ADS-B Receiver mod, `Jaron-Wilson/odysseus-adsb`), `games` (now the Games mod), `print` (3D print helper, now part of Print Hub), `terminal` and `claude-sessions`
+(now the Programming mod), `devops` (now the DevOps mod), `phone` (texting the agent, phone calls, the SIP line and
+Google Meet, which were Settings > Calls & Meetings; now the Phone & Messages mod, `/meet` opens it), `company`, and later `code`,
+`browser`, `devices`, `usage`, `plans` and `whats-new` (`LEGACY_PAGES` in
 `src/mods/placement.py`, the same list in `static/js/modLinksCore.js`). Their old links (`/#adsb`,
 `/#games?play=...`) and saved Workspace tabs keep working:
 
 1. A mod tab that declares `"replaces": "adsb"` (and that the user may use) takes them over:
    `#adsb` opens that tab, and a saved `adsb` Workspace tab becomes it. When two mods claim the
-   same key, the first by mod id wins.
+   same key, the first by mod id wins. A query on the old link goes to the tab's page:
+   `#claude-sessions?project=p&id=x` opens the replacing tab at its own path plus
+   `?project=p&id=x`. (A `#key/more` link from before the move opens the tab.)
 2. Otherwise, while the built-in page still exists, they open the built-in page as before.
 3. Otherwise they show a **This feature is now a mod** card (in the Workspace, as its tab), with
    **Find it in Browse** (Settings > Mods > Browse, searching for the key) for admins, and "ask an
@@ -771,8 +977,13 @@ Mods are **untrusted code**. What protects you:
   formats are applied, and their images are served only from the mod's own folder.
 - **Device actions need the user.** Mod tools that control devices go through the chat's approval
   flow, each call.
+- **Mods reach each other only through the core.** A capability call is checked (declared at
+  install, the user may use both mods), held to the capability's rules (a text only to the user's
+  own numbers unless they granted more), rate limited and logged; a provider's `/mod/cap/...` is
+  never reachable from a browser.
 - **Mods are reachable only through the core** (they listen on loopback), and only by the users
-  allowed to use them. Managing mods needs a signed-in admin (not an API token).
+  allowed to use them. A mod that gives admin powers declares `admin_only`, and then nobody can
+  open it to other users by mistake: the core checks the role on every page, socket and tool call. Managing mods needs a signed-in admin (not an API token).
 
 What it does **not** protect against:
 
@@ -821,6 +1032,7 @@ the same id, and that every `verified` entry's manifest has a `tutorial`).
 | `min_core` | Raises the mod's `min_core`: older cores show it as not compatible |
 | `subdir` | The mod's folder inside the repository |
 | `tags` | Extra tags, added to the manifest's |
+| `provides`, `requires`, `optional` | Capability ids (see [Capabilities](#capabilities)), added to the manifest's; Browse's capability search reads `provides` |
 
 When several indexes list the same repository, the first one in the settings wins, and the
 blocked versions of all of them add up. A broken entry is skipped with a warning in Browse; the
@@ -843,17 +1055,21 @@ The core side is `src/mods/` with small hooks elsewhere:
 | `src/mods/manifest.py` | Validates `odysseus-mod.json` |
 | `src/mods/tutorial.py` | The `tutorial` field, its Markdown, who has seen it, its images |
 | `src/mods/placement.py` | Where tabs go: `section`, `after`, `order` and the admin's override; `replaces` and the pages that moved to mods |
+| `src/mods/capabilities.py` | `provides`, `requires`, `optional`; the capability broker, its rules and log; the built-in `messaging.sms` |
 | `src/mods/catalog.py` | Finding mods: GitHub topic search, indexes, the cache, details, update checks |
 | `src/mods/registry.py` | Install (prepare, confirm), update, enable, remove, tokens |
 | `src/mods/runtime.py` | Start, stop, health checks, restart with backoff, logs, idle stop |
 | `src/mods/proxy.py` | `/mods/<id>/` HTTP and WebSocket proxy |
 | `src/mods/signing.py` | Identity signatures and frame tokens |
 | `src/mods/routes.py` | The mod API, the admin API and the proxy routes |
+| `src/mods/host_api.py` | The mod API for the agent (chats), speech, the cloud browser, Google Meet and the calendar |
 | `src/mods/events.py`, `notify.py` | The event bus and notification fan-out |
 | `src/mods/tools.py` | Tool lists, selection per message and calls |
 | `src/mods/llm.py` | `llm/models`, model specs and `local_only` |
 | `src/mods/runs.py` | Agent runs: chats, forced tools, the run header, stops between rounds, `agent.run.finished` |
 | `src/mods/usage_api.py` | Usage scope paths and the budgets the core keeps and enforces for mods |
+| `src/mods/providers.py` | Capability providers: mods the core calls for a feature (`provides`) |
+| `src/mods/llm_endpoints.py` | Model endpoints served by a mod (`mod://<id>/v1`) |
 | `src/mods/scaffold.py`, `__main__.py` | New mod and the CLI |
 | `static/js/modsSettings.js` | Settings > Mods |
 | `static/js/modsBrowse.js` | Settings > Mods > Browse |

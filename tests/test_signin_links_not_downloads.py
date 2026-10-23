@@ -32,11 +32,6 @@ def test_file_links_are_still_downloaded():
         assert not skip.search(path), path
 
 
-def test_the_meeting_row_has_no_stray_brace():
-    js = (ROOT / "static/js/devicesSettings.js").read_text(encoding="utf-8")
-    assert "Leave</button>` : ''}}</div>" not in js
-
-
 def test_a_refused_calendar_event_logs_googles_reason():
-    src = (ROOT / "src/meet/google_calendar.py").read_text(encoding="utf-8")
+    src = (ROOT / "src/google_workspace/meet.py").read_text(encoding="utf-8")
     assert 'events.insert said %s: %s", r.status_code, why' in src

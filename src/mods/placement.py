@@ -40,6 +40,7 @@ LEGACY_PAGES: Dict[str, str] = {
     "usage": "Usage",
     "plans": "Plans",
     "whats-new": "What's new",
+    "phone": "Phone & Messages",
 }
 
 
