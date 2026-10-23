@@ -309,6 +309,47 @@ def _group(q, col, limit: Optional[int] = None) -> List[Dict[str, Any]]:
     return out[:limit] if limit else out
 
 
+_RUN_SEG = "run-"
+MOD_SCOPE_DEPTH = 2          # "mod:company/c/<company>": the first two path segments name the group
+
+
+def _by_mod_scope(q) -> List[Dict[str, Any]]:
+    """Spend of mods that use scope paths, grouped by the first MOD_SCOPE_DEPTH segments of the
+    path ("mod:company/c/3f2a": one company), with the label the mod gave it
+    (src/mods/usage_api.py labels). Calls with no path are in by_mod only."""
+    from core.database import UsageEvent
+    rows = q.filter(UsageEvent.source_scope != None).with_entities(  # noqa: E711
+        UsageEvent.source_scope.label("key"), *_agg_columns()).group_by(UsageEvent.source_scope).all()
+    groups: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        key = str(r.key or "")
+        if not key.startswith("mod:") or "/" not in key:
+            continue
+        head, _, path = key.partition("/")
+        segs = [s for s in path.split("/") if s]
+        if not segs:
+            continue
+        gk = head + "/" + "/".join(segs[:MOD_SCOPE_DEPTH])
+        d = _agg_dict(r)
+        g = groups.setdefault(gk, dict(_agg_dict(_Zero()), key=gk, mod_id=head[4:],
+                                       path="/".join(segs[:MOD_SCOPE_DEPTH])))
+        for f in ("calls", "input_tokens", "cached_input_tokens", "output_tokens", "free_tokens",
+                  "unpriced_calls", "total_tokens", "metered_tokens"):
+            g[f] += d[f]
+        g["metered_cost_usd"] = round(g["metered_cost_usd"] + d["metered_cost_usd"], 6)
+    try:
+        from src.mods import usage_api
+        cache: Dict[str, Dict[str, str]] = {}
+        for g in groups.values():
+            labels = cache.setdefault(g["mod_id"], usage_api.load_labels(g["mod_id"]))
+            g["name"] = labels.get(g["path"]) or ""
+    except Exception:
+        logger.debug("[usage] scope labels unavailable", exc_info=True)
+    out = list(groups.values())
+    out.sort(key=lambda d: (d["metered_cost_usd"], d["total_tokens"]), reverse=True)
+    return out
+
+
 def summary(owner: Optional[str], *, all_users: bool = False, start: Optional[datetime] = None,
             end: Optional[datetime] = None, session_limit: int = 25,
             include_fixed: Optional[bool] = None) -> Dict[str, Any]:
@@ -381,6 +422,7 @@ def summary(owner: Optional[str], *, all_users: bool = False, start: Optional[da
             "by_company": _group(q.filter(UsageEvent.company_id != None), UsageEvent.company_id),  # noqa: E711
             "by_company_agent": by_agent,
             "by_mod": by_mod,
+            "by_mod_scope": _by_mod_scope(q),
             "by_owner": _group(q, UsageEvent.owner) if all_users else [],
             "daily": daily,
         }

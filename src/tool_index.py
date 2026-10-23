@@ -163,10 +163,6 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "spawn_subagent": "Hand a task to a subagent: a thread of this chat where the agent works on it in the background with the same tools, posting its report back here when done, while the user keeps chatting. Use for 'subagent this out', 'subagent out', 'have a subagent', 'spin off an agent', 'do it in the background', 'in parallel'.",
     "manage_bg_jobs": "Inspect and control detached background `bash` jobs (the ones started with a background marker like `#!bg`). action='list' shows this chat's jobs (id/status/age/command); action='output' returns a job's captured output so far (check on a long-running job, or re-read a finished one); action='kill' stops a runaway job by id. Use for 'is the background job done', 'check on that job', 'show the build output', 'kill the background job', 'stop the bg task'. output/kill need a job_id from list.",
 }
-# The user's Company from a chat (src/agent_tools/company_chat_tools.py). Also
-# pulled in by src/agent_loop.py when a message mentions the Company.
-from src.agent_tools.company_chat_tools import TOOL_DESCRIPTIONS as _COMPANY_CHAT_DESCRIPTIONS  # noqa: E402
-BUILTIN_TOOL_DESCRIPTIONS.update(_COMPANY_CHAT_DESCRIPTIONS)
 
 
 class ToolIndex:

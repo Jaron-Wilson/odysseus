@@ -1,0 +1,81 @@
+/* Settings > Mods > Installed (static/js/modsInstalled.js): the same card
+   language as Browse. Colors come from the theme (inherit, --accent, the card
+   background); the status hues only tint a dot and a border, never the text, so
+   text contrast follows the theme. */
+#mods-settings { --mi-ok: #2ea043; --mi-warn: #d29922; --mi-bad: #e5534b; --mi-idle: #8b949e; --mi-line: var(--border, rgba(128,128,128,.28)); --mi-soft: var(--bg-tertiary, rgba(128,128,128,.16)); }
+.mi-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.mi-top .settings-select { min-width: 0; }
+.mi-search { flex: 1 1 220px; min-width: 160px; }
+.mi-sort { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; opacity: .9; }
+.mi-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.mi-chip { padding: 1px 9px; font-size: 12px; border-radius: 12px; }
+/* !important: the studio theme restyles every .settings-btn with a more specific selector. */
+#mods-settings .mi-chip[aria-pressed="true"] { border-color: var(--accent, #58a6ff) !important; box-shadow: inset 0 0 0 1px var(--accent, #58a6ff) !important; font-weight: 600; background: color-mix(in srgb, var(--accent, #58a6ff) 14%, transparent) !important; }
+.mi-chip .mi-n { opacity: .7; margin-left: 3px; }
+.mi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; margin-top: 12px; }
+.mi-card { display: flex; flex-direction: column; gap: 8px; margin: 0; cursor: pointer; min-width: 0; }
+.mi-card:hover { border-color: var(--accent, #58a6ff); }
+.mi-card:focus-within { outline: 2px solid var(--accent, #58a6ff); outline-offset: 1px; }
+.mi-head { display: flex; gap: 10px; align-items: flex-start; }
+.mi-ico { width: 40px; height: 40px; border-radius: 8px; flex: none; object-fit: cover; background: var(--mi-soft); display: inline-flex; align-items: center; justify-content: center; font-size: 20px; }
+.mi-ico.big { width: 56px; height: 56px; font-size: 28px; border-radius: 10px; }
+.mi-title { flex: 1; min-width: 0; }
+.mi-name { font: inherit; font-size: 15px; font-weight: 600; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.mi-name:focus-visible { outline: 2px solid var(--accent, #58a6ff); outline-offset: 2px; border-radius: 3px; }
+.mi-meta { font-size: 12px; opacity: .8; overflow-wrap: anywhere; }
+.mi-desc { font-size: 13px; opacity: .9; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mi-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.mi-badge, .mi-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; line-height: 16px; padding: 0 7px; border-radius: 9px; border: 1px solid var(--mi-tone, var(--mi-line)); white-space: nowrap; }
+.mi-badge[data-tone="warn"] { --mi-tone: var(--mi-warn); }
+.mi-badge[data-tone="bad"] { --mi-tone: var(--mi-bad); }
+.mi-badge[data-tone="ok"] { --mi-tone: var(--mi-ok); }
+.mi-badge[data-tone="info"] { --mi-tone: var(--accent, #58a6ff); }
+.mi-pill { padding: 1px 8px; background: color-mix(in srgb, var(--mi-tone) 14%, transparent); }
+.mi-pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--mi-tone); }
+.mi-pill[data-status="running"] { --mi-tone: var(--mi-ok); }
+.mi-pill[data-status="starting"] { --mi-tone: var(--mi-warn); }
+.mi-pill[data-status="error"] { --mi-tone: var(--mi-bad); }
+.mi-pill[data-status="stopped"], .mi-pill[data-status="disabled"] { --mi-tone: var(--mi-idle); }
+.mi-err { font-size: 12px; padding: 4px 8px; border-left: 3px solid var(--mi-bad); background: color-mix(in srgb, var(--mi-bad) 10%, transparent); overflow-wrap: anywhere; }
+.mi-foot { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: auto; }
+.mi-foot .settings-btn, .mi-actions .settings-btn { padding: 2px 10px; font-size: 12px; }
+.mi-switch { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; color: inherit; background: none; border: 0; padding: 2px 4px; cursor: pointer; margin-left: auto; border-radius: 6px; }
+.mi-switch:focus-visible { outline: 2px solid var(--accent, #58a6ff); outline-offset: 1px; }
+.mi-switch .mi-track { width: 30px; height: 18px; border-radius: 9px; background: var(--mi-soft); border: 1px solid var(--mi-line); position: relative; flex: none; transition: background .15s; }
+.mi-switch .mi-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: currentColor; opacity: .7; transition: transform .15s; }
+.mi-switch[aria-checked="true"] .mi-track { background: var(--accent, #58a6ff); border-color: var(--accent, #58a6ff); }
+.mi-switch[aria-checked="true"] .mi-track::after { transform: translateX(12px); background: #fff; opacity: 1; }
+.mi-switch:disabled { opacity: .5; cursor: default; }
+.mi-strip { border-left: 3px solid var(--accent, #58a6ff); }
+.mi-strip[data-state="clear"] { border-left-color: var(--mi-ok); }
+.mi-strip-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.mi-strip-row h2 { margin: 0; flex: 1 1 200px; }
+.mi-strip-row .settings-btn { padding: 2px 10px; font-size: 12px; }
+.mi-strip-names { font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+.mi-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 14px; margin-top: 12px; }
+.mi-detail-grid ul, .mi-list { margin: 2px 0 0 18px; padding: 0; }
+.mi-sec-title { font-size: 12px; font-weight: 700; margin: 0 0 2px; }
+.mi-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+.mi-danger { border-color: var(--mi-bad) !important; }
+.mi-note { font-size: 12px; margin-top: 8px; padding: 6px 8px; border-left: 3px solid var(--mi-tone, var(--mi-line)); background: color-mix(in srgb, var(--mi-tone, var(--mi-idle)) 9%, transparent); overflow-wrap: anywhere; }
+.mi-note[data-tone="warn"] { --mi-tone: var(--mi-warn); }
+.mi-note[data-tone="bad"] { --mi-tone: var(--mi-bad); }
+.mi-note[data-tone="info"] { --mi-tone: var(--accent, #58a6ff); }
+.mi-log { max-height: 240px; overflow: auto; font-size: 11px; background: var(--mi-soft); padding: 8px; border-radius: 6px; white-space: pre-wrap; margin: 6px 0 0; overflow-wrap: anywhere; }
+.mi-readme { margin-top: 4px; padding: 10px 12px; border: 1px solid var(--mi-line); border-radius: 6px; max-height: 420px; overflow: auto; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.mi-readme img { max-width: 100%; height: auto; }
+.mi-readme pre { overflow-x: auto; }
+.mi-link { color: var(--accent, #58a6ff); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; }
+.mi-empty { text-align: center; padding: 24px 12px; }
+.mi-empty .settings-btn { margin-top: 8px; }
+@media (max-width: 600px) {
+  .mi-grid { grid-template-columns: 1fr; }
+  .mi-top { gap: 6px; }
+  .mi-sort { width: 100%; }
+  .mi-sort select { flex: 1; }
+  .mi-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+  .mi-chip { flex: none; padding: 4px 11px; }
+  .mi-actions .settings-btn, .mi-foot .settings-btn { padding: 6px 12px; }
+  .mi-switch { padding: 6px 4px; }
+}
+@media (prefers-reduced-motion: reduce) { .mi-switch .mi-track, .mi-switch .mi-track::after { transition: none; } }

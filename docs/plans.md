@@ -105,8 +105,5 @@ directive tells the model to finish by calling it.
 
 ### Company plans
 
-A Company agent asks for approval with `company_request_approval` type `plan`
-as before, and its plan is also saved as a Plans document (source "company",
-marked in the list). It is answered in Company > Approvals, not in a chat;
-the decision is copied onto the Plans entry. Plans a person writes for an
-agent in Company > Approvals are not copied.
+The built-in Company is now a mod. Plans its agents proposed before the move keep source
+"company" in the list and are answered in the Company mod, not here.

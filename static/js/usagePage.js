@@ -348,6 +348,7 @@ function paint() {
     ${table('By source', d.by_source, (r) => esc(SOURCE_NAMES[r.key] || r.key))}
     ${table('By chat', d.by_session, (r) => `<a href="#" data-chat="${esc(r.key)}">${esc(r.name || r.key.slice(0, 8))}</a>`, { limit: 10 })}
     ${d.by_owner && d.by_owner.length ? table('By user', d.by_owner, (r) => esc(r.key || 'shared')) : ''}
+    ${d.by_mod_scope && d.by_mod_scope.length ? table('By mod and scope', d.by_mod_scope, (r) => `${esc(r.name || r.path)} <span class="dv-meta">${esc(r.mod_id)}</span>`) : ''}
     ${d.by_company && d.by_company.length ? table('By company', d.by_company, (r) => esc(r.key)) : ''}
     ${d.by_company_agent && d.by_company_agent.length ? table('By company agent', d.by_company_agent, (r) => esc(r.name || r.key)) : ''}
     <div class="us-settings-slot"></div>

@@ -23,6 +23,7 @@ ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
 # Ids that would collide with the core's own routes under /api/mods.
 RESERVED_IDS = {"v1", "v2", "install", "settings", "events", "scaffold", "ui", "core", "odysseus", "catalog"}
 # Paths the core requests on the mod's server: absolute, no "..", no scheme.
+HANDLE_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")      # `chat.mention.handle`: what follows the @
 PATH_RE = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 SUB_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 # `ui.embeds`: a same-origin page like /play/stream.html (or a directory like /play/), and the
@@ -78,6 +79,9 @@ PERMISSIONS: Dict[str, str] = {
     "ui.style": ("Change how Odysseus looks: add one stylesheet (CSS only, no scripts) to the whole app, so it can "
                  "recolor it, round its corners or change its text size. You can turn all mod styles off with "
                  "?safe=1 or in Settings > Mods"),
+    "chat.mention": ("Appear in the @ picker of your chats: when you @-mention it, its tools are used for "
+                     "that message, and it may add a short note about what you pointed at to the message "
+                     "(the model sees that note)"),
     "embed": ("Show a page of this server that its manifest names (`ui.embeds`, for example /play/) in a frame "
               "inside its window, outside the mod sandbox and with your sign-in, so it can stream or show "
               "something a sandboxed page cannot"),
@@ -154,6 +158,35 @@ def _path(v: Any, where: str, errors: List[str], default: Optional[str] = None) 
         errors.append(f"{where} must be a path starting with / (got {v!r})")
         return default
     return v
+
+
+def _chat(raw: Any, out: Dict[str, Any], errors: List[str], warnings: List[str]) -> Optional[Dict[str, Any]]:
+    """`chat.mention`: {label, description, handle?, icon?}, plus the optional paths
+    `chat.mention_items` (sub-items for the picker) and `chat.mention_context` (a short note
+    for the turn). Needs the `chat.mention` permission."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        errors.append("`chat` must be an object")
+        return None
+    m = raw.get("mention")
+    if not isinstance(m, dict):
+        errors.append("`chat.mention` must be an object with a `label`")
+        return None
+    if "chat.mention" not in out["permissions"]:
+        errors.append("`chat.mention` needs the chat.mention permission")
+    label = m.get("label") if isinstance(m.get("label"), str) else ""
+    label = (label.strip() or out["name"])[:40]
+    handle = m.get("handle") if isinstance(m.get("handle"), str) else re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    if not HANDLE_RE.match(handle or ""):
+        errors.append("`chat.mention.handle` must be 2 to 31 lowercase letters, digits and - (starting with a letter)")
+        handle = out["id"]
+    desc = m.get("description") if isinstance(m.get("description"), str) else ""
+    icon = m.get("icon") if isinstance(m.get("icon"), str) else ""
+    items = _path(raw.get("mention_items"), "`chat.mention_items`", errors, None)
+    ctx = _path(raw.get("mention_context"), "`chat.mention_context`", errors, None)
+    return {"mention": {"label": label, "handle": handle, "description": desc.strip()[:160], "icon": icon[:32]},
+            "mention_items": items, "mention_context": ctx}
 
 
 def _embeds(raw: Any, errors: List[str]) -> List[Dict[str, Any]]:
@@ -399,6 +432,9 @@ def validate(raw: Any) -> Dict[str, Any]:
                         "keywords": sorted({k.strip().lower() for k in kws})[:64]}
     else:
         out["tools"] = None
+
+    # ── chat: the @ picker (src/mods/chat_mentions.py) ──
+    out["chat"] = _chat(raw.get("chat"), out, errors, warnings)
 
     # ── events ──
     ev = raw.get("events") or {}

@@ -34,8 +34,7 @@ and Deny. What counts:
 Reads (list_events,
 list_calendars, list/read/search email, drafts saved in Odysseus) never ask.
 
-Company agent runs (src/company_executor.py) get a Company > Approvals request
-instead of a chat card. Scheduled tasks and the mail listener hold the call
+Scheduled tasks and the mail listener hold the call
 the same way and send a notification, so nothing runs unseen. Coding agents
 (claude_code, /claude direct) run their own tools outside this path and are
 not covered.
@@ -443,14 +442,7 @@ async def needs_approval(tool: str, content: str, owner: Optional[str]) -> bool:
 
 
 def _context() -> Tuple[str, Dict[str, Any]]:
-    """Where this call comes from: a Company agent run, a scheduled task, or a chat."""
-    try:
-        from src import company_tools
-        c = company_tools.current()
-        if c:
-            return "company", dict(c)
-    except Exception:
-        pass
+    """Where this call comes from: a scheduled task, or a chat."""
     try:
         from src.usage import current_scope
         sc = current_scope() or {}
@@ -493,8 +485,6 @@ async def intercept(tool: str, content: str, owner: Optional[str], session_id: O
     if info is None:
         return None
     kind, ctx = _context()
-    if kind == "company":
-        return _hold_for_company(tool, content, owner, info, ctx)
     entry = AA.create(owner, session_id or "", tool, content, info, source=kind)
     await _notify(entry, kind, session_id)
     result = {
@@ -503,40 +493,6 @@ async def intercept(tool: str, content: str, owner: Optional[str], session_id: O
         "exit_code": 0,
     }
     return f"{t}: waiting for approval", result
-
-
-def _hold_for_company(tool: str, content: str, owner: Optional[str], info: Dict, ctx: Dict) -> Tuple[str, Dict]:
-    from src import action_approvals as AA
-    from src import company as co
-    from core.database import SessionLocal
-    entry = AA.create(owner, "", tool, content, info, source="company",
-                      extra={"company_id": ctx.get("company_id") or "", "agent_id": ctx.get("agent_id") or "",
-                             "run_id": ctx.get("run_id") or ""})
-    db = SessionLocal()
-    try:
-        ap = co.create_approval(db, owner or "", co.Actor("agent", ctx.get("agent_id"), ctx.get("run_id")),
-                                ctx.get("company_id"), {
-                                    "type": "google_write", "title": entry["title"][:200],
-                                    "payload": {"action_approval_id": entry["id"], "tool": normalize(tool),
-                                                "agent_id": ctx.get("agent_id"), "run_id": ctx.get("run_id"),
-                                                "details": entry["details"], "body": entry["body"][:8000],
-                                                "account": entry.get("account") or "",
-                                                "expires_at": entry["expires_at"]}})
-        AA.set_fields(entry["id"], company_approval_id=ap["id"])
-        entry["company_approval_id"] = ap["id"]
-    except Exception as e:
-        logger.warning("[google-approval] could not open a Company approval: %s", e, exc_info=True)
-        AA.set_fields(entry["id"], status="denied", deny_note=f"Could not ask for approval: {e}"[:300])
-        return f"{normalize(tool)}: refused", {
-            "error": "Not run: this change to the user's Google account needs approval, and the approval "
-                     "request could not be made. Do not try another way.", "exit_code": 1}
-    finally:
-        db.close()
-    return f"{normalize(tool)}: waiting for approval", {
-        "action_approval": {"id": entry["id"], "title": entry["title"], "status": "pending", "source": "company"},
-        "output": AA.held_output(entry) + " End your turn now: you are woken when it is decided.",
-        "exit_code": 0,
-    }
 
 
 async def _notify(entry: dict, kind: str, session_id: Optional[str]) -> None:

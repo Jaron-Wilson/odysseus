@@ -535,17 +535,16 @@ def setup_chat_routes(
                 _tool_intent.category,
                 _tool_intent.reason,
             )
-        # Asking for a change to a mentioned Company item ("assign JAR-2 to
-        # @CEO") needs the Company tools (src/agent_tools/company_chat_tools.py).
-        if chat_mode == "chat" and isinstance(message, str):
+        # @-mentioning a mod that has tools needs the agent (src/mods/chat_mentions.py).
+        if chat_mode == "chat" and isinstance(message, str) and "@" in message:
             try:
-                from src import company_chat
-                if company_chat.wants_company_action(message, get_current_user(request)):
+                from src.mods import chat_mentions
+                if chat_mentions.mentioned_tools(message, get_current_user(request))[0]:
                     chat_mode = "agent"
                     auto_escalated = True
-                    logger.info("chat→agent auto-escalation: Company action")
+                    logger.info("chat→agent auto-escalation: mod mention")
             except Exception as e:
-                logger.debug(f"Company intent check skipped: {e}")
+                logger.debug(f"Mod mention check skipped: {e}")
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
@@ -692,14 +691,14 @@ def setup_chat_routes(
             except Exception as e:
                 logger.warning(f"Could not attach references: {e}")
 
-        # Company mentions (@CEO, @Acme, JAR-1): a fresh snapshot of each, for
-        # this turn only (src/company_chat.py).
-        if not compare_mode:
+        # Mods the message @-mentions may add a short note about what was pointed at
+        # (src/mods/chat_mentions.py); their tools are forced in by the agent loop.
+        if not compare_mode and isinstance(message, str) and "@" in message:
             try:
-                from src import company_chat
-                company_chat.apply_mentions(ctx.messages, message, ctx.user)
+                from src.mods import chat_mentions
+                await chat_mentions.apply_context(ctx.messages, message, ctx.user)
             except Exception as e:
-                logger.warning(f"Could not attach Company context: {e}")
+                logger.warning(f"Could not attach mod mention context: {e}")
 
         # A turn spoken in the in-app voice call (static/js/voiceCall.js): the
         # model did not know, and answered "I'm not hearing live audio".

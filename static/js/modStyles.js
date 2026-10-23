@@ -44,10 +44,13 @@ function setMeta(content) {
   m.setAttribute('content', content);
 }
 
+// Tell the mod frames' theme (modTheme.js) that the tokens the page shows may have changed.
+const applied = () => document.dispatchEvent(new CustomEvent('odysseus:mod-style-applied'));
+
 /** Make the <link data-mod> elements match `styles` ([{id, url, v}], in id order). */
 export function reconcile(styles) {
   const want = new Set(styles.map((s) => s.id));
-  for (const l of links()) if (!want.has(l.dataset.mod)) l.remove();
+  for (const l of links()) if (!want.has(l.dataset.mod)) { l.remove(); applied(); }
   for (const s of styles) {
     const old = links().find((l) => l.dataset.mod === s.id);
     if (old && old.getAttribute('href') === s.url) continue;
@@ -57,12 +60,13 @@ export function reconcile(styles) {
     fresh.href = s.url;
     if (old) {
       // Swap once the new sheet is in, so the page never shows neither.
-      fresh.addEventListener('load', () => old.remove(), { once: true });
+      fresh.addEventListener('load', () => { old.remove(); applied(); }, { once: true });
       fresh.addEventListener('error', () => old.remove(), { once: true });
       old.after(fresh);
     } else {
       // A new mod goes before the first one with a later id (they stay in id order), else last.
       const later = links().find((l) => l.dataset.mod > s.id);
+      fresh.addEventListener('load', applied, { once: true });
       if (later) later.before(fresh); else document.head.appendChild(fresh);
     }
   }
