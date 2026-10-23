@@ -632,6 +632,54 @@ html.ui-workspace .ws-grid.ready:not(.ws-settled) > .ws-card:nth-child(3) { anim
 html.ui-workspace .ws-grid.ready:not(.ws-settled) > .ws-card:nth-child(4) { animation-delay: .12s; }
 html.ui-workspace .ws-grid.ready:not(.ws-settled) > .ws-card:nth-child(5) { animation-delay: .16s; }
 
+/* --- The second chat in the split view ----------------------------------- */
+/* (workspace/chatPane.js): the app's own page in an iframe (/chat-pane),
+   under a small header that names the pane's chat and chooses another.
+   Geometrically it is a docked page (.ws-docked, data-ws-pane), like the
+   tool pages; the pane's own page hides its sidebar (ody-pane,
+   chatThreadTabs.css), so the header is its one way to pick a chat. */
+html.ui-workspace .chat-pane-page {
+  display: flex !important; flex-direction: column !important;
+  background: var(--bg) !important;
+}
+html.ui-workspace .chat-pane-page .cp-head {
+  flex: none; display: flex; align-items: center; gap: 6px; box-sizing: border-box;
+  min-height: 48px; padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--st-line);
+  background: var(--st-surface);
+  font-family: var(--st-font);
+}
+html.ui-workspace .chat-pane-page .cp-ico { display: inline-flex; flex: none; color: var(--st-text-3); }
+html.ui-workspace .chat-pane-page .cp-name {
+  display: inline-flex; align-items: center; gap: 5px; flex: 1 1 auto; min-width: 0;
+  padding: 5px 9px; border: 0; border-radius: var(--st-r-sm);
+  background: transparent; box-shadow: none; cursor: pointer;
+  color: var(--st-text); font: 600 13.5px/1.2 var(--st-font);
+  transition: background-color var(--ws-fast) var(--ws-out);
+}
+html.ui-workspace .chat-pane-page .cp-name:hover,
+html.ui-workspace .chat-pane-page .cp-name:focus-visible { background: var(--st-hover); outline: none; }
+html.ui-workspace .chat-pane-page .cp-name-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+html.ui-workspace .chat-pane-page .cp-chev { display: inline-flex; flex: none; color: var(--st-text-3); }
+html.ui-workspace .chat-pane-page .cp-fill { flex: 1; }
+html.ui-workspace .chat-pane-page .cp-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none;
+  height: 28px; padding: 0 10px; border: 0; border-radius: var(--st-r-sm);
+  background: transparent; box-shadow: none; cursor: pointer;
+  color: var(--st-text-2); font: 500 12px/1 var(--st-font);
+  transition: background-color var(--ws-fast) var(--ws-out), color var(--ws-fast) var(--ws-out);
+}
+html.ui-workspace .chat-pane-page .cp-btn:hover,
+html.ui-workspace .chat-pane-page .cp-btn:focus-visible { background: var(--st-hover); color: var(--st-text); outline: none; }
+html.ui-workspace .chat-pane-page .cp-close { width: 28px; padding: 0; }
+html.ui-workspace .chat-pane-page .cp-frame {
+  flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: var(--bg);
+}
+/* The focused side of the split gets the accent edge (the thread pane's
+   .focused, chatThreadTabs.css): the main page lost focus to the pane. */
+html.ui-workspace .chat-pane-page.focused { box-shadow: inset 3px 0 0 var(--st-accent); }
+html.ui-workspace .chat-pane-page.cp-flash .cp-head { animation: ws-pop .3s var(--ws-out); }
+
 /* --- Motion ----------------------------------------------------------------- */
 @keyframes ws-page-in { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
 @keyframes ws-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -652,7 +700,8 @@ html.ui-workspace .ws-grid.ready:not(.ws-settled) > .ws-card:nth-child(5) { anim
   html.ui-workspace .ws-tab::after,
   html.ui-workspace .ws-grid > .ws-card,
   html.ui-workspace .ws-status::after,
-  html.ui-workspace .ws-skel { animation: none !important; }
+  html.ui-workspace .ws-skel,
+  html.ui-workspace .chat-pane-page .cp-head { animation: none !important; }
   html.ui-workspace :is(.ws-tab, .ws-tab-x, .ws-bar-btn, .ws-btn, .ws-row, .ws-note, .ws-compose, .ws-compose-send, .ws-quick button),
   html.ui-workspace .ws-divider::after { transition: none !important; }
   html.ui-workspace :is(.ws-btn, .ws-compose-send, .ws-bar-btn, .ws-quick button, .ws-card-link):active { transform: none !important; }

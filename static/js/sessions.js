@@ -1554,6 +1554,13 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
         history.replaceState(null, '', '#' + id);
       }
     }
+    // In a pane (the split view's second chat or thread page), the page
+    // around it owns the tab state: tell it what this page settled on, so a
+    // chat that no longer exists (or a thread followed here) is reflected in
+    // the pane's tab without this page owning the main view's selection.
+    if (_IN_PANE && window.parent !== window) {
+      try { window.parent.postMessage({ odyChatPane: 1, action: 'changed', id: id }, window.location.origin); } catch {}
+    }
     // Restore character preset for persistent chats
     try {
       const presetsModule = window.presetsModule || (await import('./presets.js')).default;

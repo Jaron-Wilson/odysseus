@@ -970,6 +970,13 @@ async def serve_index(request: Request):
 async def serve_thread_pane(request: Request):
     return await serve_index(request)
 
+# A second, independently chosen chat beside the main one in the split view
+# (static/js/workspace/shell.js): the app in an iframe, framed by this origin
+# only (core/middleware.py), the same way a thread's pane is.
+@app.get("/chat-pane")
+async def serve_chat_pane(request: Request):
+    return await serve_index(request)
+
 @app.get("/notes")
 async def serve_notes(request: Request):
     return await serve_index(request)
