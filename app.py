@@ -696,6 +696,9 @@ app.include_router(setup_cloud_browser_routes())
 # claude_code plan approvals — the only path that can authorise an execute run.
 from routes.claude_code_routes import setup_claude_code_routes
 app.include_router(setup_claude_code_routes())
+# Background hosting-service tracker (routes/hosting_routes.py)
+from routes.hosting_routes import setup_hosting_routes
+app.include_router(setup_hosting_routes())
 # Read-only transcript viewer: parsed coder-run out.jsonl (routes/transcript_routes.py).
 from routes.transcript_routes import setup_transcript_routes
 app.include_router(setup_transcript_routes())

@@ -24,8 +24,15 @@ function _dur(s) {
   return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-async function _call(path, method = 'GET') {
-  const res = await fetch(path, { method, credentials: 'same-origin' });
+const SERVICES_API = '/api/services';
+
+async function _call(path, method = 'GET', body = null) {
+  const opts = { method, credentials: 'same-origin' };
+  if (body) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
   return data;
@@ -300,17 +307,23 @@ let _running = 0;
 export async function refreshCount() {
   const badge = document.getElementById('bg-tasks-count');
   if (!badge) return;
+  let svcRunning = 0;
   try {
     const d = await _call(API);
     _running = (d.jobs || []).filter((j) => j.status === 'running' && j.background).length;
     await _fetchPending();
+    try {
+      const sData = await _call(SERVICES_API);
+      svcRunning = (sData.services || []).filter((s) => s.status === 'ready' || s.status === 'starting').length;
+    } catch (_) {}
     _renderChip(d.jobs || []);
     if (_panel) _renderApprovals();
   } catch (_) { return; }
-  const total = _running + _pending.length;
+  const total = _running + _pending.length + svcRunning;
   badge.hidden = !total;
   badge.textContent = String(total);
   badge.title = [_running ? `${_running} running in the background` : '',
+                 svcRunning ? `${svcRunning} hosting service${svcRunning > 1 ? 's' : ''} running` : '',
                  _pending.length ? `${_pending.length} waiting for your approval` : ''].filter(Boolean).join(', ');
   badge.classList.toggle('bg-count-approvals', _pending.length > 0);
 }
@@ -319,6 +332,8 @@ export async function refreshCount() {
 let _panel = null;
 let _timer = null;
 let _open = null;             // job id whose output is expanded
+let _openServiceLog = null;   // service id whose output is expanded
+let _services = [];
 let _cliTick = 0;
 let _cli = null;
 let _agents = null;           // the Claude Code agent each chat keeps
@@ -339,6 +354,36 @@ function _statusHtml(st) {
 function _editorLink(cwd) {
   if (!cwd || !window.codePanel?.isAvailable?.()) return '';
   return `<a href="#" data-open-editor="${_esc(cwd)}" title="Open ${_esc(cwd)} in the Code tool">Open in editor</a>`;
+}
+
+function _serviceRow(s) {
+  const isReady = s.status === 'ready';
+  const isStarting = s.status === 'starting';
+  const dotCls = isReady ? 'ok' : (isStarting ? 'running' : 'bad');
+  const lhBadge = s.port ? `<span class="bg-service-badge ${s.is_localhost_only ? 'lh' : 'net'}">${_esc(s.bind_label)}</span>` : '';
+  const urlLink = s.url ? `<a href="${_esc(s.url)}" target="_blank" rel="noopener" class="bg-service-link">${_esc(s.url)}</a>` : '';
+  const isOpen = _openServiceLog === s.id;
+  const isAlive = s.status === 'ready' || s.status === 'starting';
+  return `
+    <div class="bg-job ${isOpen ? 'open' : ''}" data-service="${_esc(s.id)}">
+      <div class="bg-job-head" data-toggle-service="${_esc(s.id)}">
+        <span class="bg-dot ${dotCls}"></span>
+        <span class="bg-job-title">${_esc(s.name || s.id)}</span>
+        <span class="bg-job-meta">${_esc(s.status)} · ${_dur(s.elapsed_s)}</span>
+      </div>
+      <div class="bg-job-sub">
+        ${urlLink ? urlLink + ' ' : ''}${lhBadge}
+        ${s.pid ? `<span>· PID <code>${_esc(s.pid)}</code></span>` : ''}
+        ${s.readiness_detail ? `<span>· ${_esc(s.readiness_detail)}</span>` : ''}
+      </div>
+      <div class="bg-job-cmd"><code>${_esc(s.command)}</code></div>
+      ${isOpen ? `<pre class="bg-job-log" data-service-log="${_esc(s.id)}">Loading…</pre>` : ''}
+      <div class="bg-job-actions">
+        <button type="button" data-toggle-service="${_esc(s.id)}">${isOpen ? 'Hide output' : 'Show output'}</button>
+        ${s.url ? `<a href="${_esc(s.url)}" target="_blank" rel="noopener">Open URL</a>` : ''}
+        ${isAlive ? `<button type="button" class="danger" data-stop-service="${_esc(s.id)}" data-service-name="${_esc(s.name || s.id)}">Stop</button>` : ''}
+      </div>
+    </div>`;
 }
 
 // Unknown status strings from a newer server still render: shown as-is, red dot.
@@ -389,14 +434,20 @@ async function _render() {
     _cli = { sessions: d.cli_sessions || [], error: d.cli_error || '' };
     try { _agents = (await _call('/api/claude_code/agents')).agents || []; } catch (_) { _agents = _agents || []; }
   }
+  try {
+    const sData = await _call(SERVICES_API);
+    _services = sData.services || [];
+  } catch (_) { _services = []; }
   const jobs = d.jobs || [];
   _renderApprovals();
   const body = _panel.querySelector('.bg-rest');
   const logScroll = {};
   body.querySelectorAll('.bg-job-log').forEach((el) => {
-    logScroll[el.dataset.log] = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    logScroll[el.dataset.log || el.dataset.serviceLog] = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
   });
   body.innerHTML = `
+    <div class="bg-section">Running services</div>
+    ${_services.length ? _services.map(_serviceRow).join('') : '<div class="bg-empty">No running services tracked. Use bash with #!service or manage_services to host apps.</div>'}
     <div class="bg-section">From your chats</div>
     ${jobs.length ? jobs.map(_jobRow).join('') : '<div class="bg-empty">No coding-agent runs yet. A running OpenCode or Claude Code card in a chat has a "Send to background" button.</div>'}
     <div class="bg-section">Coding agents by chat</div>
@@ -428,6 +479,16 @@ async function _render() {
       }
     } catch (_) { /* job gone */ }
   }
+  if (_openServiceLog) {
+    try {
+      const sLog = await _call(`${SERVICES_API}/${encodeURIComponent(_openServiceLog)}/logs?lines=300`);
+      const el = _panel && _panel.querySelector(`.bg-job-log[data-service-log="${_openServiceLog}"]`);
+      if (el) {
+        el.textContent = sLog.logs || '(no output)';
+        if (logScroll[_openServiceLog] !== false) el.scrollTop = el.scrollHeight;
+      }
+    } catch (_) { /* service gone */ }
+  }
   refreshCount();
 }
 
@@ -446,7 +507,7 @@ export function openPanel() {
   document.body.appendChild(_panel);
   _panel.addEventListener('click', async (ev) => {
     if (ev.target === _panel || ev.target.closest('.bg-close')) { _close(); return; }
-    const t = ev.target.closest('[data-toggle],[data-stop],[data-bg],[data-chat]');
+    const t = ev.target.closest('[data-toggle],[data-stop],[data-bg],[data-chat],[data-toggle-service],[data-stop-service]');
     if (!t) return;
     if (t.dataset.chat) {
       _close();
@@ -458,7 +519,14 @@ export function openPanel() {
     }
     ev.preventDefault();
     try {
-      if (t.dataset.toggle) {
+      if (t.dataset.toggleService) {
+        _openServiceLog = _openServiceLog === t.dataset.toggleService ? null : t.dataset.toggleService;
+      } else if (t.dataset.stopService) {
+        const sName = t.dataset.serviceName || t.dataset.stopService;
+        if (!confirm(`Stop service "${sName}"? This will safely terminate the process.`)) return;
+        await _call(`${SERVICES_API}/${encodeURIComponent(t.dataset.stopService)}/stop`, 'POST', { confirm: true });
+        _toast(`Service "${sName}" stopped.`);
+      } else if (t.dataset.toggle) {
         _open = _open === t.dataset.toggle ? null : t.dataset.toggle;
       } else if (t.dataset.stop) {
         if (!confirm('Stop this run? Anything it has already changed stays changed.')) return;
