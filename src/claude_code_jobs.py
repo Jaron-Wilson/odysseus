@@ -16,7 +16,8 @@ to the end, and posts the result into its chat (claude_code_tool.reattach_runs).
 Seen live: a restart during an approved run left the chat asking again, and
 approving again started another CLI doing the same work beside the first.
 
-Finished runs are kept in memory for a while so their output can still be read.
+Finished runs are kept in memory for 24 hours (not on disk: a restart drops
+their output, leaving only the history line) so their output can still be read.
 """
 
 import asyncio
@@ -35,7 +36,7 @@ from src.constants import DATA_DIR
 logger = logging.getLogger(__name__)
 
 MAX_LINES = 2000            # full transcript kept per run
-KEEP_FINISHED_S = 6 * 3600
+KEEP_FINISHED_S = 24 * 3600
 MAX_FINISHED = 50
 RUNS_DIR = os.path.join(DATA_DIR, "claude_code_runs")
 JOBS_FILE = os.path.join(DATA_DIR, "claude_code_jobs.json")
@@ -62,7 +63,13 @@ class Job:
         self.task: Optional[asyncio.Task] = None   # the background continuation
         self.started = time.time()
         self.finished: Optional[float] = None
-        self.status = "running"            # running | done | failed | stopped | timed_out
+        # running | done | incomplete | failed | stopped | timed_out. Consumers must
+        # treat any other string as "ended, not clearly fine".
+        self.status = "running"
+        self.exit_code: Optional[int] = None   # the CLI process's own exit code
+        # How a finished run ended, beyond its exit code: {"last_state", "last_detail",
+        # "last_text", "refused": [paths OpenCode auto-rejected]}.
+        self.outcome: Optional[Dict] = None
         self.detached = False              # sent to the background
         self.attached = False              # brought back: a chat turn is following it again
         self.reattached = False            # picked up again after a server restart
@@ -97,6 +104,9 @@ class Job:
             "finished": self.finished,
             "elapsed_s": round((self.finished or time.time()) - self.started, 1),
             "status": self.status,
+            "exit_code": self.exit_code,
+            "ended_early": ended_early_line(self),
+            "outcome": self.outcome,
             # Brought back and followed in its chat again: not background. The
             # chip kept offering "Bring back" for a run already back.
             "background": self.detached and not self.attached,
@@ -148,6 +158,22 @@ def shown_status(status: str, agent_status: Optional[Dict]) -> Optional[Dict]:
     if status != "running" and agent_status.get("state") in ("working", "needs_input", None):
         return None
     return agent_status
+
+
+def ended_early_line(job) -> str:
+    """"ended early (exit 1), last state: working: <detail>" for an incomplete or
+    failed run, "" for any other. Takes a Job or anything with the same fields."""
+    if getattr(job, "status", "") not in ("incomplete", "failed"):
+        return ""
+    oc = getattr(job, "outcome", None) or {}
+    code = getattr(job, "exit_code", None)
+    line = f"ended early (exit {code if code is not None else '?'})"
+    state = oc.get("last_state")
+    if state:
+        line += f", last state: {state}" + (f": {oc['last_detail']}" if oc.get("last_detail") else "")
+    else:
+        line += ", no progress state reported"
+    return line
 
 
 def _chat_name(session_id: str) -> str:
@@ -339,6 +365,8 @@ def finish(job: Job, status: str, result: Optional[Dict] = None) -> None:
         job.status = status
     job.finished = time.time()
     job.result = result
+    if job.exit_code is None and isinstance(result, dict) and isinstance(result.get("exit_code"), int):
+        job.exit_code = result["exit_code"]
     save()
     _add_history(job)
 
@@ -351,9 +379,29 @@ def _add_history(job: Job) -> None:
     DevOps page's coder stats (src/devops_stats.py). Never raises."""
     try:
         rec = {"id": job.id, "engine": job.engine, "model": job.model, "action": job.action,
-               "status": job.status, "started": job.started, "finished": job.finished,
+               "status": job.status, "exit_code": job.exit_code,
+               "started": job.started, "finished": job.finished,
                "owner": job.owner, "chat_session_id": job.chat_session_id}
         with open(HISTORY_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception as e:
         logger.warning("Could not note the finished Claude Code run: %s", e)
+
+
+def recent_history(max_age_s: float) -> List[Dict]:
+    """Finished-run lines from the history file within `max_age_s`, newest
+    first. Metadata only (no output); covers runs lost from memory by a restart."""
+    out: List[Dict] = []
+    cutoff = time.time() - max_age_s
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            for line in f.readlines()[-500:]:
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(r, dict) and (r.get("finished") or 0) >= cutoff:
+                    out.append(r)
+    except (FileNotFoundError, PermissionError):
+        return []
+    return sorted(out, key=lambda r: r.get("finished") or 0, reverse=True)

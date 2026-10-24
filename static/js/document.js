@@ -90,7 +90,36 @@ import * as Modals from './modalManager.js';
     return !!(account && account.smtp_host && account.smtp_user && account.has_smtp_password);
   }
 
+  // The compose From picker lists every account that can send. The choice is kept on the doc, so switching tabs
+  // keeps it. Default: the account selected in the email library (a reply goes out from the account it came to),
+  // then the default account. Hidden when only one account can send.
+  async function _populateEmailFrom(doc) {
+    const row = document.getElementById('doc-email-from-row');
+    const sel = document.getElementById('doc-email-from');
+    if (!row || !sel) return;
+    const senders = (await _getEmailAccountsCached()).filter(_accountCanSend);
+    if (!doc || docs.get(activeDocId) !== doc) return;
+    sel.textContent = '';
+    for (const a of senders) {
+      const opt = document.createElement('option');
+      opt.value = String(a.id);
+      const addr = a.from_address || a.smtp_user || '';
+      opt.textContent = a.name && addr && a.name !== addr ? `${a.name} <${addr}>` : (addr || a.name || 'account');
+      sel.appendChild(opt);
+    }
+    const ids = senders.map(a => String(a.id));
+    const active = window.__odysseusActiveEmailAccount ? String(window.__odysseusActiveEmailAccount) : '';
+    const dflt = senders.find(a => a.is_default);
+    const pick = [doc._fromAccountId, active, dflt && String(dflt.id), ids[0]].find(id => id && ids.includes(id));
+    if (pick) sel.value = pick;
+    doc._fromAccountId = pick || null;
+    sel.onchange = () => { doc._fromAccountId = sel.value || null; };
+    row.style.display = senders.length > 1 ? '' : 'none';
+  }
+
   async function _resolveComposeSendAccountId() {
+    const fromSel = document.getElementById('doc-email-from');
+    if (fromSel && fromSel.value) return fromSel.value;
     const activeAccountId = window.__odysseusActiveEmailAccount || null;
     if (!activeAccountId) return null;
     const accounts = await _getEmailAccountsCached();
@@ -2531,6 +2560,7 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (toInput) toInput.value = fields.to;
     if (subjectInput) subjectInput.value = fields.subject;
+    _populateEmailFrom(doc);
     _setEmailHeaderCollapsed(!!(doc && doc._emailHeaderCollapsed), { manual: false });
     if (subjectInput && !subjectInput._emailTabBodyBound) {
       subjectInput._emailTabBodyBound = true;
@@ -3929,6 +3959,10 @@ import * as Modals from './modalManager.js';
           <span id="doc-email-collapse-summary" class="doc-email-collapse-summary">No recipient · No subject</span>
         </button>
         <div id="doc-email-fields" class="doc-email-fields">
+          <div class="email-field" id="doc-email-from-row" style="display:none">
+            <label for="doc-email-from">From</label>
+            <select id="doc-email-from" class="doc-email-from-select"></select>
+          </div>
           <div class="email-field" style="position:relative">
             <label>To</label>
             <input type="text" id="doc-email-to" placeholder="recipient@example.com" autocomplete="off" />

@@ -12,12 +12,15 @@
 // another tab is in front, so its state survives tab switches. A tool's own
 // close button closes its tab, and closing the tab closes the tool.
 //
-// Only one chat can be on screen at a time (there is one chat view); the chat
-// itself stays in <main> and is narrowed with margins when it shares the
-// screen with another tab.
+// Two chats can be on screen at once in the split view: the one in front is
+// the real chat view, which stays in <main> and is narrowed with margins when
+// it shares the screen; the other runs the app's own page in a pane beside it
+// (chatPane.js, the /chat-pane page), with its own composer, stream and
+// selection, so the two chats never share state.
 
 import { clearRightDock } from '../modalSnap.js';
 import * as Home from './home.js';
+import * as ChatPane from './chatPane.js';
 import ToolPages from '../toolPages.js';
 import ModPanel from '../modPanel.js';
 import ModLinks from '../modLinks.js';
@@ -185,18 +188,57 @@ function _load() {
   } catch {}
 }
 
+// A split side never gets narrower than a composer can use: 25% to 75%, and
+// at least MIN_PANE px each (a narrow window keeps the middle).
+const MIN_PANE = 340;
+function clampRatio(r, w) {
+  const lo = Math.max(0.25, MIN_PANE / (w || 1));
+  const hi = Math.min(0.75, 1 - lo);
+  return lo > hi ? 0.5 : Math.min(hi, Math.max(lo, r));
+}
+
 const tab = (id) => S.tabs.find(t => t.id === id);
 const activeId = () => (S.focus === 'right' && S.right) ? S.right : S.left;
 const shown = () => [S.left, S.right].filter(Boolean);
 const paneOf = (id) => id === S.left ? 'left' : (id === S.right ? 'right' : null);
-const shownChat = () => shown().map(tab).find(t => t && t.kind === 'chat') || null;
+// The chat tabs on screen. At most one is the real chat view (the one in
+// <main>); when the split shows two, the other runs its own page in a pane
+// (chatPane.js).
+const shownChats = () => shown().map(tab).filter(t => t && t.kind === 'chat');
+// The chat the real view (<main>) shows: when both panes hold a chat, the
+// focused pane's (clicking a tab brings it to the front); else the only one.
+const shownChat = () => {
+  const chats = shownChats();
+  if (chats.length <= 1) return chats[0] || null;
+  const act = tab(activeId());
+  return act && act.kind === 'chat' ? act : chats[0];
+};
+// The chat the pane shows: the other one of the two shown chat tabs.
+const _frameChat = () => {
+  const chats = shownChats();
+  if (chats.length < 2) return null;
+  const real = shownChat();
+  return chats.find(t => t !== real) || null;
+};
 
 function _touch(id) {
   _mru = [id, ..._mru.filter(x => x !== id)];
 }
 
-// Put a tab in front, in the focused pane (or `pane`). There is one chat
-// view, so a chat going into one pane moves any chat out of the other.
+// Rename a tab (a pending new chat gets its session id, or the pane's chat
+// changes): the panes and the MRU keep pointing at the tab.
+function _retab(t, newId) {
+  if (!t || t.id === newId) return;
+  if (S.left === t.id) S.left = newId;
+  if (S.right === t.id) S.right = newId;
+  _mru = _mru.map(x => x === t.id ? newId : x);
+  t.id = newId;
+}
+
+// Put a tab in front, in the focused pane (or `pane`). A chat going into a
+// pane that already shows a different chat leaves that chat in place: the
+// pane runs its own page for it (chatPane.js), and the focused pane is the
+// one that owns the real chat view in <main>.
 function show(id, pane) {
   const t = tab(id);
   if (!t) return;
@@ -205,9 +247,6 @@ function show(id, pane) {
   if (pane === 'right' && isPhone()) pane = 'left';
   const other = pane === 'left' ? 'right' : 'left';
   if (S[other] === id) S[other] = S[pane] || _fallback([id]);   // swap sides
-  else if (t.kind === 'chat' && S[other] && tab(S[other])?.kind === 'chat') {
-    S[other] = _fallback([id, S[pane]], { noChat: true });
-  }
   S[pane] = id;
   if (S.right && S.right === S.left) S.right = null;
   if (!S.right) S.focus = 'left'; else S.focus = pane;
@@ -433,6 +472,7 @@ function _openChatTab(sid) {
 
 function _pollSession() {
   if (!_mounted || !SM()) return;
+  _pruneDeadChats();
   const cur = SM().getCurrentSessionId?.() || null;
   if (cur === _seenSid) { _refreshTitles(); return; }
   const first = _seenSid === undefined;
@@ -475,6 +515,39 @@ function _syncChatView() {
   else if (!c.sid && cur) { _seenSid = null; document.getElementById('rail-new-session')?.click(); }
 }
 
+// A chat the panes still show may no longer exist (deleted, or a different
+// account's): once the session list is known, close its tab so both panes
+// keep only live chats. The list is empty until /api/sessions arrives, so
+// nothing is pruned before then.
+function _pruneDeadChats() {
+  const list = SM()?.getSessions?.() || [];
+  if (!list.length) return;
+  const live = (id) => list.some(s => s.id === id);
+  for (const t of [...S.tabs]) {
+    if (t.kind !== 'chat' || !t.sid) continue;
+    if (live(t.sid) || (t.view && live(t.view))) continue;
+    closeTab(t.id);
+  }
+}
+
+// A thread link followed inside the pane (its page posts it up, the way the
+// thread pane does): the pane's tab follows the link it was given.
+function _onPaneThread(action, id) {
+  const t = _frameChat();
+  if (!t || !t.sid) return;
+  const root = _rootSid(id) || t.sid;
+  if (root === t.sid) {
+    // A thread of the pane's own chat: it is the tab's view, like in front.
+    t.view = id !== t.sid ? id : undefined;
+  } else {
+    _retab(t, 'chat:' + root);
+    t.sid = root;
+    t.view = id !== root ? id : undefined;
+  }
+  _refreshTitles();
+  apply();
+}
+
 // ── Layout ───────────────────────────────────────────────────────────────
 function layout() {
   if (!_mounted) return;
@@ -489,7 +562,7 @@ function layout() {
   const w = phone ? document.documentElement.clientWidth : Math.round(r.right + (parseFloat(cs.marginRight) || 0)) - x;
   const root = document.documentElement.style;
   const split = !!S.right && !isPhone();
-  const lw = split ? Math.round(w * S.ratio) : w;
+  const lw = split ? Math.round(w * clampRatio(S.ratio, w)) : w;
   root.setProperty('--ws-x', x + 'px');
   root.setProperty('--ws-w', w + 'px');
   root.setProperty('--ws-lw', lw + 'px');
@@ -545,6 +618,16 @@ function apply() {
     if (p) _dock(el, t.key, p); else _away(el);
   }
   _syncChatView();
+  // The second chat's pane: the other of the two shown chats, as its own page
+  // in the other pane (chatPane.js). One chat on screen: no pane.
+  {
+    const f = _frameChat();
+    let name = null;
+    if (f) {
+      name = f.view ? (_sessionName(f.view) || f.title) : (f.title || _sessionName(f.sid));
+    }
+    ChatPane.sync({ frame: f, name: name || (f ? 'Chat' : null), pane: f ? paneOf(f.id) : null });
+  }
   renderTabs();
   layout();
   _save();
@@ -628,7 +711,11 @@ function toggleSplit() {
   if (isPhone()) return;
   const other = _fallback([S.left]);
   if (other === S.left) return;
+  const keep = S.left && tab(S.left)?.kind === 'chat';
   show(other, 'right');
+  // The chat that was in front stays the main one; the one opened beside it
+  // takes the pane (clicking its tab brings it to the front, as usual).
+  if (keep) { S.focus = 'left'; apply(); }
 }
 
 // `items`: {label, icon, run}, '-' for a line, or {group, items} for a
@@ -809,7 +896,13 @@ function _tabMenu(id, x, y) {
       run: () => {
         if (paneOf(id) === 'right') { const l = S.left; S.left = id; S.right = l; S.focus = 'left'; apply(); }
         else if (paneOf(id) === 'left' && S.right) { const r = S.right; S.right = id; S.left = r; S.focus = 'right'; apply(); }
-        else if (paneOf(id) === 'left') { S.left = _fallback([id]); show(id, 'right'); }
+        else if (paneOf(id) === 'left') {
+          const l = S.left;
+          // A chat in the left pane takes the other pane when it is moved
+          // aside; a non-chat keeps the old fallback.
+          if (tab(l)?.kind === 'chat') { S.right = l; S.left = id; S.focus = 'right'; apply(); }
+          else { S.left = _fallback([id]); show(id, 'right'); }
+        }
         else show(id, 'right');
       } });
   }
@@ -916,7 +1009,7 @@ function _buildDivider() {
     document.documentElement.classList.add('ws-resizing');
     const x0 = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ws-x')) || 0;
     const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ws-w')) || innerWidth;
-    const move = (ev) => { S.ratio = Math.min(0.75, Math.max(0.25, (ev.clientX - x0) / w)); layout(); };
+    const move = (ev) => { S.ratio = clampRatio((ev.clientX - x0) / w, w); layout(); };
     const up = () => {
       _div.removeEventListener('pointermove', move);
       document.documentElement.classList.remove('ws-resizing');
@@ -929,7 +1022,8 @@ function _buildDivider() {
   });
   _div.addEventListener('keydown', e => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    S.ratio = Math.min(0.75, Math.max(0.25, S.ratio + (e.key === 'ArrowRight' ? 0.05 : -0.05)));
+    const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ws-w')) || innerWidth;
+    S.ratio = clampRatio(S.ratio + (e.key === 'ArrowRight' ? 0.05 : -0.05), w);
     layout(); _save(); e.preventDefault();
   });
   _div.addEventListener('dblclick', () => { S.ratio = 0.5; layout(); _save(); });
@@ -1076,6 +1170,87 @@ function mount() {
   _buildBar();
   _buildDivider();
   Home.mount({ openChat: (sid) => { _seenSid = sid; SM()?.selectSession(sid); _openChatTab(sid); }, newChat, openTool });
+  ChatPane.init({
+    // The pane's header selector picks a chat for the pane only: the tab it
+    // shows is re-pointed, the main view's chat is untouched.
+    change: (sid) => {
+      const t = _frameChat();
+      if (!t || !sid || (t.sid === sid && !t.view)) return;
+      const root = _rootSid(sid) || sid;
+      // The pane picked the chat that is in the other pane: swap the two, so
+      // the pick lands in the pane and the old one takes the other side.
+      const real = shownChat();
+      if (real && real !== t && (real.sid === root || real.view === sid)) {
+        const p = paneOf(t.id);
+        const other = p === 'left' ? 'right' : 'left';
+        S[p] = real.id;
+        S[other] = t.id;
+        S.focus = p;
+        apply();
+        return;
+      }
+      _retab(t, 'chat:' + root);
+      t.sid = root;
+      t.view = root !== sid ? sid : undefined;
+      _refreshTitles();
+      apply();
+    },
+    // The pane's page tells us what it settled on (its own auto-select after
+    // the chat it was given no longer exists): keep the tab in step.
+    changed: (sid) => {
+      const t = _frameChat();
+      if (!t || !sid) return;
+      const root = _rootSid(sid) || sid;
+      const real = shownChat();
+      if (real && real !== t && (real.sid === root || real.view === sid)) {
+        // The pane's page fell back to a chat the other pane already shows
+        // (its own was deleted): there is nothing left for the split to split.
+        if (paneOf(t.id) === 'right') { S.right = null; S.focus = 'left'; }
+        else { S.left = S.right || _fallback([t.id]); S.right = null; S.focus = 'left'; }
+        apply();
+        return;
+      }
+      if (root === t.sid) {
+        if ((t.view || null) === (sid !== root ? sid : null)) return;
+        t.view = sid !== root ? sid : undefined;
+      } else {
+        _retab(t, 'chat:' + root);
+        t.sid = root;
+        t.view = sid !== root ? sid : undefined;
+      }
+      _refreshTitles();
+      apply();
+    },
+    thread: (action, id) => _onPaneThread(action, id),
+    // "Only this": the pane's chat becomes the main view; the pane keeps a
+    // chat if the other side held one, otherwise the split goes away.
+    expand: () => {
+      const t = _frameChat();
+      if (!t) return;
+      const p = paneOf(t.id);
+      const keepId = p === 'right' ? S.left : S.right;
+      const keep = keepId ? tab(keepId) : null;
+      if (p === 'right') {
+        S.right = keep && keep.kind === 'chat' ? keepId : null;
+        S.left = t.id;
+        S.focus = 'left';
+      } else {
+        S.left = keep && keep.kind === 'chat' ? keepId : 'home';
+        S.right = t.id;
+        S.focus = 'right';
+      }
+      if (!S.right) S.focus = 'left';
+      apply();
+    },
+    // × on the pane's header: the split goes, the other side keeps its chat.
+    close: () => {
+      const t = _frameChat();
+      if (!t) return;
+      if (paneOf(t.id) === 'right') { S.right = null; S.focus = 'left'; }
+      else { S.left = S.right || _fallback([t.id]); S.right = null; S.focus = 'left'; }
+      apply();
+    },
+  });
   document.documentElement.classList.add('ws-on');
   _obs = new MutationObserver(_onMutations);
   _obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
@@ -1114,6 +1289,7 @@ function unmount() {
   _div?.remove(); _div = null;
   _closeMenu();
   Home.unmount();
+  ChatPane.destroy();
   const html = document.documentElement;
   html.classList.remove('ws-on', 'ws-no-chat', 'ws-split');
   const main = document.getElementById('chat-container');

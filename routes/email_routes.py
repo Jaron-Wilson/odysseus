@@ -325,6 +325,16 @@ def _apply_odysseus_headers(msg, kind: str | None = None, ref_id: str | None = N
         msg["X-Odysseus-Ref"] = re.sub(r"[^A-Za-z0-9_.:-]", "-", ref_id)[:128]
 
 
+def _clean_address_field(field: str | None) -> str:
+    """Drop stray separators a compose field picks up: a trailing comma after the
+    last chip ("a@b.com,"), a leading one, or an empty slot (", ,"). Python's
+    strict getaddresses returns [('', '')] for the WHOLE field when it sees one,
+    which left the envelope empty and smtplib failed with a bare "{}"."""
+    s = (field or "").strip()
+    s = re.sub(r"(?:,\s*)+,", ",", s)   # empty slots
+    return s.strip(" \t,")
+
+
 def _envelope_recipients(*fields: str) -> list:
     """Extract bare SMTP envelope addresses from one or more To/Cc/Bcc header
     strings. A naive `field.split(",")` corrupts display names that contain a
@@ -332,7 +342,8 @@ def _envelope_recipients(*fields: str) -> list:
     it splits into `"Smith` and `John" <john@corp.com>`, breaking delivery.
     email.utils.getaddresses parses the address grammar correctly."""
     out = []
-    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
+    cleaned = [_clean_address_field(f) for f in fields]
+    for _name, addr in email.utils.getaddresses([f for f in cleaned if f]):
         addr = (addr or "").strip()
         if addr:
             out.append(addr)
@@ -2172,6 +2183,12 @@ def setup_email_routes():
             cfg = _resolve_send_config(req.account_id, owner=owner)
         except Exception as e:
             return {"success": False, "error": str(e) or "No SMTP-capable email account configured"}
+
+        req.to = _clean_address_field(req.to)
+        req.cc = _clean_address_field(req.cc) or None
+        req.bcc = _clean_address_field(req.bcc) or None
+        if not _envelope_recipients(req.to, req.cc, req.bcc):
+            return {"success": False, "error": "No valid recipient. Check the To, Cc and Bcc addresses."}
 
         # Use 'mixed' if we have attachments, 'alternative' otherwise
         has_attachments = bool(req.attachments)

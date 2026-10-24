@@ -1418,6 +1418,15 @@ Mods are **untrusted code**. What protects you:
   load Odysseus without any mod style (see [Changing how Odysseus looks](#changing-how-odysseus-looks)).
 - **Tutorials are rendered by the core**: their Markdown is escaped before the few allowed
   formats are applied, and their images are served only from the mod's own folder.
+- **Secrets in URLs are kept out of the logs.** The core installs a logging filter that redacts
+  the segment after `/public/mcp/` and `/public/link/`, any long token right after `/mcp/`,
+  query parameters such as `token`, `key`, `api_key`, `secret`, `password`, `access_token`,
+  `auth`, `sig` and `signature`, and `Bearer`/`Basic` values, in every log line (including
+  uvicorn's access log and the httpx request log). The path prefix stays visible, for example
+  `/mods/trove/public/mcp/<redacted>`. A mod that puts a secret in a different place can register
+  its own pattern from core code with `core.log_safety.register_redaction(pattern)` (a regex;
+  group 1, if any, stays visible) or `register_redaction("/public/hook/", path_prefix=True)`.
+  Existing log files are not rewritten: rotate or delete old logs to drop tokens already in them.
 - **Device actions need the user.** Mod tools that control devices go through the chat's approval
   flow, each call.
 - **Mods reach each other only through the core.** A capability call is checked (declared at

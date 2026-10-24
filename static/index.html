@@ -27,6 +27,13 @@
         document.documentElement.classList.add('ody-pane');
         if (ui === 'workspace') ui = 'studio';
       }
+      // A second, independently chosen chat beside the main one in the
+      // workspace split view (static/js/workspace/shell.js): this page in an
+      // iframe, a whole chat of its own. No Workspace tabs inside it either.
+      if (location.pathname === '/chat-pane' && window.parent !== window) {
+        document.documentElement.classList.add('ody-pane');
+        if (ui === 'workspace') ui = 'studio';
+      }
       document.documentElement.classList.add('ui-' + ui);
       if (ui === 'workspace') document.documentElement.classList.add('ui-studio');
       document.documentElement.dataset.ui = ui;

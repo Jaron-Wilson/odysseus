@@ -24,3 +24,19 @@ def test_to_cc_bcc_combined_and_none_safe():
 
 def test_empty_and_none_fields():
     assert email_routes._envelope_recipients("", None) == []
+
+
+def test_trailing_comma_keeps_the_address():
+    # Compose chips leave "a@b.com," behind; strict getaddresses returned [('', '')] for the whole field, the
+    # envelope came out empty and smtplib failed with a bare "{}".
+    assert email_routes._envelope_recipients("jaron@jarondynamics.com,") == ["jaron@jarondynamics.com"]
+    assert email_routes._envelope_recipients("a@x.com, b@y.com,") == ["a@x.com", "b@y.com"]
+
+
+def test_leading_and_empty_slots():
+    assert email_routes._envelope_recipients(", a@x.com, , b@y.com") == ["a@x.com", "b@y.com"]
+
+
+def test_clean_address_field_keeps_display_names():
+    assert email_routes._clean_address_field('"Smith, John" <john@corp.com>, ') == '"Smith, John" <john@corp.com>'
+    assert email_routes._clean_address_field(None) == ""

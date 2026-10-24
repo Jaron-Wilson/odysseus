@@ -1160,9 +1160,15 @@ FUNCTION_TOOL_SCHEMAS = [
             "description": (
                 "THE tool for coding work: writing, editing or adding code, fixing bugs, "
                 "refactoring, building or rebranding a site, debugging tests, reviewing or "
-                "explaining a codebase. It runs the Claude Code agent on this host, which reads "
+                "explaining a codebase. This is the coding agent on this host, with engines OpenCode "
+                "(the default, runs on the local models), Claude Code and Antigravity. It reads "
                 "the project, edits files, runs commands and uses its own subagents, streaming "
                 "its console back live.\n"
+                "STATUS: action 'status' (or 'list') reports every coding run of every engine, "
+                "OpenCode included: running ones and recent finished, failed or stopped ones, "
+                "with engine, model, how long, and the result or error. This is how you check "
+                "OpenCode runs: call it, and never say you cannot see OpenCode runs. Name the "
+                "engine each run used; do not call an OpenCode run Claude Code.\n"
                 "If the user says 'claude', 'claude code', 'claude agent' or 'claude subagents', "
                 "you MUST call this tool. Do NOT invoke the claude CLI through bash: that skips "
                 "the plan-and-approve gate the user relies on. Prefer this over bash/write_file/"
@@ -1187,8 +1193,8 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "prompt": {"type": "string", "description": "The coding task, stated in full. On an execute call, any amendments the user asked for (the approved plan is passed along automatically)."},
                     "cwd": {"type": "string", "description": "Absolute path to the project directory. Required: it is the only bound on what can be read or edited, so name the project and nothing broader."},
-                    "action": {"type": "string", "enum": ["execute", "ask", "list", "status", "agents", "attach"], "description": "'attach' follows a background run (job_id) in this chat again: what 'Bring back' asks for. 'agents' lists the Claude Code agents each chat has (chat name and id, folder, model, last task), so you can carry one on with from_chat. 'ask' converses with a read-only agent that can explore the codebase and spawn its own subagents — no approval needed since it cannot write. Use 'ask' for every check, status question, recon or 'what is the state of X'. There is no 'plan' action: write plans yourself with propose_plan. 'execute' carries out a plan the user approved in the chat (pass its plan_id) with write tools, starting straight away with no planning phase. 'list' shows the Claude Code sessions running on this host. 'status' reports on backgrounded runs — use it whenever the user asks how a job is going."},
-                    "job_id": {"type": "string", "description": "For attach: the run to follow. For status: a specific background job. Omit to report every backgrounded run in this chat."},
+                    "action": {"type": "string", "enum": ["execute", "ask", "list", "status", "agents", "attach"], "description": "'attach' follows a background run (job_id) in this chat again: what 'Bring back' asks for. 'agents' lists the Claude Code agents each chat has (chat name and id, folder, model, last task), so you can carry one on with from_chat. 'ask' converses with a read-only agent that can explore the codebase and spawn its own subagents — no approval needed since it cannot write. Use 'ask' for every check, status question, recon or 'what is the state of X'. There is no 'plan' action: write plans yourself with propose_plan. 'execute' carries out a plan the user approved in the chat (pass its plan_id) with write tools, starting straight away with no planning phase. 'list' and 'status' report on coding runs of ALL engines (OpenCode, Claude Code, Antigravity): running and recent finished/failed/stopped ones, then, in a separate labeled section, the Claude Code CLI's own sessions. Use 'status' whenever the user asks how a run, job or coding task is going or how it ended."},
+                    "job_id": {"type": "string", "description": "For attach: the run to follow. For status: a specific run, running or finished. Omit to report all recent runs of every engine."},
                     "engine": {"type": "string", "enum": ["opencode", "claude", "antigravity"], "description": "'opencode' (the default when omitted) runs the task on this host's LOCAL models (qwen3.8-27b), costing nothing. 'claude' uses Claude Code on the user's Claude plan: only when the user asks for Claude by name, or has said yes to using it for this task. 'antigravity' uses Google Antigravity (agy) on the user's Google subscription: when the user asks for Antigravity, Gemini or Google. Same approved-plan gate for all three."},
                     "plan_id": {"type": "string", "description": "Required for execute: the plan_id of the plan you wrote with propose_plan and the user approved. Use the cwd that plan names."},
                     "session_id": {"type": "string", "description": "Optional for ask: each chat already carries on its own agent for the folder automatically, so this is rarely needed."},

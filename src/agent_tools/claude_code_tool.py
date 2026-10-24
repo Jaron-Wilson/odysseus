@@ -187,6 +187,37 @@ def opencode_model_ids() -> list:
     return [mid for mid, _ in opencode_providers.models()[0]]
 
 
+def scratch_env(env: dict, run_dir: str) -> str:
+    """Give an OpenCode run its own temp dir, inside the run's directory, and allow
+    exactly that dir (nothing wider) past OpenCode's external_directory check.
+
+    OpenCode runs headless and auto-rejects any path outside the project dir
+    ("permission requested: external_directory (/tmp/*); auto-rejecting"), so
+    pytest tmp dirs, node and scratch files in /tmp all failed. TMPDIR/TEMP/TMP
+    point at <run_dir>/tmp instead, and the config OpenCode is handed gets one
+    allow rule, `permission.external_directory["<run_dir>/tmp/*"] = "allow"`.
+    Returns the scratch path ("" if it could not be made)."""
+    try:
+        scratch = os.path.join(os.path.realpath(run_dir), "tmp")
+        os.makedirs(scratch, exist_ok=True)
+    except OSError:
+        return ""
+    for k in ("TMPDIR", "TEMP", "TMP"):
+        env[k] = scratch
+    try:
+        cfg = json.loads(env.get("OPENCODE_CONFIG_CONTENT") or "{}")
+        perm = cfg.setdefault("permission", {})
+        if not isinstance(perm, dict):
+            perm = cfg["permission"] = {}
+        ext = perm.setdefault("external_directory", {})
+        if isinstance(ext, dict):
+            ext[scratch + "/*"] = "allow"
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(cfg)
+    except (ValueError, TypeError):
+        pass
+    return scratch
+
+
 def _cli_env() -> dict:
     """The environment a coding-agent CLI runs in (see run())."""
     env = {k: v for k, v in os.environ.items()
@@ -245,6 +276,94 @@ def _summarize_opencode(event: dict) -> Optional[str]:
     if etype == "step_finish":
         return None
     return None
+
+
+RECENT_RUNS_S = 24 * 3600
+MAX_RUNS_SHOWN = 15
+CLI_SECTION_TITLE = ("Claude Code CLI sessions on this host (separate from Odysseus runs; "
+                     "not OpenCode)")
+_RUNS_KEPT_NOTE = ("Odysseus keeps finished runs in memory for 24 hours, so runs older than that, "
+                   "or from before a server restart, are not listed in detail.")
+_BRANCH_RE = re.compile(
+    r"(https://github\.com/[\w.-]+/[\w.-]+/pull/\d+|"
+    r"(?:branch|pushed(?: to)?|checked out|on branch)\s+[`'\"]?([\w][\w./-]{2,})[`'\"]?)",
+    re.IGNORECASE)
+
+
+def _ago(secs: float) -> str:
+    secs = max(0, int(secs))
+    if secs < 90:
+        return "just now"
+    if secs < 5400:
+        return f"{secs // 60} min ago"
+    return f"{round(secs / 3600, 1)} h ago"
+
+
+def _run_refs(text: str) -> list:
+    """Pull request URLs and branch names a run's output mentions."""
+    seen, out = set(), []
+    for m in _BRANCH_RE.finditer(text or ""):
+        ref = m.group(1) if m.group(1).startswith("https://") else m.group(2)
+        if ref and ref.lower() not in ("to", "the", "a", "and") and ref not in seen:
+            seen.add(ref)
+            out.append(ref)
+    return out[:3]
+
+
+def _run_lines(j, chat_id: str = "") -> list:
+    now = time.time()
+    took = round(((j.finished or now) - j.started) / 60, 1)
+    st = claude_code_jobs.shown_status(j.status, j.agent_status) or {}
+    on = f" on {j.model}" if j.model else ""
+    mine = " (this chat)" if chat_id and j.chat_session_id == chat_id else ""
+    when = f", finished {_ago(now - j.finished)}" if j.finished else ""
+    detail = f" \u00b7 {st['detail']}" if st.get("detail") else ""
+    lines = [f"- `{j.id}` {j.status} - {engine_label(j.engine)} {j.action}{on}, "
+             f"{'ran ' if j.finished else ''}{took} min{when}{mine}{detail}"]
+    if j.cwd:
+        lines.append(f"  cwd: {j.cwd}")
+    early = claude_code_jobs.ended_early_line(j)
+    if early:
+        lines.append(f"  {early}. It did NOT finish.")
+        oc = j.outcome or {}
+        if oc.get("last_text"):
+            lines.append("  last model text: " + " ".join(oc["last_text"].split())[-LAST_TEXT_CHARS:])
+        if oc.get("refused"):
+            lines.append("  OpenCode refused access outside the project: " + ", ".join(oc["refused"]))
+        pid = (j.spec or {}).get("native_plan_id") or ""
+        sid = j.cli_session_id or ""
+        lines.append("  next: tell the user it did not finish; to continue call claude_code action 'execute'"
+                     + (f" with plan_id '{pid}'" if pid else "")
+                     + (f" and session_id '{sid}'" if sid.startswith("ses_") else "")
+                     + " and a prompt to continue from where it stopped.")
+    elif (j.outcome or {}).get("refused"):
+        lines.append("  OpenCode refused access outside the project: " + ", ".join(j.outcome["refused"]))
+    res = j.result or {}
+    body = (res.get("output") or "").strip()
+    err = (res.get("error") or "").strip()
+    if j.status == "running":
+        tail = [l for l in list(j.lines)[-6:] if l.strip()]
+        if tail:
+            lines.append("  last output: " + " | ".join(t.strip()[:160] for t in tail))
+    else:
+        why = err or body
+        if not why:
+            tail = [l for l in list(j.lines)[-4:] if l.strip()]
+            why = " | ".join(t.strip() for t in tail)
+        if j.status in ("failed", "timed_out") and res.get("exit_code") not in (None, 0):
+            lines.append(f"  exit code {res.get('exit_code')}")
+        if why:
+            why = " ".join(why.split())
+            why = why if len(why) <= 400 else "..." + why[-400:]
+            label = {"done": "result", "failed": "error", "stopped": "stopped",
+                     "incomplete": "output", "timed_out": "timed out"}.get(j.status, "result")
+            lines.append(f"  {label}: " + why)
+        elif j.status == "stopped":
+            lines.append("  stopped before it produced a result")
+    refs = _run_refs("\n".join([body, err] + list(j.lines)[-60:]))
+    if refs:
+        lines.append("  mentions: " + ", ".join(refs))
+    return lines
 
 
 def engine_label(engine: str) -> str:
@@ -440,39 +559,48 @@ class ClaudeCodeTool:
         }
 
     async def _job_status(self, job_id: Optional[str], chat_id: str = "") -> Dict:
-        """Report on background sessions, so the user can just ask how it is going.
+        """Report on coding runs (the `status` and `list` actions).
 
-        Odysseus's own runs first (the job ids its cards, Background tasks and
-        "Bring back" use): asked about job fd81af50, this said "no background
-        session matching fd81af50", because it only read the Claude CLI's
-        sessions (2026-09-29). Then the CLI's own view, whose ids are the ones
-        `claude attach` / `logs` / `stop` accept.
+        Odysseus's own runs come first, for every engine (OpenCode, Claude
+        Code, Antigravity): running ones, then recent finished, failed and
+        stopped ones. Only after that, in a section of its own, the Claude Code
+        CLI's separate background sessions on this host. Before, a chat asking
+        about its OpenCode runs got "no active job" and an unrelated CLI
+        session presented as the answer (2026-10-23).
         """
         own = self._own_job_status(job_id, chat_id)
-        if own:
-            return own
-        listing = await self._list_agents()
-        if listing.get("exit_code") != 0:
-            return listing
-        sessions = [s for s in listing.get("sessions") or []
-                    if s.get("kind") == "background"]
+        sessions: list = []
+        if shutil.which("claude"):
+            listing = await self._list_agents()
+            if listing.get("exit_code") == 0:
+                sessions = [s for s in listing.get("sessions") or []
+                            if s.get("kind") == "background"]
         if job_id:
             sessions = [s for s in sessions
                         if str(s.get("id", "")).startswith(job_id)
                         or str(s.get("sessionId", "")).startswith(job_id)]
-            if not sessions:
-                return {"error": f"no background session matching {job_id}", "exit_code": 1}
-        if not sessions:
-            return {"output": "No background Claude Code sessions are running.", "exit_code": 0}
+            if not own and not sessions:
+                return {"error": (f"no coding run or Claude Code CLI session matching {job_id}. "
+                                  f"{_RUNS_KEPT_NOTE}"), "exit_code": 1}
+        out = dict(own) if own else {"exit_code": 0, "jobs": []}
+        parts = [out["output"]] if own else []
+        if not own:
+            parts.append("No coding runs (OpenCode, Claude Code or Antigravity) started from "
+                         "Odysseus in the last 24 hours. " + _RUNS_KEPT_NOTE)
+        if sessions:
+            parts.append(await self._cli_sessions_text(sessions))
+            out["cli_sessions"] = sessions
+        out["output"] = "\n".join(parts)
+        return out
 
+    async def _cli_sessions_text(self, sessions: list) -> str:
         cli = shutil.which("claude")
         env = _cli_env()
-
-        lines = []
+        lines = [CLI_SECTION_TITLE + ":"]
         for s in sessions:
             sid = s.get("id") or ""
             state = s.get("state") or s.get("status") or "?"
-            lines.append(f"- `{sid}` {state} — {s.get('name') or '?'} ({s.get('cwd')})")
+            lines.append(f"- `{sid}` {state} - {s.get('name') or '?'} ({s.get('cwd')})")
             if cli and sid:
                 try:
                     p = await asyncio.create_subprocess_exec(
@@ -481,8 +609,6 @@ class ClaudeCodeTool:
                         stderr=asyncio.subprocess.DEVNULL)
                     o, _ = await asyncio.wait_for(p.communicate(), timeout=30)
                     clean = _strip_ansi((o or b"").decode("utf-8", "replace"))
-                    # Cursor-positioning leftovers and spinner frames survive
-                    # escape-stripping as junk lines; keep only real text.
                     # `claude logs` replays a TUI buffer, so most lines are
                     # spinner frames and cursor droppings. Keep lines that look
                     # like prose rather than animation.
@@ -497,7 +623,7 @@ class ClaudeCodeTool:
                 except Exception:
                     pass
         lines.append("Attach with `claude attach <id>`, stop with `claude stop <id>`.")
-        return {"output": "\n".join(lines), "sessions": sessions, "exit_code": 0}
+        return "\n".join(lines)
 
     def _chat_agents(self, chat_id: str) -> Dict:
         """The Claude Code agents chats have used, so a chat can carry one on
@@ -567,37 +693,63 @@ class ClaudeCodeTool:
             for s in sessions
         ]
         return {
-            "output": "\n".join(lines) or "No Claude Code sessions running.",
+            "output": "\n".join(lines) or "The Claude Code CLI has no sessions on this host.",
             "sessions": sessions,
             "count": len(sessions),
             "exit_code": 0,
         }
 
     @staticmethod
-    def _own_job_status(job_id: Optional[str], chat_id: str) -> Optional[Dict]:
+    def _own_job_status(job_id: Optional[str], chat_id: str = "") -> Optional[Dict]:
+        """Odysseus's own runs of every engine: running first, then recent
+        finished ones (newest first, capped). None when there are none."""
+        now = time.time()
         if job_id:
             job = claude_code_jobs.get(job_id)
+            if not job:
+                for k in claude_code_jobs.list_jobs(""):
+                    if k.id.startswith(job_id):
+                        job = k
+                        break
             jobs = [job] if job else []
         else:
             jobs = [j for j in claude_code_jobs.list_jobs("")
-                    if j.status == "running" and (not chat_id or j.chat_session_id == chat_id)]
-        if not jobs:
+                    if j.status == "running"
+                    or (j.finished and now - j.finished <= RECENT_RUNS_S)]
+            jobs.sort(key=lambda j: (j.status != "running", -(j.finished or j.started)))
+            jobs = jobs[:MAX_RUNS_SHOWN]
+        # Finished runs no longer in memory (after a restart) still have a
+        # metadata line in the history file.
+        hist = []
+        if not job_id:
+            have = {j.id for j in jobs}
+            hist = [r for r in claude_code_jobs.recent_history(RECENT_RUNS_S)
+                    if r.get("id") not in have][:max(0, MAX_RUNS_SHOWN - len(jobs))]
+        elif not jobs:
+            hist = [r for r in claude_code_jobs.recent_history(7 * 86400)
+                    if str(r.get("id", "")).startswith(job_id)][:1]
+        if not jobs and not hist:
             return None
         lines = []
         for j in jobs:
-            took = round(((j.finished or time.time()) - j.started) / 60, 1)
-            st = claude_code_jobs.shown_status(j.status, j.agent_status) or {}
-            on = f" on {j.model}" if j.model else ""
-            detail = f" \u00b7 {st['detail']}" if st.get("detail") else ""
-            lines.append(f"- `{j.id}` {j.status} \u2014 {engine_label(j.engine)} {j.action}{on}, {took} min{detail}")
-            tail = [l for l in list(j.lines)[-6:] if l.strip()]
-            if tail:
-                lines.append("  last output: " + " | ".join(t.strip()[:160] for t in tail))
+            lines.extend(_run_lines(j, chat_id))
+        for r in hist:
+            took = round(((r.get("finished") or now) - (r.get("started") or now)) / 60, 1)
+            lines.append(f"- `{r.get('id')}` {r.get('status')} - {engine_label(r.get('engine'))} "
+                         f"{r.get('action')}"
+                         + (f" on {r['model']}" if r.get("model") else "")
+                         + f", ran {took} min, finished {_ago(now - (r.get('finished') or now))}"
+                         + (f" (exit {r.get('exit_code')}, did not finish: continue with action 'execute')"
+                            if r.get("status") in ("incomplete", "failed") and r.get("exit_code") is not None
+                            else "")
+                         + " (details not kept after a server restart)")
         running = [j for j in jobs if j.status == "running"]
-        hint = (" To follow one here, call claude_code with action 'attach' and its job_id. "
-                "Do not start it again." if running else "")
-        return {"output": "\n".join(lines) + ("\n" + hint.strip() if hint else ""), "exit_code": 0,
-                "jobs": [j.public() for j in jobs]}
+        head = ("Coding runs started from Odysseus (all engines: OpenCode, Claude Code, "
+                "Antigravity), running first, then recent finished ones:")
+        hint = ("\nTo follow a running one here, call claude_code with action 'attach' and its "
+                "job_id. Do not start it again." if running else "")
+        return {"output": head + "\n" + "\n".join(lines) + hint, "exit_code": 0,
+                "jobs": [j.public() for j in jobs], "history": hist}
 
     async def _attach(self, job_id: str, ctx: dict) -> Dict:
         """Follow a background run in this chat turn again ("bring it back"):
@@ -683,7 +835,7 @@ class ClaudeCodeTool:
 
         # Reads: no prompt, no directory, nothing spawned.
         if action == "list":
-            return await self._list_agents()
+            return await self._job_status(None, "")
         if action == "agents":
             return self._chat_agents((ctx or {}).get("session_id") or "")
         if action == "status":
@@ -723,6 +875,7 @@ class ClaudeCodeTool:
                               "'execute' and its plan_id. For a read-only question use action 'ask'."),
                     "use": "propose_plan", "exit_code": 1}
         native = None          # the approved native plan an execute carries out
+        continue_session = ""
         if action == "execute" and str(args.get("plan_id") or "").strip():
             from src import native_plans
             native = native_plans.get(str(args.get("plan_id")).strip())
@@ -735,6 +888,9 @@ class ClaudeCodeTool:
                     "denied": "the user denied this plan. Revise it with propose_plan, or stop.",
                     "superseded": "a newer plan replaced this one."}.get(str(native.get("status")), "this plan is not approved.")),
                     "exit_code": 1}
+            # An OpenCode session id (ses_...) from a run that ended early is kept, so
+            # the continuation keeps its context; anything else starts fresh.
+            continue_session = resume_id if resume_id.startswith("ses_") else ""
             resume_id = ""
             args.pop("session_id", None)
             if not str(args.get("cwd") or "").strip() and native.get("cwd"):
@@ -814,6 +970,8 @@ class ClaudeCodeTool:
                 # approved text, with no plan phase of its own.
                 run_fresh, plan_engine = True, ""
                 plan_text = str(native.get("approved_content") or native.get("content") or "")
+                if continue_session and engine == "opencode":
+                    run_fresh, resume_id = False, continue_session
         if engine not in ENGINES:
             return {"error": "engine must be 'opencode', 'claude' or 'antigravity'", "exit_code": 1}
         # Plans are written on OpenCode (the local model) unless the user
@@ -1229,6 +1387,8 @@ class ClaudeCodeTool:
         # cap, nothing to escape); OpenCode takes it positionally.
         os.makedirs(job.run_dir, exist_ok=True)
         env["ODYSSEUS_STATUS_FILE"] = os.path.join(job.run_dir, "status.jsonl")
+        if engine == "opencode":
+            scratch_env(env, job.run_dir)
         prompt_path = os.path.join(job.run_dir, "prompt.txt")
         if prompt_via_stdin:
             with open(prompt_path, "w", encoding="utf-8") as f:
@@ -1361,7 +1521,7 @@ class ClaudeCodeTool:
                     result = await _build_result(job, stream, _exit_code(job), timed_out)
                 except Exception as e:
                     result = {"error": f"could not finish the background run: {e}", "exit_code": 1}
-                claude_code_jobs.finish(job, _job_status(result), result)
+                claude_code_jobs.finish(job, settle(job, stream, result), result)
                 await _post_background_result(job, result)
 
             job.task = asyncio.create_task(_carry_on())
@@ -1394,7 +1554,7 @@ class ClaudeCodeTool:
         if prog:
             prog.cancel()
         result = await _build_result(job, stream, _exit_code(job), timed_out)
-        claude_code_jobs.finish(job, _job_status(result), result)
+        claude_code_jobs.finish(job, settle(job, stream, result), result)
         return result
 
 
@@ -1412,6 +1572,8 @@ class _Stream:
         self.engine = engine
         self.session_id = session_id
         self.final_text = ""
+        self.last_text = ""                # the model's most recent text block
+        self.last_stop_reason = ""         # OpenCode: reason of the last step_finish
         self.is_error = False
         self.thinking_tokens = 0
         # For run limits: turns taken and dollars spent so far. Claude reports
@@ -1485,6 +1647,7 @@ class _Stream:
             if event.get("type") == "step_start":
                 self.turns += 1
             elif event.get("type") == "step_finish":
+                self.last_stop_reason = str((event.get("part") or {}).get("reason") or "")
                 try:
                     self.cost_exact = (self.cost_exact or 0.0) + float((event.get("part") or {}).get("cost") or 0)
                 except (TypeError, ValueError):
@@ -1493,6 +1656,7 @@ class _Stream:
             if not summary:
                 return []
             if event.get("type") == "text":
+                self.last_text = summary
                 self.final_text = (self.final_text + "\n" + summary).strip()
             return summary.splitlines()
         if event.get("type") == "assistant":
@@ -1805,6 +1969,136 @@ def _job_status(result: Dict) -> str:
     return "done" if code == 0 else "timed_out" if code == 124 else "failed"
 
 
+# What OpenCode writes to stderr when it refuses a path outside the project.
+_REFUSED_RE = re.compile(r"permission requested: external_directory \(([^)]*)\); auto-rejecting")
+LAST_TEXT_CHARS = 600
+
+
+def _refused_paths(job, limit: int = 5) -> list:
+    """Paths OpenCode auto-rejected (outside the project dir), from err.log."""
+    try:
+        with open(os.path.join(job.run_dir, "err.log"), "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 200000))
+            text = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    seen: list = []
+    for m in _REFUSED_RE.finditer(text):
+        if m.group(1) not in seen:
+            seen.append(m.group(1))
+    return seen[:limit]
+
+
+_PROGRESS_NOTE_RE = re.compile(
+    r"^\s*#{1,4}\s*(where we are|progress|status|in progress|next steps?|handoff|hand-off|remaining)\b"
+    r"|\bin progress\b.*\b(next|remaining|todo)\b", re.I | re.S)
+_MIDWORK_TAIL_RE = re.compile(
+    r"(^|\n)\s*(now |next,? |first,? |then )?(let me|i'll|i will|i am going to|i'm going to)\b[^\n]{0,200}$"
+    r"|[:…]\s*$|\.\.\.\s*$", re.I)
+
+
+def _looks_unfinished(text: str) -> bool:
+    """The model's last words read as a progress note or "let me ..." rather than a
+    final answer (it stopped, the run did not conclude)."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    return bool(_PROGRESS_NOTE_RE.search(t) or _MIDWORK_TAIL_RE.search(t))
+
+
+def classify_outcome(*, action: str, exit_code: int, last_state, last_text: str,
+                     stopped_on_stop: bool = True) -> str:
+    """done | incomplete | failed for a finished execute run.
+
+    done: exit 0 and the agent did not leave its last state at "working" (or its last
+    words are a real final answer). incomplete: exit 0 but it stopped mid-task.
+    failed: nonzero exit."""
+    if exit_code != 0:
+        return "failed"
+    if last_state == "failed":
+        return "failed"
+    if last_state == "done":
+        return "done"
+    final_answer = bool(last_text.strip()) and stopped_on_stop and not _looks_unfinished(last_text)
+    if last_state == "working":
+        return "done" if final_answer else "incomplete"
+    # No state, or waiting on the user: only the words can say.
+    return "incomplete" if _looks_unfinished(last_text) else "done"
+
+
+def _last_text(stream) -> str:
+    text = getattr(stream, "last_text", "") or ""
+    if not text:
+        paras = [p for p in re.split(r"\n\s*\n", stream.final_text or "") if p.strip()]
+        text = paras[-1] if paras else ""
+    return text.strip()
+
+
+def _settle(job, stream, result: Dict) -> str:
+    """Decide how a finished run really ended, store it on the job, and put the
+    truth in `result` so the chat model cannot call a stopped run done. Returns the
+    status to finish the job with."""
+    status = _job_status(result)
+    code = _exit_code(job)
+    job.exit_code = code
+    engine = job.spec.get("engine", job.engine)
+    st = job.agent_status or {}
+    last = _last_text(stream)
+    refused = _refused_paths(job) if engine == "opencode" else []
+    job.outcome = {"last_state": st.get("state") or "", "last_detail": st.get("detail") or "",
+                   "last_text": last[-LAST_TEXT_CHARS:], "refused": refused}
+    if (job.action == "execute" and status == "done" and result.get("exit_code") == 0
+            and not result.get("limit_hit")):
+        status = classify_outcome(
+            action=job.action, exit_code=code, last_state=st.get("state"), last_text=last,
+            stopped_on_stop=getattr(stream, "last_stop_reason", "stop") in ("stop", "", None))
+    if status in ("incomplete", "failed") and job.action == "execute":
+        head = claude_code_jobs.ended_early_line(_Ended(status, code, job.outcome)) or "ended early"
+        notes = [f"**This run did NOT finish: {head}.**"]
+        if last:
+            notes.append("Where it stopped (its last words): " + " ".join(last[-LAST_TEXT_CHARS:].split()))
+        if refused:
+            notes.append(f"OpenCode refused access outside the project: {', '.join(refused)}")
+        pid = job.spec.get("native_plan_id") or ""
+        if pid:
+            _restore_native(job.spec)          # give the approved run back so it can continue
+        elif job.plan_id:
+            approvals.restore_approval(job.plan_id)
+        sid = job.cli_session_id or ""
+        again = ("Tell the user it did not finish and what is left. To carry on, call claude_code with "
+                 "action 'execute'"
+                 + (f", plan_id '{pid}'" if pid else "")
+                 + (f" and session_id '{sid}' (the same OpenCode session, so it keeps its context)" if sid.startswith("ses_") else "")
+                 + ", with a prompt that says to continue from where it stopped. "
+                 "Do not say the work is done.")
+        result["incomplete"] = True
+        result["next_step"] = again
+        result["ended_early"] = head
+        result["process_exit_code"] = code
+        if code != 0:
+            result["exit_code"] = code
+        result["output"] = "\n".join(notes) + "\n\n" + (result.get("output") or "")
+    elif refused:
+        result["output"] = (f"OpenCode refused access outside the project: {', '.join(refused)}\n\n"
+                            + (result.get("output") or ""))
+    return status
+
+
+def settle(job, stream, result: Dict) -> str:
+    try:
+        return _settle(job, stream, result)
+    except Exception:
+        logger.exception("Could not classify how run %s ended", getattr(job, "id", "?"))
+        return _job_status(result)
+
+
+class _Ended:
+    """Just enough of a Job for ended_early_line before the status is stored."""
+    def __init__(self, status, exit_code, outcome):
+        self.status, self.exit_code, self.outcome = status, exit_code, outcome
+
+
 def _restore_native(spec: dict) -> bool:
     """An approved native plan's run, given back after a run that never
     really ran (src/native_plans.py)."""
@@ -2108,7 +2402,7 @@ async def _reattached(job) -> None:
         result = await _build_result(job, stream, _exit_code(job), timed_out)
     except Exception as e:
         result = {"error": f"could not finish the run: {e}", "exit_code": 1}
-    claude_code_jobs.finish(job, _job_status(result), result)
+    claude_code_jobs.finish(job, settle(job, stream, result), result)
     await _post_background_result(job, result)
 
 
@@ -2217,15 +2511,17 @@ async def _post_background_result(job, result: Dict) -> None:
     sid = job.chat_session_id
     if not sid or job.attached:
         return                          # brought back: the chat turn following it reports it
-    ok = result.get("exit_code") == 0
+    ok = result.get("exit_code") == 0 and job.status != "incomplete"
     name = engine_label(job.engine)
     head = (f"**{name if job.reattached else 'Background ' + name} job `{job.id}` "
-            f"{'finished' if ok else 'stopped' if job.status == 'stopped' else 'failed'}** "
+            f"{'finished' if ok else 'stopped' if job.status == 'stopped' else 'ended early, NOT finished' if job.status == 'incomplete' else 'failed'}** "
             f"({job.action}, {job.model}, {round((job.finished or time.time()) - job.started)}s, "
             f"in `{job.cwd}`"
             + ("; it kept running through a server restart" if job.reattached else "") + ")")
     body = result.get("output") or result.get("error") or ""
     parts = [head, "", body.strip()]
+    if result.get("next_step") and result.get("incomplete"):
+        parts += ["", result["next_step"]]
     if result.get("pdf"):
         parts += ["", result["pdf"]]
     approval = result.get("approval") or {}
@@ -2258,7 +2554,8 @@ async def _post_background_result(job, result: Dict) -> None:
             await chat_queue.send_done_notification(sid, job.notify, failed=not ok)
         except Exception:
             pass
-    _wake_chat(job, sid, "finished" if ok else "stopped" if job.status == "stopped" else "failed")
+    _wake_chat(job, sid, "finished" if ok else "stopped" if job.status == "stopped"
+               else "ended early without finishing" if job.status == "incomplete" else "failed")
 
 
 BG_DONE_PROMPT = (
