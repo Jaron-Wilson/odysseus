@@ -7,8 +7,10 @@ routes/openai_gateway_routes.py; this module decides which models exist and wher
 A model is listed as ``<endpoint-slug>:<model>``, for example ``local-ollama:qwen3:8b`` (the slug comes from the
 endpoint's name). A bare model name also works while exactly one endpoint has it.
 
-Only endpoints that speak the OpenAI chat-completions format are exposed. Anthropic, ChatGPT sign-in, Copilot, native
-Ollama (ollama.com /api) and add-on endpoints use other formats or credentials and are left out.
+Every enabled chat model the user can use is listed. Endpoints that speak the OpenAI chat-completions format are
+passed straight through. The others (Anthropic, ChatGPT sign-in, Copilot, native Ollama /api, add-on models) are
+translated: routes/openai_gateway_routes.py sends the request through Odysseus's own provider layer (src/llm_core.py,
+the code a chat turn uses) and turns the answer back into OpenAI chat-completions, streamed or not.
 """
 import json
 import re
@@ -26,8 +28,8 @@ from src.endpoint_resolver import (
 )
 from src.llm_core import _detect_provider
 
-# provider names from _detect_provider that do not take an OpenAI chat-completions request
-_UNSUPPORTED = {"anthropic", "chatgpt-subscription", "chatgpt-plan", "copilot", "ollama"}
+# provider names from _detect_provider that do not take a plain OpenAI chat-completions request
+_TRANSLATED = {"anthropic", "chatgpt-subscription", "chatgpt-plan", "copilot", "ollama"}
 # on top of the resolver's list: embedding models such as nomic-embed-text do not answer chat requests
 _NOT_CHAT = _NON_CHAT_MODEL + ("embed",)
 
@@ -46,15 +48,15 @@ def _json_list(raw) -> list:
     return v if isinstance(v, list) else []
 
 
-def supported_base(base: str) -> bool:
-    """True when requests to this base can be passed through in the OpenAI format."""
+def needs_translation(base: str) -> bool:
+    """True when this base does not take an OpenAI chat-completions request as it is."""
     try:
         from src.mods.llm_endpoints import is_mod_url
         if is_mod_url(base):
-            return False
+            return True
     except Exception:
         pass
-    return _detect_provider(base) not in _UNSUPPORTED
+    return _detect_provider(base) in _TRANSLATED
 
 
 def _chat_models(ep) -> List[str]:
@@ -79,8 +81,6 @@ def _entries(db, owner: Optional[str]) -> List[Tuple[object, str, str]]:
     for ep in sorted(q.all(), key=lambda e: (str(e.name or "").lower(), str(getattr(e, "created_at", "") or ""), str(e.id))):
         if (getattr(ep, "model_type", None) or "llm") != "llm":
             continue
-        if not supported_base(normalize_base(getattr(ep, "base_url", "") or "")):
-            continue
         slug = _slug(ep.name)
         if slug in used:
             slug = f"{slug}-{str(ep.id)[:4]}"
@@ -100,8 +100,9 @@ def catalog(owner: Optional[str]) -> List[Dict[str, str]]:
         db.close()
 
 
-def resolve(model_id: str, owner: Optional[str]) -> Tuple[str, Dict[str, str], str]:
-    """(chat url, request headers, the model's name at that endpoint). LookupError says why a request cannot go."""
+def resolve(model_id: str, owner: Optional[str]) -> Tuple[str, Dict[str, str], str, bool]:
+    """(chat url, request headers, the model's name at that endpoint, whether it needs translating).
+    LookupError says why a request cannot go."""
     wanted = (model_id or "").strip()
     if not wanted:
         raise LookupError("no model given")
@@ -121,6 +122,6 @@ def resolve(model_id: str, owner: Optional[str]) -> Tuple[str, Dict[str, str], s
             base, key = resolve_endpoint_runtime(ep, owner=owner or None)
         except Exception as e:
             raise LookupError(f"could not get credentials for that endpoint: {e}")
-        return build_chat_url(base), build_headers(key, base), model
+        return build_chat_url(base), build_headers(key, base), model, needs_translation(base)
     finally:
         db.close()

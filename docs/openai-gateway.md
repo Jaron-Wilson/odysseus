@@ -35,8 +35,11 @@ opencode (`~/.config/opencode/opencode.json`), with the models you want listed u
 `local-ollama`). Two endpoints with the same name get a short suffix on the newer one. A bare model name works while
 only one endpoint has it. A token sees the shared endpoints and the ones owned by the person who made the token.
 
-## What is not included
+## Providers that use another format
 
-Only endpoints that take the OpenAI chat-completions format are exposed. Anthropic, ChatGPT sign-in, Copilot, native
-Ollama (`ollama.com/api`) and add-on endpoints use other formats or credentials and are left out. Embedding and image
-models are not listed. The caller's `ody_` token is never forwarded; each request goes out with the endpoint's own key.
+Every model you can use in Odysseus is listed. Endpoints that take the OpenAI chat-completions format are passed straight
+through. Anthropic, ChatGPT sign-in, Copilot, native Ollama (`ollama.com/api`) and add-on models are translated: the
+request goes through the same provider code a chat turn uses, and the answer comes back as OpenAI chat-completions,
+streamed or whole, with text, reasoning (`reasoning_content`), tool calls and token usage. Sampling options other than
+`temperature` and `max_tokens` are not forwarded for these. Embedding and image models are not listed. The caller's
+`ody_` token is never forwarded; each request goes out with the endpoint's own key or sign-in.
