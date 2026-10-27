@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 from core.database import Base, ModelEndpoint
 from routes import openai_gateway_routes as routes
 from src import openai_gateway as gw
+from src.openai_translate import Translator
 
 
 @pytest.fixture
@@ -58,26 +59,30 @@ def test_catalog_lists_only_usable_chat_models(db):
     assert "openrouter:openai/gpt-4o" in got and "openrouter:meta/llama-3" in got      # cached and pinned
     assert not any("llama3.1" in i for i in got)             # hidden on the endpoint
     assert not any("embed" in i for i in got)                # not a chat model
-    assert not any(i.startswith(("anthropic:", "disabled-box:", "images:", "bob-private:")) for i in got)
+    assert "anthropic:claude-x" in got                        # translated, so listed too
+    assert not any(i.startswith(("disabled-box:", "images:", "bob-private:")) for i in got)
     assert "bob-private:bobs-model" in ids("bob")             # a private endpoint is its owner's only
     slugs = {i.split(":")[0] for i in got}
     assert len([s for s in slugs if s.startswith("local-ollama")]) == 2    # same name twice: second gets a suffix
 
 
 def test_resolve_routes_to_the_endpoint_with_its_own_key(db):
-    url, headers, model = gw.resolve("openrouter:openai/gpt-4o", "alice")
-    assert url == "https://openrouter.ai/api/v1/chat/completions" and model == "openai/gpt-4o"
+    url, headers, model, translate = gw.resolve("openrouter:openai/gpt-4o", "alice")
+    assert url == "https://openrouter.ai/api/v1/chat/completions" and model == "openai/gpt-4o" and not translate
     assert headers["Authorization"] == "Bearer sk-or-secret"
-    url, headers, model = gw.resolve("local-ollama:qwen3:8b", "alice")
+    url, headers, model, translate = gw.resolve("local-ollama:qwen3:8b", "alice")
     assert url == "http://10.0.0.5:11434/v1/chat/completions" and model == "qwen3:8b" and "Authorization" not in headers
+    assert not translate
+    assert gw.resolve("anthropic:claude-x", "alice")[3] is True               # needs translating
 
 
 def test_resolve_bare_names_and_errors(db):
     assert gw.resolve("openai/gpt-4o", "alice")[2] == "openai/gpt-4o"      # only one endpoint has it
     with pytest.raises(LookupError, match="several endpoints"):
         gw.resolve("qwen3:8b", "alice")                                      # two endpoints have it
+    assert gw.resolve("claude-x", "alice")[2] == "claude-x"                  # Anthropic is listed now
     with pytest.raises(LookupError, match="no model"):
-        gw.resolve("claude-x", "alice")                                      # Anthropic is not exposed
+        gw.resolve("not-a-model", "alice")
     with pytest.raises(LookupError):
         gw.resolve("bobs-model", "alice")                                    # someone else's endpoint
     with pytest.raises(LookupError):
@@ -176,3 +181,82 @@ def test_an_upstream_error_status_passes_through(client):
     r = client.post("/v1/chat/completions", headers={"x-test-scopes": "chat"},
                     json={"model": "local-ollama:qwen3:8b", "messages": []})
     assert r.status_code == 429 and r.json()["error"]["message"] == "slow down"
+
+
+# ---- translated models: Anthropic, ChatGPT sign-in, Copilot, native Ollama, add-ons ----
+
+def sse(*events):
+    return [e if isinstance(e, str) else "data: " + json.dumps(e) + "\n\n" for e in events]
+
+
+def fake_llm(monkeypatch, chunks):
+    seen = {}
+
+    async def gen(url, model, messages, **kw):
+        seen.update(url=url, model=model, messages=messages, kw=kw)
+        for c in chunks:
+            yield c
+
+    monkeypatch.setattr(routes, "_llm_stream", gen)
+    return seen
+
+
+H = {"x-test-scopes": "chat", "x-test-owner": "alice"}
+
+
+def test_translator_streams_text_thinking_tools_and_usage():
+    t = Translator("m", include_usage=True)
+    out = []
+    for c in sse({"delta": "why", "thinking": True}, {"delta": "hi"},
+                 {"type": "tool_calls", "calls": [{"id": "c1", "name": "f", "arguments": "{\"a\":1}"}]},
+                 {"type": "usage", "data": {"input_tokens": 3, "output_tokens": 4}}, "data: [DONE]\n\n"):
+        out += t.feed(c)
+    objs = [json.loads(o[6:]) for o in out if not o.startswith("data: [DONE]")]
+    assert objs[0]["choices"][0]["delta"]["role"] == "assistant"
+    assert objs[1]["choices"][0]["delta"] == {"reasoning_content": "why"}
+    assert objs[2]["choices"][0]["delta"] == {"content": "hi"}
+    call = objs[3]["choices"][0]["delta"]["tool_calls"][0]
+    assert call["index"] == 0 and call["id"] == "c1" and call["function"] == {"name": "f", "arguments": "{\"a\":1}"}
+    assert objs[4]["choices"][0]["finish_reason"] == "tool_calls"
+    assert objs[5]["usage"] == {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}
+    assert out[-1] == "data: [DONE]\n\n"
+
+
+def test_translated_chat_non_streaming(client, monkeypatch):
+    seen = fake_llm(monkeypatch, sse({"delta": "he"}, {"delta": "llo"},
+                                     {"type": "usage", "data": {"input_tokens": 1, "output_tokens": 2}}, "data: [DONE]\n\n"))
+    body = {"model": "anthropic:claude-x", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 50,
+            "temperature": 0.1, "tools": [{"type": "function", "function": {"name": "f"}}]}
+    r = client.post("/v1/chat/completions", json=body, headers=H)
+    assert r.status_code == 200
+    j = r.json()
+    assert j["object"] == "chat.completion" and j["choices"][0]["message"]["content"] == "hello"
+    assert j["choices"][0]["finish_reason"] == "stop" and j["usage"]["total_tokens"] == 3
+    assert seen["model"] == "claude-x" and seen["url"].startswith("https://api.anthropic.com")
+    assert seen["kw"]["max_tokens"] == 50 and seen["kw"]["temperature"] == 0.1 and seen["kw"]["owner"] == "alice"
+    assert seen["kw"]["tools"] == body["tools"]
+    assert "ody_" not in json.dumps(seen["kw"]["headers"])
+
+
+def test_translated_chat_streaming(client, monkeypatch):
+    fake_llm(monkeypatch, sse({"delta": "he"}, {"delta": "llo"}, "data: [DONE]\n\n"))
+    r = client.post("/v1/chat/completions", headers=H,
+                    json={"model": "anthropic:claude-x", "messages": [{"role": "user", "content": "hi"}], "stream": True})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+    assert '"content": "he"' in r.text and '"content": "llo"' in r.text and r.text.rstrip().endswith("[DONE]")
+    assert r.text.count("[DONE]") == 1
+
+
+def test_translated_error_before_output_is_an_http_error(client, monkeypatch):
+    fake_llm(monkeypatch, ['event: error\ndata: {"status": 401, "text": "bad key"}\n\n'])
+    for stream in (False, True):
+        r = client.post("/v1/chat/completions", headers=H,
+                        json={"model": "anthropic:claude-x", "messages": [{"role": "user", "content": "hi"}], "stream": stream})
+        assert r.status_code == 401 and r.json()["error"]["message"] == "bad key"
+
+
+def test_translated_error_mid_stream_ends_cleanly(client, monkeypatch):
+    fake_llm(monkeypatch, sse({"delta": "part"}, 'event: error\ndata: {"status": 500, "text": "boom"}\n\n'))
+    r = client.post("/v1/chat/completions", headers=H,
+                    json={"model": "anthropic:claude-x", "messages": [{"role": "user", "content": "hi"}], "stream": True})
+    assert r.status_code == 200 and '"message": "boom"' in r.text and r.text.rstrip().endswith("[DONE]")
