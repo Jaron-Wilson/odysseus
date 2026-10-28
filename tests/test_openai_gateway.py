@@ -260,3 +260,16 @@ def test_translated_error_mid_stream_ends_cleanly(client, monkeypatch):
     r = client.post("/v1/chat/completions", headers=H,
                     json={"model": "anthropic:claude-x", "messages": [{"role": "user", "content": "hi"}], "stream": True})
     assert r.status_code == 200 and '"message": "boom"' in r.text and r.text.rstrip().endswith("[DONE]")
+
+
+def test_gateway_is_exempt_from_the_45_second_request_limit():
+    """A model can take longer than 45s to send its first byte (loading, reading a long prompt); app.py's hard request
+    timeout must not cut /v1 requests off. Read from the source so the test does not have to boot the whole app."""
+    import ast
+    import pathlib
+    tree = ast.parse((pathlib.Path(__file__).resolve().parent.parent / "app.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(getattr(x, "id", "") == "_TIMEOUT_EXEMPT_PREFIXES" for x in node.targets):
+            assert "/v1/" in [e.value for e in node.value.elts]
+            return
+    raise AssertionError("_TIMEOUT_EXEMPT_PREFIXES not found in app.py")
