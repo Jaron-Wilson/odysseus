@@ -143,6 +143,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/v1/",                 # OpenAI-compatible gateway: a model can take minutes to load or read a long prompt before its first byte; the gateway has its own timeouts
     "/ide/",                # the code editor proxy: long polls and big downloads stream
     "/mods/",               # mods (src/mods/proxy.py): camera streams, SSE, uploads
     "/api/mods/",           # installing a mod clones and runs its setup
