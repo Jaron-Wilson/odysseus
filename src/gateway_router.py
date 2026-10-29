@@ -345,8 +345,9 @@ def _top3(q: List[float], vecs: List[List[float]]) -> float:
     return sum(best) / len(best) if best else -1.0
 
 
-# a file name or a path in the message means it is about the workspace, not a plain question
-_NAMES_A_FILE = re.compile(r"(?:^|[\s`'\"(])(?:[\w.-]*/[\w./-]+|[\w-]+\.[A-Za-z][A-Za-z0-9]{0,5})(?=$|[\s`'\")?,:;!])")
+# a file name or a path in the message means it is about the workspace, not a plain question. A path has text on
+# both sides of a slash, so "/no_think" or "/help" at the start of a message is not one
+_NAMES_A_FILE = re.compile(r"(?:^|[\s`'\"(])(?:~?/?[\w.-]+/[\w./-]+|[\w-]+\.[A-Za-z][A-Za-z0-9]{0,5})(?=$|[\s`'\")?,:;!])")
 
 
 async def classify(cfg: Dict, owner: Optional[str], text: str, complete: Complete,
