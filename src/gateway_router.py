@@ -8,10 +8,13 @@ is still understood. In order:
    - a conversation longer than the chosen model can read goes to the long-context model;
    - an endpoint that is offline, or busy with as many gateway requests as it can take at once (arrietty runs one
      at a time), is skipped for the next model on the fallback list.
-2. Easy or hard, decided on a new message from the user (not on tool results), by comparing an embedding of the
-   message with labeled example prompts (``nomic-embed-text`` on the desktop). When the two are nearly tied, a small
-   model breaks the tie. The answer is kept for the conversation, so one session keeps one model; it can only move
-   up from easy to hard, never back.
+2. Chat, easy or hard, decided on a new message from the user (not on tool results), by comparing an embedding of
+   the message with labeled example prompts (``embeddinggemma`` on the desktop). First easy or hard: when the two are
+   nearly tied, a small model breaks the tie. Then, for an easy one, chat or easy: a plain question that needs no
+   tools or files ("what does git stash pop do?") goes to the tiny chat model with the tool list removed, but only
+   on a conversation's first step, with no images and no file named, and only when it is clearly a question; a near
+   tie stays easy. The answer is kept for the conversation, so one session keeps one model; it can only move up
+   (chat, easy, hard), never back.
 3. Images: when the model chosen cannot read images (Ollama reports it), each image is replaced with a description
    from the vision model, written for the user's question. Descriptions are cached by image, since clients such as
    opencode send the whole conversation again on every step.
@@ -38,6 +41,7 @@ AUTO_IDS = ("auto", "odysseus:auto")
 
 DEFAULTS: Dict = {
     "enabled": True,
+    "chat": "desktop-jaron:gemma3:1b",          # plain questions; it has no tools, so they are removed
     "fast": "desktop-jaron:qwen3:8b",
     "strong": "a-liberty-11435:qwen3.8:27b",
     "long": "a-liberty-11435:qwen3.8:27b",
@@ -45,22 +49,38 @@ DEFAULTS: Dict = {
     "fallback": ["desktop-jaron:qwen3:8b"],
     "describer": "desktop-jaron:qwen2.5vl:7b",
     "embed_via": "desktop-jaron:qwen3:8b",       # a model on the endpoint that also serves the embedding model
-    "embed_model": "nomic-embed-text",
-    "embed_prefix": "classification: ",     # nomic models expect a task prefix on every input
+    "embed_model": "embeddinggemma",
+    "embed_prefix": "task: classification | query: ",     # the task prompt embeddinggemma was trained with
+    # measured 2026-10-29 on 12 prompts: embeddinggemma 12/12 with a gap of 0.158 between the closest easy and hard,
+    # nomic-embed-text 12/12 with 0.056; for near ties qwen3:8b got 11/12 and gemma3:1b 10/12
     "tiebreak": "desktop-jaron:qwen3:8b",
-    "tie_margin": 0.01,      # measured 2026-10-29: clear prompts land past 0.013 either way
+    "tie_margin": 0.02,
+    "chat_margin": 0.03,     # chat must beat easy by this much; measured: questions +0.07 to +0.20, actions below +0.02
     # how many gateway requests an endpoint takes at once (by endpoint slug); not listed = no limit
     "concurrency": {"a-liberty-11435": 1},
     # trained context, in tokens, by model name (the part after the endpoint slug)
     "context": {"qwen3.8:27b": 262144, "qwen3.8-27b": 262144, "gemma4:26b": 262144, "gpt-oss:20b": 131072,
-                "qwen3:8b": 40960, "qwen2.5vl:7b": 128000, "llama3.2-vision": 131072, "deepseek-r1:8b": 131072,
+                "qwen3:8b": 40960, "gemma3:1b": 32768, "qwen2.5vl:7b": 128000, "llama3.2-vision": 131072, "deepseek-r1:8b": 131072,
                 "llama3.1": 131072},
     "examples": {
+        "chat": [
+            "what does git rebase do?",
+            "explain what a mutex is",
+            "what's the difference between TCP and UDP?",
+            "how do I exit vim?",
+            "what's the command to list docker containers?",
+            "what is a closure in JavaScript?",
+            "what does HTTP 502 mean?",
+            "how do list comprehensions work in python?",
+            "what's a good name for a function that parses dates?",
+            "is python pass by reference?",
+            "what does chmod 755 mean?",
+            "when should I use a set instead of a list?",
+        ],
         "easy": [
             "what does this function return?",
             "rename this variable to something clearer",
             "fix the typo in the README",
-            "what's the command to list docker containers?",
             "add a comment explaining this line",
             "convert this list to a set",
             "what time zone is the server in?",
@@ -68,7 +88,8 @@ DEFAULTS: Dict = {
             "is this json valid?",
             "show me the git log for the last 5 commits",
             "what port does this service listen on?",
-            "translate this error message into plain English",
+            "change the default timeout in config.py to 30",
+            "run the tests and tell me what fails",
         ],
         "hard": [
             "find out why the server keeps crashing and fix it",
@@ -246,6 +267,15 @@ def _last_user(messages: List[Dict]) -> Optional[str]:
     return None
 
 
+RANK = ["chat", "easy", "hard"]       # a conversation's route only moves right
+
+
+def _chat_ok(messages: List[Dict]) -> bool:
+    """The chat model has no tools and no eyes: only for conversations that have used neither."""
+    return not _images_in(messages) and not any(
+        m.get("role") in ("tool", "function") or m.get("tool_calls") or m.get("function_call") for m in messages)
+
+
 def context_of(cfg: Dict, model_id: str) -> Optional[int]:
     name = model_id.split(":", 1)[1] if ":" in model_id else model_id
     table = cfg.get("context") or {}
@@ -309,28 +339,45 @@ def _cos(a: List[float], b: List[float]) -> float:
     return dot / (na * nb)
 
 
+def _top3(q: List[float], vecs: List[List[float]]) -> float:
+    """The mean of the three closest examples."""
+    best = sorted((_cos(q, v) for v in vecs), reverse=True)[:3]
+    return sum(best) / len(best) if best else -1.0
+
+
+# a file name or a path in the message means it is about the workspace, not a plain question
+_NAMES_A_FILE = re.compile(r"(?:^|[\s`'\"(])(?:[\w.-]*/[\w./-]+|[\w-]+\.[A-Za-z][A-Za-z0-9]{0,5})(?=$|[\s`'\")?,:;!])")
+
+
 async def classify(cfg: Dict, owner: Optional[str], text: str, complete: Complete,
                    embed=None) -> Tuple[str, str, Optional[float]]:
-    """("easy" | "hard", how it was decided, margin)."""
+    """("chat" | "easy" | "hard", how it was decided, the hard-minus-easy margin)."""
     embed = embed or (lambda texts: _embed(cfg, owner, texts))
     ex = cfg.get("examples") or DEFAULTS["examples"]
+    chat_ex = list(ex.get("chat") or [])
     try:
-        key = json.dumps(ex, sort_keys=True) + cfg.get("embed_model", "")
+        key = json.dumps(ex, sort_keys=True) + cfg.get("embed_model", "") + str(cfg.get("embed_prefix"))
         if key not in _example_vecs:
-            vecs = await embed(ex["easy"] + ex["hard"])
+            vecs = await embed(chat_ex + ex["easy"] + ex["hard"])
             _example_vecs.clear()
             _example_vecs[key] = vecs
         vecs = _example_vecs[key]
         q = (await embed([text[:2000]]))[0]
     except Exception as e:
         return "hard", f"embeddings unavailable ({type(e).__name__}), so the strong model", None
-    n = len(ex["easy"])
-    # the mean of each label's three closest examples
-    easy = sorted((_cos(q, v) for v in vecs[:n]), reverse=True)[:3]
-    hard = sorted((_cos(q, v) for v in vecs[n:]), reverse=True)[:3]
-    margin = sum(hard) / len(hard) - sum(easy) / len(easy)
+    nc, ne = len(chat_ex), len(ex["easy"])
+    chat_v, easy_v, hard_v = vecs[:nc], vecs[nc:nc + ne], vecs[nc + ne:]
+    margin = _top3(q, hard_v) - _top3(q, chat_v + easy_v)
     if abs(margin) >= float(cfg.get("tie_margin", 0.01)):
-        return ("hard" if margin > 0 else "easy"), "embeddings", round(margin, 4)
+        if margin > 0:
+            return "hard", "embeddings", round(margin, 4)
+        how = "embeddings"
+        if chat_ex and cfg.get("chat"):
+            chat_by = _top3(q, chat_v) - _top3(q, easy_v)
+            if chat_by >= float(cfg.get("chat_margin", 0.03)) and not _NAMES_A_FILE.search(text):
+                return "chat", f"embeddings, a plain question by {chat_by:.3f}", round(margin, 4)
+            how = f"embeddings, not a plain question ({chat_by:+.3f})"
+        return "easy", how, round(margin, 4)
     try:
         said = await complete(cfg["tiebreak"], [{"role": "user", "content": (
             "/no_think Is this request EASY (a quick answer, a small edit, a lookup) or HARD (multi-step coding, "
@@ -406,7 +453,9 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
     new_message = last is not None and (not st or hashlib.sha256(last.encode()).hexdigest() != st.get("seen"))
     if new_message and label != "hard":
         got, how, margin = await classify(cfg, owner, last, complete, embed=embed)
-        label = "hard" if label == "hard" else got
+        if got == "chat" and not _chat_ok(messages):
+            got, how = "easy", how + ", but the conversation has used tools or has images"
+        label = max(label or got, got, key=RANK.index)
     label = label or "hard"
     with _lock:
         if len(_sticky) >= STICKY_MAX:
@@ -414,12 +463,19 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
         _sticky[key] = {"route": label, "at": now,
                         "seen": hashlib.sha256((last or "").encode()).hexdigest() if new_message else (st or {}).get("seen")}
 
-    model = cfg["strong"] if label == "hard" else cfg["fast"]
+    model = {"hard": cfg["strong"], "chat": cfg.get("chat")}.get(label) or cfg["fast"]
     reason = [f"{label} ({how})"]
+    if model == cfg.get("chat"):
+        tokens = estimate_tokens({"messages": messages})      # its tools are removed, so they do not count
     ctx = context_of(cfg, model)
     if ctx and tokens > ctx * 0.9:
-        model = cfg["long"]
-        reason.append(f"about {tokens} tokens is too long for {label}'s model, so the long-context one")
+        if model == cfg.get("chat"):
+            model, tokens = cfg["fast"], estimate_tokens(payload)
+            reason.append(f"too long for {cfg['chat']}, so the fast model")
+            ctx = context_of(cfg, model)
+        if ctx and tokens > ctx * 0.9:
+            model = cfg["long"]
+            reason.append(f"about {tokens} tokens is too long for {label}'s model, so the long-context one")
     # offline or busy: the next one on the fallback list that is neither, and long enough
     for cand in [model] + [m for m in cfg.get("fallback") or [] if m != model]:
         c_ctx = context_of(cfg, cand)
@@ -438,6 +494,9 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
         model = cand
         break
     out = dict(payload, model=model)
+    if model == cfg.get("chat"):
+        for k in ("tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"):
+            out.pop(k, None)
     images = _images_in(messages)
     described = 0
     if images and not await supports_images(model):
