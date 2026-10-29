@@ -137,6 +137,11 @@ def clean_rules(rules) -> List[Dict]:
             allow = re.split(r"[,\s]+", allow)
         allow = [a.strip().lower() for a in allow if a and a.strip()][:20]
         rule = {"address": addr, "action": action, "instructions": instructions, "from_allow": allow}
+        runner = str(r.get("runner") or "").strip()
+        if runner:   # Fix it / Publish buttons in Inbound mail (src/mail_jobs.py)
+            if not os.path.isabs(runner) or not runner.endswith(".py") or not os.path.isfile(runner):
+                raise ValueError(f"The job runner must be the full path of a .py script that exists: {runner}")
+            rule["runner"] = runner
         if r.get("chat_id"):
             rule["chat_id"] = str(r["chat_id"])
         out.append(rule)
@@ -379,7 +384,8 @@ def read_message(key: str) -> Dict:
     if not e.get("read"):
         _update(key, read=True)
     html = m["body_html"]
-    return {**e, "read": True, "date": m["date"], "body": m["body"][:50000],
+    rule = next((r for r in load_config().get("rules") or [] if r.get("address") == e.get("rule")), {})
+    return {**e, "read": True, "date": m["date"], "body": m["body"][:50000], "has_runner": bool(rule.get("runner")),
             "body_html": html if len(html) <= 500000 else "",
             "attachments": m["attachments"], "to": m["to"] or e.get("to")}
 

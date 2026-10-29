@@ -103,7 +103,10 @@ async function showOne(key) {
     <div class="bg-job-sub">From <b>${esc(m.from)}</b> to ${esc((m.to || []).join(', '))} · ${esc(m.date || when(m.received))}</div>
     ${m.attachments && m.attachments.length ? `<div class="bg-job-sub">Attachments: ${m.attachments.map(esc).join(', ')}</div>` : ''}
     ${m.action && m.action !== 'in Inbound mail' ? `<div class="bg-job-sub">${esc(m.action)}</div>` : ''}
+    ${m.has_runner ? '<div class="im-jobs"></div>' : ''}
     <div class="im-text">${esc(m.body || '(no text)')}</div>`);
+  const jobsBox = shell().querySelector('.im-jobs');
+  if (jobsBox) mountJobs(jobsBox, m.key);
   refreshCount();
 }
 
@@ -134,6 +137,78 @@ async function onClick(ev) {
     if (window.showToast) window.showToast(e.message);
     if (t.dataset.ask) { t.disabled = false; t.textContent = 'Ask AI about this'; }
   }
+}
+
+// Job buttons (src/mail_jobs.py). Mail whose rule has a job runner, like
+// CleverNode submissions, is fixed from here instead of in a chat. Asked for
+// 2026-10-29: "i can click a button and it does it", and a way to continue
+// the jobs a server restart cut off.
+const JOB_STATE = {
+  working: 'Working', interrupted: 'Interrupted (its runner stopped, likely a restart)',
+  done: 'Fixed: publish it?', failed: 'Failed', dropped: 'Not published', published: 'Published',
+};
+
+function mins(ts) { return Math.max(0, Math.round((Date.now() / 1000 - (ts || 0)) / 60)); }
+
+function jobHtml(j) {
+  const pub = j.publishing;
+  const btn = (act, label, cls = '') => `<button type="button" class="${cls}" data-job-act="${act}" data-job="${esc(j.job)}">${label}</button>`;
+  let acts = '';
+  if (j.state === 'interrupted') acts = btn('resume', 'Continue');
+  else if (j.state === 'failed') acts = btn('resume', 'Try again');
+  else if (j.state === 'done' && !(pub && pub.state === 'running')) acts = btn('publish', 'Publish', 'im-primary') + btn('drop', "Don't publish");
+  const meta = [`job ${esc(j.job)}`, esc(j.agent || ''), j.attempts > 1 ? `try ${j.attempts}` : '',
+    j.state === 'working' ? `${mins(j.started)} min so far` : ''].filter(Boolean).join(' · ');
+  return `<div class="im-job" style="border-top:1px solid color-mix(in srgb, var(--fg) 12%, transparent);padding:8px 0">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(JOB_STATE[j.state] || j.state)}</b>
+      <span style="opacity:.7;font-size:12px">${meta}</span><span style="flex:1"></span>${acts}</div>
+    ${j.summary ? `<div style="margin-top:4px">${esc(j.summary)}</div>` : ''}
+    ${j.report ? `<details ${j.state === 'done' ? 'open' : ''} style="margin-top:4px"><summary style="cursor:pointer;font-size:12px">Full report</summary><pre style="white-space:pre-wrap;font-size:12px;margin:4px 0">${esc(j.report)}</pre></details>` : ''}
+    ${pub ? `<div style="margin-top:4px;font-size:12px"><b>Publishing: ${esc(pub.state)}</b><pre style="white-space:pre-wrap;max-height:240px;overflow:auto;margin:4px 0">${esc((pub.output || '').slice(-4000) || '…')}</pre></div>` : ''}
+  </div>`;
+}
+
+export function mountJobs(box, key) {
+  const url = `${API}/${encodeURIComponent(key)}/jobs`;
+  let timer = null;
+  async function paint() {
+    clearTimeout(timer);
+    if (!box.isConnected) return;
+    let d;
+    try { d = await call(url); } catch (e) {
+      box.innerHTML = `<div style="padding:6px 12px;color:var(--red,#e55)">Job buttons: ${esc(e.message)}</div>`;
+      return;
+    }
+    if (!d.runner) { box.innerHTML = ''; return; }
+    const open = d.jobs.some((j) => ['working', 'interrupted', 'done'].includes(j.state));
+    const busy = d.jobs.some((j) => j.state === 'working' || (j.publishing && j.publishing.state === 'running'));
+    box.innerHTML = `<div style="margin:6px 12px;padding:8px 12px;border-radius:8px;background:color-mix(in srgb, var(--fg) 5%, transparent)">
+      <div style="display:flex;gap:8px;align-items:center"><b>Fix it</b>
+        <span style="opacity:.7;font-size:12px">batch ${d.batches.map((b) => esc(b.slice(0, 8))).join(', ')}</span><span style="flex:1"></span>
+        ${open ? '' : `<button type="button" class="im-primary" data-job-act="start">${d.jobs.length ? 'Start a new fix' : 'Fix it'}</button>`}</div>
+      ${d.jobs.map(jobHtml).join('')}
+      ${d.hidden_failed ? `<div style="opacity:.7;font-size:12px">${d.hidden_failed} more failed ${d.hidden_failed === 1 ? 'try' : 'tries'} not shown</div>` : ''}
+    </div>`;
+    timer = setTimeout(paint, busy ? 5000 : 30000);
+  }
+  box.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-job-act]');
+    if (!b) return;
+    ev.stopPropagation();
+    const act = b.dataset.jobAct;
+    const job = b.dataset.job;
+    if (act === 'publish' && !confirm(`Publish job ${job}? It pushes, deploys the gateway and site if they changed, and ships an extension change as a beta.`)) return;
+    if (act === 'drop' && !confirm(`Not publish job ${job}? Its branch is kept, and the batch can be fixed again.`)) return;
+    b.disabled = true;
+    b.textContent = { start: 'Starting…', resume: 'Starting…', publish: 'Publishing…', drop: 'Dropping…' }[act] || '…';
+    try {
+      await call(act === 'start' ? url : `${url}/${encodeURIComponent(job)}/${act}`, 'POST');
+    } catch (e) {
+      if (window.showToast) window.showToast(e.message); else alert(e.message);
+    }
+    paint();
+  });
+  paint();
 }
 
 // For the Email window's Inbound list (emailLibrary.js): the same actions.
