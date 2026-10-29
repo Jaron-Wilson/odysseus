@@ -8,15 +8,18 @@ import pytest
 
 from src import gateway_router as R
 
-# Two directions in a tiny embedding space: "easy" texts point one way, "hard" ones the other.
-EASY, HARD, MIDDLE = [1.0, 0.0], [0.0, 1.0], [0.7071, 0.7072]
+# A tiny embedding space: "easy" texts point one way, "hard" ones another, and plain questions ("chat") lean
+# toward easy but are their own direction.
+EASY, HARD, CHAT, MIDDLE = [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.6, 0.0, 0.8], [0.7071, 0.7072, 0.0]
 
 
 def fake_embed(texts):
     async def go():
         out = []
         for t in texts:
-            if t in R.DEFAULTS["examples"]["easy"] or t.startswith("easy"):
+            if t in R.DEFAULTS["examples"]["chat"] or t.startswith("chat"):
+                out.append(CHAT)
+            elif t in R.DEFAULTS["examples"]["easy"] or t.startswith("easy"):
                 out.append(EASY)
             elif t in R.DEFAULTS["examples"]["hard"] or t.startswith("hard"):
                 out.append(HARD)
@@ -87,6 +90,47 @@ def test_one_model_per_conversation_and_it_only_moves_up():
     # ... and an easy one later does not move it back down
     (out, _), _ = run(chat(first, {"role": "assistant", "content": "done"}, {"role": "user", "content": "easy: thanks, what time is it"}))
     assert out["model"] == R.DEFAULTS["strong"]
+
+
+TOOLS = {"tools": [{"type": "function", "function": {"name": "bash", "parameters": {}}}], "tool_choice": "auto"}
+
+
+def test_a_plain_question_goes_to_the_chat_model_without_tools():
+    (out, d), _ = run({**chat({"role": "user", "content": "chat: what does git stash pop do?"}), **TOOLS})
+    assert out["model"] == R.DEFAULTS["chat"] and d["route"] == "chat" and "plain question" in d["reason"]
+    assert "tools" not in out and "tool_choice" not in out
+
+
+def test_a_question_that_names_a_file_is_not_plain():
+    (out, d), _ = run({**chat({"role": "user", "content": "chat: how many lines are in app.py?"}), **TOOLS})
+    assert out["model"] == R.DEFAULTS["fast"] and d["route"] == "easy" and out["tools"]
+
+
+def test_no_chat_model_once_tools_were_used_or_with_images():
+    msgs = chat({"role": "user", "content": "easy: look at the logs"},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]}, {"role": "tool", "content": "ok"},
+                {"role": "user", "content": "chat: what does SIGKILL mean?"}, system="tools used")
+    (out, d), _ = run({**msgs, **TOOLS})
+    assert out["model"] == R.DEFAULTS["fast"] and out["tools"]
+    img = {"role": "user", "content": [{"type": "text", "text": "chat: what is this?"},
+                                       {"type": "image_url", "image_url": {"url": "data:image/png;base64,CCCC"}}]}
+    (out, d), _ = run(chat(img, system="has an image"))
+    assert d["route"] == "easy" and "images" in d["reason"]
+
+
+def test_a_chat_conversation_moves_up_to_easy_and_gets_its_tools_back():
+    first = {"role": "user", "content": "chat: what is a docker volume?"}
+    (out, _), _ = run({**chat(first), **TOOLS})
+    assert out["model"] == R.DEFAULTS["chat"]
+    (out, d), _ = run({**chat(first, {"role": "assistant", "content": "a volume is..."},
+                              {"role": "user", "content": "easy: list the volumes on this machine"}), **TOOLS})
+    assert out["model"] == R.DEFAULTS["fast"] and d["route"] == "easy" and out["tools"]
+
+
+def test_chat_model_offline_falls_back_with_tools_kept():
+    (out, d), _ = run({**chat({"role": "user", "content": "chat: explain a mutex"}), **TOOLS},
+                      url=lambda m: "http://offline" if m == R.DEFAULTS["chat"] else "http://" + m)
+    assert out["model"] == R.DEFAULTS["fallback"][0] and "offline" in d["reason"] and out["tools"]
 
 
 def test_too_long_for_the_fast_model_goes_to_the_long_context_one():
