@@ -14,6 +14,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from src import gateway_router as auto_router
 from src import openai_gateway as gw
 from src.openai_translate import Translator
 from src.auth_helpers import effective_user
@@ -53,7 +54,34 @@ def _num(v, cast):
         return None
 
 
-async def _translated(url: str, headers: dict, model: str, payload: dict, owner):
+async def _complete(model_id: str, messages: list, owner, max_tokens: int) -> str:
+    """One short non-streamed answer from a gateway model, for the auto router's tiebreaker and image descriptions."""
+    url, headers, model, translate = await asyncio.to_thread(gw.resolve, model_id, owner)
+    if translate:
+        tr = Translator(model)
+        agen = _llm_stream(url, model, messages, headers=headers, owner=owner or None, max_tokens=max_tokens)
+        try:
+            async for chunk in agen:
+                tr.feed(chunk)
+        finally:
+            try:
+                await agen.aclose()
+            except Exception:
+                pass
+        if tr.error and not tr.text:
+            raise RuntimeError(tr.error["message"])
+        return "".join(tr.text)
+    client = _client()
+    try:
+        r = await client.post(url, headers=headers, json={"model": model, "messages": messages,
+                                                          "max_tokens": max_tokens, "stream": False})
+        r.raise_for_status()
+        return str(((r.json().get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+    finally:
+        await client.aclose()
+
+
+async def _translated(url: str, headers: dict, model: str, payload: dict, owner, done=lambda: None, extra=None):
     """Answer a request for a model that does not take a plain OpenAI request."""
     opts = payload.get("stream_options")
     tr = Translator(str(payload.get("model") or model), include_usage=isinstance(opts, dict) and bool(opts.get("include_usage")))
@@ -67,12 +95,16 @@ async def _translated(url: str, headers: dict, model: str, payload: dict, owner)
     if mt:
         kw["max_tokens"] = mt
     agen = _llm_stream(url, model, payload["messages"], **kw)
+    closed = []
 
     async def close():
         try:
             await agen.aclose()
         except Exception:
             pass
+        if not closed:
+            closed.append(True)
+            done()
 
     if not payload.get("stream"):
         try:
@@ -83,7 +115,7 @@ async def _translated(url: str, headers: dict, model: str, payload: dict, owner)
         if tr.error and not (tr.text or tr.calls):
             return _error(tr.error["status"], tr.error["message"], "upstream_error")
         tr.finish()
-        return JSONResponse(tr.completion())
+        return JSONResponse(tr.completion(), headers=extra or None)
 
     first = []
     try:
@@ -114,7 +146,7 @@ async def _translated(url: str, headers: dict, model: str, payload: dict, owner)
         finally:
             await close()
     return StreamingResponse(body(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", **(extra or {})})
 
 
 def setup_openai_gateway_routes() -> APIRouter:
@@ -125,8 +157,10 @@ def setup_openai_gateway_routes() -> APIRouter:
         if not _allowed(request):
             return _error(403, "this token needs the 'chat' scope", "insufficient_scope")
         items = await asyncio.to_thread(gw.catalog, effective_user(request))
-        return {"object": "list", "data": [{"id": i["id"], "object": "model", "created": 0, "owned_by": i["endpoint_name"]}
-                                           for i in items]}
+        data = [{"id": i["id"], "object": "model", "created": 0, "owned_by": i["endpoint_name"]} for i in items]
+        if await asyncio.to_thread(auto_router.enabled):
+            data.insert(0, {"id": "auto", "object": "model", "created": 0, "owned_by": "Odysseus router"})
+        return {"object": "list", "data": data}
 
     @router.post("/v1/chat/completions")
     async def chat_completions(request: Request):
@@ -138,12 +172,31 @@ def setup_openai_gateway_routes() -> APIRouter:
             return _error(400, "the body must be JSON")
         if not isinstance(payload, dict) or not isinstance(payload.get("messages"), list):
             return _error(400, "send a JSON object with 'model' and 'messages'")
+        owner = effective_user(request)
+        extra = {}
+        if str(payload.get("model") or "").strip() in auto_router.AUTO_IDS:
+            if not await asyncio.to_thread(auto_router.enabled):
+                return _error(404, "the auto model is turned off (gateway_router.json)", "model_not_found")
+            payload, decision = await auto_router.route(payload, owner, _complete)
+            extra["X-Odysseus-Route"] = f"{decision['model']}; {decision['reason']}"[:500]
+        model_id = str(payload.get("model") or "")
         try:
-            url, headers, model, translate = await asyncio.to_thread(gw.resolve, str(payload.get("model") or ""), effective_user(request))
+            url, headers, model, translate = await asyncio.to_thread(gw.resolve, model_id, owner)
         except LookupError as e:
             return _error(404, str(e), "model_not_found")
+        auto_router.begin(model_id)                    # how busy each endpoint is, for the auto model
+        ended = []
+
+        def done():
+            if not ended:
+                ended.append(True)
+                auto_router.end(model_id)
         if translate:
-            return await _translated(url, headers, model, payload, effective_user(request))
+            try:
+                return await _translated(url, headers, model, payload, owner, done=done, extra=extra)
+            except BaseException:
+                done()
+                raise
         upstream = dict(payload, model=model)
         want_stream = bool(upstream.get("stream"))
         client = _client()
@@ -151,6 +204,7 @@ def setup_openai_gateway_routes() -> APIRouter:
             resp = await client.send(client.build_request("POST", url, json=upstream, headers=headers), stream=True)
         except httpx.HTTPError as e:
             await client.aclose()
+            done()
             logger.warning("gateway: %s unreachable: %s", url, type(e).__name__)
             return _error(502, f"the model's server did not answer ({type(e).__name__})", "upstream_unreachable")
         ctype = resp.headers.get("content-type") or ("text/event-stream" if want_stream else "application/json")
@@ -160,7 +214,8 @@ def setup_openai_gateway_routes() -> APIRouter:
             finally:
                 await resp.aclose()
                 await client.aclose()
-            return Response(content=data, status_code=resp.status_code, media_type=ctype)
+                done()
+            return Response(content=data, status_code=resp.status_code, media_type=ctype, headers=extra or None)
 
         async def body():
             try:
@@ -169,7 +224,8 @@ def setup_openai_gateway_routes() -> APIRouter:
             finally:
                 await resp.aclose()
                 await client.aclose()
+                done()
         return StreamingResponse(body(), status_code=resp.status_code, media_type=ctype,
-                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", **extra})
 
     return router

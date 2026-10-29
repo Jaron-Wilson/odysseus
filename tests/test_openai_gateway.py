@@ -262,6 +262,26 @@ def test_translated_error_mid_stream_ends_cleanly(client, monkeypatch):
     assert r.status_code == 200 and '"message": "boom"' in r.text and r.text.rstrip().endswith("[DONE]")
 
 
+def test_auto_is_listed_and_routed_to_the_model_the_router_picks(client, monkeypatch, tmp_path):
+    """The auto model (src/gateway_router.py): listed first, and sent where the router says, with the reason."""
+    import src.constants as const
+    from src import gateway_router as router
+    monkeypatch.setattr(const, "DATA_DIR", str(tmp_path))
+
+    async def fake_route(payload, owner, complete, **kw):
+        return dict(payload, model="local-ollama:qwen3:8b"), {"model": "local-ollama:qwen3:8b", "reason": "easy (embeddings)"}
+    monkeypatch.setattr(router, "route", fake_route)
+    up = Upstream()
+    client.mk(up)
+    ids_ = [m["id"] for m in client.get("/v1/models", headers={"x-test-scopes": "chat"}).json()["data"]]
+    assert ids_[0] == "auto"
+    r = client.post("/v1/chat/completions", headers={"x-test-scopes": "chat"},
+                    json={"model": "auto", "messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 200 and r.headers["x-odysseus-route"].startswith("local-ollama:qwen3:8b; easy")
+    assert up.seen[0][2]["model"] == "qwen3:8b"
+    assert router._inflight.get("local-ollama") == 0          # counted while it ran, released after
+
+
 def test_gateway_is_exempt_from_the_45_second_request_limit():
     """A model can take longer than 45s to send its first byte (loading, reading a long prompt); app.py's hard request
     timeout must not cut /v1 requests off. Read from the source so the test does not have to boot the whole app."""
