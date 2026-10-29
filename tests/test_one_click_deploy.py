@@ -148,13 +148,39 @@ def test_restart_plan(tmp_path):
     compile(dr.RESTART_HELPER, "helper", "exec")
 
 
+def test_a_systemd_service_is_restarted_by_systemd():
+    """Run as odysseus.service, a deploy restart goes through systemctl (2026-10-29)."""
+    user = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/odysseus.service\n"
+    assert dr._systemd_restart_cmd(user, {"INVOCATION_ID": "x"}) == [
+        "systemctl", "--user", "--no-block", "restart", "odysseus.service"]
+    system = "0::/system.slice/odysseus-ui.service\n"
+    assert dr._systemd_restart_cmd(system, {"INVOCATION_ID": "x"}) == [
+        "systemctl", "--no-block", "restart", "odysseus-ui.service"]
+    # Started by hand (an SSH login), or no INVOCATION_ID: restart it directly, as before.
+    assert dr._systemd_restart_cmd("0::/user.slice/user-1000.slice/session-5.scope\n", {"INVOCATION_ID": "x"}) == []
+    assert dr._systemd_restart_cmd(user, {}) == []
+
+
+def test_helper_asks_systemd_and_leaves_the_server_alone(tmp_path):
+    marker = tmp_path / "systemctl-called"
+    fake = [sys.executable, "-c", f"open({str(marker)!r}, 'w').write('yes')"]
+    code, text, stopped = _run_helper(tmp_path, systemd=fake)
+    assert code == 0 and marker.read_text() == "yes" and not stopped
+    assert "asked systemd to restart" in text
+
+
+def test_helper_restarts_directly_if_systemctl_fails(tmp_path):
+    code, text, stopped = _run_helper(tmp_path, systemd=[sys.executable, "-c", "raise SystemExit(4)"])
+    assert code == 0 and stopped and "failed" in text and "server is back up" in text
+
+
 def _free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
 
-def _run_helper(tmp_path, cmd=None, check=None):
+def _run_helper(tmp_path, cmd=None, check=None, systemd=None):
     """Run the helper against a stand-in `sleep` "server" and an http.server
     on a free port, never the real server."""
     # Not our child, so it does not linger as a zombie once stopped.
@@ -165,7 +191,8 @@ def _run_helper(tmp_path, cmd=None, check=None):
     serve = [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"]
     check = check or [sys.executable, "-c", "pass"]
     plan = {"pid": old, "cwd": str(tmp_path), "log": str(log), "port": port, "wait_s": 15,
-            "cmd": cmd or serve, "check": check, "fallback": serve, "fallback_check": check}
+            "cmd": cmd or serve, "check": check, "fallback": serve, "fallback_check": check,
+            "systemd": systemd or []}
     r = subprocess.run([sys.executable, "-I", "-c", dr.RESTART_HELPER, json.dumps(plan)], timeout=90)
     text = log.read_text() if log.exists() else ""
     m = re.search(r"\(pid (\d+)\)", text)

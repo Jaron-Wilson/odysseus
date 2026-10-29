@@ -209,7 +209,31 @@ def _import_check(cmd: List[str], cwd: str, executable: str) -> List[str]:
     return [py, "-c", code + (f"; import {mod}" if mod else "")]
 
 
-def _restart_plan(port: int, log: str, cwd: str = None, cmd: List[str] = None, wait_s: int = 90) -> dict:
+def _systemd_restart_cmd(cgroup: str = None, env: Dict = None) -> List[str]:
+    """`systemctl restart <unit>` when this server is a systemd service, else [].
+
+    Run as a service (odysseus.service since 2026-10-29), stopping its own
+    process and starting a copy beside it leaves systemd thinking the service
+    is dead while the copy keeps serving: no restart if it crashes, and the
+    unit no longer tracks it. systemd has to do the restart itself."""
+    env = os.environ if env is None else env
+    if not env.get("INVOCATION_ID"):          # set by systemd for the processes of a unit
+        return []
+    if cgroup is None:
+        try:
+            with open("/proc/self/cgroup") as f:
+                cgroup = f.read()
+        except OSError:
+            return []
+    m = re.search(r"/([\w@.:-]+\.service)\s*$", cgroup.strip())
+    if not m:
+        return []
+    user = "/user@" in cgroup
+    return ["systemctl", *(["--user"] if user else []), "--no-block", "restart", m.group(1)]
+
+
+def _restart_plan(port: int, log: str, cwd: str = None, cmd: List[str] = None, wait_s: int = 90,
+                  systemd: List[str] = None) -> dict:
     """Everything the detached restart helper needs, worked out here so it can
     be tested without restarting anything."""
     cwd = cwd or os.getcwd()
@@ -219,7 +243,8 @@ def _restart_plan(port: int, log: str, cwd: str = None, cmd: List[str] = None, w
     fallback = [sys.executable, "-m", "uvicorn", *args]
     return {"pid": os.getpid(), "cwd": cwd, "log": log, "port": port, "wait_s": wait_s,
             "cmd": cmd, "check": _import_check(cmd, cwd, sys.executable),
-            "fallback": fallback, "fallback_check": _import_check(fallback, cwd, sys.executable)}
+            "fallback": fallback, "fallback_check": _import_check(fallback, cwd, sys.executable),
+            "systemd": _systemd_restart_cmd() if systemd is None else systemd}
 
 
 # The detached helper. Runs with `python -I` (stdlib only, nothing from the
@@ -265,6 +290,13 @@ if not runs:
     log("ERROR: NOT RESTARTING: neither the server's command nor python -m uvicorn would start. "
         "The old server keeps running the old code.")
     sys.exit(1)
+if plan.get("systemd"):
+    r = subprocess.run(plan["systemd"], capture_output=True, text=True, timeout=60)
+    if r.returncode == 0:
+        log("asked systemd to restart the server: " + " ".join(plan["systemd"]))
+        sys.exit(0)
+    log("ERROR: " + " ".join(plan["systemd"]) + " failed (" + (r.stderr.strip() or "exit %d" % r.returncode)
+        + "); restarting it directly instead")
 time.sleep(1)
 pid = plan["pid"]
 if alive(pid):
