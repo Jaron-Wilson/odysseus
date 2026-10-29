@@ -1,7 +1,10 @@
 """Settings › Email › Inbound mail: the Cloudflare mail Worker (src/mail_listener.py)."""
+import asyncio
+import subprocess
+
 from fastapi import APIRouter, HTTPException, Request
 
-from src import mail_listener
+from src import mail_jobs, mail_listener
 
 
 def setup_mail_listener_routes() -> APIRouter:
@@ -68,5 +71,40 @@ def setup_mail_listener_routes() -> APIRouter:
             raise HTTPException(404, "No such email")
         except ValueError as e:
             raise HTTPException(400, str(e))
+
+    # Job buttons for mail whose rule has a runner (src/mail_jobs.py): Fix it,
+    # Continue / Try again, Publish, Don't publish.
+    def _job_call(fn, *args):
+        try:
+            return fn(*args)
+        except (KeyError, FileNotFoundError):
+            raise HTTPException(404, "No such email")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504, "The job runner took too long to answer")
+
+    @router.get("/messages/{key}/jobs")
+    async def jobs(request: Request, key: str):
+        _admin(request)
+        return await asyncio.to_thread(_job_call, mail_jobs.jobs, key)
+
+    @router.post("/messages/{key}/jobs")
+    async def start_job(request: Request, key: str):
+        _admin(request)
+        out = await asyncio.to_thread(_job_call, mail_jobs.start, key)
+        mail_jobs.spawn_watch(key, out.get("job", ""))
+        return out
+
+    @router.post("/messages/{key}/jobs/{job}/{what}")
+    async def job_action(request: Request, key: str, job: str, what: str):
+        _admin(request)
+        fn = {"resume": mail_jobs.resume, "publish": mail_jobs.publish, "drop": mail_jobs.drop}.get(what)
+        if not fn:
+            raise HTTPException(404, "Unknown action")
+        out = await asyncio.to_thread(_job_call, fn, key, job)
+        if what == "resume":
+            mail_jobs.spawn_watch(key, job)
+        return out
 
     return router

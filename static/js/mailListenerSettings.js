@@ -64,8 +64,9 @@ function ruleRow(r, i) {
     <div class="ml-task-fields" style="${r.action === 'task' ? '' : 'display:none'}">
       <textarea class="settings-select ml-instructions" rows="3" style="width:100%;margin-top:6px;font-family:inherit;resize:vertical"
         placeholder="What the agent does with each email, e.g. Pull the submitted pages with tools/submissions.py and fix them in the CleverNode repo; run the tests; tell me what changed.">${esc(r.instructions)}</textarea>
-      <input class="settings-select ml-allow" type="text" value="${esc(allowText(r.from_allow))}" placeholder="Allowed senders (empty for anyone): gateway@clevernode.org, clevernode.org" style="width:100%;margin-top:6px" />
     </div>
+    <input class="settings-select ml-allow" type="text" value="${esc(allowText(r.from_allow))}" placeholder="Allowed senders (empty for anyone): gateway@clevernode.org, clevernode.org" style="width:100%;margin-top:6px" />
+    <input class="settings-select ml-runner" type="text" value="${esc(r.runner || '')}" placeholder="Job runner (optional): a script for Fix it / Publish buttons in Inbound mail, e.g. /home/you/Canvas-Gemini-Extension/tools/fix_submission.py" style="width:100%;margin-top:6px" />
     ${r.chat_id ? `<input type="hidden" class="ml-chat" value="${esc(r.chat_id)}">` : ''}
   </div>`;
 }
@@ -83,6 +84,7 @@ function readRules() {
     action: el.querySelector('.ml-action').value,
     instructions: el.querySelector('.ml-instructions').value.trim(),
     from_allow: el.querySelector('.ml-allow').value,
+    runner: el.querySelector('.ml-runner').value.trim(),
     chat_id: (el.querySelector('.ml-chat') || {}).value || undefined,
   }));
 }

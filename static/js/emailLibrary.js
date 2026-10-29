@@ -1939,7 +1939,10 @@ async function _openInbound(card, m) {
     </div>
     ${e.attachments && e.attachments.length ? `<div class="email-reader-meta-row" style="padding:4px 12px;font-size:12px;opacity:.8">Attachments: ${e.attachments.map(_esc).join(', ')}</div>` : ''}
     ${e.action && e.action !== 'in Inbound mail' ? `<div style="padding:4px 12px;font-size:12px;opacity:.8">${_esc(e.action)}</div>` : ''}
+    ${e.has_runner ? '<div class="email-inbound-jobs"></div>' : ''}
     <div class="email-reader-body${e.body_html ? ' html-body' : ''}">${_safeRenderEmailBody({ body: e.body || '', body_html: e.body_html || '' })}</div>`;
+  const jobsBox = reader.querySelector('.email-inbound-jobs');
+  if (jobsBox) inboundMail.mountJobs(jobsBox, e.key);   // Fix it / Publish (src/mail_jobs.py)
   reader.classList.remove('email-card-reader-loading');
   _markEmailReaderActive(reader);
   reader.addEventListener('click', async (ev) => {
