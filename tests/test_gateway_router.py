@@ -106,6 +106,14 @@ def test_a_question_that_names_a_file_is_not_plain():
     assert out["model"] == R.DEFAULTS["fast"] and d["route"] == "easy" and out["tools"]
 
 
+def test_what_counts_as_naming_a_file():
+    for text in ("how many lines are in app.py?", "what is in src/app/main.ts", "cat /etc/hosts", "open ~/notes/todo"):
+        assert R._NAMES_A_FILE.search(text), text
+    for text in ("/no_think What does git stash pop do?", "/think what is a mutex?",
+                 "what does HTTP 502 mean?", "is python pass by reference?"):
+        assert not R._NAMES_A_FILE.search(text), text
+
+
 def test_no_chat_model_once_tools_were_used_or_with_images():
     msgs = chat({"role": "user", "content": "easy: look at the logs"},
                 {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]}, {"role": "tool", "content": "ok"},
