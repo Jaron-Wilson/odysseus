@@ -274,12 +274,15 @@ def test_auto_is_listed_and_routed_to_the_model_the_router_picks(client, monkeyp
     up = Upstream()
     client.mk(up)
     ids_ = [m["id"] for m in client.get("/v1/models", headers={"x-test-scopes": "chat"}).json()["data"]]
-    assert ids_[0] == "auto"
+    assert ids_[:3] == ["auto", "auto:fast", "auto:hard"]
     r = client.post("/v1/chat/completions", headers={"x-test-scopes": "chat"},
                     json={"model": "auto", "messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 200 and r.headers["x-odysseus-route"].startswith("local-ollama:qwen3:8b; easy")
     assert up.seen[0][2]["model"] == "qwen3:8b"
     assert router._inflight.get("local-ollama") == 0          # counted while it ran, released after
+    r = client.post("/v1/chat/completions", headers={"x-test-scopes": "chat"},
+                    json={"model": "odysseus:auto:hard", "messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 200 and r.headers["x-odysseus-route"].startswith("local-ollama:qwen3:8b")
 
 
 def test_gateway_is_exempt_from_the_45_second_request_limit():

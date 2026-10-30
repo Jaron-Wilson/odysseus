@@ -19,6 +19,10 @@ is still understood. In order:
    from the vision model, written for the user's question. Descriptions are cached by image, since clients such as
    opencode send the whole conversation again on every step.
 
+Levels, like a ChatGPT model's (asked for on 2026-10-30): ``auto`` (also ``auto:default``) decides as above;
+``auto:fast`` never uses the strong model (chat or easy only); ``auto:hard`` always uses it, with no classifying. The
+rules in 1 and the image descriptions in 3 hold at every level.
+
 Settings: DEFAULTS below, with any keys in <data>/gateway_router.json on top. Every decision is logged to
 <data>/logs/gateway_router.jsonl with the route and the reason, never the content of a message.
 """
@@ -38,6 +42,25 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 AUTO_IDS = ("auto", "odysseus:auto")
+LEVELS = ("default", "fast", "hard")      # auto:<level>; plain auto is default
+
+
+def level_of(model_id: str) -> Optional[str]:
+    """The level an auto model id asks for ("default", "fast" or "hard"), or None for a model that is not auto."""
+    m = str(model_id or "").strip().lower()
+    for base in AUTO_IDS:
+        if m == base:
+            return "default"
+        if m.startswith(base + ":") and m[len(base) + 1:] in LEVELS:
+            return m[len(base) + 1:]
+    return None
+
+
+def model_ids() -> List[Tuple[str, str]]:
+    """The auto models to list in /v1/models, with what each does."""
+    return [("auto", "picks a model for each conversation"),
+            ("auto:fast", "never the strong model"),
+            ("auto:hard", "always the strong model")]
 
 DEFAULTS: Dict = {
     "enabled": True,
@@ -436,8 +459,9 @@ async def describe_images(cfg: Dict, owner: Optional[str], messages: List[Dict],
 async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=None,
                 reachable=None, supports_images=None) -> Tuple[Dict, Dict]:
     """(the payload to send, with "model" set to a real model, decision). Never raises for a routing problem: the
-    strong model is the answer when in doubt."""
+    strong model is the answer when in doubt (except at auto:fast, which never uses it)."""
     cfg = config()
+    level = level_of(payload.get("model")) or "default"
     reachable = reachable or (lambda mid: _url_of(mid, owner))
     supports_images = supports_images or (lambda mid: _supports_images(mid, owner))
     messages = payload.get("messages") or []
@@ -452,20 +476,24 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
     last = _last_user(messages)
     label, how, margin = (st or {}).get("route"), "kept for this conversation", None
     new_message = last is not None and (not st or hashlib.sha256(last.encode()).hexdigest() != st.get("seen"))
-    if new_message and label != "hard":
+    if level == "hard":
+        label, how, new_message = "hard", "auto:hard", False
+    elif new_message and label != "hard":
         got, how, margin = await classify(cfg, owner, last, complete, embed=embed)
         if got == "chat" and not _chat_ok(messages):
             got, how = "easy", how + ", but the conversation has used tools or has images"
         label = max(label or got, got, key=RANK.index)
-    label = label or "hard"
+    label = label or ("easy" if level == "fast" else "hard")
     with _lock:
         if len(_sticky) >= STICKY_MAX:
             _sticky.pop(next(iter(_sticky)))
         _sticky[key] = {"route": label, "at": now,
                         "seen": hashlib.sha256((last or "").encode()).hexdigest() if new_message else (st or {}).get("seen")}
 
-    model = {"hard": cfg["strong"], "chat": cfg.get("chat")}.get(label) or cfg["fast"]
-    reason = [f"{label} ({how})"]
+    # the conversation keeps its own label; auto:fast only caps what is used this time
+    used = "easy" if level == "fast" and label == "hard" else label
+    model = {"hard": cfg["strong"], "chat": cfg.get("chat")}.get(used) or cfg["fast"]
+    reason = [f"{label} ({how})" + (", capped at easy by auto:fast" if used != label else "")]
     if model == cfg.get("chat"):
         tokens = estimate_tokens({"messages": messages})      # its tools are removed, so they do not count
     ctx = context_of(cfg, model)
@@ -503,7 +531,8 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
     if images and not await supports_images(model):
         out["messages"], images, described = await describe_images(cfg, owner, messages, complete)
         reason.append(f"{images} image(s) described by {cfg['describer']}")
-    decision = {"at": round(now, 3), "conversation": key[:12], "model": model, "route": label, "margin": margin,
+    decision = {"at": round(now, 3), "conversation": key[:12], "model": model, "route": used, "level": level,
+                "margin": margin,
                 "tokens": tokens, "images": images, "described": described, "reason": "; ".join(reason)}
     _log(decision)
     return out, decision

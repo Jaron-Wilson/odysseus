@@ -159,7 +159,8 @@ def setup_openai_gateway_routes() -> APIRouter:
         items = await asyncio.to_thread(gw.catalog, effective_user(request))
         data = [{"id": i["id"], "object": "model", "created": 0, "owned_by": i["endpoint_name"]} for i in items]
         if await asyncio.to_thread(auto_router.enabled):
-            data.insert(0, {"id": "auto", "object": "model", "created": 0, "owned_by": "Odysseus router"})
+            data[:0] = [{"id": mid, "object": "model", "created": 0, "owned_by": "Odysseus router", "description": what}
+                        for mid, what in auto_router.model_ids()]
         return {"object": "list", "data": data}
 
     @router.post("/v1/chat/completions")
@@ -174,7 +175,7 @@ def setup_openai_gateway_routes() -> APIRouter:
             return _error(400, "send a JSON object with 'model' and 'messages'")
         owner = effective_user(request)
         extra = {}
-        if str(payload.get("model") or "").strip() in auto_router.AUTO_IDS:
+        if auto_router.level_of(payload.get("model")):
             if not await asyncio.to_thread(auto_router.enabled):
                 return _error(404, "the auto model is turned off (gateway_router.json)", "model_not_found")
             payload, decision = await auto_router.route(payload, owner, _complete)
