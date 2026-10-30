@@ -274,7 +274,7 @@ def test_auto_is_listed_and_routed_to_the_model_the_router_picks(client, monkeyp
     up = Upstream()
     client.mk(up)
     ids_ = [m["id"] for m in client.get("/v1/models", headers={"x-test-scopes": "chat"}).json()["data"]]
-    assert ids_[:3] == ["auto", "auto:fast", "auto:hard"]
+    assert ids_[:4] == ["auto", "auto:fast", "auto:hard", "auto:remote"]
     r = client.post("/v1/chat/completions", headers={"x-test-scopes": "chat"},
                     json={"model": "auto", "messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 200 and r.headers["x-odysseus-route"].startswith("local-ollama:qwen3:8b; easy")

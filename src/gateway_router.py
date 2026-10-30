@@ -23,6 +23,11 @@ Levels, like a ChatGPT model's (asked for on 2026-10-30): ``auto`` (also ``auto:
 ``auto:fast`` never uses the strong model (chat or easy only); ``auto:hard`` always uses it, with no classifying. The
 rules in 1 and the image descriptions in 3 hold at every level.
 
+``auto:remote`` (asked for the same day): decided the same way, on this network, but answered by a ChatGPT model
+chosen for the kind of task, each with its own reasoning effort (``remote`` in the settings): a plain question goes
+to GPT-6 Luna, an easy one to GPT-6.1 Terra, a hard one to GPT-6.1 Sol. An effort the client sends is kept. When the
+ChatGPT model is offline, the fallback list is used as at the other levels.
+
 Settings: DEFAULTS below, with any keys in <data>/gateway_router.json on top. Every decision is logged to
 <data>/logs/gateway_router.jsonl with the route and the reason, never the content of a message.
 """
@@ -42,11 +47,13 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 AUTO_IDS = ("auto", "odysseus:auto")
-LEVELS = ("default", "fast", "hard")      # auto:<level>; plain auto is default
+LEVELS = ("default", "fast", "hard", "remote")      # auto:<level>; plain auto is default
+EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 def level_of(model_id: str) -> Optional[str]:
-    """The level an auto model id asks for ("default", "fast" or "hard"), or None for a model that is not auto."""
+    """The level an auto model id asks for ("default", "fast", "hard" or "remote"), or None for a model that is not
+    auto."""
     m = str(model_id or "").strip().lower()
     for base in AUTO_IDS:
         if m == base:
@@ -60,7 +67,8 @@ def model_ids() -> List[Tuple[str, str]]:
     """The auto models to list in /v1/models, with what each does."""
     return [("auto", "picks a model for each conversation"),
             ("auto:fast", "never the strong model"),
-            ("auto:hard", "always the strong model")]
+            ("auto:hard", "always the strong model"),
+            ("auto:remote", "ChatGPT models: Luna for plain questions, Terra for easy work, Sol for hard work")]
 
 DEFAULTS: Dict = {
     "enabled": True,
@@ -71,6 +79,12 @@ DEFAULTS: Dict = {
     # tried in order when the model picked is offline or busy
     "fallback": ["desktop-jaron:qwen3:8b"],
     "describer": "desktop-jaron:qwen2.5vl:7b",
+    # auto:remote: the model and reasoning effort for each route (they all read images and take tools)
+    "remote": {
+        "chat": {"model": "chatgpt:gpt-6-luna", "effort": "none"},
+        "easy": {"model": "chatgpt:gpt-6.1-terra", "effort": "low"},
+        "hard": {"model": "chatgpt:gpt-6.1-sol", "effort": "high"},
+    },
     "embed_via": "desktop-jaron:qwen3:8b",       # a model on the endpoint that also serves the embedding model
     "embed_model": "embeddinggemma",
     "embed_prefix": "task: classification | query: ",     # the task prompt embeddinggemma was trained with
@@ -456,6 +470,20 @@ async def describe_images(cfg: Dict, owner: Optional[str], messages: List[Dict],
 
 # ── the decision ──────────────────────────────────────────────────────────
 
+def remote_pick(cfg: Dict, route_: str) -> Optional[Dict]:
+    """auto:remote's {"model", "effort"} for a route, from the settings; a route with none set falls back to the one
+    above it (chat, then easy, then hard), so a settings file that lists only "hard" still works."""
+    table = cfg.get("remote") or {}
+    for r in RANK[RANK.index(route_):] if route_ in RANK else ["hard"]:
+        v = table.get(r)
+        if isinstance(v, str):
+            v = {"model": v}
+        if isinstance(v, dict) and v.get("model"):
+            effort = str(v.get("effort") or "").strip().lower()
+            return {"model": str(v["model"]), "effort": effort if effort in EFFORTS else None}
+    return None
+
+
 async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=None,
                 reachable=None, supports_images=None) -> Tuple[Dict, Dict]:
     """(the payload to send, with "model" set to a real model, decision). Never raises for a routing problem: the
@@ -492,8 +520,11 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
 
     # the conversation keeps its own label; auto:fast only caps what is used this time
     used = "easy" if level == "fast" and label == "hard" else label
-    model = {"hard": cfg["strong"], "chat": cfg.get("chat")}.get(used) or cfg["fast"]
+    pick = remote_pick(cfg, used) if level == "remote" else None
+    model = (pick or {}).get("model") or {"hard": cfg["strong"], "chat": cfg.get("chat")}.get(used) or cfg["fast"]
     reason = [f"{label} ({how})" + (", capped at easy by auto:fast" if used != label else "")]
+    if pick:
+        reason.append(f"auto:remote, {model}" + (f" at {pick['effort']} effort" if pick.get("effort") else ""))
     if model == cfg.get("chat"):
         tokens = estimate_tokens({"messages": messages})      # its tools are removed, so they do not count
     ctx = context_of(cfg, model)
@@ -523,6 +554,8 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
         model = cand
         break
     out = dict(payload, model=model)
+    if pick and model == pick["model"] and pick.get("effort") and not payload.get("reasoning_effort"):
+        out["reasoning_effort"] = pick["effort"]
     if model == cfg.get("chat"):
         for k in ("tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"):
             out.pop(k, None)
