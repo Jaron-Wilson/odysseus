@@ -199,3 +199,26 @@ def test_settings_file_overrides_the_defaults(clean):
     (clean / "gateway_router.json").write_text(json.dumps({"fast": "x:small", "enabled": False}))
     cfg = R.config()
     assert cfg["fast"] == "x:small" and cfg["strong"] == R.DEFAULTS["strong"] and not R.enabled()
+
+
+def test_auto_levels_are_read_from_the_model_id():
+    assert [R.level_of(m) for m in ("auto", "odysseus:auto", "auto:default", "Auto:Hard", "odysseus:auto:fast")] \
+        == ["default", "default", "default", "hard", "fast"]
+    assert [R.level_of(m) for m in ("auto:max", "autox", "qwen3:8b", "", None)] == [None] * 5
+    assert [m for m, _ in R.model_ids()] == ["auto", "auto:fast", "auto:hard"]
+
+
+def test_auto_hard_always_uses_the_strong_model_without_classifying():
+    (out, d), m = run({**chat({"role": "user", "content": "chat: what does git stash pop do?"}), "model": "auto:hard"})
+    assert out["model"] == R.DEFAULTS["strong"] and d["route"] == "hard" and d["level"] == "hard"
+    assert "auto:hard" in d["reason"] and m.calls == []
+
+
+def test_auto_fast_never_uses_the_strong_model():
+    (out, d), _ = run({**chat({"role": "user", "content": "hard: find out why it crashes"}), "model": "auto:fast"})
+    assert out["model"] == R.DEFAULTS["fast"] and d["route"] == "easy" and d["level"] == "fast"
+    assert "capped at easy by auto:fast" in d["reason"]
+    # a plain question can still go to the chat model
+    (out, d), _ = run({**chat({"role": "user", "content": "chat: what does git stash pop do?"}, system="other"),
+                       "model": "auto:fast"})
+    assert out["model"] == R.DEFAULTS["chat"]
