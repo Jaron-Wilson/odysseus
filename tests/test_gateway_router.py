@@ -205,7 +205,7 @@ def test_auto_levels_are_read_from_the_model_id():
     assert [R.level_of(m) for m in ("auto", "odysseus:auto", "auto:default", "Auto:Hard", "odysseus:auto:fast")] \
         == ["default", "default", "default", "hard", "fast"]
     assert [R.level_of(m) for m in ("auto:max", "autox", "qwen3:8b", "", None)] == [None] * 5
-    assert [m for m, _ in R.model_ids()] == ["auto", "auto:fast", "auto:hard"]
+    assert [m for m, _ in R.model_ids()] == ["auto", "auto:fast", "auto:hard", "auto:remote"]
 
 
 def test_auto_hard_always_uses_the_strong_model_without_classifying():
@@ -222,3 +222,32 @@ def test_auto_fast_never_uses_the_strong_model():
     (out, d), _ = run({**chat({"role": "user", "content": "chat: what does git stash pop do?"}, system="other"),
                        "model": "auto:fast"})
     assert out["model"] == R.DEFAULTS["chat"]
+
+
+def test_auto_remote_answers_each_route_with_its_chatgpt_model_and_effort():
+    remote = R.DEFAULTS["remote"]
+    (out, d), _ = run({**chat({"role": "user", "content": "hard: find out why it crashes"}), "model": "auto:remote"})
+    assert out["model"] == remote["hard"]["model"] and out["reasoning_effort"] == "high" and d["level"] == "remote"
+    assert "auto:remote" in d["reason"]
+    (out, _), _ = run({**chat({"role": "user", "content": "easy: rename it"}, system="s2"), "model": "auto:remote"})
+    assert out["model"] == remote["easy"]["model"] and out["reasoning_effort"] == "low"
+    # a plain question goes to the small ChatGPT model, and keeps its tools (it can use them)
+    (out, d), _ = run({**chat({"role": "user", "content": "chat: what does git stash pop do?"}, system="s3"),
+                       "model": "odysseus:auto:remote", **TOOLS})
+    assert out["model"] == remote["chat"]["model"] and out["reasoning_effort"] == "none" and out.get("tools")
+
+
+def test_auto_remote_keeps_the_clients_effort_and_falls_back_when_chatgpt_is_offline():
+    (out, _), _ = run({**chat({"role": "user", "content": "hard: design it"}), "model": "auto:remote",
+                       "reasoning_effort": "max"})
+    assert out["reasoning_effort"] == "max"
+    (out, d), _ = run({**chat({"role": "user", "content": "hard: design it"}, system="s2"), "model": "auto:remote"},
+                      url=lambda m: "http://offline" if m.startswith("chatgpt:") else "http://" + m)
+    assert out["model"] == R.DEFAULTS["fallback"][0] and "offline" in d["reason"] and "reasoning_effort" not in out
+
+
+def test_remote_settings_can_name_just_one_model():
+    cfg = {"remote": {"hard": "chatgpt:gpt-6-astra"}}
+    assert R.remote_pick(cfg, "chat") == R.remote_pick(cfg, "hard") == {"model": "chatgpt:gpt-6-astra", "effort": None}
+    assert R.remote_pick({"remote": {"easy": {"model": "x:y", "effort": "LOUD"}}}, "easy") == {"model": "x:y", "effort": None}
+    assert R.level_of("auto:remote") == "remote" and "auto:remote" in [m for m, _ in R.model_ids()]
