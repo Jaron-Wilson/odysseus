@@ -18,6 +18,9 @@
 #   4. tells Odysseus what it found so it can add and connect the servers.
 # Safe to re-run: it upgrades in place.
 $ErrorActionPreference = 'Stop'
+# No progress bars: over SSH there is no console to draw them on, and Windows
+# PowerShell's download progress slows Invoke-WebRequest badly or stalls it.
+$ProgressPreference = 'SilentlyContinue'
 $Base   = '__ODYSSEUS_BASE__'
 $Code   = '__ENROLL_CODE__'
 $PubKey = '__ODYSSEUS_PUBKEY__'
@@ -46,6 +49,30 @@ function Die($m) {
 $lock = New-Object System.Threading.Mutex($false, 'Global\OdysseusInstall')
 # Wait up to a minute for another install (often the one just before this) to end.
 try { $got = $lock.WaitOne(0); if (-not $got) { Say 'Another Odysseus install is running; waiting for it to finish...'; $got = $lock.WaitOne(60000) } } catch [System.Threading.AbandonedMutexException] { $got = $true }
+# An install still holding the lock after 20 minutes is stuck, not working: one
+# hung on a stalled download from 2026-10-27 and blocked every install after it
+# for days ("Another Odysseus install is already running"). Earlier installs are
+# found by their command line (Odysseus starts them with -EncodedCommand, so
+# that is decoded too); one started by hand in a console is never stopped.
+function Stop-StuckInstalls {
+    $old = (Get-Date).AddMinutes(-20)
+    $stuck = Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessId -ne $PID -and $_.CreationDate -lt $old -and $_.CommandLine } | Where-Object {
+            $c = $_.CommandLine
+            if ($c -match '-EncodedCommand\s+(\S+)') {
+                try { $c = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1])) } catch {}
+            }
+            $c -match '/enroll/[^/\s]+/install\.ps1'
+        }
+    foreach ($p in $stuck) {
+        Say "stopping an Odysseus install that has been stuck since $($p.CreationDate)"
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    return @($stuck).Count
+}
+if (-not $got -and (Stop-StuckInstalls) -gt 0) {
+    try { $got = $lock.WaitOne(15000) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+}
 if (-not $got) { $lock = $null; Die 'Another Odysseus install is already running on this computer. Wait for it to finish, then run this again if needed.' }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -79,7 +106,19 @@ function Fetch($name) {
     $final = Join-Path $Dest $name
     $tmp = "$final.download"
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-    Invoke-WebRequest "$Base/enroll/$Code/file/$name" -OutFile $tmp -UseBasicParsing -TimeoutSec 120
+    # With a limit on the whole download: Invoke-WebRequest's -TimeoutSec only
+    # covers the start, so a download that stalled halfway (25 of 75 KB, on
+    # 2026-10-27) waited forever. curl.exe (in Windows since 1803) stops after
+    # 3 minutes, retries, and fails on a short file; Invoke-WebRequest is kept
+    # only for a Windows without it.
+    $url = "$Base/enroll/$Code/file/$name"
+    $curl = (Get-Command curl.exe -ErrorAction SilentlyContinue).Source
+    if ($curl) {
+        & $curl -fsS --connect-timeout 20 --max-time 180 --retry 2 --retry-delay 3 -o $tmp $url
+        if ($LASTEXITCODE -ne 0) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue; Die "Could not download $name from Odysseus (curl exit $LASTEXITCODE). Check this PC can reach $Base, then run this again." }
+    } else {
+        Invoke-WebRequest $url -OutFile $tmp -UseBasicParsing -TimeoutSec 120
+    }
     for ($i = 0; $i -lt 10; $i++) {
         try { Move-Item -Force $tmp $final; return } catch { Start-Sleep -Milliseconds 500 }
     }
@@ -180,7 +219,7 @@ Say 'registering with Odysseus'
 $body = @{ dns = $dns; ip = $ip; os = 'windows'; user = $env:USERNAME; gpu = "$gpu"; ssh = $ssh; servers = $servers } |
         ConvertTo-Json -Depth 4
 try {
-    $r = Invoke-RestMethod -Method Post -Uri "$Base/enroll/$Code/register" -ContentType 'application/json' -Body $body
+    $r = Invoke-RestMethod -Method Post -Uri "$Base/enroll/$Code/register" -ContentType 'application/json' -Body $body -TimeoutSec 60
     # The overlay's token (messages, the phone's song), where the overlay reads it.
     if ($r.overlay_token) {
         $od = Join-Path $env:APPDATA 'odysseus-music-overlay'
