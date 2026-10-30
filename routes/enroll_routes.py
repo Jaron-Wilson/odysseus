@@ -441,7 +441,12 @@ async def run_installer(m: dict, base: str, code: str, job: dict = None, timeout
     """Run this computer's install command there, over SSH. Its output is kept
     as it comes (job["output"], and job["step"]: the last "==>" line), so a
     stall shows where it is; at the timeout ssh is killed, which ends the
-    install there rather than leaving it running."""
+    install there rather than leaving it running.
+
+    On Windows the install runs detached instead (_run_detached_windows): twice
+    (2026-10-27 and 2026-10-30) an install run inside the SSH session stopped
+    for good at a step that never blocks, with the session still open, and
+    stayed running after ssh was killed."""
     import getpass
     peer = m.get("_peer") or {}
     host = peer.get("dns") or (peer.get("ips") or [peer.get("host")])[0]
@@ -454,7 +459,12 @@ async def run_installer(m: dict, base: str, code: str, job: dict = None, timeout
     job = job if job is not None else {}
     last = ""
     for key in machines._ssh_keys():
-        r = await _run_streamed(machines._ssh_argv(user, host, key, remote, m["os"]), job, timeout)
+        if m["os"] == "windows":
+            r = await _run_detached_windows(
+                lambda script: machines._ssh_argv(user, host, key, ["powershell", "-NoProfile", "-Command", script], "windows"),
+                f"{base}/enroll/{code}/install.ps1", job, timeout)
+        else:
+            r = await _run_streamed(machines._ssh_argv(user, host, key, remote, m["os"]), job, timeout)
         if r["rc"] == 0:
             return {"ok": True, "machine": m["name"], "output": r["out"][-3000:]}
         last = machines.clean_powershell_error(r["err"] or r["out"])
@@ -492,6 +502,99 @@ async def _run_streamed(argv: list, job: dict, timeout: float) -> dict:
         raise
     out = "\n".join(lines)
     return {"rc": proc.returncode, "out": out, "err": "" if proc.returncode == 0 else out}
+
+
+# The detached Windows install: started with Win32_Process.Create, so it is not
+# part of the SSH session, writing everything (Write-Host included) to a log in
+# %LOCALAPPDATA%\Odysseus\install, and its exit code to install.rc at the end.
+# ODYSSEUS_INSTALL_QUIET is not set: Die then throws, which the wrapper catches
+# and records, where "exit 1" would end the process without a trace.
+_WIN_DIR = "$d = Join-Path $env:LOCALAPPDATA 'Odysseus\\install'; $log = Join-Path $d 'install.log'; $rc = Join-Path $d 'install.rc'"
+_WIN_INNER = """$ProgressPreference = 'SilentlyContinue'
+$code = 1
+try { & { iwr -useb '__URL__' | iex } *>&1 | Out-File -FilePath '__LOG__' -Append -Encoding utf8 -Width 400; $code = 0 }
+catch { ('==> stopped: ' + $_.Exception.Message) | Out-File -FilePath '__LOG__' -Append -Encoding utf8 }
+Set-Content -Encoding ASCII -Path '__RC__' -Value $code"""
+_WIN_START = _WIN_DIR + """
+New-Item -ItemType Directory -Force -Path $d | Out-Null
+Remove-Item $log, $rc -Force -ErrorAction SilentlyContinue
+$inner = @'
+__INNER__
+'@
+$inner = $inner.Replace('__LOG__', $log).Replace('__RC__', $rc)
+$enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
+$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+    CommandLine = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $enc" }
+if ($r.ReturnValue -ne 0) { [Console]::Error.WriteLine("could not start the install (Win32_Process.Create: $($r.ReturnValue))"); exit 1 }
+"STARTED $($r.ProcessId)\""""
+_WIN_POLL = _WIN_DIR + """
+$state = if (Test-Path $rc) { 'done ' + (Get-Content $rc -Raw).Trim() }
+         elseif (Get-Process -Id __PID__ -ErrorAction SilentlyContinue) { 'running' } else { 'gone' }
+"@@STATE $state"
+if (Test-Path $log) { Get-Content $log -Tail 120 -Encoding UTF8 }"""
+_WIN_STOP = """Get-CimInstance Win32_Process -Filter "ParentProcessId=__PID__" -ErrorAction SilentlyContinue |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Stop-Process -Id __PID__ -Force -ErrorAction SilentlyContinue
+"stopped\""""
+
+
+def _win_start_script(url: str) -> str:
+    return _WIN_START.replace("__INNER__", _WIN_INNER.replace("__URL__", url.replace("'", "''")))
+
+
+async def _ssh_once(argv: list, timeout: float) -> dict:
+    """One short SSH command: {"rc", "out"} (stdout and stderr together); rc -1 if it did not answer in time."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    except OSError as e:
+        return {"rc": -1, "out": str(e)}
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return {"rc": -1, "out": f"no answer in {timeout:.0f}s"}
+    return {"rc": proc.returncode, "out": out.decode(errors="replace")}
+
+
+async def _run_detached_windows(ssh_for, url: str, job: dict, timeout: float, poll: float = 3.0) -> dict:
+    """Start the install on the PC (not inside this SSH session), then read its log
+    every few seconds with short SSH calls until it records its exit code, its
+    process is gone, or the timeout, when it is stopped there. A check that fails
+    (the network, a sleeping PC) is just tried again."""
+    started = await _ssh_once(ssh_for(_win_start_script(url)), 60)
+    m = re.search(r"STARTED (\d+)", started["out"])
+    if not m:
+        err = machines.clean_powershell_error(started["out"]) or "could not start the install"
+        return {"rc": started["rc"] or 1, "out": started["out"], "err": err}
+    pid = m.group(1)
+    loop = asyncio.get_running_loop()
+    end = loop.time() + timeout
+    text = ""
+    while True:
+        await asyncio.sleep(poll)
+        r = await _ssh_once(ssh_for(_WIN_POLL.replace("__PID__", pid)), 30)
+        state = re.search(r"@@STATE (\S+)(?: (-?\d+))?", r["out"])
+        if state:
+            log = r["out"][r["out"].index("@@STATE"):].split("\n", 1)[1] if "\n" in r["out"][r["out"].index("@@STATE"):] else ""
+            lines = [re.sub(r"\x1b\[[0-9;]*m", "", x).rstrip() for x in log.replace("\r", "").split("\n")]
+            lines = [x for x in lines if x and not x.startswith(("#< CLIXML", "<Objs"))]
+            text = "\n".join(lines)
+            job["output"] = text[-3000:]
+            steps = [x.split("==> ", 1)[1].strip() for x in lines if "==> " in x]
+            if steps:
+                job["step"] = steps[-1]
+            if state.group(1) == "done":
+                rc = int(state.group(2) or 1)
+                return {"rc": rc, "out": text, "err": "" if rc == 0 else text}
+            if state.group(1) == "gone":
+                return {"rc": 1, "out": text, "err": text or "the install stopped without finishing"}
+        if loop.time() >= end:
+            await _ssh_once(ssh_for(_WIN_STOP.replace("__PID__", pid)), 30)
+            step = job.get("step")
+            return {"rc": -1, "out": text,
+                    "err": f"timed out after {timeout:.0f}s" + (f", at: {step}" if step else "") + "; stopped it there"}
 
 
 def _owner(request: Request) -> str:

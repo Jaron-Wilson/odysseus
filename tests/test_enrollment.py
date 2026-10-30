@@ -364,10 +364,7 @@ def test_update_runs_the_install_command_over_ssh(monkeypatch):
     r = asyncio.run(enroll_routes.run_installer(lap, "https://ody.tail0.ts.net", "abcdefghjkmnpqrs"))
     assert r["ok"] and "jaron@jaron-laptop.tail0.ts.net" in ran[-1]
     assert "curl -fsSL https://ody.tail0.ts.net/enroll/abcdefghjkmnpqrs/install.sh | bash" in ran[-1][-1]
-    win = dict(lap, name="desktop-jaron-desktop", os="windows",
-               _peer={"host": "desktop-jaron", "dns": "desktop-jaron.tail0.ts.net", "ips": []})
-    asyncio.run(enroll_routes.run_installer(win, "https://ody.tail0.ts.net", "abcdefghjkmnpqrs"))
-    assert ran[-1][-1].startswith("powershell -NoProfile -EncodedCommand ")
+    # Windows runs detached: test_windows_update_uses_the_detached_run
 
 
 def test_an_install_shows_its_step_and_is_stopped_at_the_timeout(tmp_path):
@@ -416,3 +413,86 @@ def test_both_desktop_mcps_report_their_version_and_start_the_overlay():
     ui = open(os.path.join(HERE, "static", "js", "devicesSettings.js"), encoding="utf-8").read()
     assert "/api/devices/tools/${encodeURIComponent(b.dataset.mUpdate)}/update" in ui
     assert "import './deviceToolsNudge.js';" in open(os.path.join(HERE, "static", "js", "chat.js")).read()
+
+
+class _FakePC:
+    """Stands in for ssh to a Windows PC running the detached install: the start returns a PID, then each poll
+    returns the next canned state."""
+    def __init__(self, polls):
+        self.polls, self.scripts = list(polls), []
+
+    def argv(self, script):
+        return ["fake", script]
+
+    async def once(self, argv, timeout):
+        script = argv[-1]
+        self.scripts.append(script)
+        if "Win32_Process" in script and "-MethodName Create" in script:
+            return {"rc": 0, "out": "#< CLIXML\nSTARTED 4242\n"}
+        if "Stop-Process" in script:
+            return {"rc": 0, "out": "stopped"}
+        return self.polls.pop(0) if self.polls else {"rc": 0, "out": "@@STATE running\n==> still going"}
+
+
+def test_a_windows_install_runs_detached_and_is_followed_through_its_log(monkeypatch):
+    """Seen 2026-10-27 and 2026-10-30: an install run inside the SSH session stopped for good right after pip, with
+    the session open, and kept running on the PC after ssh was killed. Now it is started on the PC on its own
+    (Win32_Process.Create), logs to a file, and Odysseus reads that file with short SSH calls."""
+    pc = _FakePC([{"rc": 0, "out": "@@STATE running\n==> installing its Python packages (pip)\n"},
+                  {"rc": 255, "out": "ssh: connect to host: Connection timed out"},         # a blip is retried
+                  {"rc": 0, "out": "@@STATE running\n==> installing its Python packages (pip)\n==> starting the desktop MCP server\n"},
+                  {"rc": 0, "out": "@@STATE done 0\n==> installing its Python packages (pip)\n==> starting the desktop MCP server\n"
+                             "==> registering with Odysseus\n==> done: {}\n"}])
+    monkeypatch.setattr(enroll_routes, "_ssh_once", pc.once)
+    job = {}
+    r = asyncio.run(enroll_routes._run_detached_windows(pc.argv, "https://ody.tail0.ts.net/enroll/abc/install.ps1",
+                                                        job, timeout=60, poll=0))
+    assert r["rc"] == 0 and job["step"].startswith("done") and "starting the desktop MCP server" in job["output"]
+    start = pc.scripts[0]
+    assert "Invoke-CimMethod -ClassName Win32_Process -MethodName Create" in start
+    assert "iwr -useb 'https://ody.tail0.ts.net/enroll/abc/install.ps1' | iex" in start
+    assert "ODYSSEUS_INSTALL_QUIET" not in start          # Die throws (logged), not exit 1 (no trace)
+    assert "Get-Process -Id 4242" in pc.scripts[1] and not any("Stop-Process" in s for s in pc.scripts)
+
+
+def test_a_detached_install_that_fails_or_hangs_says_where_and_is_stopped(monkeypatch):
+    pc = _FakePC([{"rc": 0, "out": "@@STATE done 1\n==> installing its Python packages (pip)\nError: pip install failed (see above).\n==> stopped: pip install failed (see above).\n"}])
+    monkeypatch.setattr(enroll_routes, "_ssh_once", pc.once)
+    r = asyncio.run(enroll_routes._run_detached_windows(pc.argv, "https://x/enroll/abc/install.ps1", {}, 60, poll=0))
+    assert r["rc"] == 1 and "pip install failed" in r["err"]
+    # gone without an exit code
+    pc = _FakePC([{"rc": 0, "out": "@@STATE gone\n==> installing the desktop MCP server\n"}])
+    monkeypatch.setattr(enroll_routes, "_ssh_once", pc.once)
+    r = asyncio.run(enroll_routes._run_detached_windows(pc.argv, "https://x/enroll/abc/install.ps1", {}, 60, poll=0))
+    assert r["rc"] == 1 and "installing the desktop MCP server" in r["err"]
+    # still running at the timeout: stopped there, and the step is named
+    pc = _FakePC([])
+    monkeypatch.setattr(enroll_routes, "_ssh_once", pc.once)
+    job = {}
+    r = asyncio.run(enroll_routes._run_detached_windows(pc.argv, "https://x/enroll/abc/install.ps1", job, 0, poll=0))
+    assert r["rc"] == -1 and "timed out" in r["err"] and "stopped it there" in r["err"] and job["step"] == "still going"
+    assert "Stop-Process -Id 4242" in pc.scripts[-1]
+    # could not start at all
+    async def no_start(argv, timeout):
+        return {"rc": 1, "out": "#< CLIXML\n<Objs Version=\"1.1.0.1\"><S S=\"Error\">Access is denied._x000D__x000A_</S></Objs>"}
+    monkeypatch.setattr(enroll_routes, "_ssh_once", no_start)
+    r = asyncio.run(enroll_routes._run_detached_windows(pc.argv, "https://x/enroll/abc/install.ps1", {}, 60, poll=0))
+    assert r["rc"] == 1 and "Access is denied" in r["err"]
+
+
+def test_windows_update_uses_the_detached_run(monkeypatch):
+    seen = []
+
+    async def fake_detached(ssh_for, url, job, timeout, poll=3.0):
+        seen.append((ssh_for("Write-Output hi"), url))
+        return {"rc": 0, "out": "==> done", "err": ""}
+    monkeypatch.setattr(enroll_routes, "_run_detached_windows", fake_detached)
+    monkeypatch.setattr(machines, "_ssh_keys", lambda: ["/k"])
+    monkeypatch.setattr(machines, "load_prefs", lambda: {})
+    win = {"name": "desktop-jaron-desktop", "os": "windows",
+           "_peer": {"host": "desktop-jaron", "dns": "desktop-jaron.tail0.ts.net", "ips": []}}
+    r = asyncio.run(enroll_routes.run_installer(win, "https://ody.tail0.ts.net", "abcdefghjkmnpqrs"))
+    argv, url = seen[0]
+    assert r["ok"] and url == "https://ody.tail0.ts.net/enroll/abcdefghjkmnpqrs/install.ps1"
+    assert argv[-1].startswith("powershell -NoProfile -EncodedCommand ") and "desktop-jaron.tail0.ts.net" in argv[-2]
+
