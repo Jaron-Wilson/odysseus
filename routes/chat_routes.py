@@ -16,7 +16,7 @@ from core.models import ChatMessage
 from src.request_models import ChatRequest
 from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
-from src import agent_runs, chat_queue
+from src import agent_runs, chat_queue, chat_auto
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
@@ -81,6 +81,8 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
     """Clear a session model if its endpoint was deleted from ModelEndpoint."""
     if not getattr(sess, "endpoint_url", ""):
         return False
+    if chat_auto.is_auto_session(sess):
+        return False        # the auto model is no endpoint in the list; each turn is routed to a real one
     db = SessionLocal()
     try:
         q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
@@ -279,6 +281,18 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         db.close()
 
 
+async def _route_auto(sess, owner, message, *, tools: bool, has_attachments: bool):
+    """The chat as it runs this turn when it is on an auto model (src/chat_auto.py): routed by the gateway's router,
+    with the chosen model's endpoint. HTTPException when that cannot be done, saying why."""
+    from routes.openai_gateway_routes import _complete
+    try:
+        return await chat_auto.route_turn(sess, owner, message, _complete, tools=tools,
+                                          has_attachments=has_attachments)
+    except chat_auto.AutoError as e:
+        # {"error", "message"} like the other chat errors: the page shows the message as it is
+        raise HTTPException(e.status, detail={"error": "AUTO_MODEL", "message": str(e)})
+
+
 def _set_user_time_from_request(request: Request) -> None:
     """Copy browser timezone headers into the per-request context.
 
@@ -391,6 +405,13 @@ def setup_chat_routes(
                 "No model selected for this chat. Open the model picker and choose one before sending.",
             )
 
+        # On an auto model: routed to a real one for this message (see chat_stream)
+        auto_turn = None
+        if chat_auto.is_auto_session(sess):
+            auto_turn = await _route_auto(sess, owner, str(message or ""), tools=False,
+                                          has_attachments=bool(att_ids))
+            sess = auto_turn
+
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
         _enforce_chat_privileges(request, sess)
@@ -436,18 +457,25 @@ def setup_chat_routes(
             except Exception as e:
                 logger.error(f"Research failed: {e}")
 
-        reply = await llm_call_async(
-            sess.endpoint_url,
-            sess.model,
-            ctx.messages,
-            headers=sess.headers,
-            temperature=ctx.preset.temperature,
-            max_tokens=ctx.preset.max_tokens,
-            prompt_type=preset_id,
-            session_id=session,
-            owner=owner,
-        )
-        _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
+        if auto_turn is not None:
+            auto_turn.begin()
+        try:
+            reply = await llm_call_async(
+                sess.endpoint_url,
+                sess.model,
+                ctx.messages,
+                headers=sess.headers,
+                temperature=ctx.preset.temperature,
+                max_tokens=ctx.preset.max_tokens,
+                prompt_type=preset_id,
+                session_id=session,
+                owner=owner,
+            )
+        finally:
+            if auto_turn is not None:
+                auto_turn.end()
+        _clean_reply, _clean_md = clean_thinking_for_save(
+            reply, {"model": sess.model, **({"auto": auto_turn.auto_meta} if auto_turn is not None else {})})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
 
         from core.database import update_session_last_accessed
@@ -619,6 +647,13 @@ def setup_chat_routes(
                     400,
                     "No model selected for this chat. Open the model picker and choose one before sending.",
                 )
+            # On an auto model (Auto, Auto (fast) ...) each message is routed to a real model here, and the turn
+            # runs as that model's: `sess` is the chat with the chosen model's name, URL and headers.
+            auto_turn = None
+            if chat_auto.is_auto_session(sess):
+                auto_turn = await _route_auto(sess, owner, str(message or ""), tools=(chat_mode == "agent"),
+                                              has_attachments=_has_atts)
+                sess = auto_turn
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):
@@ -634,8 +669,9 @@ def setup_chat_routes(
         # ADMIN_PRIVILEGES wholesale) so this is a no-op for them.
         _enforce_chat_privileges(request, sess)
 
-        # Ensure session has auth headers
-        resolve_session_auth(sess, session, owner=get_current_user(request))
+        # Ensure session has auth headers (an auto turn already has the chosen model's)
+        if auto_turn is None:
+            resolve_session_auth(sess, session, owner=get_current_user(request))
 
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
@@ -1041,6 +1077,15 @@ def setup_chat_routes(
                 _fallback_candidates = resolve_chat_fallback_candidates(owner=_user)
             except Exception:
                 _fallback_candidates = []
+            # The auto model has its own fallback list (in the router); a failure after it chose shows as an error
+            # rather than being answered by some other model
+            _auto_md = None
+            _effort_kw = {}
+            if auto_turn is not None:
+                _fallback_candidates = []
+                _auto_md = auto_turn.auto_meta
+                if auto_turn.effort:
+                    _effort_kw = {"reasoning_effort": auto_turn.effort}
 
             # Send model name early so the frontend can show it during streaming
             _model_suffix = "Research" if effective_do_research else None
@@ -1050,6 +1095,8 @@ def setup_chat_routes(
             if ctx.preset.character_name:
                 _model_info["character_name"] = ctx.preset.character_name
             yield f'data: {json.dumps(_model_info)}\n\n'
+            if auto_turn is not None:
+                yield f'data: {json.dumps({"type": "auto_route", "data": auto_turn.auto_meta})}\n\n'
 
             if _is_image_generation_session(sess, owner=_user):
                 from src.settings import get_setting
@@ -1112,6 +1159,7 @@ def setup_chat_routes(
                         tools=None,
                         session_id=session,
                         owner=_user,
+                        **_effort_kw,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1197,6 +1245,7 @@ def setup_chat_routes(
                                     used_memories=ctx.used_memories,
                                     do_research=effective_do_research,
                                     incognito=incognito,
+                                    extra_metadata={"auto": _auto_md} if _auto_md else None,
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
@@ -1222,6 +1271,7 @@ def setup_chat_routes(
                                 "stopped": True,
                                 "model": _actual_model or _answered_by or _requested_model,
                                 "requested_model": _requested_model,
+                                **({"auto": _auto_md} if _auto_md else {}),
                             },
                         )
                         sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
@@ -1274,6 +1324,7 @@ def setup_chat_routes(
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         client_device=_client_dev,
+                        **_effort_kw,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1344,6 +1395,7 @@ def setup_chat_routes(
                                     rag_sources=ctx.rag_sources,
                                     used_memories=ctx.used_memories,
                                     incognito=incognito,
+                                    extra_metadata={"auto": _auto_md} if _auto_md else None,
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
@@ -1377,6 +1429,7 @@ def setup_chat_routes(
                                     "stopped": True,
                                     "model": _actual_model or _answered_by or _requested_model,
                                     "requested_model": _requested_model,
+                                    **({"auto": _auto_md} if _auto_md else {}),
                                 },
                             )
                             sess.add_message(ChatMessage("assistant", _stopped_content2, metadata=_stopped_md2))
@@ -1392,9 +1445,13 @@ def setup_chat_routes(
             """Wrapper that guarantees _active_streams cleanup even if stream_with_save
             raises before reaching a mode-specific finally block."""
             try:
+                if auto_turn is not None:
+                    auto_turn.begin()       # how busy each endpoint is, for the auto model's router
                 async for chunk in stream_with_save():
                     yield chunk
             finally:
+                if auto_turn is not None:
+                    auto_turn.end()
                 _active_streams.pop(session, None)
 
         # Compare panes are short-lived, single-shot generations whose sessions
@@ -1653,6 +1710,12 @@ def setup_chat_routes(
             sess = session_manager.get_session(session_id)
         except (KeyError, SessionNotFoundError):
             raise HTTPException(404, "Session not found")
+        if chat_auto.is_auto_session(sess):
+            # not a message of the conversation: the model its last reply used, no routing
+            try:
+                sess = chat_auto.pinned_session(sess, get_current_user(request))
+            except chat_auto.AutoError as e:
+                raise HTTPException(e.status, detail={"error": "AUTO_MODEL", "message": str(e)})
 
         messages = [
             {"role": "system", "content": (

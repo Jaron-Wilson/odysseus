@@ -70,6 +70,15 @@ def model_ids() -> List[Tuple[str, str]]:
             ("auto:hard", "always the strong model"),
             ("auto:remote", "ChatGPT models: Luna for plain questions, Terra for easy work, Sol for hard work")]
 
+
+# How each level is named where people read it (the chat's model picker and the label on a reply).
+LEVEL_NAMES = {"default": "Auto", "fast": "Auto (fast)", "hard": "Auto (hard)", "remote": "Auto (remote)"}
+
+
+def display_name(model_id: str) -> str:
+    """"Auto", "Auto (fast)", "Auto (hard)" or "Auto (remote)" for an auto model id; the id itself otherwise."""
+    return LEVEL_NAMES.get(level_of(model_id) or "", str(model_id or ""))
+
 DEFAULTS: Dict = {
     "enabled": True,
     "chat": "desktop-jaron:gemma3:1b",          # plain questions; it has no tools, so they are removed
@@ -485,15 +494,22 @@ def remote_pick(cfg: Dict, route_: str) -> Optional[Dict]:
 
 
 async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=None,
-                reachable=None, supports_images=None) -> Tuple[Dict, Dict]:
+                reachable=None, supports_images=None, conversation: Optional[str] = None,
+                no_chat: str = "") -> Tuple[Dict, Dict]:
     """(the payload to send, with "model" set to a real model, decision). Never raises for a routing problem: the
-    strong model is the answer when in doubt (except at auto:fast, which never uses it)."""
+    strong model is the answer when in doubt (except at auto:fast, which never uses it).
+
+    ``conversation`` names the conversation when the caller knows it (Odysseus's own chat passes its chat id), so
+    the label is kept per chat; without it the conversation is recognized by its first system prompt and first user
+    message, as a client of the gateway sends the whole thing again each step. ``no_chat``, when set, is why this turn
+    cannot go to the chat model (it has no tools and cannot read files): "this turn uses tools" in an agent-mode chat
+    turn, "this turn has attachments"."""
     cfg = config()
     level = level_of(payload.get("model")) or "default"
     reachable = reachable or (lambda mid: _url_of(mid, owner))
     supports_images = supports_images or (lambda mid: _supports_images(mid, owner))
     messages = payload.get("messages") or []
-    key = conversation_key(messages)
+    key = conversation or conversation_key(messages)
     tokens = estimate_tokens(payload)
     now = time.time()
     with _lock:
@@ -511,6 +527,8 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
         if got == "chat" and not _chat_ok(messages):
             got, how = "easy", how + ", but the conversation has used tools or has images"
         label = max(label or got, got, key=RANK.index)
+    if no_chat and label == "chat":
+        label, how = "easy", f"{how}, but {no_chat}"
     label = label or ("easy" if level == "fast" else "hard")
     with _lock:
         if len(_sticky) >= STICKY_MAX:
@@ -565,7 +583,7 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
         out["messages"], images, described = await describe_images(cfg, owner, messages, complete)
         reason.append(f"{images} image(s) described by {cfg['describer']}")
     decision = {"at": round(now, 3), "conversation": key[:12], "model": model, "route": used, "level": level,
-                "margin": margin,
+                "label": label, "how": how, "margin": margin,
                 "tokens": tokens, "images": images, "described": described, "reason": "; ".join(reason)}
     _log(decision)
     return out, decision

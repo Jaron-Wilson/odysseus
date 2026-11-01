@@ -2276,8 +2276,11 @@ async def stream_agent_loop(
     _is_teacher_run: bool = False,
     client_device: Optional[Dict] = None,
     auto_input_budget: bool = False,
+    reasoning_effort: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
+
+    ``reasoning_effort``: sent with every model call, for providers that take one (the chat's auto:remote level).
 
     ``auto_input_budget``: treat an ``agent_input_token_budget`` that equals
     the default as unset, so the input budget scales to ``context_length``.
@@ -2984,6 +2987,7 @@ async def stream_agent_loop(
                 timeout=agent_stream_timeout,
                 session_id=session_id,
                 owner=owner,
+                **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
             ),
             FIRST_TOKEN_TIMEOUT_S,
             max(float(agent_stream_timeout), 60.0),

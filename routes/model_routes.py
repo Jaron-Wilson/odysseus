@@ -1281,6 +1281,14 @@ def setup_model_routes(model_discovery):
 
     _fetch_models = fetch_models
 
+    def _with_auto(result):
+        """The chat picker's Auto entries (src/chat_auto.py), beside the endpoint list rather than in it, so the
+        pages that read the list (tasks, compare, group chat) do not offer them. Not cached: it follows
+        gateway_router.json. Absent when the router is off."""
+        from src import chat_auto
+        auto = chat_auto.picker()
+        return {**result, "auto": auto} if auto else result
+
     @router.get("/models")
     def api_models(request: Request, refresh: bool = False):
         """Get available models — per-user (caller sees only their endpoints +
@@ -1318,12 +1326,12 @@ def setup_model_routes(model_discovery):
         _cache_key = (owner, _is_admin)
         cache_entry = _models_cache.get(_cache_key)
         if not refresh and cache_entry is not None and (now - cache_entry["time"]) < _MODELS_CACHE_TTL:
-            return cache_entry["data"]
+            return _with_auto(cache_entry["data"])
         result = _fetch_models(owner=owner, is_admin=_is_admin)
         _models_cache[_cache_key] = {"data": result, "time": now}
         # Kick off background refresh to update caches from live endpoints
         _refresh_caches_bg(force=refresh)
-        return result
+        return _with_auto(result)
 
     # Brief cache for local-probe results so picker-open doesn't hammer
     # endpoint health checks every time. 8s TTL — long enough to amortize cost,

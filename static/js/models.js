@@ -15,6 +15,7 @@ import { sortModelIds } from './modelSort.js';
 
 let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
+let _autoModels = null; // the Auto entries of /api/models ({url, endpoint_name, models: [{id, name, description}]}), or null when off
 let _lastFetchTime = 0;
 let _fetchInflight = null;
 const _FETCH_CACHE_TTL = 30000; // 30s client-side cache for /api/models
@@ -206,6 +207,7 @@ export async function refreshModels(force = false) {
       const data = await _fetchInflight;
       _lastFetchTime = Date.now();
       _cachedItems = data.items || [];
+      _autoModels = data.auto && Array.isArray(data.auto.models) && data.auto.models.length ? data.auto : null;
     } catch (e) {
       console.error(e);
       box.textContent = '(scan failed)';
@@ -657,12 +659,14 @@ export async function refreshProviders() {
 }
 
 export function getCachedItems() { return _cachedItems; }
+export function getAutoModels() { return _autoModels; }
 
 const modelsModule = {
   init,
   refreshModels,
   refreshProviders,
   getCachedItems,
+  getAutoModels,
 };
 
 export default modelsModule;

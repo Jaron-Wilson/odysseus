@@ -78,8 +78,33 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 let _deps = null;
 let _autoSelectingDefault = false;
 
+// The Auto entries (Auto, Auto (fast) ...) the server offers when the router is on. They are not endpoints: they sit
+// beside the endpoint list in /api/models and are picked like a model, with a stand-in URL.
+function _autoList() {
+  const a = window.modelsModule && window.modelsModule.getAutoModels ? window.modelsModule.getAutoModels() : null;
+  if (!a || !Array.isArray(a.models)) return [];
+  return a.models.map(m => ({
+    mid: m.id,
+    display: m.name || m.id,
+    description: m.description || '',
+    url: a.url || '',
+    endpointId: '',
+    epName: a.endpoint_name || 'Auto',
+    providerText: ['auto', m.description || ''].join(' '),
+    stale: false,
+    offline: false,
+    auto: true,
+  }));
+}
+
+function _autoEntry(modelId) {
+  return modelId ? _autoList().find(m => m.mid === modelId) || null : null;
+}
+
 function _modelExists(modelId, url) {
   if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
+  const autoHit = _autoEntry(modelId);
+  if (autoHit) return !url || url === autoHit.url;
   const items = window.modelsModule.getCachedItems() || [];
   if (!items.length) return true;
   const targetUrl = (url || '').replace(/\/+$/, '');
@@ -312,7 +337,7 @@ function _initModelPickerDropdown() {
         row.style.opacity = '0.45';
         row.title = `Local server appears offline: ${m.staleReason}. Click to try anyway, or relaunch in Cookbook.`;
       }
-      const _mlogo = providerLogo(m.mid);
+      const _mlogo = m.auto ? null : providerLogo(m.mid);
       if (_mlogo) {
         const logoSpan = document.createElement('span');
         logoSpan.className = 'provider-logo';
@@ -334,9 +359,18 @@ function _initModelPickerDropdown() {
       const epSpan = document.createElement('span');
       epSpan.className = 'model-switch-ep';
       // Don't show endpoint name if it matches the model name (local self-hosted)
-      const _epDisplay = m.epName && !m.display.toLowerCase().includes(m.epName.toLowerCase().split('/').pop()) ? m.epName : '';
+      const _epDisplay = m.auto ? m.description
+        : (m.epName && !m.display.toLowerCase().includes(m.epName.toLowerCase().split('/').pop()) ? m.epName : '');
       epSpan.textContent = _epDisplay;
       row.appendChild(epSpan);
+      if (m.auto) {
+        epSpan.title = m.description;
+        row.title = m.description;
+        row.classList.add('model-switch-auto');
+        row.addEventListener('click', () => _pick(m));
+        listEl.appendChild(row);
+        return;     // no favorite dot: Auto is always at the top
+      }
 
       // Inline favorite dot — toggles favorite, never picks the model.
       const favDot = document.createElement('button');
@@ -384,9 +418,21 @@ function _initModelPickerDropdown() {
         return [m.mid, m.display, m.epName, m.providerText, provName]
           .filter(Boolean).join(' ').toLowerCase().includes(q);
       });
-      if (matches.length === 0) _addEmpty('No matching models');
-      else matches.forEach(_addRow);
+      const autoMatches = _autoList().filter(m =>
+        [m.mid, m.display, m.description, m.providerText].join(' ').toLowerCase().includes(q));
+      if (matches.length === 0 && autoMatches.length === 0) _addEmpty('No matching models');
+      else {
+        autoMatches.forEach(_addRow);
+        matches.forEach(_addRow);
+      }
       return;
+    }
+
+    // ── Auto first: the router's models, above Favorites and everything else ──
+    const autos = _autoList();
+    if (autos.length) {
+      _addSection('Auto');
+      autos.forEach(_addRow);
     }
 
     // ── Browse mode: Favorites (manual) + Recent (auto), with dedupe. ──
@@ -423,7 +469,7 @@ function _initModelPickerDropdown() {
     if (all.length <= BROWSE_ALL_LIMIT) {
       const rest = all.filter(m => !shown.has(m.mid));
       if (rest.length) {
-        if (shown.size) _addSection('All models');
+        if (shown.size || autos.length) _addSection('All models');
         rest.forEach(_addRow);
       }
     } else {
@@ -483,7 +529,7 @@ function _initModelPickerDropdown() {
 
     // Remember this pick so it surfaces under "Recent" next time the picker
     // opens — the whole point of quick-switch.
-    if (m && m.mid) _pushRecent(m.mid);
+    if (m && m.mid && !m.auto) _pushRecent(m.mid);
 
     // Broadcast immediately so listeners (e.g. the tour) can advance without
     // waiting for the async session-create/PATCH that follows.
@@ -683,7 +729,7 @@ export function updateModelPicker() {
   // Never override an existing session's model — the user explicitly chose it
   if (modelId && !currentSessionId && _pendingChat && window.modelsModule && window.modelsModule.getCachedItems) {
     const items = window.modelsModule.getCachedItems();
-    const allAvailable = [];
+    const allAvailable = _autoList().map(a => a.mid);
     items.forEach(item => {
       if (item.offline) return;
       (item.models || []).concat(item.models_extra || []).forEach(m => allAvailable.push(m));
@@ -719,7 +765,8 @@ export function updateModelPicker() {
     }
   }
 
-  let displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  const autoPicked = _autoEntry(modelId);
+  let displayName = autoPicked ? autoPicked.display : (modelId ? modelId.split('/').pop() : 'Select model');
   // Which server it is on, by its nickname (Settings > Add Models > Added Models > Rename): the
   // same model name can be on two servers (two Ollamas). Shown when the name
   // is ambiguous, and always on hover.
@@ -745,8 +792,8 @@ export function updateModelPicker() {
   if (epName && (!isDefaultName || copies > 1)) displayName += ` \u00b7 ${epName}`;
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
-  label.title = modelId ? (epName ? `${modelId} on ${epName}` : modelId) : '';
-  const logo = modelId ? providerLogo(modelId) : null;
+  label.title = modelId ? (autoPicked ? autoPicked.description : (epName ? `${modelId} on ${epName}` : modelId)) : '';
+  const logo = modelId && !autoPicked ? providerLogo(modelId) : null;
   if (logo) {
     // The logo is our own markup; the name (with a user's nickname) is text.
     label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ';
