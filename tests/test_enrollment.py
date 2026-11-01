@@ -350,6 +350,20 @@ def test_the_tools_check_names_what_each_computer_lacks(monkeypatch):
     assert rows["win"]["outdated"] == ["music_overlay.py"] and not rows["win"]["up_to_date"]
 
 
+def test_every_listed_feature_is_a_tool_of_that_systems_desktop_server():
+    # A feature whose tool the server does not have is "missing" forever, and the
+    # device keeps offering Install (2026-11-01: play_stream on Windows).
+    import re
+    for system, features in enroll_routes.FEATURES.items():
+        path = os.path.join(HERE, "tools", "mcp", enroll_routes.MCP_FILE[system])
+        with open(path, encoding="utf-8") as f:
+            src = f.read()
+        tools = set(re.findall(r"@mcp\.tool\([^)]*\)\s*\n(?:@[^\n]*\n)*\s*(?:async\s+)?def\s+(\w+)\s*\(", src))
+        assert len(tools) > 5, f"read the tools of {path}"
+        absent = {name: tool for name, tool in features.items() if tool not in tools}
+        assert not absent, f"{system}: listed but not in {enroll_routes.MCP_FILE[system]}: {absent}"
+
+
 def test_update_runs_the_install_command_over_ssh(monkeypatch):
     ran = []
 

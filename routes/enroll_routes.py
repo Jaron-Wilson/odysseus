@@ -49,7 +49,9 @@ FEATURES = {
                 "Hear the phone here (Bluetooth)": "bluetooth_audio_receive",
                 "Pair the phone from the site": "bluetooth_pair",
                 "Stream this computer's sound": "audio_stream_start",
-                "Play another computer's sound": "play_stream",
+                # Not "Play another computer's sound": play_stream is only in the Linux
+                # server, so listing it here offered Install on every Windows PC forever
+                # (2026-11-01, right after a successful install).
                 "Play its videos in the chat": "share_media"},
     "linux": {"Music overlay (Pop out)": "start_music_overlay",
               "Play another computer's sound": "play_stream",
