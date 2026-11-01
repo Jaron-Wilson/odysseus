@@ -384,6 +384,16 @@ async def _prepare(sess, session_id: str, context: List[Dict]):
     return context, ctx_len
 
 
+async def _counted(stream, auto_turn):
+    """A run on an auto model, counted against the chosen endpoint while it goes (the router's busy check)."""
+    auto_turn.begin()
+    try:
+        async for chunk in stream:
+            yield chunk
+    finally:
+        auto_turn.end()
+
+
 async def run_headless(session_id: str, text: str, client_device: Optional[Dict] = None,
                        source: str = "queued", voice_call: bool = False, note: str = "") -> bool:
     """Send a message with no page open, as a detached run: a queued
@@ -414,11 +424,20 @@ async def run_headless(session_id: str, text: str, client_device: Optional[Dict]
             agent_runs.start(session_id, claude_direct.stream(session_id, sess, text, sm))
             logger.info("Sent a %s message to Claude Code in %s with no page open", source, session_id)
             return True
+        # A chat on an auto model: this message is routed to a real one first (src/chat_auto.py). A failure leaves
+        # the message with the page, which shows why when it is sent from there.
+        auto_turn = None
+        from src import chat_auto
+        if chat_auto.is_auto_session(sess):
+            from routes.openai_gateway_routes import _complete
+            auto_turn = await chat_auto.route_turn(sess, getattr(sess, "owner", None), text, _complete, tools=True)
         sm.add_message(session_id, ChatMessage("user", text, metadata={"source": source}))
         sm.save_sessions()
         context = sess.get_context_messages()
         if not context or context[-1].get("content") != text:
             context.append({"role": "user", "content": text})
+        if auto_turn is not None:
+            sess = auto_turn
         context, ctx_len = await _prepare(sess, session_id, context)
         if voice_call:
             # Spoken on a phone call: the same note an in-app call turn gets.
@@ -431,9 +450,12 @@ async def run_headless(session_id: str, text: str, client_device: Optional[Dict]
                 context.insert(0, {"role": "system", "content": note})
         if agent_runs.is_active(session_id):
             return True         # a page got in first; the message is in the chat either way
-        agent_runs.start(session_id, _resume_stream(
+        stream = _resume_stream(
             sess, sm, context, source=source, client_device=client_device,
-            context_length=ctx_len))
+            context_length=ctx_len)
+        if auto_turn is not None:
+            stream = _counted(stream, auto_turn)
+        agent_runs.start(session_id, stream)
         logger.info("Sent a %s message in %s with no page open", source, session_id)
         return True
     except Exception as e:

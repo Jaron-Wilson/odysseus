@@ -1621,15 +1621,23 @@ import './chatThreads.js';
           return;
         }
         let errText = `Error ${res.status}`;
+        let _autoModelError = false;      // the Auto model could not pick or reach a model: shown as the server says it
         try {
           const errBody = await res.text();
+          try {
+            const j = JSON.parse(errBody);
+            if (j && j.detail && j.detail.error === 'AUTO_MODEL' && j.detail.message) {
+              errText = j.detail.message;
+              _autoModelError = true;
+            }
+          } catch {}
           // Parse nested JSON error if present
-          const m = errBody.match(/"message"\s*:\s*"([^"]+)"/);
+          const m = _autoModelError ? null : errBody.match(/"message"\s*:\s*"([^"]+)"/);
           if (m) errText = m[1].replace(/\\"/g, '"');
-          else if (errBody.length < 200) errText = errBody;
+          else if (!_autoModelError && errBody.length < 200) errText = errBody;
         } catch {}
         // Auto-switch to chat mode for tool-related errors
-        if (errText.includes('tool') || errText.includes('auto')) {
+        if (!_autoModelError && (errText.includes('tool') || errText.includes('auto'))) {
           errText = 'This model doesn\'t support agent tools — switched to Chat mode. Try again.';
           const _ab = document.getElementById('mode-agent-btn');
           const _cb = document.getElementById('mode-chat-btn');
@@ -2486,6 +2494,12 @@ import './chatThreads.js';
                       characterName: holder._characterName,
                     });
                   }
+                }
+              } else if (json.type === 'auto_route') {
+                // The Auto model chose a model for this message: say which and why, under the reply's name
+                if (!_isBg && holder && json.data) {
+                  holder._autoRoute = json.data;
+                  if (chatRenderer.setAutoRouteNote) chatRenderer.setAutoRouteNote(holder, json.data);
                 }
               } else if (json.type === 'fallback') {
                 // The selected model failed and another provider answered. Make

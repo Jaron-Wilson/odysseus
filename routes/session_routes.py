@@ -148,6 +148,9 @@ def _reject_raw_endpoint_url_for_non_admin(
         return
     if not endpoint_url:
         return
+    from src.chat_auto import AUTO_URL
+    if endpoint_url == AUTO_URL:
+        return      # the auto model: not a host to dial, each message is routed to one of the user's own models
     # Raw URLs make the server dial whatever host the request supplies. For
     # non-admin users, require a saved endpoint row so normal owner scoping and
     # endpoint validation have already happened.

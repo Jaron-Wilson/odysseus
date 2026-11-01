@@ -93,6 +93,10 @@ async def _resume_stream(sess, sm, context, agent_loop=None, *,
             context, context_length = await _prepare(sess, sess.id, context)
         except Exception as e:
             logger.debug("resumed turn setup skipped: %s", e)
+    # A chat on an auto model (src/chat_auto.py): the chosen model's choice is saved with the reply, and the
+    # remote level's reasoning effort goes with each call
+    from src.chat_auto import RoutedSession
+    routed = isinstance(sess, RoutedSession)
     try:
         async for chunk in agent_loop(
             sess.endpoint_url, sess.model, context,
@@ -101,6 +105,7 @@ async def _resume_stream(sess, sm, context, agent_loop=None, *,
             session_id=sess.id,
             owner=getattr(sess, "owner", None),
             **({"client_device": client_device} if client_device else {}),
+            **({"reasoning_effort": sess.effort} if routed and sess.effort else {}),
         ):
             _collect(chunk, st)
             yield chunk
@@ -110,7 +115,8 @@ async def _resume_stream(sess, sm, context, agent_loop=None, *,
                 sm.add_message(sess.id, ChatMessage(
                     "assistant", st["full"],
                     metadata={"tool_events": st["tools"], "model": sess.model,
-                              "source": source},
+                              "source": source,
+                              **({"auto": sess.auto_meta} if routed else {})},
                 ))
                 sm.save_sessions()
                 logger.info("Saved %s turn in chat %s", source, sess.id)

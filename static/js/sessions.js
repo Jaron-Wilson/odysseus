@@ -1868,7 +1868,9 @@ export async function materializePendingSession() {
 
   const incognitoChk = document.getElementById('incognito-toggle');
   const isIncognito = incognitoChk && incognitoChk.checked;
-  const base = (pending.modelId || 'model').split('/').pop();
+  const _auto = pending.url === 'odysseus://auto' && window.modelsModule && window.modelsModule.getAutoModels
+    ? (window.modelsModule.getAutoModels()?.models || []).find(m => m.id === pending.modelId) : null;
+  const base = _auto ? _auto.name : (pending.modelId || 'model').split('/').pop();
   const name = isIncognito ? 'Nobody' : `${base} ${new Date().toLocaleTimeString()}`;
 
   const fd = new FormData();

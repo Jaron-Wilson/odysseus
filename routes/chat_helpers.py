@@ -910,9 +910,13 @@ def save_assistant_response(
     do_research: bool = False,
     tool_events: list = None,
     incognito: bool = False,
+    extra_metadata: dict = None,
 ):
-    """Add assistant response to session history. In incognito mode, keeps in-memory context but skips DB persistence."""
+    """Add assistant response to session history. In incognito mode, keeps in-memory context but skips DB persistence.
+    ``extra_metadata`` is saved with the reply as it is (the auto model's choice, for the label under it)."""
     md = dict(last_metrics) if last_metrics else {}
+    if extra_metadata:
+        md.update(extra_metadata)
     def _model_value(value) -> str:
         if value is None:
             return ""

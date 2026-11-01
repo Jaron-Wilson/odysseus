@@ -1748,8 +1748,11 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                     owner: Optional[str] = None):
+                     owner: Optional[str] = None, reasoning_effort: Optional[str] = None):
     """Stream LLM responses with improved error handling.
+
+    ``reasoning_effort`` ("low", "high" ...) is sent to the providers that take one (ChatGPT Subscription, OpenAI-style
+    servers); the others ignore it. The chat sets it for the auto model's remote level.
 
     ``owner`` is whose ChatGPT sign-in to use for request-scoped providers
     (Sign in with ChatGPT, ChatGPT Subscription); their bearer is resolved
@@ -1802,6 +1805,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        if reasoning_effort:
+            payload["reasoning"] = {"effort": reasoning_effort}
     else:
         target_url = url
         payload = {
@@ -1819,6 +1824,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = _alias_harmony_tools(tools, model)
+        if reasoning_effort and provider not in {"copilot"}:
+            payload["reasoning_effort"] = reasoning_effort
         # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
         # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.

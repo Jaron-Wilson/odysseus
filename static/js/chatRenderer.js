@@ -545,9 +545,13 @@ const IMAGE_PRICING = {
   'gpt-image-1-mini': { 'low': { '1024x1024': 0.005, '1024x1536': 0.006, '1536x1024': 0.006 }, 'medium': { '1024x1024': 0.011, '1024x1536': 0.015, '1536x1024': 0.015 }, 'high': { '1024x1024': 0.036, '1024x1536': 0.052, '1536x1024': 0.052 } },
 };
 
+// The Auto models' ids, as the chat's model picker names them
+const AUTO_MODEL_NAMES = { 'auto': 'Auto', 'auto:fast': 'Auto (fast)', 'auto:hard': 'Auto (hard)', 'auto:remote': 'Auto (remote)' };
+
 export function shortModel(name) {
   if (!name) return '...';
   if (typeof name !== 'string') name = String(name);
+  if (AUTO_MODEL_NAMES[name]) return AUTO_MODEL_NAMES[name];
   let short = name.split('/').pop();
   // Strip .gguf extension
   short = short.replace(/\.gguf$/i, '');
@@ -860,6 +864,25 @@ export function updateSessionCostUI() {
 /** Create a timestamp span for role labels.
  * Pass an ISO string / Date / epoch-ms to render the message's own time
  * (used when replaying history). Falls back to "now" when no value is given. */
+/**
+ * The small note under a reply that came from the Auto model, saying which model answered and why, like
+ * "Auto -> qwen3.8:27b (hard, kept for this conversation)". `auto` is the reply's metadata.auto (also sent as the
+ * auto_route event while it streams). Safe to call again; it replaces the note.
+ */
+export function setAutoRouteNote(msgEl, auto) {
+  if (!msgEl || !auto || !auto.text) return;
+  const roleEl = msgEl.querySelector('.role');
+  if (!roleEl) return;
+  let note = msgEl.querySelector('.auto-route-note');
+  if (!note) {
+    note = document.createElement('div');
+    note.className = 'auto-route-note';
+    roleEl.insertAdjacentElement('afterend', note);
+  }
+  note.textContent = auto.text;
+  note.title = auto.reason || auto.text;
+}
+
 export function roleTimestamp(when) {
   const ts = document.createElement('span');
   ts.className = 'role-timestamp';
@@ -2426,6 +2449,7 @@ export function addMessage(role, content, modelName, metadata) {
         }
       }
 
+      if (firstMsgAi && metadata?.auto) setAutoRouteNote(firstMsgAi, metadata.auto);
       const firstWrap = lastMsgAi || lastWrap;
       if (firstWrap && firstWrap.classList.contains('msg-ai')) {
         if (metadata?.memories_used?.length) firstWrap._memoriesUsed = metadata.memories_used;
@@ -2639,6 +2663,7 @@ export function addMessage(role, content, modelName, metadata) {
 
     wrap.appendChild(r);
     wrap.appendChild(b);
+    if (role === 'assistant' && metadata?.auto) setAutoRouteNote(wrap, metadata.auto);
 
     // Add stopped indicator + continue button for messages that were stopped by user
     if (role === 'assistant' && metadata?.stopped) {
@@ -3036,6 +3061,7 @@ const chatRenderer = {
   resetSessionCost,
   updateSessionCostUI,
   roleTimestamp,
+  setAutoRouteNote,
   stripToolBlocks,
   copyMessageText,
   safeToolScreenshotSrc,
