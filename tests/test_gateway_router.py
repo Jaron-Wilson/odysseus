@@ -251,3 +251,23 @@ def test_remote_settings_can_name_just_one_model():
     assert R.remote_pick(cfg, "chat") == R.remote_pick(cfg, "hard") == {"model": "chatgpt:gpt-6-astra", "effort": None}
     assert R.remote_pick({"remote": {"easy": {"model": "x:y", "effort": "LOUD"}}}, "easy") == {"model": "x:y", "effort": None}
     assert R.level_of("auto:remote") == "remote" and "auto:remote" in [m for m, _ in R.model_ids()]
+
+
+_REAL_REACHABLE = R._reachable      # taken at import: the autouse fixture swaps in a stub for each test
+
+
+def test_an_add_on_endpoint_counts_as_reachable(monkeypatch):
+    # mod://chatgpt/v1 has no host: it was looked up as the host "chatgpt", always failed, and auto:remote never
+    # reached ChatGPT (2026-11-01).
+    import socket
+    tried = []
+
+    def no_network(*a, **k):
+        tried.append(a)
+        raise OSError("no such host")
+    monkeypatch.setattr(socket, "create_connection", no_network)
+    monkeypatch.setattr(R, "_online", {})
+    assert _REAL_REACHABLE("mod://chatgpt/v1") is True
+    assert not tried                                     # no socket for an add-on
+    assert _REAL_REACHABLE("http://100.102.86.125:11434/v1") is False   # a real server is still checked
+    assert tried

@@ -255,6 +255,12 @@ def _reachable(url: str) -> bool:
         return hit[1]
     u = urlparse(url)
     ok = True
+    if u.scheme not in ("http", "https"):
+        # An add-on's endpoint (mod://chatgpt/v1) has no host to open a socket to: "chatgpt" was looked up as a
+        # host name, so ChatGPT always read as offline and auto:remote fell back to a local model (88 times in the
+        # decision log by 2026-11-01).
+        _online[url] = (now, True)
+        return True
     if u.hostname:
         try:
             with socket.create_connection((u.hostname, u.port or (443 if u.scheme == "https" else 80)), timeout=2):
