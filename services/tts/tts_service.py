@@ -398,13 +398,23 @@ class TTSService:
     # ── Public interface ──
 
     def synthesize_checked(self, text: str, use_cache: bool = True, voice: Optional[str] = None,
-                           speed: Optional[float] = None, response_format: str = "mp3") -> bytes:
+                           speed: Optional[float] = None, response_format: str = "mp3",
+                           provider: Optional[str] = None, model: Optional[str] = None) -> bytes:
         """Audio for `text` with the configured provider. `voice` and `speed`
         override the saved ones (the Settings preview). `response_format` is
         what an API engine is asked for: MP3 for the browser, WAV for a phone
         call (the Phone & Messages mod, through the mod API), which has no MP3 decoder to count on. Kokoro
-        always makes WAV. Raises TTSError."""
+        always makes WAV. Raises TTSError.
+
+        `provider` (and `model`, for an endpoint) speak with that provider for this call instead of the saved one
+        (the OpenAI gateway's tts:<name> models). The saved voice and model belong to the saved provider, so
+        they only carry over when it is the same one. The "off" switch still applies. The app never passes it."""
         settings = self._load_settings()
+        if provider and provider != settings["tts_provider"]:
+            settings = dict(settings, tts_provider=provider, tts_voice="alloy" if provider.startswith("endpoint:") else "",
+                            tts_model=model or "tts-1")
+        elif provider and model:
+            settings = dict(settings, tts_model=model)
         provider = settings["tts_provider"]
         if settings.get("tts_enabled") is False or provider == "disabled":
             raise TTSError("Text to speech is off.")
