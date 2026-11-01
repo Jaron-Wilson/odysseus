@@ -27,11 +27,10 @@ def _pending_plans(owner: str) -> list:
     from src.chat_queue import _session_title
     out = []
     for p in approvals.pending_for(owner)[:5]:
-        from src.agent_tools.claude_code_tool import engine_label
-        engine = engine_label(p.get("engine") or "claude")
+        from src.agent_tools.claude_code_tool import runs_on
         out.append({"id": p["session_id"], "session_id": p["chat_session_id"],
                     "chat": _session_title(p["chat_session_id"]) if p["chat_session_id"] else "",
-                    "runs_on": f"{engine} · {p.get('model') or 'local default'}",
+                    "runs_on": runs_on(p.get("engine") or "claude", p.get("model")),
                     "plan": p["plan"], "created": p["created"]})
     return out
 
@@ -163,11 +162,10 @@ def setup_overlay_routes() -> APIRouter:
             except Exception:
                 pages = 0
         chat = entry.get("chat_session_id") or ""
-        from src.agent_tools.claude_code_tool import engine_label
-        engine = engine_label(entry.get("engine") or "claude")
+        from src.agent_tools.claude_code_tool import runs_on
         return {"id": plan_id, "status": entry.get("status"), "plan": entry.get("plan") or "",
                 "chat": _session_title(chat) if chat else "", "session_id": chat,
-                "runs_on": f"{engine} · {entry.get('model') or 'local default'}",
+                "runs_on": runs_on(entry.get("engine") or "claude", entry.get("model")),
                 "cwd": entry.get("cwd") or "", "pages": pages,
                 "pdf_url": f"/api/claude_code/plan/{plan_id}/pdf?inline=1" if pdf else ""}
 

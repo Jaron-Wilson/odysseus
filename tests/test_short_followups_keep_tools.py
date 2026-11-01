@@ -56,10 +56,19 @@ def test_coding_tasks_default_to_local_opencode(tmp_path, monkeypatch):
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setattr(cct, "DEFAULT_ENGINE", "opencode")
+    # The label names the model OpenCode will really use: its global default.
+    home = tmp_path / "home"
+    (home / ".config" / "opencode").mkdir(parents=True)
+    (home / ".config" / "opencode" / "opencode.json").write_text(json.dumps({"model": "vllm3090/qwen3.8-27b"}))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("OPENCODE_CONFIG", raising=False)
+    monkeypatch.delenv("OPENCODE_CONFIG_CONTENT", raising=False)
+    from src import opencode_providers
+    monkeypatch.setattr(opencode_providers, "_endpoints", lambda: [])
     out = asyncio.run(cct.ClaudeCodeTool().execute(
         json.dumps({"prompt": "draft the cuts", "cwd": str(tmp_path)}), {"user_initiated": True}))
     assert json.loads(argv.read_text())[0] == "run"                  # opencode, not claude
-    assert "runs on OpenCode · local default" in out["approval"]["approve"]
+    assert "runs on OpenCode · vllm3090/qwen3.8-27b" in out["approval"]["approve"]
     assert approvals.get(out["session_id"])["engine"] == "opencode"
 
 
