@@ -188,11 +188,12 @@ def setup_openai_gateway_routes() -> APIRouter:
         try:
             req = speech.validate(body)
             target = await asyncio.to_thread(speech.resolve, req["model"], owner)
-            audio, info = await asyncio.to_thread(speech.speak, target, req["text"], req["voice"], req["speed"], req["fmt"])
+            audio, info = await asyncio.to_thread(speech.speak, target, req["text"], req["voice"], req["speed"],
+                                                  req["fmt"], owner)
         except speech.SpeechError as e:
             return _error(e.status, e.message, e.code)
-        await asyncio.to_thread(speech.record, owner, target, len(req["text"].strip()), info)
-        headers = {"X-Odysseus-Voice": target.id, **speech.fallback_headers(info)}
+        await asyncio.to_thread(speech.record, owner, info, len(req["text"].strip()))
+        headers = speech.response_headers(info)
         if info["format"] != req["fmt"]:
             # This server cannot convert (PyAV is not installed): say what the bytes are rather than label them wrong.
             headers["X-Odysseus-Audio-Format"] = info["format"]

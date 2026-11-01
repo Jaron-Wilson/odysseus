@@ -45,6 +45,9 @@ class FakeKokoro:
 
     def synthesize(self, text, model, voice, speed):
         self.calls.append({"text": text, "voice": voice, "speed": speed})
+        if voice not in ("af_heart", "af_nicole", "af_bella", "bf_emma"):
+            from services.tts.kokoro_local import TTSError
+            raise TTSError(f"Kokoro could not use the voice {voice!r}", 400)
         return WAV
 
 
@@ -82,6 +85,9 @@ def env(monkeypatch, tmp_path, mods_dir):
     monkeypatch.setattr(svc, "_get_kokoro", lambda: kok)
     monkeypatch.setattr(svc, "_kokoro_model", lambda st: "kokoro-int8")
     monkeypatch.setattr(speech, "_service", lambda: svc)
+    monkeypatch.setattr(gw, "voice_setting", lambda: (
+        settings["tts_provider"].split(":", 1)[1] if settings["tts_provider"].startswith("endpoint:") else None,
+        settings["tts_model"]))
 
     posted = []
 
@@ -89,6 +95,10 @@ def env(monkeypatch, tmp_path, mods_dir):
         posted.append({"url": url, "json": json, "headers": headers})
         if posted_mode.get("down"):
             raise httpx.ConnectError("refused")
+        if posted_mode.get("status"):
+            return httpx.Response(posted_mode["status"], text="nope", request=httpx.Request("POST", url))
+        if json.get("voice") == posted_mode.get("reject_voice"):
+            return httpx.Response(422, text="no such voice", request=httpx.Request("POST", url))
         return httpx.Response(200, content=MP3, request=httpx.Request("POST", url))
     posted_mode = {}
     monkeypatch.setattr(T.httpx, "post", fake_post)
@@ -137,32 +147,30 @@ def usage_rows(c):
 
 # ---- the models ----
 
-@needs_av
-@pytest.mark.parametrize("name", ["tts", "tts-1", "tts-1-hd", "gpt-4o-mini-tts", "TTS-1"])
-def test_tts_and_the_openai_names_use_the_voice_odysseus_is_set_to(env, name):
+@pytest.mark.parametrize("name", ["tts", "tts-1", "tts-1-hd", "gpt-4o-mini-tts", "TTS-1", "tts:auto"])
+def test_tts_the_openai_names_and_auto_are_the_same_model(env, name):
     r = say(env, name)
-    assert r.status_code == 200 and r.headers["content-type"] == "audio/mpeg" and speech.sniff(r.content) == "mp3"
-    # the saved voice and speed speak: "alloy" is an OpenAI name, not a voice of ours, so it is ignored
-    assert env.kok.calls[-1]["voice"] == "af_nicole" and env.kok.calls[-1]["speed"] == 1.25
+    # no add-on here, so the first speech endpoint (the voice endpoint, else by name) speaks
+    assert r.status_code == 200 and r.headers["content-type"] == "audio/mpeg" and r.content == MP3
+    assert r.headers["x-odysseus-voice"] == "tts:kokoro-ep-k"
+    assert env.posted[-1]["url"].startswith("http://10.0.0.7")
 
 
-def test_tts_follows_the_saved_provider(env, addon):
-    env.settings.update(tts_provider="mod:elevenlabs", tts_voice="myclone1")
-    r = say(env, "tts", response_format="mp3")
-    assert r.status_code == 200 and r.content == MP3 and r.headers["content-type"] == "audio/mpeg"
-    body = [c for c in addon.calls if c[0] == "POST"][-1][2]
-    assert body["voice"] == "myclone1" and body["speed"] == 1.25 and not env.kok.calls
-    assert r.headers["x-odysseus-voice"] == "tts"
+def test_the_voice_endpoint_is_tried_first_by_auto(env):
+    env.settings.update(tts_provider="endpoint:ep-speech")
+    r = say(env, "tts")
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:speech-box"
+    assert env.posted[-1]["url"].startswith("http://10.0.0.6")
 
 
-def test_a_real_voice_in_the_request_overrides_the_saved_one(env):
-    r = say(env, "tts", voice="bf_emma", speed=1.5, response_format="wav")
+def test_a_real_voice_in_the_request_is_passed_on(env):
+    r = say(env, "tts:kokoro", voice="bf_emma", speed=1.5, response_format="wav")
     assert r.status_code == 200
     assert env.kok.calls[-1]["voice"] == "bf_emma" and env.kok.calls[-1]["speed"] == 1.5
 
 
 def test_a_voice_object_is_read_like_a_string(env):
-    assert say(env, "tts", voice={"id": "bf_emma"}, response_format="wav").status_code == 200
+    assert say(env, "tts:kokoro", voice={"id": "bf_emma"}, response_format="wav").status_code == 200
     assert env.kok.calls[-1]["voice"] == "bf_emma"
 
 
@@ -219,15 +227,14 @@ def test_an_endpoint_named_like_a_reserved_id_gets_a_suffix_and_private_ones_sta
 
 # ---- formats ----
 
-@needs_av
 def test_mp3_is_the_default_and_wav_can_be_asked_for(env):
-    r = env.post("/v1/audio/speech", json={"model": "tts", "input": "Hi"}, headers=H)       # no format, no voice
+    r = env.post("/v1/audio/speech", json={"model": "tts:kokoro", "input": "Hi"}, headers=H)   # no format, no voice
     assert r.status_code == 200 and r.headers["content-type"] == "audio/mpeg"
     assert speech.sniff(r.content) == "mp3"
     assert "x-odysseus-audio-format" not in r.headers
-    r = say(env, "tts", response_format="wav")
+    r = say(env, "tts:kokoro", response_format="wav")
     assert r.headers["content-type"] == "audio/wav" and r.content[:4] == b"RIFF"
-    r = say(env, "tts", response_format="MP3")
+    r = say(env, "tts:kokoro", response_format="MP3")
     assert r.headers["content-type"] == "audio/mpeg"
 
 
@@ -310,24 +317,21 @@ def test_elevenlabs_without_the_add_on_is_404_and_says_to_install_it(env):
     assert r.status_code == 404 and "Install the ElevenLabs voice add-on" in r.json()["error"]["message"]
 
 
-def test_a_turned_off_add_on_is_unavailable_for_tts(env):
+def test_a_saved_add_on_voice_that_is_not_installed_does_not_stop_auto(env):
     env.settings.update(tts_provider="mod:elevenlabs")
     r = say(env, "tts")
-    assert r.status_code == 503 and r.json()["error"]["code"] == "voice_unavailable"
-    assert "Install the ElevenLabs voice add-on" in r.json()["error"]["message"]
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:kokoro-ep-k"
 
 
-def test_the_browser_voice_and_off_cannot_speak_on_the_server(env):
-    env.settings["tts_provider"] = "browser"
-    r = say(env, "tts")
-    assert r.status_code == 503 and "browser" in r.json()["error"]["message"]
-    assert say(env, "tts:kokoro", response_format="wav").status_code == 200       # but a named voice still works
-    env.settings["tts_provider"] = "disabled"
-    r = say(env, "tts")
-    assert r.status_code == 503 and "off" in r.json()["error"]["message"]
+def test_only_the_off_switch_stops_the_server_voices(env):
+    for saved in ("browser", "disabled"):             # the saved voice is the web app's business, not the gateway's
+        env.settings["tts_provider"] = saved
+        assert say(env, "tts:kokoro", response_format="wav").status_code == 200
+        assert say(env, "tts").status_code == 200
     env.settings.update(tts_provider="local", tts_enabled=False)
-    r = say(env, "tts:kokoro")
-    assert r.status_code == 503 and r.json()["error"]["message"] == "Text to speech is off."
+    for name in ("tts:kokoro", "tts", "tts:speech-box"):
+        r = say(env, name)
+        assert r.status_code == 503 and r.json()["error"]["message"] == "Text to speech is off."
 
 
 def test_kokoro_not_ready_is_503_with_the_reason(env):
@@ -362,16 +366,13 @@ def test_an_add_on_that_is_over_quota_is_429(env, addon, monkeypatch):
 
 # ---- a paused add-on ----
 
-@needs_av
 def test_a_paused_add_on_falls_back_to_kokoro_and_says_so(env, addon):
     addon.paused = "Credit reserve reached"
-    r = say(env, "tts:elevenlabs", response_format="mp3")
+    r = say(env, "tts:elevenlabs", response_format="mp3")                 # by name: the service's own fallback
     assert r.status_code == 200 and r.content[:3] != b"RIFF" and r.headers["content-type"] == "audio/mpeg"
     assert r.headers["x-tts-fallback"] == "local" and r.headers["x-tts-fallback-reason"] == "Credit reserve reached"
+    assert r.headers["x-odysseus-voice"] == "tts:kokoro"
     assert env.kok.calls and env.kok.calls[-1]["voice"] == "af_heart"
-    env.settings.update(tts_provider="mod:elevenlabs")
-    r = say(env, "tts", response_format="wav")
-    assert r.status_code == 200 and r.content[:4] == b"RIFF" and r.headers["x-tts-fallback"] == "local"
 
 
 def test_a_paused_add_on_without_kokoro_is_409(env, addon):
@@ -422,28 +423,26 @@ def test_models_lists_the_speech_models_and_leaves_the_chat_ones_alone(env, addo
     data = r.json()["data"]
     ids = [m["id"] for m in data]
     voice = {m["id"]: m for m in data if m["owned_by"] == "Odysseus voice"}
-    assert set(voice) == {"tts", "tts:kokoro", "tts:elevenlabs", "tts:speech-box", "tts:kokoro-ep-k", "tts:local-ollama"}
-    assert all(m["object"] == "model" and m["created"] == 0 for m in voice.values())
+    assert list(voice) == ["tts:auto", "tts:elevenlabs", "tts:kokoro-ep-k", "tts:local-ollama", "tts:speech-box", "tts:kokoro"]
+    assert all(m["object"] == "model" and m["created"] == 0 and m["description"] for m in voice.values())
+    assert "ElevenLabs" in voice["tts:auto"]["description"] and "Speech Box" in voice["tts:auto"]["description"]
     assert len(ids) == len(set(ids))
     chat = [m["id"] for m in data if m["owned_by"] != "Odysseus voice"]
     auto = [i for i in chat if i == "auto" or i.startswith("auto:")]
     assert chat[:len(auto)] == auto                                    # the router entries stay first, as before
     assert chat[len(auto):] == [i["id"] for i in gw.catalog("alice")]  # then the chat models, in their order
+    assert chat[len(auto):] == ["local-ollama:qwen3:8b"]              # and no speech model among them
     assert data[-len(voice):] == list(voice.values())                  # the speech models come last
-    assert "tts-1" not in ids and "gpt-4o-mini-tts" not in ids          # the OpenAI names work but are not listed
+    assert not {"tts", "tts-1", "tts-1-hd", "gpt-4o-mini-tts"} & set(ids)   # the OpenAI names work but are not listed
 
 
 def test_models_only_lists_what_can_speak(env):
-    base = {"tts", "tts:kokoro", "tts:speech-box", "tts:kokoro-ep-k", "tts:local-ollama"}          # no add-on installed
-    got = {m["id"] for m in env.get("/v1/models", headers=H).json()["data"] if m["owned_by"] == "Odysseus voice"}
-    assert got == base
+    base = ["tts:auto", "tts:kokoro-ep-k", "tts:local-ollama", "tts:speech-box", "tts:kokoro"]      # no add-on installed
+    assert _voice_ids_list(env) == base
     env.kok.ready = False
-    env.settings["tts_provider"] = "browser"
-    got = {m["id"] for m in env.get("/v1/models", headers=H).json()["data"] if m["owned_by"] == "Odysseus voice"}
-    assert got == {"tts:speech-box", "tts:kokoro-ep-k", "tts:local-ollama"}
-    env.settings.update(tts_provider="local", tts_enabled=False)
-    got = {m["id"] for m in env.get("/v1/models", headers=H).json()["data"] if m["owned_by"] == "Odysseus voice"}
-    assert "tts" not in got
+    assert _voice_ids_list(env) == ["tts:auto", "tts:kokoro-ep-k", "tts:local-ollama", "tts:speech-box"]
+    env.settings.update(tts_provider="browser", tts_enabled=False)
+    assert _voice_ids_list(env) == []
 
 
 def test_an_add_on_that_is_not_ready_is_not_listed(env, addon, monkeypatch):
@@ -467,15 +466,15 @@ def test_models_list_needs_the_scope_and_survives_a_speech_failure(env, monkeypa
 def test_usage_is_recorded_as_tts_in_characters(env, addon):
     say(env, "tts:kokoro", input="  Hello there.  ", response_format="wav")
     assert usage_rows(env) == [("tts", "alice", "tts:kokoro", 12, "local_free", "kokoro", 0.0)]
-    say(env, "tts-1-hd", response_format="wav")                    # an OpenAI name is recorded as the model it is for
-    rows = usage_rows(env)
-    assert rows[-1][:4] == ("tts", "alice", "tts", 12) and rows[-1][5] == "kokoro"
-    say(env, "tts:elevenlabs")
+    say(env, "tts-1-hd", response_format="wav")                  # auto: recorded as the backend that spoke
     row = usage_rows(env)[-1]
     assert row[:4] == ("tts", "alice", "tts:elevenlabs", 12) and row[5] == "elevenlabs" and row[4] != "local_free"
     say(env, "tts:speech-box")
     row = usage_rows(env)[-1]
     assert row[:4] == ("tts", "alice", "tts:speech-box", 12)
+    addon.paused = "Credit reserve reached"
+    say(env, "tts", response_format="wav")                       # auto passes over the paused add-on
+    assert usage_rows(env)[-1][:4] == ("tts", "alice", "tts:kokoro-ep-k", 12)
 
 
 def test_a_fallback_is_recorded_as_the_kokoro_that_spoke(env, addon):
@@ -526,3 +525,270 @@ def test_the_conversion_keeps_the_audio_playable_and_its_length():
     codec, rate, secs = info(wav)
     assert speech.sniff(wav) == "wav" and codec.startswith("pcm") and rate == 24000 and abs(secs - 0.5) < 0.1
     assert speech.transcode(b"not audio", "mp3") is None
+
+
+def _add_endpoint(env, **kw):
+    s = env.factory()
+    s.add(ModelEndpoint(**kw))
+    s.commit()
+    s.close()
+
+
+def _voice_ids_list(env):
+    return [m["id"] for m in env.get("/v1/models", headers=H).json()["data"] if m["owned_by"] == "Odysseus voice"]
+
+
+def _voice_ids(env):
+    return {m["id"] for m in env.get("/v1/models", headers=H).json()["data"] if m["owned_by"] == "Odysseus voice"}
+
+
+def test_a_kokoro_server_whose_only_model_is_called_kokoro_is_a_speech_endpoint(env):
+    _add_endpoint(env, id="ep-pc", name="PC Kokoro", base_url="http://100.102.86.125:8880/v1",
+                  cached_models=json.dumps(["kokoro"]))
+    assert "tts:pc-kokoro" in _voice_ids(env)
+    r = say(env, "tts:pc-kokoro", voice="af_bella")
+    assert r.status_code == 200
+    p = env.posted[-1]
+    assert p["url"] == "http://100.102.86.125:8880/v1/audio/speech" and p["json"]["model"] == "kokoro"
+    assert p["json"]["voice"] == "af_bella"
+
+
+def test_a_tts_name_is_preferred_when_an_endpoint_has_several_speech_models(env):
+    say(env, "tts:speech-box")                       # models: kokoro, tts-1, whisper-1
+    assert env.posted[-1]["json"]["model"] == "tts-1"
+
+
+def test_the_endpoint_set_as_the_voice_counts_whatever_its_models_are_called(env):
+    _add_endpoint(env, id="ep-odd", name="Odd voice", base_url="http://10.0.0.20/v1",
+                  cached_models=json.dumps(["my-voice-v1"]))
+    assert "tts:odd-voice" not in _voice_ids(env)    # nothing says it speaks
+    assert say(env, "tts:odd-voice").status_code == 404
+    assert "odd-voice:my-voice-v1" in [i["id"] for i in gw.catalog("alice")]      # until it is the voice, it is a chat model
+    env.settings.update(tts_provider="endpoint:ep-odd", tts_model="my-voice-v1")
+    assert "tts:odd-voice" in _voice_ids(env)
+    assert say(env, "tts:odd-voice").status_code == 200
+    assert env.posted[-1]["json"]["model"] == "my-voice-v1"
+    assert "odd-voice:my-voice-v1" not in [i["id"] for i in gw.catalog("alice")]   # the saved speech model is not chat
+    env.settings.update(tts_model="")
+    say(env, "tts:odd-voice", input="Again.")
+    assert env.posted[-1]["json"]["model"] == "tts-1"
+    env.settings.update(tts_provider="local")        # no longer the voice: back to not listed
+    assert "tts:odd-voice" not in _voice_ids(env)
+
+
+def test_chat_and_speech_to_text_models_do_not_make_a_speech_endpoint(env):
+    _add_endpoint(env, id="ep-llm", name="Plain LLM", base_url="http://10.0.0.21/v1",
+                  cached_models=json.dumps(["qwen3:8b", "whisper-1", "text-embedding-3-small"]))
+    assert "tts:plain-llm" not in _voice_ids(env)
+
+
+def test_the_voice_endpoint_is_still_owner_scoped_and_needs_to_be_enabled(env):
+    _add_endpoint(env, id="ep-priv", name="Private voice", base_url="http://10.0.0.22/v1", owner="bob",
+                  cached_models=json.dumps(["x"]))
+    env.settings.update(tts_provider="endpoint:ep-priv")
+    assert "tts:private-voice" not in _voice_ids(env)           # alice does not see bob's endpoint
+    got = {m["id"] for m in env.get("/v1/models", headers={"x-test-scopes": "chat", "x-test-owner": "bob"}).json()["data"]}
+    assert "tts:private-voice" in got
+
+
+# ---- tts:auto: ElevenLabs, then the speech endpoints, then Kokoro on the server ----
+
+@pytest.fixture
+def desktop(env):
+    """The PC's Kokoro, as it is registered in the live setup: one model, "kokoro", no "tts" in its name."""
+    s = env.factory()
+    for ep in s.query(ModelEndpoint).filter(ModelEndpoint.id.in_(["ep-chat", "ep-speech", "ep-kok1", "ep-bob", "ep-off"])):
+        s.delete(ep)
+    s.add(ModelEndpoint(id="ep-desk", name="Kokoro (desktop)", base_url="http://100.102.86.125:8880/v1",
+                        cached_models=json.dumps(["kokoro"])))
+    s.commit()
+    s.close()
+    return env
+
+
+def post_bodies(addon):
+    return [c[2] for c in addon.calls if c[0] == "POST"]
+
+
+def test_auto_tries_elevenlabs_first(desktop, addon):
+    r = say(desktop, "tts:auto", voice="myclone1")
+    assert r.status_code == 200 and r.content == MP3 and r.headers["x-odysseus-voice"] == "tts:elevenlabs"
+    assert "x-odysseus-voice-skipped" not in r.headers
+    assert len(post_bodies(addon)) == 1 and not desktop.posted and not desktop.kok.calls
+
+
+def test_auto_goes_to_the_desktop_kokoro_then_to_the_server_kokoro(desktop):
+    r = say(desktop, "tts:auto")                                  # no add-on installed
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:kokoro-desktop"
+    assert desktop.posted[-1]["url"] == "http://100.102.86.125:8880/v1/audio/speech"
+    assert desktop.posted[-1]["json"]["model"] == "kokoro" and not desktop.kok.calls
+    desktop.mode["down"] = True                                   # the PC is off
+    r = say(desktop, "tts:auto", response_format="wav")
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:kokoro" and r.content[:4] == b"RIFF"
+    assert "kokoro-desktop" in r.headers["x-odysseus-voice-skipped"]
+    assert len(desktop.kok.calls) == 1
+
+
+@pytest.mark.parametrize("how", ["quota", "key", "limit", "down"])
+def test_auto_falls_through_when_elevenlabs_fails(desktop, addon, monkeypatch, how):
+    status = {"quota": 402, "key": 401, "limit": 429, "down": 500}[how]
+
+    def post(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        return self._send(status, {"error": f"ElevenLabs answered {status}"})
+    monkeypatch.setattr(addon.srv.RequestHandlerClass, "do_POST", post)
+    r = say(desktop, "tts:auto")
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:kokoro-desktop"
+    assert r.headers["x-odysseus-voice-skipped"].startswith("elevenlabs:")
+    assert not desktop.kok.calls
+
+
+def test_auto_falls_through_when_the_add_on_is_not_running(desktop, addon):
+    from src.mods import runtime
+    runtime.state("elevenlabs").status = "stopped"
+    desktop.svc._mod_status_cache.clear()
+    r = say(desktop, "tts:auto")
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:kokoro-desktop"
+    assert "x-odysseus-voice-skipped" in r.headers
+
+
+def test_auto_skips_a_paused_add_on_without_calling_it_and_does_not_use_the_server_kokoro_for_it(desktop, addon):
+    addon.paused = "Credit reserve reached"
+    r = say(desktop, "tts:auto")
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:kokoro-desktop"
+    assert "Credit reserve reached" in r.headers["x-odysseus-voice-skipped"]
+    assert not post_bodies(addon) and not desktop.kok.calls
+    assert "x-tts-fallback" not in r.headers
+
+
+def test_auto_handles_a_pause_that_starts_between_the_status_check_and_the_call(desktop, addon, monkeypatch):
+    monkeypatch.setattr(speech, "_mod_state", lambda mid: (True, ""))       # the status said fine
+    addon.paused = "Credit reserve reached"                               # the call says paused
+    r = say(desktop, "tts:auto")
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:kokoro-desktop"
+    assert len(post_bodies(addon)) == 1 and not desktop.kok.calls          # the add-on's own Kokoro fallback is not used
+
+
+def test_auto_with_everything_failing_is_one_openai_error(desktop, addon, monkeypatch):
+    desktop.mode["down"] = True
+    desktop.kok.ready = False
+    desktop.svc.start_download = lambda m: None
+    addon.paused = "Credit reserve reached"
+    r = say(desktop, "tts:auto")
+    e = r.json()["error"]
+    assert r.status_code == 502 and e["code"] == "upstream_error" and e["type"] == "api_error"
+    for part in ("elevenlabs: Credit reserve reached", "kokoro-desktop:", "kokoro: Kokoro is not downloaded"):
+        assert part in e["message"]
+    assert usage_rows(desktop) == []
+
+
+def test_auto_with_nothing_available_is_503(desktop):
+    desktop.kok.ready = False
+    desktop.svc.start_download = lambda m: None
+    s = desktop.factory()
+    s.query(ModelEndpoint).delete()
+    s.commit()
+    s.close()
+    r = say(desktop, "tts:auto")
+    assert r.status_code == 503 and r.json()["error"]["code"] == "voice_unavailable"
+    assert _voice_ids_list(desktop) == []                               # and nothing is listed, auto included
+
+
+def test_auto_follows_the_order_and_names_who_spoke_in_usage(desktop, addon):
+    say(desktop, "tts-1")
+    say(desktop, "tts-1", input="Second one.")
+    assert [r[2] for r in usage_rows(desktop)] == ["tts:elevenlabs", "tts:elevenlabs"]
+    addon.paused = "Credit reserve reached"
+    say(desktop, "tts-1", input="Third one.")
+    assert usage_rows(desktop)[-1][2] == "tts:kokoro-desktop"
+
+
+# ---- voices that the backend that speaks does not have ----
+
+def test_a_voice_the_add_on_does_not_have_is_replaced_by_its_default(desktop, addon):
+    r = say(desktop, "tts:auto", voice="af_heart")                # a Kokoro voice, asked of ElevenLabs
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:elevenlabs"
+    assert post_bodies(addon)[-1]["voice"] == ""
+    say(desktop, "tts:elevenlabs", voice="Jaron", input="By name.")        # a voice it has, by its name
+    assert post_bodies(addon)[-1]["voice"] == "Jaron"
+    say(desktop, "tts:elevenlabs", voice="myclone1", input="By id.")
+    assert post_bodies(addon)[-1]["voice"] == "myclone1"
+
+
+def test_an_elevenlabs_voice_on_kokoro_uses_the_kokoro_default(desktop):
+    r = say(desktop, "tts:kokoro", voice="myclone1", response_format="wav")
+    assert r.status_code == 200 and desktop.kok.calls[-1]["voice"] == "af_heart"
+    r = say(desktop, "tts:kokoro", voice="zz_unknown", response_format="wav", input="Another.")   # looks like Kokoro, is not
+    # it refused that one, so Kokoro's default speaks (here the saved Kokoro voice)
+    assert r.status_code == 200 and [c["voice"] for c in desktop.kok.calls][-2:] == ["zz_unknown", "af_nicole"]
+
+
+def test_an_endpoint_that_refuses_the_voice_is_asked_again_with_its_default(desktop):
+    desktop.mode["reject_voice"] = "af_heart"
+    r = say(desktop, "tts:kokoro-desktop", voice="af_heart")
+    assert r.status_code == 200 and [p["json"]["voice"] for p in desktop.posted] == ["af_heart", "alloy"]
+
+
+def test_falling_through_never_fails_over_a_voice(desktop, addon, monkeypatch):
+    # ElevenLabs is down and the desktop does not know the voice: the desktop's default speaks, not an error
+    def post(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        return self._send(500, {"error": "boom"})
+    monkeypatch.setattr(addon.srv.RequestHandlerClass, "do_POST", post)
+    desktop.mode["reject_voice"] = "myclone1"
+    r = say(desktop, "tts:auto", voice="myclone1")
+    assert r.status_code == 200 and r.headers["x-odysseus-voice"] == "tts:kokoro-desktop"
+    assert [p["json"]["voice"] for p in desktop.posted] == ["myclone1", "alloy"]
+
+
+def test_a_server_that_is_down_is_not_retried_as_a_voice_problem(desktop):
+    desktop.mode["status"] = 500
+    r = say(desktop, "tts:kokoro-desktop", voice="af_heart")
+    assert r.status_code == 502 and len(desktop.posted) == 1
+
+
+# ---- speech models are not chat models ----
+
+def test_the_desktop_kokoro_is_a_speech_model_and_not_a_chat_model(desktop):
+    data = desktop.get("/v1/models", headers=H).json()["data"]
+    ids = {m["id"]: m for m in data}
+    assert "kokoro-desktop:kokoro" not in ids                      # it was listed as a chat model before
+    assert ids["tts:kokoro-desktop"]["owned_by"] == "Odysseus voice" and ids["tts:auto"]["owned_by"] == "Odysseus voice"
+    assert "Kokoro (desktop)" in ids["tts:auto"]["description"]
+    assert gw.catalog("alice") == []                               # the only endpoint left is a speech one
+    with pytest.raises(LookupError):
+        gw.resolve("kokoro-desktop:kokoro", "alice")               # the auto router resolves through this
+    with pytest.raises(LookupError):
+        gw.resolve("kokoro", "alice")
+
+
+def test_a_chat_completion_for_a_speech_model_is_a_404(desktop):
+    r = desktop.post("/v1/chat/completions", headers=H, json={"model": "kokoro-desktop:kokoro", "messages": []})
+    assert r.status_code == 404 and r.json()["error"]["code"] == "model_not_found"
+
+
+def test_the_auto_router_never_picks_a_speech_model(env, monkeypatch):
+    """The router names its candidates in gateway_router.json and reaches them through gw.resolve. A speech model named
+    there (strong model gone wrong, or the only endpoint added) is "not available", so the next candidate is used."""
+    import asyncio
+    from src import gateway_router as ar
+    _add_endpoint(env, id="ep-desk", name="Kokoro (desktop)", base_url="http://100.102.86.125:8880/v1",
+                  cached_models=json.dumps(["kokoro"]))
+    cfg = dict(ar.config(), strong="kokoro-desktop:kokoro", fast="kokoro-desktop:kokoro", chat=None,
+               fallback=["local-ollama:qwen3:8b"])
+    monkeypatch.setattr(ar, "config", lambda: cfg)
+    monkeypatch.setattr(ar, "_log", lambda entry: None)
+    monkeypatch.setattr(ar, "_reachable", lambda url: True)
+    payload = {"model": "auto:hard", "messages": [{"role": "user", "content": "fix the crash"}]}
+    out, decision = asyncio.run(ar.route(payload, "alice", complete=None, supports_images=None))
+    assert out["model"] == "local-ollama:qwen3:8b"
+    assert "kokoro-desktop:kokoro is not available" in decision["reason"]
+
+
+def test_chat_models_on_a_mixed_endpoint_stay_chat_models(env):
+    _add_endpoint(env, id="ep-mix", name="Mixed", base_url="http://10.0.0.30/v1",
+                  cached_models=json.dumps(["gpt-4o", "tts-1", "gpt-4o-mini-tts", "kokoro"]))
+    assert [i["id"] for i in gw.catalog("alice") if i["id"].startswith("mixed:")] == ["mixed:gpt-4o"]
+    assert "tts:mixed" in _voice_ids(env)
+    say(env, "tts:mixed")
+    assert env.posted[-1]["json"]["model"] == "tts-1"              # a tts-* name first
