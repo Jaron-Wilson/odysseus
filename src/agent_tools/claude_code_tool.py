@@ -75,8 +75,34 @@ ENGINE_LABELS = {"opencode": "OpenCode", "claude": "Claude Code", "antigravity":
 DEFAULT_ENGINE = (os.environ.get("ODYSSEUS_CODE_ENGINE", "opencode").strip().lower() or "opencode")
 if DEFAULT_ENGINE not in ENGINES:
     DEFAULT_ENGINE = "opencode"
-OPENCODE_DEFAULT_LABEL = "local default (vllm3090/qwen3.8-27b)"
+# What an OpenCode run shows as its model when none is passed and none can be
+# found in its config: the label used to be a hard-coded "local default
+# (vllm3090/qwen3.8-27b)" that was simply wrong once the global default changed.
+OPENCODE_DEFAULT_LABEL = "opencode default"
 ANTIGRAVITY_DEFAULT_LABEL = "Antigravity default"
+
+
+def opencode_default_label(env: Optional[dict] = None) -> str:
+    """The model an OpenCode run with no `--model` really uses, for the run's
+    label: `model` in OPENCODE_CONFIG_CONTENT, else in the user's own config
+    (~/.config/opencode/opencode.json[c], or the file OPENCODE_CONFIG names),
+    else OPENCODE_DEFAULT_LABEL. Read per run, and never raises: a missing or
+    broken file just means the generic label."""
+    try:
+        from src import opencode_providers
+        return opencode_providers.effective_model(env) or OPENCODE_DEFAULT_LABEL
+    except Exception:
+        return OPENCODE_DEFAULT_LABEL
+
+
+def runs_on(engine: str, model: str = "") -> str:
+    """"OpenCode · <model>" for a plan or run card. A record with no model
+    stored says what its engine would use now instead of a made-up default."""
+    model = (model or "").strip()
+    if not model:
+        model = (opencode_default_label() if engine == "opencode"
+                 else ANTIGRAVITY_DEFAULT_LABEL if engine == "antigravity" else DEFAULT_MODEL)
+    return f"{engine_label(engine)} \u00b7 {model}"
 
 
 def engine_cli(engine: str) -> Optional[str]:
@@ -255,6 +281,19 @@ def _strip_ansi(s: str) -> str:
     """Drop terminal escapes. `claude --bg` and `claude logs` both colour their
     output, and the raw codes make the id unparseable and the logs unreadable."""
     return _ANSI_RE.sub("", s or "")
+
+
+def _step_was_empty(event: dict) -> bool:
+    """An OpenCode step_finish that produced nothing: its token counts are
+    there and output and reasoning are both zero. A step_finish with no token
+    counts at all is not called empty, since nothing says it was."""
+    tokens = (event.get("part") or {}).get("tokens")
+    if not isinstance(tokens, dict):
+        return False
+    try:
+        return not (float(tokens.get("output") or 0) or float(tokens.get("reasoning") or 0))
+    except (TypeError, ValueError):
+        return False
 
 
 def _summarize_opencode(event: dict) -> Optional[str]:
@@ -1320,7 +1359,17 @@ class ClaudeCodeTool:
             if limits.get("max_cost_usd"):
                 # The CLI's own hard stop, at the point where the wrap-up starts.
                 cmd += ["--max-budget-usd", f"{BUDGET_WRAP_AT * limits['max_cost_usd']:.2f}"]
-        model_label = model or (ANTIGRAVITY_DEFAULT_LABEL if engine == "antigravity" else OPENCODE_DEFAULT_LABEL)
+        # Start from a clean environment for the child. Anything inherited from
+        # a surrounding Claude Code process (CLAUDECODE, CLAUDE_CODE_*, the
+        # messaging socket) makes the CLI think it is a nested child session and
+        # it then refuses its own edit tools — the run exits 0 having silently
+        # changed nothing. Only relevant when this server was itself launched
+        # from a Claude Code session, which is exactly the case while developing.
+        # Built before the label: an OpenCode run with no model passed uses the
+        # `model` in this environment's config, and the label says which.
+        env = _cli_env()
+        model_label = model or (ANTIGRAVITY_DEFAULT_LABEL if engine == "antigravity"
+                                else opencode_default_label(env))
         run_label = f"{engine_label(engine)} · {model_label}"
 
         # Detached mode: hand the run to bg_jobs and return now, so a refactor
@@ -1332,14 +1381,6 @@ class ClaudeCodeTool:
             return await self._launch_background(
                 cmd, prompt, cwd_path, session_id, action,
                 (ctx or {}).get("session_id"))
-
-        # Start from a clean environment for the child. Anything inherited from
-        # a surrounding Claude Code process (CLAUDECODE, CLAUDE_CODE_*, the
-        # messaging socket) makes the CLI think it is a nested child session and
-        # it then refuses its own edit tools — the run exits 0 having silently
-        # changed nothing. Only relevant when this server was itself launched
-        # from a Claude Code session, which is exactly the case while developing.
-        env = _cli_env()
 
         try:
             timeout = max(30, min(3600, int(args.get("timeout") or DEFAULT_TIMEOUT_S)))
@@ -1574,6 +1615,9 @@ class _Stream:
         self.final_text = ""
         self.last_text = ""                # the model's most recent text block
         self.last_stop_reason = ""         # OpenCode: reason of the last step_finish
+        # OpenCode: step_finish events in a row that produced no output tokens,
+        # with no text or tool call between them (see _check_empty_loop).
+        self.empty_steps = 0
         self.is_error = False
         self.thinking_tokens = 0
         # For run limits: turns taken and dollars spent so far. Claude reports
@@ -1648,10 +1692,16 @@ class _Stream:
                 self.turns += 1
             elif event.get("type") == "step_finish":
                 self.last_stop_reason = str((event.get("part") or {}).get("reason") or "")
+                if _step_was_empty(event):
+                    self.empty_steps += 1
+                else:
+                    self.empty_steps = 0
                 try:
                     self.cost_exact = (self.cost_exact or 0.0) + float((event.get("part") or {}).get("cost") or 0)
                 except (TypeError, ValueError):
                     pass
+            elif event.get("type") in ("text", "tool", "tool_use", "reasoning"):
+                self.empty_steps = 0       # it said or did something
             summary = _summarize_opencode(event)
             if not summary:
                 return []
@@ -1725,6 +1775,7 @@ async def _follow(job, stream: "_Stream", add, exited, tail: "_FileTail") -> Non
         if not done:
             _check_limits(job, stream, add)
             _check_stalled(job, add, last_heard)
+            _check_empty_loop(job, stream, add)
         if stream.session_id and job.cli_session_id != stream.session_id:
             job.cli_session_id = stream.session_id
             job.spec["session_id"] = stream.session_id
@@ -1871,6 +1922,27 @@ def _check_stalled(job, add, last_heard: float) -> None:
         return
     job.spec["stalled"] = max(1, round(quiet / 60))
     add(f"\u25a0 No output for {job.spec['stalled']} minutes: the model server looks stuck. Stopping the run.")
+    claude_code_jobs.save()
+    claude_code_jobs.kill_run(job)
+
+
+# 2026-11-01: OpenCode was pointed at a model that answered every request with
+# nothing (the gateway redirected an unauthenticated call to its login page).
+# It recorded an empty step (0 tokens, reason "unknown") and tried again, 4,878
+# times in 27 minutes, and the job stayed "running". A real model that is slow
+# or confused still emits text, a tool call or tokens; this many empty steps in
+# a row means the model is not answering at all.
+EMPTY_STEP_LIMIT = int(os.environ.get("ODYSSEUS_CODER_EMPTY_STEPS", "25"))
+
+
+def _check_empty_loop(job, stream: "_Stream", add) -> None:
+    """Stop an OpenCode run that keeps finishing steps with no output; the
+    failure message is built in _build_result."""
+    if (job.spec.get("empty_loop") or job.status != "running" or EMPTY_STEP_LIMIT <= 0
+            or stream.engine != "opencode" or stream.empty_steps < EMPTY_STEP_LIMIT):
+        return
+    job.spec["empty_loop"] = stream.empty_steps
+    add(f"\u25a0 {stream.empty_steps} empty replies in a row: the model is not answering. Stopping the run.")
     claude_code_jobs.save()
     claude_code_jobs.kill_run(job)
 
@@ -2149,6 +2221,20 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
                 "usage": {"turns": stream.turns, "cost_usd": round(stream.cost, 2), "limits": limits},
                 "engine_label": engine_label(spec.get("engine", job.engine)), "exit_code": 0,
                 "job_id": job.id}
+    if spec.get("empty_loop"):
+        restored = action == "execute" and (approvals.restore_approval(session_id)
+                                            or _restore_native(spec))
+        return {
+            "error": (
+                f"OpenCode got empty replies from {model_label} {spec['empty_loop']} times in a row "
+                "(is the model reachable and the token valid?) "
+                + ("The approval is restored, so it can run again. " if restored else "")
+                + "Tell the user this in your reply, and suggest checking that model's server or "
+                  "token, or another model. Do not retry on the same model by yourself."),
+            "output": console[-MAX_RESULT_CHARS:],
+            "session_id": session_id, "approval_restored": restored, "empty_loop": True,
+            "exit_code": 1,
+        }
     if spec.get("stalled"):
         restored = action == "execute" and (approvals.restore_approval(session_id)
                                             or _restore_native(spec))

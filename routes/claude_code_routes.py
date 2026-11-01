@@ -219,13 +219,12 @@ def setup_claude_code_routes() -> APIRouter:
         out = []
         for p in approvals.pending_for(user or ""):
             chat = p.get("chat_session_id") or ""
-            from src.agent_tools.claude_code_tool import engine_label
-            engine = engine_label(p.get("engine") or "claude")
+            from src.agent_tools.claude_code_tool import runs_on
             out.append({
                 "id": p["session_id"], "chat_session_id": chat,
                 "chat_name": _session_title(chat) if chat else "",
                 "cwd": p.get("cwd", ""), "created": p.get("created", 0),
-                "runs_on": f"{engine} \u00b7 {p.get('model') or 'local default'}",
+                "runs_on": runs_on(p.get("engine") or "claude", p.get("model")),
                 "preview": p.get("plan", ""),
                 "has_pdf": os.path.isfile(os.path.join(PDF_DIR, f"plan-{p['session_id']}.pdf")),
             })

@@ -22,12 +22,86 @@ logger = logging.getLogger(__name__)
 PREFIX = "ody-"
 
 
-def _own_config() -> Dict:
+def _strip_jsonc(text: str) -> str:
+    """opencode.jsonc: drop // and /* */ comments (not inside strings) and the
+    trailing commas JSONC allows, so json.loads can read it."""
+    out = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+            out.append(c)
+        elif text.startswith("//", i):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+
+
+def _read_config_file(path: str) -> Dict:
+    """One OpenCode config file as a dict; {} when missing or not valid."""
     try:
-        with open(os.path.expanduser("~/.config/opencode/opencode.json"), encoding="utf-8") as f:
-            return json.load(f) or {}
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        if path.endswith(".jsonc"):
+            text = _strip_jsonc(text)
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _read_own(env) -> Dict:
+    """OpenCode's own config as it would see it: ~/.config/opencode/opencode.json
+    (or .jsonc), with the file named by OPENCODE_CONFIG in `env` laid over it.
+    Whatever is missing or invalid reads as empty."""
+    cfg: Dict = {}
+    base = os.path.expanduser("~/.config/opencode")
+    paths = [os.path.join(base, "opencode.json"), os.path.join(base, "opencode.jsonc")]
+    if env.get("OPENCODE_CONFIG"):
+        paths.append(os.path.expanduser(env["OPENCODE_CONFIG"]))
+    for path in paths:
+        cfg.update(_read_config_file(path))
+    return cfg
+
+
+def _own_config() -> Dict:
+    return _read_own(os.environ)
+
+
+def effective_model(env=None) -> str:
+    """The model an OpenCode run uses when none is passed with --model: the
+    `model` in OPENCODE_CONFIG_CONTENT (what Odysseus hands the run) if set,
+    else the one in the user's own config, else "". Read when a run starts, so
+    a changed config is picked up.
+
+    2026-11-01: the run screen said "local default (vllm3090/qwen3.8-27b)", a
+    hard-coded string, while OpenCode was really on the global default
+    "odysseus/auto" and looping on empty replies."""
+    env = os.environ if env is None else env
+    try:
+        content = json.loads(env.get("OPENCODE_CONFIG_CONTENT") or "{}")
+    except ValueError:
+        content = {}
+    if isinstance(content, dict) and str(content.get("model") or "").strip():
+        return str(content["model"]).strip()
+    return str(_read_own(env).get("model") or "").strip()
 
 
 def _norm(url: str) -> str:

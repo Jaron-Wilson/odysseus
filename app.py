@@ -52,7 +52,8 @@ from core.constants import (
     REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
-from core.middleware import ModAwareCORSMiddleware, SecurityHeadersMiddleware, is_cors_preflight
+from core.middleware import (ModAwareCORSMiddleware, SecurityHeadersMiddleware, is_cors_preflight,
+                             is_openai_api_path, openai_auth_error)
 from core.auth import AuthManager, normalize_known_username
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
@@ -365,6 +366,10 @@ if AUTH_ENABLED:
                 return await call_next(request)
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
+                if is_openai_api_path(path):
+                    return openai_auth_error(
+                        "Odysseus has no users yet; finish setup in the browser, then send an API token.",
+                        "setup_required")
                 if not path.startswith("/api/"):
                     return RedirectResponse(url="/login", status_code=302)
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
@@ -375,6 +380,8 @@ if AUTH_ENABLED:
                 raw_token = auth_header[7:]
                 # Sanity check: tokens are "ody_" + 43 chars of base64
                 if len(raw_token) < 12 or len(raw_token) > 100:
+                    if is_openai_api_path(path):
+                        return openai_auth_error("Invalid API token.")
                     return JSONResponse(status_code=401, content={"error": "Invalid API token"})
                 prefix = raw_token[:8]
                 try:
@@ -429,11 +436,19 @@ if AUTH_ENABLED:
                 except Exception:
                     logger.warning("API token auth error", exc_info=False)
                 # Invalid bearer token — reject immediately
+                if is_openai_api_path(path):
+                    return openai_auth_error("Invalid API token.")
                 return JSONResponse(status_code=401, content={"error": "Invalid API token"})
 
             # --- Cookie-based session auth ---
             token = request.cookies.get(SESSION_COOKIE)
             if not auth_manager.validate_token(token):
+                # /v1/ is for programs: a 401 they can read, not a login page.
+                # (An empty "Authorization: Bearer " lands here too.)
+                if is_openai_api_path(path):
+                    return openai_auth_error(
+                        "No API key provided. Send 'Authorization: Bearer <token>' with an Odysseus API token "
+                        "that has the chat scope.", "missing_api_key")
                 if path.startswith("/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
                 return RedirectResponse(url="/login", status_code=302)
