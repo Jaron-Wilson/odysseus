@@ -901,7 +901,7 @@ app.include_router(setup_webhook_routes(webhook_manager, auth_manager, session_m
 from routes.api_token_routes import setup_api_token_routes
 app.include_router(setup_api_token_routes())
 
-# OpenAI-compatible gateway (/v1/models, /v1/chat/completions) over the models added in Settings
+# OpenAI-compatible gateway (/v1/models, /v1/chat/completions, /v1/audio/speech) over the models added in Settings
 from routes.openai_gateway_routes import setup_openai_gateway_routes
 app.include_router(setup_openai_gateway_routes())
 

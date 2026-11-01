@@ -7,7 +7,8 @@ routes/openai_gateway_routes.py; this module decides which models exist and wher
 A model is listed as ``<endpoint-slug>:<model>``, for example ``local-ollama:qwen3:8b`` (the slug comes from the
 endpoint's name). A bare model name also works while exactly one endpoint has it.
 
-Every enabled chat model the user can use is listed. Endpoints that speak the OpenAI chat-completions format are
+Every enabled chat model the user can use is listed. Speech models (kokoro, tts-1 ...) are not: they belong to
+/v1/audio/speech (src/gateway_speech.py) and never answer a chat, so the auto router cannot pick them either. Endpoints that speak the OpenAI chat-completions format are
 passed straight through. The others (Anthropic, ChatGPT sign-in, Copilot, native Ollama /api, add-on models) are
 translated: routes/openai_gateway_routes.py sends the request through Odysseus's own provider layer (src/llm_core.py,
 the code a chat turn uses) and turns the answer back into OpenAI chat-completions, streamed or not.
@@ -20,6 +21,7 @@ from core.database import ModelEndpoint, SessionLocal
 from src.auth_helpers import owner_filter
 from src.endpoint_resolver import (
     _NON_CHAT_MODEL,
+    _endpoint_cached_models,
     _endpoint_enabled_models,
     build_chat_url,
     build_headers,
@@ -59,13 +61,46 @@ def needs_translation(base: str) -> bool:
     return _detect_provider(base) in _TRANSLATED
 
 
-def _chat_models(ep) -> List[str]:
+# a model id with one of these in it is a speech model (OpenAI's tts-1 and gpt-4o-mini-tts, Kokoro-FastAPI's "kokoro", ...).
+# Speech models are offered as tts:<endpoint> by src/gateway_speech.py and are never chat models.
+SPEECH_MODEL_HINTS = ("tts", "kokoro", "piper", "orpheus", "parler", "cosyvoice", "chatterbox")
+
+
+def is_speech_model(name: str) -> bool:
+    low = str(name).lower()
+    return any(h in low for h in SPEECH_MODEL_HINTS)
+
+
+def voice_setting() -> Tuple[Optional[str], str]:
+    """(id of the endpoint chosen as the voice in Settings > Text to speech, else None; the saved speech model)."""
+    try:
+        from src.settings import load_settings
+        s = load_settings()
+        p = str(s.get("tts_provider") or "")
+        return (p.split(":", 1)[1] if p.startswith("endpoint:") else None), str(s.get("tts_model") or "")
+    except Exception:
+        return None, ""
+
+
+def speech_models(ep, voice: Optional[Tuple[Optional[str], str]] = None) -> List[str]:
+    """Every model of an endpoint (hidden ones too) that is a speech model: by its name, or the speech model saved
+    for the endpoint that is the voice in Settings. A model with tts in its name comes first."""
+    voice_id, voice_model = voice if voice is not None else voice_setting()
+    out = []
+    for m in [str(x) for x in list(_endpoint_cached_models(ep)) + _json_list(getattr(ep, "pinned_models", None))]:
+        if m not in out and (is_speech_model(m) or (str(ep.id) == voice_id and voice_model and m == voice_model)):
+            out.append(m)
+    return sorted(out, key=lambda m: "tts" not in m.lower())
+
+
+def _chat_models(ep, voice: Optional[Tuple[Optional[str], str]] = None) -> List[str]:
     """Enabled and pinned models of an endpoint that look like chat models, in order, without repeats."""
     hidden = set(_json_list(getattr(ep, "hidden_models", None)))
+    speech = set(speech_models(ep, voice))
     seen, out = set(), []
     for m in list(_endpoint_enabled_models(ep)) + _json_list(getattr(ep, "pinned_models", None)):
         m = str(m)
-        if m in seen or m in hidden or any(p in m.lower() for p in _NOT_CHAT):
+        if m in seen or m in hidden or m in speech or any(p in m.lower() for p in _NOT_CHAT):
             continue
         seen.add(m)
         out.append(m)
@@ -77,6 +112,7 @@ def _entries(db, owner: Optional[str]) -> List[Tuple[object, str, str]]:
     q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
     q = owner_filter(q, ModelEndpoint, owner or "")
     out, used = [], set()
+    voice = voice_setting()
     # oldest first, so the endpoint that has had a name longest keeps it plain when two share one
     for ep in sorted(q.all(), key=lambda e: (str(e.name or "").lower(), str(getattr(e, "created_at", "") or ""), str(e.id))):
         if (getattr(ep, "model_type", None) or "llm") != "llm":
@@ -85,7 +121,7 @@ def _entries(db, owner: Optional[str]) -> List[Tuple[object, str, str]]:
         if slug in used:
             slug = f"{slug}-{str(ep.id)[:4]}"
         used.add(slug)
-        for m in _chat_models(ep):
+        for m in _chat_models(ep, voice):
             out.append((ep, slug, m))
     return out
 

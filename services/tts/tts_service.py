@@ -206,7 +206,7 @@ class TTSService:
         return [v for v in voices if isinstance(v, dict) and v.get("voice_id")]
 
     def _synthesize_mod(self, mod_id: str, text: str, voice: str, speed: float, response_format: str,
-                        use_cache: bool, settings: dict) -> bytes:
+                        use_cache: bool, settings: dict, allow_fallback: bool = True) -> bytes:
         from src.mods import providers
         self._fallback = None
         if not providers.provider("tts.voice", mod_id):
@@ -223,6 +223,8 @@ class TTSService:
             if d.get("paused"):
                 # The add-on is paused (credit reserve, quota): Kokoro or the browser speaks.
                 self._mod_status_cache.pop(mod_id, None)
+                if not allow_fallback:      # the caller has its own next choice (the gateway's tts:auto)
+                    raise TTSError(str(d.get("reason") or f"{self._addon_name(mod_id)} is paused"), 409)
                 return self._synthesize_fallback(mod_id, str(d.get("reason") or ""), text, speed, use_cache, settings)
         if r.status_code >= 400:
             d = _json(r)
@@ -398,13 +400,25 @@ class TTSService:
     # ── Public interface ──
 
     def synthesize_checked(self, text: str, use_cache: bool = True, voice: Optional[str] = None,
-                           speed: Optional[float] = None, response_format: str = "mp3") -> bytes:
+                           speed: Optional[float] = None, response_format: str = "mp3",
+                           provider: Optional[str] = None, model: Optional[str] = None,
+                           allow_fallback: bool = True) -> bytes:
         """Audio for `text` with the configured provider. `voice` and `speed`
         override the saved ones (the Settings preview). `response_format` is
         what an API engine is asked for: MP3 for the browser, WAV for a phone
         call (the Phone & Messages mod, through the mod API), which has no MP3 decoder to count on. Kokoro
-        always makes WAV. Raises TTSError."""
+        always makes WAV. Raises TTSError.
+
+        `provider` (and `model`, for an endpoint) speak with that provider for this call instead of the saved one
+        (the OpenAI gateway's tts:<name> models). The saved voice and model belong to the saved provider, so
+        they only carry over when it is the same one. The "off" switch still applies. `allow_fallback=False` makes a
+        paused add-on raise (409) instead of speaking with Kokoro. The app never passes any of these."""
         settings = self._load_settings()
+        if provider and provider != settings["tts_provider"]:
+            settings = dict(settings, tts_provider=provider, tts_voice="alloy" if provider.startswith("endpoint:") else "",
+                            tts_model=model or "tts-1")
+        elif provider and model:
+            settings = dict(settings, tts_model=model)
         provider = settings["tts_provider"]
         if settings.get("tts_enabled") is False or provider == "disabled":
             raise TTSError("Text to speech is off.")
@@ -423,7 +437,8 @@ class TTSService:
         mod_id = mod_id_of(provider)
         if mod_id:
             # The add-on keeps its own cache (and limits, and voice defaults).
-            return self._synthesize_mod(mod_id, text, voice or "", speed, response_format, use_cache, settings)
+            return self._synthesize_mod(mod_id, text, voice or "", speed, response_format, use_cache, settings,
+                                        allow_fallback)
         if provider == "local":
             model = self._kokoro_model(settings)
             voice = resolve_voice(voice)

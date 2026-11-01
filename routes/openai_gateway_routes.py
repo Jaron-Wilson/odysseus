@@ -1,10 +1,12 @@
-"""OpenAI-compatible gateway: GET /v1/models and POST /v1/chat/completions.
+"""OpenAI-compatible gateway: GET /v1/models, POST /v1/chat/completions and POST /v1/audio/speech.
 
 Point any OpenAI-compatible client at ``<odysseus>/v1`` with a ``ody_`` API token (Settings > API tokens, "chat" scope)
 and it can use every chat model added in Settings > Models. The model list and routing are in src/openai_gateway.py;
 this file only checks the token and gets the answer back to the caller: passed straight through for servers that speak
 the OpenAI format, or translated (src/openai_translate.py) for Anthropic, ChatGPT sign-in, Copilot, native Ollama and
 add-on models, which go through the same provider code a chat turn uses.
+Speech (text to speech) uses the same token and the same "chat" scope; src/gateway_speech.py sends it through
+Odysseus's TTS service, so the voice, fallback and cache settings of the web app apply.
 Requests are never logged with their content, and the caller's token is never sent upstream.
 """
 import asyncio
@@ -15,6 +17,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from src import gateway_router as auto_router
+from src import gateway_speech as speech
 from src import openai_gateway as gw
 from src.openai_translate import Translator
 from src.auth_helpers import effective_user
@@ -161,7 +164,40 @@ def setup_openai_gateway_routes() -> APIRouter:
         if await asyncio.to_thread(auto_router.enabled):
             data[:0] = [{"id": mid, "object": "model", "created": 0, "owned_by": "Odysseus router", "description": what}
                         for mid, what in auto_router.model_ids()]
-        return {"object": "list", "data": data}
+        try:
+            data += await asyncio.to_thread(speech.catalog, effective_user(request))
+        except Exception:
+            logger.warning("gateway: could not list the speech models", exc_info=True)
+        seen, merged = set(), []
+        for m in data:                     # a chat model that happens to be called tts:<x> keeps its place
+            if m["id"] not in seen:
+                seen.add(m["id"])
+                merged.append(m)
+        return {"object": "list", "data": merged}
+
+    @router.post("/v1/audio/speech")
+    async def audio_speech(request: Request):
+        """Text to speech, as OpenAI's: JSON {model, input, voice, response_format, speed, instructions} in, audio out."""
+        if not _allowed(request):
+            return _error(403, "this token needs the 'chat' scope", "insufficient_scope")
+        try:
+            body = await request.json()
+        except Exception:
+            return _error(400, "the body must be JSON")
+        owner = effective_user(request)
+        try:
+            req = speech.validate(body)
+            target = await asyncio.to_thread(speech.resolve, req["model"], owner)
+            audio, info = await asyncio.to_thread(speech.speak, target, req["text"], req["voice"], req["speed"],
+                                                  req["fmt"], owner)
+        except speech.SpeechError as e:
+            return _error(e.status, e.message, e.code)
+        await asyncio.to_thread(speech.record, owner, info, len(req["text"].strip()))
+        headers = speech.response_headers(info)
+        if info["format"] != req["fmt"]:
+            # This server cannot convert (PyAV is not installed): say what the bytes are rather than label them wrong.
+            headers["X-Odysseus-Audio-Format"] = info["format"]
+        return Response(content=audio, media_type=speech.FORMATS[info["format"]], headers=headers)
 
     @router.post("/v1/chat/completions")
     async def chat_completions(request: Request):
