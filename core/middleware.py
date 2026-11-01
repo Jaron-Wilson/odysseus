@@ -7,7 +7,7 @@ import secrets
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 
 # Per-process token that lets the in-app tool layer hit admin-gated
@@ -25,6 +25,26 @@ def is_cors_preflight(method: str, headers) -> bool:
     401s the preflight and breaks every cross-origin browser/WebView client.
     Pure so it can be unit-tested without standing up the app."""
     return method == "OPTIONS" and "access-control-request-method" in headers
+
+
+def is_openai_api_path(path: str) -> bool:
+    """True for the OpenAI-compatible gateway (/v1/models, /v1/chat/completions
+    ...). Its callers are programs (opencode, the OpenAI SDKs, curl), not
+    browsers, so a request they cannot authenticate gets a 401 with an
+    OpenAI-style JSON error, never a redirect to the login page."""
+    return path == "/v1" or path.startswith("/v1/")
+
+
+def openai_auth_error(message: str, code: str = "invalid_api_key") -> JSONResponse:
+    """The 401 an OpenAI client expects: {"error": {message, type, code}}.
+    2026-11-01: an unauthenticated /v1/models answered 302 -> /login, opencode
+    followed it, got no completion and retried 4,878 empty steps in 27 minutes.
+    A plain 401 makes such a client stop and show the problem."""
+    return JSONResponse(
+        status_code=401,
+        content={"error": {"message": message, "type": "authentication_error", "code": code}},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def is_mod_frame_cors(scope) -> bool:
