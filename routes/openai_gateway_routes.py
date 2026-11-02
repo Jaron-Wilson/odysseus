@@ -215,6 +215,8 @@ def setup_openai_gateway_routes() -> APIRouter:
             if not await asyncio.to_thread(auto_router.enabled):
                 return _error(404, "the auto model is turned off (gateway_router.json)", "model_not_found")
             payload, decision = await auto_router.route(payload, owner, _complete)
+            if decision.get("error"):
+                return _error(decision.get("status") or 503, decision["error"], decision.get("code"))
             extra["X-Odysseus-Route"] = f"{decision['model']}; {decision['reason']}"[:500]
         model_id = str(payload.get("model") or "")
         try:
