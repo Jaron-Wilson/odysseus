@@ -200,6 +200,8 @@ async def route_turn(sess, owner: Optional[str], message: str, complete, *, tool
         logger.warning("chat auto: the router failed: %s", e, exc_info=True)
         raise AutoError(f"{auto_router.display_name(choice)} could not choose a model ({type(e).__name__}). "
                         "Pick a model yourself, or try again.")
+    if decision.get("error"):
+        raise AutoError(decision["error"], int(decision.get("status") or 503))
     model_id = str(out.get("model") or "")
     try:
         url, headers, model, _translate = await asyncio.to_thread(gw.resolve, model_id, owner)

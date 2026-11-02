@@ -63,6 +63,7 @@ def world(tmp_path, monkeypatch):
     R._sticky.clear(); R._inflight.clear(); R._vision.clear(); R._online.clear(); R._example_vecs.clear()
     monkeypatch.setattr(R, "_embed", fake_embed)
     monkeypatch.setattr(R, "_reachable", lambda url: "offline" not in url)
+    monkeypatch.setitem(R.DEFAULTS, "unavailable", {})     # the lab's hours would make these depend on the clock
 
     async def url_of(mid, owner):
         return fake_resolve(mid, owner)[0]
@@ -534,3 +535,15 @@ def test_reasoning_effort_reaches_the_provider_payloads(monkeypatch):
     assert sent["json"]["reasoning_effort"] == "high"
     asyncio.run(run("http://strong/v1/chat/completions", "qwen3.8:27b", None))
     assert "reasoning_effort" not in sent["json"]
+
+
+def test_a_conversation_too_long_for_every_model_is_an_error_for_the_person():
+    class Sess:
+        id, model, history, context = "c-long", "auto", [], []
+
+    async def router(payload, owner, complete, **kw):
+        return payload, {"error": "This conversation is about 300000 tokens, more than the maximum context length",
+                         "status": 400, "code": "context_length_exceeded", "model": ""}
+    with pytest.raises(chat_auto.AutoError) as e:
+        asyncio.run(chat_auto.route_turn(Sess(), "jaron", "hi", None, route=router))
+    assert e.value.status == 400 and "maximum context length" in str(e.value)

@@ -5,9 +5,13 @@ the request goes, so a quick question does not wait in line for the big model, a
 is still understood. In order:
 
 1. Rules that always hold, checked on every request:
-   - a conversation longer than the chosen model can read goes to the long-context model;
-   - an endpoint that is offline, or busy with as many gateway requests as it can take at once (arrietty runs one
-     at a time), is skipped for the next model on the fallback list.
+   - a conversation longer than the chosen model can read goes to the first long-context model that can read it
+     and can be used now; when none can, the client gets a "maximum context length" error, so it compacts the
+     conversation (an image counts as a fixed amount, not as the length of its data);
+   - an endpoint that is offline, outside the hours it may be used (``unavailable``: the lab's arrietty is never
+     used on Monday mornings), or busy with as many gateway requests as it can take at once (arrietty runs one at a
+     time), is skipped for the next model on the fallback list. When nothing is left, a busy one waits its turn;
+     an offline one is an error, not a request sent to a model that cannot answer.
 2. Chat, easy or hard, decided on a new message from the user (not on tool results), by comparing an embedding of
    the message with labeled example prompts (``embeddinggemma`` on the desktop). First easy or hard: when the two are
    nearly tied, a small model breaks the tie. Then, for an easy one, chat or easy: a plain question that needs no
@@ -84,7 +88,8 @@ DEFAULTS: Dict = {
     "chat": "desktop-jaron:gemma3:1b",          # plain questions; it has no tools, so they are removed
     "fast": "desktop-jaron:qwen3:8b",
     "strong": "a-liberty-11435:qwen3.8:27b",
-    "long": "a-liberty-11435:qwen3.8:27b",
+    # the long-context models, tried in order (a list, or one model)
+    "long": ["a-liberty-11435:qwen3.8:27b"],
     # tried in order when the model picked is offline or busy
     "fallback": ["desktop-jaron:qwen3:8b"],
     "describer": "desktop-jaron:qwen2.5vl:7b",
@@ -104,6 +109,11 @@ DEFAULTS: Dict = {
     "chat_margin": 0.03,     # chat must beat easy by this much; measured: questions +0.07 to +0.20, actions below +0.02
     # how many gateway requests an endpoint takes at once (by endpoint slug); not listed = no limit
     "concurrency": {"a-liberty-11435": 1},
+    # hours an endpoint must not be used (by endpoint slug), as "Mon 00:00-12:00" (a day, or "*" for every day), in
+    # "timezone". The lab asked on 2026-11-02 that arrietty not be used on Monday mornings; also, it is reached only
+    # through a Slurm job, so when no job is running its tunnel is closed and it reads as offline.
+    "unavailable": {"a-liberty-11435": ["Mon 00:00-12:00"]},
+    "timezone": "America/New_York",
     # trained context, in tokens, by model name (the part after the endpoint slug)
     "context": {"qwen3.8:27b": 262144, "qwen3.8-27b": 262144, "gemma4:26b": 262144, "gpt-oss:20b": 131072,
                 "qwen3:8b": 40960, "gemma3:1b": 32768, "qwen2.5vl:7b": 128000, "llama3.2-vision": 131072, "deepseek-r1:8b": 131072,
@@ -299,10 +309,27 @@ def _images_in(messages: List[Dict]) -> int:
     return n
 
 
+IMAGE_TOKENS = 1500     # what one image costs a model, about; its base64 data is far longer and is not text
+
+
+def _without_images(messages: List[Dict]) -> List[Dict]:
+    out = []
+    for m in messages:
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, list):
+            m = dict(m, content=[{"type": "image_url"} if isinstance(p, dict) and p.get("type") == "image_url" else p
+                                 for p in c])
+        out.append(m)
+    return out
+
+
 def estimate_tokens(payload: Dict) -> int:
-    """Rough: about 3.5 characters a token, over the messages and the tool definitions."""
-    chars = len(json.dumps(payload.get("messages") or [])) + len(json.dumps(payload.get("tools") or []))
-    return int(chars / 3.5)
+    """Rough: about 3.5 characters a token, over the messages and the tool definitions, and a fixed amount for each
+    image. Counting an image's base64 as text made a conversation with 3 screenshots read as 443k tokens on
+    2026-11-02, too long for every model but the long-context one."""
+    messages = payload.get("messages") or []
+    chars = len(json.dumps(_without_images(messages))) + len(json.dumps(payload.get("tools") or []))
+    return int(chars / 3.5) + IMAGE_TOKENS * _images_in(messages)
 
 
 def conversation_key(messages: List[Dict]) -> str:
@@ -326,6 +353,41 @@ def _chat_ok(messages: List[Dict]) -> bool:
     """The chat model has no tools and no eyes: only for conversations that have used neither."""
     return not _images_in(messages) and not any(
         m.get("role") in ("tool", "function") or m.get("tool_calls") or m.get("function_call") for m in messages)
+
+
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def off_hours(cfg: Dict, model_id: str, at: Optional[float] = None) -> bool:
+    """Is this model's endpoint inside hours it must not be used ("unavailable")?"""
+    spans = (cfg.get("unavailable") or {}).get(slug_of(model_id)) or []
+    if isinstance(spans, str):
+        spans = [spans]
+    if not spans:
+        return False
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(str(cfg.get("timezone") or "America/New_York"))
+    except Exception:
+        tz = None
+    now = datetime.fromtimestamp(time.time() if at is None else at, tz)
+    day, minute = DAYS[now.weekday()], now.hour * 60 + now.minute
+    for span in spans:
+        m = re.fullmatch(r"\s*(\*|[A-Za-z]{3})\w*\s+(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*", str(span))
+        if not m:
+            continue
+        if m.group(1) != "*" and m.group(1).lower() != day:
+            continue
+        start, stop = int(m.group(2)) * 60 + int(m.group(3)), int(m.group(4)) * 60 + int(m.group(5))
+        if start <= minute < stop:
+            return True
+    return False
+
+
+def _longs(cfg: Dict) -> List[str]:
+    v = cfg.get("long") or []
+    return [v] if isinstance(v, str) else [str(x) for x in v]
 
 
 def context_of(cfg: Dict, model_id: str) -> Optional[int]:
@@ -503,7 +565,9 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
                 reachable=None, supports_images=None, conversation: Optional[str] = None,
                 no_chat: str = "") -> Tuple[Dict, Dict]:
     """(the payload to send, with "model" set to a real model, decision). Never raises for a routing problem: the
-    strong model is the answer when in doubt (except at auto:fast, which never uses it).
+    strong model is the answer when in doubt (except at auto:fast, which never uses it). When no model can take the
+    request (too long for every one that can be used now, or all of them offline), the decision has "error", with
+    "status" and "code", for the client, and nothing should be sent.
 
     ``conversation`` names the conversation when the caller knows it (Odysseus's own chat passes its chat id), so
     the label is kept per chat; without it the conversation is recognized by its first system prompt and first user
@@ -552,21 +616,35 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
     if model == cfg.get("chat"):
         tokens = estimate_tokens({"messages": messages})      # its tools are removed, so they do not count
     ctx = context_of(cfg, model)
+    too_long = False
     if ctx and tokens > ctx * 0.9:
         if model == cfg.get("chat"):
             model, tokens = cfg["fast"], estimate_tokens(payload)
             reason.append(f"too long for {cfg['chat']}, so the fast model")
             ctx = context_of(cfg, model)
         if ctx and tokens > ctx * 0.9:
-            model = cfg["long"]
-            reason.append(f"about {tokens} tokens is too long for {label}'s model, so the long-context one")
-    # offline or busy: the next one on the fallback list that is neither, and long enough
-    for cand in [model] + [m for m in cfg.get("fallback") or [] if m != model]:
-        c_ctx = context_of(cfg, cand)
-        if c_ctx and tokens > c_ctx * 0.9 and cand != model:
+            too_long = True
+            reason.append(f"about {tokens} tokens is too long for {label}'s model, so a long-context one")
+
+    def fits(m: str) -> bool:
+        c = context_of(cfg, m)
+        return not (c and tokens > c * 0.9)
+    # the model picked, then (when too long) the long-context ones, then the fallback list; each must be able to
+    # read the conversation, be inside its hours, not busy and online
+    cands: List[str] = []
+    for m in [model] + (_longs(cfg) if too_long else []) + list(cfg.get("fallback") or []):
+        if m and m not in cands:
+            cands.append(m)
+    chosen, waiting, error = None, None, None
+    for cand in cands:
+        if not fits(cand):
+            continue
+        if off_hours(cfg, cand):
+            reason.append(f"{slug_of(cand)} is not used at this hour")
             continue
         if _busy(cfg, cand):
             reason.append(f"{slug_of(cand)} is busy")
+            waiting = waiting or cand
             continue
         try:
             if not await asyncio.to_thread(_reachable, await reachable(cand)):
@@ -575,8 +653,25 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
         except Exception:
             reason.append(f"{cand} is not available")
             continue
-        model = cand
+        chosen = cand
         break
+    if not chosen and waiting:
+        chosen = waiting
+        reason.append(f"nothing else can take it, so it waits for {slug_of(waiting)}")
+    if chosen:
+        if too_long:
+            reason.append(f"{chosen} reads it")
+        model = chosen
+    elif not any(fits(m) for m in cands) or too_long:
+        largest = max([c for c in (context_of(cfg, m) for m in cands) if c] or [0])
+        why = "; ".join(reason[1:]) or "none can read it"
+        error = {"status": 400, "code": "context_length_exceeded",
+                 "error": f"This conversation is about {tokens} tokens, more than the maximum context length of any "
+                          f"model the auto model can use now (at most {largest} tokens: {why}). Compact the "
+                          "conversation or start a new one."}
+    else:
+        error = {"status": 503, "code": "model_unavailable",
+                 "error": "No model the auto model can use is available now (" + "; ".join(reason[1:]) + ")."}
     out = dict(payload, model=model)
     if pick and model == pick["model"] and pick.get("effort") and not payload.get("reasoning_effort"):
         out["reasoning_effort"] = pick["effort"]
@@ -585,6 +680,12 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
             out.pop(k, None)
     images = _images_in(messages)
     described = 0
+    if error:
+        decision = {"at": round(now, 3), "conversation": key[:12], "model": "", "route": used, "level": level,
+                    "label": label, "how": how, "margin": margin, "tokens": tokens, "images": images,
+                    "described": 0, "reason": "; ".join(reason), **error}
+        _log(decision)
+        return out, decision
     if images and not await supports_images(model):
         out["messages"], images, described = await describe_images(cfg, owner, messages, complete)
         reason.append(f"{images} image(s) described by {cfg['describer']}")

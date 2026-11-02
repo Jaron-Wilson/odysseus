@@ -47,6 +47,7 @@ def clean(tmp_path, monkeypatch):
     monkeypatch.setattr(const, "DATA_DIR", str(tmp_path))
     R._sticky.clear(); R._inflight.clear(); R._vision.clear(); R._online.clear(); R._example_vecs.clear()
     monkeypatch.setattr(R, "_reachable", lambda url: "offline" not in url)
+    monkeypatch.setitem(R.DEFAULTS, "unavailable", {})     # the lab's Monday mornings: tested on their own
     yield tmp_path
 
 
@@ -144,7 +145,71 @@ def test_chat_model_offline_falls_back_with_tools_kept():
 def test_too_long_for_the_fast_model_goes_to_the_long_context_one():
     big = "easy: " + "x" * 200_000          # about 57k tokens: past qwen3:8b's 40k
     (out, d), _ = run(chat({"role": "user", "content": big}))
-    assert out["model"] == R.DEFAULTS["long"] and "too long" in d["reason"]
+    assert out["model"] == R.DEFAULTS["long"][0] and "too long" in d["reason"]
+
+
+def test_an_image_counts_as_a_fixed_amount_not_its_data():
+    shot = {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 600_000}}
+    msgs = [{"role": "user", "content": [{"type": "text", "text": "hard: why is this broken"}, shot, shot, shot]}]
+    assert R.estimate_tokens({"messages": msgs}) < 3 * R.IMAGE_TOKENS + 100
+    (out, d), _ = run(chat(*msgs))
+    assert out["model"] == R.DEFAULTS["strong"] and "too long" not in d["reason"] and d["images"] == 3
+
+
+def test_too_long_for_every_model_is_an_error_for_the_client():
+    huge = "hard: " + "x" * 1_000_000         # about 286k tokens: past every model's context
+    (out, d), _ = run(chat({"role": "user", "content": huge}))
+    assert d["status"] == 400 and d["code"] == "context_length_exceeded" and not d["model"]
+    assert "maximum context length" in d["error"] and "262144" in d["error"]
+
+
+def test_too_long_with_the_long_context_model_offline_is_an_error_not_a_request_to_it():
+    big = "easy: " + "x" * 200_000
+    (out, d), _ = run(chat({"role": "user", "content": big}),
+                      url=lambda m: "http://offline" if m in R.DEFAULTS["long"] else "http://" + m)
+    assert d["code"] == "context_length_exceeded" and "offline" in d["error"]
+
+
+def test_the_next_long_context_model_is_used_when_the_first_cannot_be(clean):
+    (clean / "gateway_router.json").write_text(json.dumps(
+        {"long": [R.DEFAULTS["strong"], "other:gemma4:26b"]}))
+    big = "easy: " + "x" * 200_000
+    (out, d), _ = run(chat({"role": "user", "content": big}),
+                      url=lambda m: "http://offline" if m == R.DEFAULTS["strong"] else "http://" + m)
+    assert out["model"] == "other:gemma4:26b" and "offline" in d["reason"] and not d.get("error")
+
+
+def test_all_offline_is_an_error_and_a_busy_one_waits():
+    (out, d), _ = run(chat({"role": "user", "content": "hard: build a feature"}), url=lambda m: "http://offline")
+    assert d["status"] == 503 and d["code"] == "model_unavailable"
+    R.begin(R.DEFAULTS["strong"])
+    (out, d), _ = run(chat({"role": "user", "content": "hard: build a thing"}, system="s3"),
+                      url=lambda m: "http://offline" if m != R.DEFAULTS["strong"] else "http://" + m)
+    R.end(R.DEFAULTS["strong"])
+    assert out["model"] == R.DEFAULTS["strong"] and "waits" in d["reason"] and not d.get("error")
+
+
+def test_off_hours_lab_monday_morning():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    cfg = {"unavailable": {"a-liberty-11435": ["Mon 00:00-12:00"]}, "timezone": "America/New_York"}
+    ny = ZoneInfo("America/New_York")
+    at = lambda *a: datetime(*a, tzinfo=ny).timestamp()
+    lab = "a-liberty-11435:qwen3.8:27b"
+    assert R.off_hours(cfg, lab, at(2026, 11, 2, 10, 40))          # a Monday, 10:40
+    assert not R.off_hours(cfg, lab, at(2026, 11, 2, 12, 0))       # noon: allowed again
+    assert not R.off_hours(cfg, lab, at(2026, 11, 3, 9, 0))        # Tuesday
+    assert not R.off_hours(cfg, "desktop-jaron:qwen3:8b", at(2026, 11, 2, 10, 40))
+    assert R.off_hours({"unavailable": {"a-liberty-11435": "* 00:00-24:00"}}, lab)
+
+
+def test_the_lab_is_skipped_in_its_off_hours(clean):
+    (clean / "gateway_router.json").write_text(json.dumps({"unavailable": {"a-liberty-11435": ["* 00:00-24:00"]}}))
+    (out, d), _ = run(chat({"role": "user", "content": "hard: build a feature"}))
+    assert out["model"] == R.DEFAULTS["fallback"][0] and "not used at this hour" in d["reason"]
+    big = "easy: " + "x" * 200_000            # too long for the fallback, and the lab is out: an error
+    (out, d), _ = run(chat({"role": "user", "content": big}, system="s4"))
+    assert d["code"] == "context_length_exceeded" and "not used at this hour" in d["error"]
 
 
 def test_busy_or_offline_endpoints_are_skipped():
