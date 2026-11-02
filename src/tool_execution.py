@@ -240,6 +240,7 @@ logger = logging.getLogger(__name__)
 
 _ADMIN_TOOLS = {
     "app_api",
+    "opencode_chat",
     "manage_endpoints",
     "manage_mcp",
     "manage_webhooks",
@@ -528,12 +529,12 @@ def _pending_plan_block(tool: str, content: str, session_id: str) -> str:
     pending = native_plans.pending_for_chat(session_id)
     if not pending:
         return ""
-    if tool == "claude_code":
+    if tool in ("claude_code", "opencode_chat"):
         try:
             a = json.loads(content) if (content or "").strip().startswith("{") else {}
         except (ValueError, TypeError):
             a = {}
-        if str((a or {}).get("action") or "").strip().lower() in ("list", "status", "agents", "attach"):
+        if str((a or {}).get("action") or "").strip().lower() in ("list", "status", "agents", "attach", "bind", "unbind"):
             return ""
     return (f"Not run: your plan \"{pending.get('title')}\" (plan_id {pending['id']}) is waiting for "
             "the user to approve or deny it in the chat. Until they answer, nothing may be handed "
@@ -929,6 +930,16 @@ async def execute_tool_block(
         except Exception as e:
             logger.warning("notify_device failed: %s", e, exc_info=True)
             result = {"error": f"notify_device: {type(e).__name__}: {e}"[:400], "exit_code": 1}
+    elif tool == "opencode_chat":
+        # A chat that already lives on the user's opencode server (src/opencode_chat.py). It needs the
+        # chat session id: sends are held for approval per chat, and updates go back to it.
+        desc = f"opencode_chat: {content.split(chr(10))[0][:80]}"
+        from src.agent_tools import TOOL_HANDLERS
+        try:
+            result = await TOOL_HANDLERS["opencode_chat"](content, {"session_id": session_id, "owner": owner})
+        except Exception as e:
+            logger.warning("opencode_chat failed: %s", e, exc_info=True)
+            result = {"error": f"opencode_chat: {type(e).__name__}: {e}"[:400], "exit_code": 1}
     elif tool == "claude_code":
         # Registering the handler is not enough: this chain has no default that
         # reaches TOOL_HANDLERS, so anything missing here lands in the final

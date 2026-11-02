@@ -2431,6 +2431,9 @@ _APP_API_BLOCKLIST_PREFIXES = (
     # (src/action_approvals.py, src/google_write_gate.py), never the model.
     "/api/action_approvals",
     "/api/google/write-approval",
+    # Picking the opencode chat a call may send into is the user's own consent
+    # (src/opencode_chat.py): the model must not be able to arm itself.
+    "/api/opencode_chat",
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints

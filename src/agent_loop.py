@@ -13,7 +13,7 @@ import json
 import re
 import time
 import logging
-from typing import AsyncGenerator, List, Dict, Optional, Set
+from typing import AsyncGenerator, List, Dict, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
@@ -376,6 +376,12 @@ PLANS ARE YOURS. There is no 'plan' action and the server refuses one: write the
 For a one-line edit you could make with edit_file, just do that instead — this spawns a whole second agent.
 NOT for chores: committing, pushing, opening a PR (`gh pr create`), checking git status or running a known command. Do those yourself with `bash`; handing them to Claude Code spends the user's Claude plan for nothing.
 Before the first call for a task, say in one line which engine and model you are using (default: OpenCode, local qwen3.8-27b). With engine "claude", omitting `model` uses `sonnet`; use `haiku` for small changes and `opus` only when the user asks for it.""",
+
+    "opencode_chat": """\
+```opencode_chat
+{"action": "send", "chat": "JaronDynamics", "text": "<the work, stated in full>", "wait_seconds": 8}
+```
+Talk to a chat the user ALREADY has open on their opencode server (a new one-off coding run is `claude_code`). Actions: `list` (recent chats: title, folder, how long ago, working now or idle), `send` (`chat` + `text`; waits up to `wait_seconds` and returns the reply, or "still working" with the latest steps while the run goes on without you), `status` (steps since its last message), `stop`, `bind` (make a chat this conversation's default so `chat` can be left out), `unbind`. `chat` is an id, a title, or "the one in <folder>". A send is held for the user's Approve unless they armed the chat in the call's work-chat menu. In a voice call, send coding and file work here and keep your own answer to a sentence; progress and a summary are spoken to the user automatically, so do not poll `status` and never read out code.""",
 
     "trigger_research": """\
 ```trigger_research
@@ -2253,6 +2259,31 @@ def _attached_claude_note(session_id: str) -> str:
         return ""
 
 
+def _opencode_chat_note(session_id: str, messages: List[Dict]) -> Tuple[bool, str]:
+    """(whether opencode_chat should be on offer, what the model is told) for this chat: it is offered in a
+    voice call and in a chat bound to one of the user's opencode chats (src/opencode_chat.py)."""
+    try:
+        from src import opencode_chat as _oc
+        VOICE_CALL_MARK = _oc.VOICE_CALL_MARK
+        first = (messages[0].get("content") if messages and messages[0].get("role") == "system" else "") or ""
+        in_call = isinstance(first, str) and VOICE_CALL_MARK in first
+        b = _oc.get_binding(session_id) if session_id else None
+        if not in_call and not b:
+            return False, ""
+        if b:
+            armed = _oc.is_armed(session_id, b["id"])
+            note = (f"This chat is bound to the user's opencode chat \"{b['title']}\" in {b['folder']}. With the "
+                    "opencode_chat tool, leave out `chat` to use it. "
+                    + ("The user armed it, so a send goes through without asking."
+                       if armed else "A send is held for the user's Approve."))
+        else:
+            note = ("The user can name one of their opencode chats (\"call my JaronDynamics chat\"): use "
+                    "opencode_chat with action 'bind' for that, or 'list' to see them.")
+        return True, note
+    except Exception:
+        return False, ""
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -2305,6 +2336,9 @@ async def stream_agent_loop(
         from src import chat_prefs
         if session_id and not chat_prefs.claude_code_allowed(session_id):
             disabled_tools.add("claude_code")
+        # opencode_chat is OpenCode too (the user's own chats on its server).
+        if session_id and not chat_prefs.engine_allowed(session_id, "opencode"):
+            disabled_tools.add("opencode_chat")
     except Exception:
         pass
     if tool_policy:
@@ -2478,6 +2512,9 @@ async def stream_agent_loop(
         # has the coding tool: "carry on" names no tool at all.
         if session_id and "claude_code" not in disabled_tools and _attached_claude_note(session_id):
             _relevant_tools.add("claude_code")
+        # A voice call, or a chat bound to one of the user's opencode chats: "make the hero blue" names no tool.
+        if "opencode_chat" not in disabled_tools and _opencode_chat_note(session_id or "", messages)[0]:
+            _relevant_tools.add("opencode_chat")
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
@@ -2675,6 +2712,14 @@ async def stream_agent_loop(
                 messages[0]["content"] = (messages[0].get("content") or "") + "\n\n" + _attach_note
             else:
                 messages.insert(0, {"role": "system", "content": _attach_note})
+    # The user's opencode chats (src/opencode_chat.py): in a voice call, or bound to one.
+    if not guide_only and "opencode_chat" not in disabled_tools:
+        _oc_on, _oc_note = _opencode_chat_note(session_id or "", messages)
+        if _oc_on and _oc_note:
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = (messages[0].get("content") or "") + "\n\n" + _oc_note
+            else:
+                messages.insert(0, {"role": "system", "content": _oc_note})
     # Native plans only (src/native_plans.py): the model writes its plans
     # itself with propose_plan, and is told where this chat's newest plan
     # stands (waiting for the user, or approved and not yet carried out).

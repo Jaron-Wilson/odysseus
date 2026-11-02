@@ -430,7 +430,8 @@ async def run_headless(session_id: str, text: str, client_device: Optional[Dict]
         from src import chat_auto
         if chat_auto.is_auto_session(sess):
             from routes.openai_gateway_routes import _complete
-            auto_turn = await chat_auto.route_turn(sess, getattr(sess, "owner", None), text, _complete, tools=True)
+            auto_turn = await chat_auto.route_turn(sess, getattr(sess, "owner", None), text, _complete, tools=True,
+                                                   voice_call=voice_call)
         sm.add_message(session_id, ChatMessage("user", text, metadata={"source": source}))
         sm.save_sessions()
         context = sess.get_context_messages()

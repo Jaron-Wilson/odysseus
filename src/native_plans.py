@@ -53,7 +53,7 @@ ID_RE = re.compile(r"^[0-9a-f]{12}$")
 # chat is waiting for the user, so the answer comes from the user first.
 DELEGATION_TOOLS = frozenset({
     "claude_code", "chat_with_model", "ask_teacher", "pipeline", "send_to_session",
-    "create_session", "spawn_subagent", "branch_thread",
+    "create_session", "spawn_subagent", "branch_thread", "opencode_chat",
 })
 
 _lock = threading.RLock()
