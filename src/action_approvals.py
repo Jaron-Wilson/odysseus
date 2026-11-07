@@ -446,6 +446,13 @@ def recent_audit(owner: Optional[str], limit: int = 50, all_owners: bool = False
 
 def held_output(e: dict) -> str:
     where = "in the chat with Approve and Deny"
+    if e.get("kind") == "opencode_chat":
+        return (f"Not done yet: \"{e.get('title')}\" puts work into the user's own OpenCode chat, so it needs "
+                f"their approval first (approval id {e['id']}). It is shown {where}. Your turn ends here: say in "
+                "one short sentence that it is waiting for their OK on the screen (in a call, they can also pick "
+                "that chat in the call's work-chat menu, and then you can send without asking each time). Do not "
+                "call it again, do not try another way, and do not say it was sent. If they approve, it runs "
+                "exactly as you asked and you get its result.")
     return (f"Not run yet: \"{e.get('title')}\" writes to the user's Google account, so it needs their "
             f"approval first (approval id {e['id']}). It is shown {where}. Your turn ends here: do not "
             "call it again, do not try another way to make the change, and do not say it is done. If they "
@@ -455,6 +462,13 @@ def held_output(e: dict) -> str:
 def approved_prompt(e: dict) -> str:
     r = e.get("result") or {}
     ok = r.get("exit_code") == 0
+    if e.get("kind") == "opencode_chat":
+        return (f"[OpenCode chat approved · {e.get('title')}]\n\n"
+                f"The user approved \"{e.get('title')}\" and it ran once, exactly as requested"
+                + ("." if ok else ", but it failed.")
+                + f" Its result:\n\n<result>\n{(r.get('output') or '').strip()}\n</result>\n\n"
+                "Do not send it again. Tell the user in one or two short sentences what is happening. If the "
+                "chat is still working, progress and a summary are spoken to them automatically in a call.")
     return (f"[Google change approved · {e.get('title')}]\n\n"
             f"The user approved \"{e.get('title')}\" and it ran once, exactly as requested"
             + ("." if ok else ", but it failed.")
@@ -464,6 +478,12 @@ def approved_prompt(e: dict) -> str:
 
 def denied_prompt(e: dict) -> str:
     note = (e.get("deny_note") or "").strip()
+    if e.get("kind") == "opencode_chat":
+        return (f"[OpenCode chat denied · {e.get('title')}]\n\n"
+                f"The user denied {e.get('title')}"
+                + (f": {note}" if note else ". They left no note.")
+                + "\n\nNothing was sent. Do not try again or reach the chat another way. Ask the user what they "
+                  "would like instead.")
     return (f"[Google change denied · {e.get('title')}]\n\n"
             f"The user denied {e.get('title')}"
             + (f": {note}" if note else ". They left no note.")

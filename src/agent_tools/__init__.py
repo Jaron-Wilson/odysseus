@@ -26,6 +26,7 @@ from .claude_code_tool import ClaudeCodeTool
 from .notify_tool import NotifyDeviceTool
 from .devices_tool import ManageDevicesTool
 from .bg_job_tools import ManageBgJobsTool
+from .opencode_chat_tool import OpenCodeChatTool
 from .services_tools import ManageServicesTool
 
 TOOL_HANDLERS = {
@@ -48,6 +49,7 @@ TOOL_HANDLERS = {
     "suggest_document": SuggestDocumentTool().execute,
     "manage_documents": ManageDocumentTool().execute,
     "manage_bg_jobs": ManageBgJobsTool().execute,
+    "opencode_chat": OpenCodeChatTool().execute,
     "manage_services": ManageServicesTool().execute,
 }
 
@@ -91,6 +93,7 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              # Other tools the agent reaches for that were also missing.
              "edit_image", "trigger_research", "manage_research",
              "claude_code", "notify_device", "manage_devices",
+             "opencode_chat",
              "chat_memory",
              # Threads of a chat: a branch, or a subagent run in the
              # background (src/chat_subagents.py).

@@ -214,6 +214,7 @@ _TOOL_NAME_MAP = {
     "manage_bg_jobs": "manage_bg_jobs",
     "bg_jobs": "manage_bg_jobs",
     "background_jobs": "manage_bg_jobs",
+    "opencode_chat": "opencode_chat",
 }
 
 _MISFENCED_WEB_TOOL_NAMES = {

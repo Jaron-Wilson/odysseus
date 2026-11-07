@@ -194,6 +194,29 @@ def test_the_remote_level_resolves_the_chatgpt_model_and_carries_its_reasoning_e
     assert turn(chat_session("auto:remote", "z"), "easy: rename this variable").effort == "low"
 
 
+def test_a_voice_call_turn_on_auto_remote_stays_on_the_fast_models_with_tools():
+    # A call turn only hands the work to the user's opencode chat (src/opencode_chat.py): quick answers matter more
+    # than depth, so a plain question stays on Luna even with tools, and a hard message is capped at easy.
+    q = "chat: what does a rebase do?"
+    plain = turn(chat_session("auto:remote", "v1"), q, tools=True, voice_call=True)
+    assert plain.model_id == "chatgpt:gpt-6-luna" and plain.effort == "none"
+    assert turn(chat_session("auto:remote", "v0"), q, tools=True).model_id == "chatgpt:gpt-6.1-terra"   # not in a call
+    hard = turn(chat_session("auto:remote", "v2"), "hard: refactor the payment module", tools=True, voice_call=True)
+    assert hard.model_id == "chatgpt:gpt-6.1-terra" and hard.effort == "low"
+    assert "capped at easy for the call" in hard.auto_meta["text"]
+    # the same message outside a call is still the strong model, and the chat keeps its label
+    assert turn(chat_session("auto:remote", "v3"), "hard: refactor the payment module", tools=True).model_id == "chatgpt:gpt-6.1-sol"
+    # Auto (hard) asked for the strong model: a call does not override it
+    assert turn(chat_session("auto:hard", "v4"), "easy: x", tools=True, voice_call=True).model_id == STRONG
+
+
+def test_the_call_flag_reaches_the_router_from_both_send_paths():
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    assert 'voice_call=str(form_data.get("voice_call") or "").lower() in ("1", "true")' in (root / "routes" / "chat_routes.py").read_text()
+    assert "voice_call=voice_call)" in (root / "src" / "chat_queue.py").read_text()
+
+
 def test_the_turn_is_counted_against_the_chosen_endpoint_while_it_runs():
     r = turn(chat_session("auto"), "hard: refactor the payment module")
     assert R._inflight.get(R.slug_of(STRONG), 0) == 0

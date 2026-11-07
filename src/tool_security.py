@@ -15,6 +15,7 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "bash",
     "python",
     "manage_bg_jobs",
+    "opencode_chat",
     "read_file",
     "write_file",
     "edit_file",
@@ -123,6 +124,8 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "bash", "python",
     # Controls shell processes (kill); plan mode can't run bash anyway.
     "manage_bg_jobs",
+    # Sends messages into the user's opencode chats, which can write files and run commands.
+    "opencode_chat",
 }
 
 

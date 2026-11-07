@@ -570,6 +570,7 @@ export async function sendHeadless(text, sid, onReply, signal) {
 
 // ── The call ────────────────────────────────────────────────────────────
 
+const WORK_POLL_MS = 3000;      // how often the call asks the server for work chat updates
 const FRAME = 2048;
 const PREROLL_MS = 400;
 const MIN_SPEECH_MS = 220;
@@ -700,6 +701,7 @@ export class VoiceCall {
 
     this._wireAudio();
     this._wireApp();
+    this._workStart();
     if (this.tts.kind === 'server') this._setupLoopback();
     this._startedAt = Date.now();
     this._tick();
@@ -888,6 +890,7 @@ export class VoiceCall {
     if (this.stt && this.stt.kind === 'browser') this.stt.abort();
     try { if (this.ctx) this.ctx.close(); } catch (_) { /* closed */ }
     if (this._unsub) { try { this._unsub(); } catch (_) { /* gone */ } }
+    if (this._workTimer) { clearInterval(this._workTimer); this._workTimer = null; }
     for (const off of this._listen) off();
     this._listen = [];
     if (this._lock) { try { this._lock.release(); } catch (_) { /* released */ } this._lock = null; }
@@ -1309,6 +1312,13 @@ export class VoiceCall {
         const p = this._pending;
         if (p && this.state === 'speaking' && !p.done) this._setState('thinking');
         if (p) this._maybeFinish(p);
+        else if (this.state === 'speaking' && !this._queue.length && !this.ended) {
+          // An update from the work chat (not a reply to a turn) has been said: back to listening.
+          this._quietUntil = Date.now() + ECHO_TAIL_MS;
+          if (this.vad) this.vad.reset(false);
+          this._setState('listening');
+          this._announceNext();
+        }
       }
     }
   }
@@ -1473,6 +1483,19 @@ export class VoiceCall {
           <div class="vc-error" role="alert" hidden></div>
           <div class="vc-handoff" aria-live="polite" hidden></div>
         </div>
+        <div class="vc-work" hidden>
+          <label class="vc-work-label">Work chat
+            <select class="vc-work-select" aria-label="OpenCode chat to hand coding work to"></select>
+          </label>
+          <div class="vc-work-note" aria-live="polite"></div>
+          <div class="vc-work-ask" hidden>
+            <div class="vc-work-ask-text" aria-live="polite"></div>
+            <div class="vc-work-ask-row">
+              <button type="button" class="vc-ask-btn vc-work-ok">Approve</button>
+              <button type="button" class="vc-ask-btn vc-work-no">Deny</button>
+            </div>
+          </div>
+        </div>
         <ol class="vc-transcript" aria-label="Recent turns"></ol>
         <div class="vc-move" hidden>
           <div class="vc-move-head">Move call to</div>
@@ -1511,6 +1534,9 @@ export class VoiceCall {
       transcript: q('.vc-transcript'), mute: q('.vc-mute'), talk: q('.vc-talk'),
       interrupt: q('.vc-interrupt'), end: q('.vc-end'), handoff: q('.vc-handoff'),
       move: q('.vc-move'), moveList: q('.vc-move-list'), moveBtn: q('.vc-move-btn'),
+      work: q('.vc-work'), workSelect: q('.vc-work-select'), workNote: q('.vc-work-note'),
+      workAsk: q('.vc-work-ask'), workAskText: q('.vc-work-ask-text'),
+      workOk: q('.vc-work-ok'), workNo: q('.vc-work-no'),
       pState: qp('.vc-pill-state'), pTimer: qp('.vc-pill-timer'), pMute: qp('.vc-pill-mute'),
       pTalk: qp('.vc-pill-talk'),
     };
@@ -1522,6 +1548,10 @@ export class VoiceCall {
     e.mute.addEventListener('click', () => this.setMuted(!this.muted));
     q('.vc-minimize').addEventListener('click', () => this.minimize('button'));
     e.moveBtn.addEventListener('click', () => (e.move.hidden ? this._openMove() : this._closeMove()));
+    e.workSelect.addEventListener('change', () => this._workPick(e.workSelect.value));
+    e.workSelect.addEventListener('focus', () => this._workChats());
+    e.workOk.addEventListener('click', () => this._workAnswer('approve'));
+    e.workNo.addEventListener('click', () => this._workAnswer('deny'));
     qp('.vc-pill-main').addEventListener('click', () => this.expand());
     qp('.vc-pill-expand').addEventListener('click', () => this.expand());
     qp('.vc-pill-end').addEventListener('click', () => this.end('button'));
@@ -1789,6 +1819,150 @@ export class VoiceCall {
     this._showError(msg, goto);
     this._setState('error');
     this.expand();                 // a call that cannot go on says why, in full
+  }
+
+  // ── The work chat: the user's opencode chat this call hands coding work to ──
+  //
+  // The agent sends the work with its opencode_chat tool and answers in a sentence. While the chat works, the
+  // server (src/opencode_chat.py) queues short progress lines (at most one every 15 s) and a one or two sentence
+  // summary of the result. This page asks for them every few seconds and says them when the call is idle: not
+  // while the user talks, not over a reply. The menu is the user's own pick of which chat that is; picking it also
+  // lets the agent send into it without asking Approve for each message.
+
+  _workStart() {
+    if (this.opts.workChat === false || this._work) return;
+    this._work = { after: 0, items: [], off: false, busy: false, shown: false, bound: null };
+    this._workTimer = setInterval(() => this._workPoll(), this.opts.workPollMs || WORK_POLL_MS);
+    this._workPoll();
+  }
+
+  async _workPoll() {
+    const w = this._work;
+    if (!w || w.off || w.busy || this.ended || !this.sid) return;
+    w.busy = true;
+    try {
+      const r = await fetch(`/api/opencode_chat/updates?chat=${encodeURIComponent(this.sid)}&after=${w.after}`,
+        { credentials: 'same-origin' });
+      if (r.status === 403 || r.status === 401) { w.off = true; return; }      // not for this user
+      if (!r.ok) return;                                                       // a chat not saved yet, or a hiccup
+      const d = await r.json();
+      if (this.ended) return;
+      w.after = d.after ?? w.after;
+      w.bound = d.bound || null;
+      if (!w.shown) { w.shown = true; this._workChats(); } else this._workNote();
+      this._workAsk(d.approval || null);
+      for (const it of d.items || []) w.items.push(it);
+      this._announceNext();
+    } catch (_) { /* offline: the next poll tries again */ } finally {
+      w.busy = false;
+    }
+  }
+
+  async _workChats() {
+    const e = this._els, w = this._work;
+    if (!e || !w || w.off || !this.sid) return;
+    let d;
+    try {
+      const r = await fetch(`/api/opencode_chat/chats?chat=${encodeURIComponent(this.sid)}`, { credentials: 'same-origin' });
+      if (!r.ok) return;
+      d = await r.json();
+    } catch (_) { return; }
+    if (!this._els || !Array.isArray(d.chats)) return;
+    w.bound = d.bound || null;
+    const cur = w.bound ? w.bound.id : '';
+    const opts = ['<option value="">No work chat</option>'].concat(d.chats.map((c) =>
+      `<option value="${_esc(c.id)}"${c.id === cur ? ' selected' : ''}>${_esc(c.title)} (${_esc(c.folder)}${c.busy ? ', working' : ''})</option>`));
+    // A bound chat that has dropped off the newest list stays in the menu.
+    if (cur && !d.chats.some((c) => c.id === cur)) {
+      opts.push(`<option value="${_esc(cur)}" selected>${_esc(w.bound.title)} (${_esc(w.bound.folder || '')})</option>`);
+    }
+    e.workSelect.innerHTML = opts.join('');
+    e.work.hidden = false;
+    this._workNote();
+  }
+
+  // A send held for the user's Approve (the agent cannot approve it): shown here so the call need not be
+  // minimized to find the card in the chat. Approving runs that one message, like the card's own button.
+  _workAsk(a) {
+    const e = this._els, w = this._work;
+    if (!e || !w) return;
+    const same = (a && w.ask && a.id === w.ask.id) || (!a && !w.ask);
+    w.ask = a;
+    if (same) return;
+    e.workAsk.hidden = !a;
+    if (a) {
+      e.work.hidden = false;
+      e.workAskText.textContent = a.message ? `${a.title}: "${a.message}"` : a.title;
+      e.workOk.disabled = e.workNo.disabled = false;
+      this._emit('work-ask', { id: a.id });
+    }
+  }
+
+  async _workAnswer(verb) {
+    const e = this._els, w = this._work;
+    const a = w && w.ask;
+    if (!e || !a) return;
+    e.workOk.disabled = e.workNo.disabled = true;
+    try {
+      const r = await fetch(`/api/action_approvals/${encodeURIComponent(a.id)}/${verb}`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        this._showError(String(d.detail || 'Could not answer that.'));
+      } else {
+        this._clearError();
+        this._hint(verb === 'approve' ? 'Sent. You will hear how it goes.' : 'Not sent.');
+      }
+    } catch (_) {
+      this._showError('Could not reach the server to answer that.');
+    }
+    w.ask = null;
+    if (this._els) this._els.workAsk.hidden = true;
+  }
+
+  _workNote() {
+    const e = this._els, w = this._work;
+    if (!e || !w) return;
+    const b = w.bound;
+    e.workNote.textContent = !b ? 'Pick one of your OpenCode chats to hand coding work to by voice.'
+      : b.armed ? `Talking to "${b.title}". The agent can send to it without asking.`
+        : `"${b.title}" is the default, but each message needs your Approve on screen. Pick it again to skip that.`;
+  }
+
+  async _workPick(id) {
+    const w = this._work;
+    if (!w || !this.sid) return;
+    try {
+      const r = await fetch(id ? '/api/opencode_chat/binding' : `/api/opencode_chat/binding?chat=${encodeURIComponent(this.sid)}`, {
+        method: id ? 'PUT' : 'DELETE', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: id ? JSON.stringify({ chat: this.sid, opencode: id }) : undefined,
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { this._showError(String(d.detail || 'Could not pick that chat.')); await this._workChats(); return; }
+      w.bound = d.bound || null;
+      this._clearError();
+      this._workNote();
+      this._emit('work-chat', { bound: w.bound });
+    } catch (_) { this._showError('Could not reach the server to pick that chat.'); }
+  }
+
+  /** Say the next update from the work chat when the call is idle. A result replaces older progress. */
+  _announceNext() {
+    const w = this._work;
+    if (!w || !w.items.length || this.ended || !this.tts) return;
+    if (this._pending || this.state !== 'listening' || this._playing || this._held || this._capturing
+        || this._pttHeld || (this.vad && this.vad.speaking)) return;
+    if (w.items.some((i) => i.kind !== 'progress')) w.items = w.items.filter((i) => i.kind !== 'progress');
+    const it = w.items.shift();
+    const plain = speakableText(it && it.text);
+    if (!plain.trim()) { if (w.items.length) this._announceNext(); return; }
+    this._addTurn('agent', plain.trim());
+    const p = { announce: true, sent: true, done: true };
+    this._emit('announce', { text: plain.trim(), kind: it.kind });
+    for (const s of takeSentences(plain, 0, true).sentences) this._enqueue(s, p);
   }
 
   _addTurn(who, text) {
