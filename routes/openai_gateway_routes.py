@@ -175,6 +175,16 @@ def setup_openai_gateway_routes() -> APIRouter:
                 merged.append(m)
         return {"object": "list", "data": merged}
 
+    @router.get("/v1/router/session/{session_id}")
+    async def router_session(session_id: str, request: Request):
+        """What the auto model did for one opencode session (and its sub-agents): requests, models by share, routes,
+        the last decision. Counts only; no message content is in the log. An unknown session is all zeros."""
+        if not _allowed(request):
+            return _error(403, "this token needs the 'chat' scope", "insufficient_scope")
+        if not auto_router.SESSION_RE.fullmatch(session_id):
+            return _error(400, "not a session id", "invalid_session")
+        return await asyncio.to_thread(auto_router.session_stats, session_id)
+
     @router.post("/v1/audio/speech")
     async def audio_speech(request: Request):
         """Text to speech, as OpenAI's: JSON {model, input, voice, response_format, speed, instructions} in, audio out."""
@@ -214,7 +224,8 @@ def setup_openai_gateway_routes() -> APIRouter:
         if auto_router.level_of(payload.get("model")):
             if not await asyncio.to_thread(auto_router.enabled):
                 return _error(404, "the auto model is turned off (gateway_router.json)", "model_not_found")
-            payload, decision = await auto_router.route(payload, owner, _complete)
+            session, parent = auto_router.session_ids(request.headers)
+            payload, decision = await auto_router.route(payload, owner, _complete, session=session, parent=parent)
             if decision.get("error"):
                 return _error(decision.get("status") or 503, decision["error"], decision.get("code"))
             extra["X-Odysseus-Route"] = f"{decision['model']}; {decision['reason']}"[:500]

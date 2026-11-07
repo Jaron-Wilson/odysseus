@@ -336,3 +336,143 @@ def test_an_add_on_endpoint_counts_as_reachable(monkeypatch):
     assert not tried                                     # no socket for an add-on
     assert _REAL_REACHABLE("http://100.102.86.125:11434/v1") is False   # a real server is still checked
     assert tried
+
+
+# ── models turned off for auto ("disabled") ───────────────────────────────
+
+def _disable(tmp_path, *ids, **more):
+    (tmp_path / "gateway_router.json").write_text(json.dumps({"disabled": list(ids), **more}))
+
+
+def test_a_disabled_hard_model_at_remote_falls_back_to_easy_with_the_hard_effort(clean):
+    sol, terra = R.DEFAULTS["remote"]["hard"]["model"], R.DEFAULTS["remote"]["easy"]["model"]
+    _disable(clean, sol)
+    (out, d), _ = run({**chat({"role": "user", "content": "hard: find out why it crashes"}), "model": "auto:remote"})
+    assert out["model"] == terra and out["reasoning_effort"] == "high"
+    assert f"{sol} is turned off for auto" in d["reason"]
+
+
+def test_remote_falls_through_to_chat_then_to_the_local_fallback_list(clean):
+    r = R.DEFAULTS["remote"]
+    _disable(clean, r["hard"]["model"], r["easy"]["model"])
+    (out, d), _ = run({**chat({"role": "user", "content": "hard: design it"}), "model": "auto:remote"})
+    assert out["model"] == r["chat"]["model"] and out["reasoning_effort"] == "high"
+    _disable(clean, *[v["model"] for v in r.values()])
+    (out, d), _ = run({**chat({"role": "user", "content": "hard: design it"}, system="s2"), "model": "auto:remote"})
+    assert out["model"] == R.DEFAULTS["fallback"][0] and "reasoning_effort" not in out
+
+
+def test_remote_easy_prefers_the_weaker_route_over_the_stronger():
+    r = R.DEFAULTS["remote"]
+    got = R.remote_pick({"remote": r, "disabled": [r["easy"]["model"]]}, "easy")
+    assert got["model"] == r["chat"]["model"] and got["effort"] == "low"
+
+
+def test_a_disabled_strong_model_goes_to_the_fallback_list(clean):
+    _disable(clean, R.DEFAULTS["strong"], long=[])
+    (out, d), _ = run(chat({"role": "user", "content": "hard: find out why it crashes"}))
+    assert out["model"] == R.DEFAULTS["fallback"][0]
+    assert f"{R.DEFAULTS['strong']} is turned off for auto" in d["reason"]
+
+
+def test_a_disabled_chat_model_uses_the_fast_one(clean):
+    _disable(clean, R.DEFAULTS["chat"])
+    (out, d), _ = run(chat({"role": "user", "content": "chat: what does rebase do?"}))
+    assert out["model"] == R.DEFAULTS["fast"] and "turned off" in d["reason"]
+
+
+def test_a_disabled_long_context_model_is_never_used(clean):
+    _disable(clean, R.DEFAULTS["strong"])
+    big = {"role": "user", "content": "hard: " + "x" * 400_000}
+    (out, d), _ = run(chat(big))
+    assert d.get("error") and d["model"] == ""
+
+
+def test_everything_disabled_is_the_no_model_error(clean):
+    _disable(clean, R.DEFAULTS["strong"], R.DEFAULTS["fast"], *R.DEFAULTS["fallback"])
+    (out, d), _ = run(chat({"role": "user", "content": "hard: find out why it crashes"}))
+    assert d["status"] == 503 and d["code"] == "model_unavailable" and d["model"] == ""
+    assert "turned off for auto" in d["error"]
+
+
+def test_disabled_helpers(clean):
+    _disable(clean, "x:tiebreaker", tiebreak="x:tiebreaker")
+    (out, d), models = run(chat({"role": "user", "content": "somewhere in the middle"}))
+    assert out["model"] == R.DEFAULTS["strong"] and "tiebreaker is turned off" in d["how"]
+    assert "x:tiebreaker" not in models.calls
+    _disable(clean, R.DEFAULTS["describer"])
+    img = {"role": "user", "content": [{"type": "text", "text": "easy: what is this"},
+                                       {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}]}
+    (out, d), models = run(chat(img, system="s2"), vision=lambda m: False)
+    assert R.DEFAULTS["describer"] not in models.calls
+    assert "could not be described" in json.dumps(out["messages"])
+    _disable(clean, R.DEFAULTS["embed_via"])
+    (out, d), _ = run(chat({"role": "user", "content": "easy: hi"}, system="s3"))
+    assert out["model"] == R.DEFAULTS["strong"] and "embeddings unavailable" in d["how"]
+
+
+# ── per-session stats ─────────────────────────────────────────────────────
+
+def test_session_ids_from_headers():
+    assert R.session_ids({"x-opencode-session-id": "ses_abc123", "x-opencode-parent-session-id": "ses_par9"}) == ("ses_abc123", "ses_par9")
+    assert R.session_ids({"x-session-id": "ses_fallback1"}) == ("ses_fallback1", None)
+    assert R.session_ids({"x-opencode-session-id": "ses_a", "x-session-id": "ses_b"})[0] == "ses_a"
+    for bad in ("", "abc", "ses_", "ses_a b", "ses_../x", "ses_" + "a" * 81, "ses_a\n"):
+        assert R.session_ids({"x-opencode-session-id": bad, "x-opencode-parent-session-id": bad}) == (None, None)
+    assert R.session_ids({"x-opencode-session-id": "bad", "x-session-id": "ses_ok"})[0] == "ses_ok"
+
+
+def test_the_decision_log_records_the_session_ids_only(clean):
+    async def url(m):
+        return "http://" + m
+
+    async def sees(m):
+        return True
+    asyncio.run(R.route(chat({"role": "user", "content": "easy: secret words"}), "jaron", Models(), embed=fake_embed,
+                        reachable=url, supports_images=sees, session="ses_one", parent="ses_up"))
+    line = (clean / "logs" / "gateway_router.jsonl").read_text()
+    row = json.loads(line)
+    assert row["session"] == "ses_one" and row["parent"] == "ses_up" and "secret" not in line
+
+
+FIXTURE = [
+    {"at": 1, "session": "ses_a", "model": "chatgpt:gpt-6.1-sol", "route": "hard", "level": "remote", "how": "embeddings",
+     "reason": "hard (embeddings); auto:remote, chatgpt:gpt-6.1-sol at high effort", "tokens": 100},
+    {"at": 2, "session": "ses_a", "model": "chatgpt:gpt-6.1-terra", "route": "easy", "level": "remote", "how": "kept",
+     "reason": "easy (kept); auto:remote, chatgpt:gpt-6.1-terra at low effort", "tokens": 200},
+    {"at": 3, "session": "ses_a", "model": "chatgpt:gpt-6.1-terra", "route": "hard", "level": "remote", "how": "kept",
+     "reason": "hard (kept); auto:remote, chatgpt:gpt-6.1-terra at high effort", "tokens": 300},
+    {"at": 4, "session": "ses_kid", "parent": "ses_a", "model": "desktop-jaron:qwen3:8b", "route": "easy", "level": "default",
+     "how": "x", "reason": "easy", "tokens": 5},
+    {"at": 5, "session": "ses_b", "model": "other", "route": "chat", "level": "default", "how": "x", "reason": "y", "tokens": 1},
+]
+
+
+def test_aggregation_of_one_session():
+    got = R.aggregate_session(FIXTURE, "ses_a")
+    assert got["session"] == "ses_a" and got["requests"] == 3
+    assert got["models"] == [{"model": "chatgpt:gpt-6.1-terra", "count": 2, "share": 0.6667},
+                             {"model": "chatgpt:gpt-6.1-sol", "count": 1, "share": 0.3333}]
+    assert got["routes"] == {"hard": 2, "easy": 1}
+    assert got["last"] == {"at": 3, "model": "chatgpt:gpt-6.1-terra", "route": "hard", "level": "remote", "effort": "high",
+                           "how": "kept", "reason": FIXTURE[2]["reason"], "tokens": 300}
+    assert got["children"] == {"requests": 1, "models": [{"model": "desktop-jaron:qwen3:8b", "count": 1, "share": 1.0}]}
+    assert R.aggregate_session(FIXTURE, "ses_none") == {"session": "ses_none", "requests": 0, "models": [], "routes": {},
+                                                        "last": None, "children": {"requests": 0, "models": []}}
+
+
+def test_the_log_is_read_from_the_end_and_cached_by_size_and_mtime(clean, monkeypatch):
+    (clean / "logs").mkdir()
+    p = clean / "logs" / "gateway_router.jsonl"
+    p.write_text("not json\n" + "".join(json.dumps(r) + "\n" for r in FIXTURE))
+    assert R.session_stats("ses_a")["requests"] == 3
+    first = R._stats_cache["rows"]
+    assert R.session_stats("ses_b")["requests"] == 1 and R._stats_cache["rows"] is first      # no re-read
+    with open(p, "a") as f:
+        f.write(json.dumps({"at": 6, "session": "ses_a", "model": "m", "route": "easy"}) + "\n")
+    assert R.session_stats("ses_a")["requests"] == 4
+    monkeypatch.setattr(R, "STATS_MAX_LINES", 2)
+    R._stats_cache["key"] = None
+    assert R.session_stats("ses_a")["requests"] == 1       # only the newest 2 lines
+    p.unlink()
+    assert R.session_stats("ses_a")["requests"] == 0
