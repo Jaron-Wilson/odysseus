@@ -296,3 +296,42 @@ def test_gateway_is_exempt_from_the_45_second_request_limit():
             assert "/v1/" in [e.value for e in node.value.elts]
             return
     raise AssertionError("_TIMEOUT_EXEMPT_PREFIXES not found in app.py")
+
+
+def test_router_session_endpoint(client, tmp_path, monkeypatch):
+    import json
+    import src.constants as const
+    monkeypatch.setattr(const, "DATA_DIR", str(tmp_path))
+    (tmp_path / "logs").mkdir()
+    rows = [{"at": 1, "session": "ses_x1", "model": "chatgpt:gpt-6.1-sol", "route": "hard", "level": "remote",
+             "how": "embeddings", "reason": "hard; auto:remote, chatgpt:gpt-6.1-sol at high effort", "tokens": 9},
+            {"at": 2, "session": "ses_kid", "parent": "ses_x1", "model": "desktop-jaron:qwen3:8b", "route": "easy",
+             "level": "default", "how": "kept", "reason": "easy", "tokens": 3}]
+    (tmp_path / "logs" / "gateway_router.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    ok = {"x-test-scopes": "chat"}
+    r = client.get("/v1/router/session/ses_x1", headers=ok)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["session"] == "ses_x1" and body["requests"] == 1 and body["routes"] == {"hard": 1}
+    assert body["models"] == [{"model": "chatgpt:gpt-6.1-sol", "count": 1, "share": 1.0}]
+    assert body["last"]["effort"] == "high" and body["last"]["tokens"] == 9
+    assert body["children"] == {"requests": 1, "models": [{"model": "desktop-jaron:qwen3:8b", "count": 1, "share": 1.0}]}
+    unknown = client.get("/v1/router/session/ses_nobody", headers=ok)
+    assert unknown.status_code == 200 and unknown.json()["requests"] == 0 and unknown.json()["last"] is None
+    assert client.get("/v1/router/session/not-a-session", headers=ok).status_code == 400
+    # a token without the chat scope is refused
+    assert client.get("/v1/router/session/ses_x1", headers={"x-test-scopes": "other"}).status_code == 403
+
+
+def test_the_gateway_passes_the_opencode_session_headers_to_the_router(client, monkeypatch):
+    seen = {}
+
+    async def fake_route(payload, owner, complete, **kw):
+        seen.update(kw)
+        return payload, {"error": "stop", "status": 503, "code": "x"}
+    monkeypatch.setattr(routes.auto_router, "route", fake_route)
+    monkeypatch.setattr(routes.auto_router, "enabled", lambda: True)
+    client.post("/v1/chat/completions", json={"model": "auto", "messages": []},
+                headers={"x-test-scopes": "chat", "x-opencode-session-id": "ses_abc",
+                         "x-opencode-parent-session-id": "ses_up", "x-session-id": "bad id"})
+    assert seen == {"session": "ses_abc", "parent": "ses_up"}

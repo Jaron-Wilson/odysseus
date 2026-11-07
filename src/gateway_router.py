@@ -33,7 +33,22 @@ to GPT-6 Luna, an easy one to GPT-6.1 Terra, a hard one to GPT-6.1 Sol. An effor
 ChatGPT model is offline, the fallback list is used as at the other levels.
 
 Settings: DEFAULTS below, with any keys in <data>/gateway_router.json on top. Every decision is logged to
-<data>/logs/gateway_router.jsonl with the route and the reason, never the content of a message.
+<data>/logs/gateway_router.jsonl with the route and the reason, never the content of a message. The log also holds
+the opencode session id (``session``) and its parent's (``parent``, for a sub-agent) when the client sent them in
+``x-opencode-session-id`` / ``X-Session-Id`` / ``x-opencode-parent-session-id``: ids only. ``session_stats()`` totals
+them for GET /v1/router/session/<id>.
+
+Turning models off (``"disabled": ["chatgpt:gpt-6.1-sol"]``): model ids auto never picks, at any level, for anything:
+the answer (remote table, strong, fast, chat, long, fallback) and the helpers (tiebreak, describer, embed_via). When
+the model a route would use is disabled, the nearest allowed one is used, in this order:
+  - auto:remote: the same route's own entry first; then the next weaker route (hard, easy, chat), then, last, a
+    stronger one. The reasoning effort stays the one of the route asked for (hard keeps "high" on Terra).
+  - other levels: the model picked, then the long-context models (when too long), then the fallback list, each with
+    the disabled ones skipped.
+  - when nothing is left the request gets the 503 "no model can take the request" error, naming what was skipped.
+  - the tiebreaker off: a near tie reads as hard; embed_via off: embeddings are unavailable, so hard; the describer
+    off: an image is replaced by a note that it could not be described.
+The decision's ``reason`` says "<model> is turned off for auto" for each model skipped.
 """
 import asyncio
 import hashlib
@@ -206,6 +221,12 @@ def enabled() -> bool:
     return bool(config().get("enabled"))
 
 
+def disabled_models(cfg: Dict) -> set:
+    """Model ids auto must never pick ("disabled" in the settings: a list, or one id)."""
+    v = cfg.get("disabled") or []
+    return {v} if isinstance(v, str) else {str(x) for x in v if x}
+
+
 def _log(entry: Dict) -> None:
     try:
         d = os.path.join(_data_dir(), "logs")
@@ -218,6 +239,101 @@ def _log(entry: Dict) -> None:
     except OSError:
         pass
     logger.info("gateway auto -> %s (%s)", entry.get("model"), entry.get("reason"))
+
+
+SESSION_RE = re.compile(r"^ses_[A-Za-z0-9]{1,80}$")
+
+
+def session_ids(headers) -> Tuple[Optional[str], Optional[str]]:
+    """(session, parent): opencode's session ids from the request headers, each only when it is a well-formed id.
+    ``x-opencode-session-id`` first, then ``X-Session-Id``; the parent is set for a sub-agent's chat."""
+    def pick(*names):
+        for n in names:
+            v = str(headers.get(n) or "")
+            if SESSION_RE.fullmatch(v):
+                return v
+        return None
+    return pick("x-opencode-session-id", "x-session-id"), pick("x-opencode-parent-session-id")
+
+
+def _log_path() -> str:
+    return os.path.join(_data_dir(), "logs", "gateway_router.jsonl")
+
+
+_stats_cache: Dict = {"key": None, "rows": []}
+STATS_MAX_LINES = 20000
+STATS_MAX_BYTES = 8_000_000
+
+
+def _recent_rows() -> List[Dict]:
+    """The newest decisions (at most STATS_MAX_LINES, from the last STATS_MAX_BYTES of the log), cached until the log
+    changes (size and modification time)."""
+    p = _log_path()
+    try:
+        st = os.stat(p)
+    except OSError:
+        return []
+    key = (st.st_size, st.st_mtime_ns, p)
+    with _lock:
+        if _stats_cache["key"] == key:
+            return _stats_cache["rows"]
+    rows: List[Dict] = []
+    try:
+        with open(p, "rb") as f:
+            start = max(0, st.st_size - STATS_MAX_BYTES)
+            f.seek(start)
+            data = f.read()
+        lines = data.split(b"\n")
+        if start:
+            lines = lines[1:]               # the first line is cut
+        for line in lines[-STATS_MAX_LINES:]:
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(r, dict):
+                rows.append(r)
+    except OSError:
+        return []
+    with _lock:
+        _stats_cache.update(key=key, rows=rows)
+    return rows
+
+
+def _model_shares(rows: List[Dict]) -> List[Dict]:
+    counts: Dict[str, int] = {}
+    for r in rows:
+        m = r.get("model") or ""
+        if m:
+            counts[m] = counts.get(m, 0) + 1
+    total = sum(counts.values())
+    return [{"model": m, "count": n, "share": round(n / total, 4)}
+            for m, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def aggregate_session(rows: List[Dict], session_id: str) -> Dict:
+    """Totals for one opencode session from decision rows (oldest first): its own requests, and its sub-agents'
+    (rows whose ``parent`` is this session). A request that was refused (no model) counts in ``requests`` but has no
+    model."""
+    own = [r for r in rows if r.get("session") == session_id]
+    kids = [r for r in rows if r.get("parent") == session_id and r.get("session") != session_id]
+    routes: Dict[str, int] = {}
+    for r in own:
+        k = r.get("route") or "?"
+        routes[k] = routes.get(k, 0) + 1
+    last = None
+    if own:
+        r = own[-1]
+        eff = re.search(r" at (\w+) effort", str(r.get("reason") or ""))
+        last = {"at": r.get("at"), "model": r.get("model"), "route": r.get("route"), "level": r.get("level"),
+                "effort": eff.group(1) if eff else None, "how": r.get("how"), "reason": r.get("reason"),
+                "tokens": r.get("tokens")}
+    return {"session": session_id, "requests": len(own), "models": _model_shares(own), "routes": routes,
+            "last": last, "children": {"requests": len(kids), "models": _model_shares(kids)}}
+
+
+def session_stats(session_id: str) -> Dict:
+    return aggregate_session(_recent_rows(), session_id)
 
 
 def _desc_path() -> str:
@@ -470,7 +586,10 @@ async def classify(cfg: Dict, owner: Optional[str], text: str, complete: Complet
     embed = embed or (lambda texts: _embed(cfg, owner, texts))
     ex = cfg.get("examples") or DEFAULTS["examples"]
     chat_ex = list(ex.get("chat") or [])
+    off = disabled_models(cfg)
     try:
+        if cfg.get("embed_via") in off:
+            raise RuntimeError("embed_via is turned off for auto")
         key = json.dumps(ex, sort_keys=True) + cfg.get("embed_model", "") + str(cfg.get("embed_prefix"))
         if key not in _example_vecs:
             vecs = await embed(chat_ex + ex["easy"] + ex["hard"])
@@ -493,6 +612,8 @@ async def classify(cfg: Dict, owner: Optional[str], text: str, complete: Complet
                 return "chat", f"embeddings, a plain question by {chat_by:.3f}", round(margin, 4)
             how = f"embeddings, not a plain question ({chat_by:+.3f})"
         return "easy", how, round(margin, 4)
+    if cfg.get("tiebreak") in off:
+        return "hard", "near tie and the tiebreaker is turned off for auto", round(margin, 4)
     try:
         said = await complete(cfg["tiebreak"], [{"role": "user", "content": (
             "/no_think Is this request EASY (a quick answer, a small edit, a lookup) or HARD (multi-step coding, "
@@ -527,6 +648,8 @@ async def describe_images(cfg: Dict, owner: Optional[str], messages: List[Dict],
             text = cache.get(key)
             if text is None:
                 try:
+                    if cfg["describer"] in disabled_models(cfg):
+                        raise RuntimeError("the describer is turned off for auto")
                     text = await complete(cfg["describer"], [{"role": "user", "content": [
                         {"type": "text", "text": (
                             "Describe this image for someone who cannot see it, so they can answer the question below. "
@@ -547,23 +670,53 @@ async def describe_images(cfg: Dict, owner: Optional[str], messages: List[Dict],
 
 # ── the decision ──────────────────────────────────────────────────────────
 
+def _remote_entry(table: Dict, r: str) -> Optional[Dict]:
+    v = table.get(r)
+    if isinstance(v, str):
+        v = {"model": v}
+    if isinstance(v, dict) and v.get("model"):
+        effort = str(v.get("effort") or "").strip().lower()
+        return {"model": str(v["model"]), "effort": effort if effort in EFFORTS else None}
+    return None
+
+
 def remote_pick(cfg: Dict, route_: str) -> Optional[Dict]:
     """auto:remote's {"model", "effort"} for a route, from the settings; a route with none set falls back to the one
-    above it (chat, then easy, then hard), so a settings file that lists only "hard" still works."""
+    above it (chat, then easy, then hard), so a settings file that lists only "hard" still works.
+
+    Models in "disabled" are never returned. The order is the route's own entry (or the one above it, as said), then
+    the next weaker routes (hard, easy, chat), then stronger ones; the effort stays the one of the route asked for.
+    "skipped" lists the disabled models passed over; "model" is "" when every entry is disabled."""
     table = cfg.get("remote") or {}
-    for r in RANK[RANK.index(route_):] if route_ in RANK else ["hard"]:
-        v = table.get(r)
-        if isinstance(v, str):
-            v = {"model": v}
-        if isinstance(v, dict) and v.get("model"):
-            effort = str(v.get("effort") or "").strip().lower()
-            return {"model": str(v["model"]), "effort": effort if effort in EFFORTS else None}
-    return None
+    off = disabled_models(cfg)
+    order = RANK[RANK.index(route_):] if route_ in RANK else ["hard"]
+    wanted = next((e for e in map(lambda r: _remote_entry(table, r), order) if e), None)
+    if not wanted:
+        return None
+    if route_ in RANK:
+        i = RANK.index(route_)
+        tries = [route_] + RANK[:i][::-1] + RANK[i + 1:]
+    else:
+        tries = ["hard", "easy", "chat"]
+    skipped: List[str] = []
+    for r in tries:
+        e = _remote_entry(table, r)
+        if r == route_ and not e:
+            e = wanted
+        if not e:
+            continue
+        if e["model"] in off:
+            if e["model"] not in skipped:
+                skipped.append(e["model"])
+            continue
+        return {"model": e["model"], "effort": wanted["effort"], **({"skipped": skipped} if skipped else {})}
+    return {"model": "", "effort": None, "skipped": skipped}
 
 
 async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=None,
                 reachable=None, supports_images=None, conversation: Optional[str] = None,
-                no_chat: str = "", cap_easy: bool = False) -> Tuple[Dict, Dict]:
+                no_chat: str = "", cap_easy: bool = False, session: Optional[str] = None,
+                parent: Optional[str] = None) -> Tuple[Dict, Dict]:
     """(the payload to send, with "model" set to a real model, decision). Never raises for a routing problem: the
     strong model is the answer when in doubt (except at auto:fast, which never uses it). When no model can take the
     request (too long for every one that can be used now, or all of them offline), the decision has "error", with
@@ -575,8 +728,10 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
     cannot go to the chat model (it has no tools and cannot read files): "this turn uses tools" in an agent-mode chat
     turn, "this turn has attachments". ``cap_easy`` keeps this turn off the strong model, like auto:fast does (not at
     auto:hard, which asked for it): a spoken call turn, where the answer has to be quick and the hard work is handed
-    to another agent. The conversation keeps its own label."""
+    to another agent. The conversation keeps its own label. ``session`` and ``parent`` are the client's session ids
+    (``session_ids``), kept in the log for per-chat totals."""
     cfg = config()
+    off = disabled_models(cfg)
     level = level_of(payload.get("model")) or "default"
     reachable = reachable or (lambda mid: _url_of(mid, owner))
     supports_images = supports_images or (lambda mid: _supports_images(mid, owner))
@@ -616,13 +771,22 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
     capped_by = "auto:fast" if level == "fast" else ("the voice call" if cap_easy and level != "hard" else "")
     used = "easy" if capped_by and label == "hard" else label
     pick = remote_pick(cfg, used) if level == "remote" else None
-    model = (pick or {}).get("model") or {"hard": cfg["strong"], "chat": cfg.get("chat")}.get(used) or cfg["fast"]
     reason = [f"{label} ({how})" + (f", capped at easy by {capped_by}" if used != label else "")]
+    for m in (pick or {}).get("skipped") or []:
+        reason.append(f"{m} is turned off for auto")
+    if pick and not pick["model"]:
+        pick, model = None, ""
+    else:
+        model = (pick or {}).get("model") or {"hard": cfg["strong"], "chat": cfg.get("chat")}.get(used) or cfg["fast"]
+    if model in off:
+        if f"{model} is turned off for auto" not in reason:
+            reason.append(f"{model} is turned off for auto")
+        model = cfg["fast"] if model == cfg.get("chat") else model
     if pick:
         reason.append(f"auto:remote, {model}" + (f" at {pick['effort']} effort" if pick.get("effort") else ""))
-    if model == cfg.get("chat"):
+    if model and model == cfg.get("chat"):
         tokens = estimate_tokens({"messages": messages})      # its tools are removed, so they do not count
-    ctx = context_of(cfg, model)
+    ctx = context_of(cfg, model) if model else None
     too_long = False
     if ctx and tokens > ctx * 0.9:
         if model == cfg.get("chat"):
@@ -640,6 +804,10 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
     # read the conversation, be inside its hours, not busy and online
     cands: List[str] = []
     for m in [model] + (_longs(cfg) if too_long else []) + list(cfg.get("fallback") or []):
+        if m in off:
+            if f"{m} is turned off for auto" not in reason:
+                reason.append(f"{m} is turned off for auto")
+            continue
         if m and m not in cands:
             cands.append(m)
     chosen, waiting, error = None, None, None
@@ -669,7 +837,7 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
         if too_long:
             reason.append(f"{chosen} reads it")
         model = chosen
-    elif not any(fits(m) for m in cands) or too_long:
+    elif (cands and not any(fits(m) for m in cands)) or too_long:
         largest = max([c for c in (context_of(cfg, m) for m in cands) if c] or [0])
         why = "; ".join(reason[1:]) or "none can read it"
         error = {"status": 400, "code": "context_length_exceeded",
@@ -690,7 +858,7 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
     if error:
         decision = {"at": round(now, 3), "conversation": key[:12], "model": "", "route": used, "level": level,
                     "label": label, "how": how, "margin": margin, "tokens": tokens, "images": images,
-                    "described": 0, "reason": "; ".join(reason), **error}
+                    "described": 0, "reason": "; ".join(reason), "session": session, "parent": parent, **error}
         _log(decision)
         return out, decision
     if images and not await supports_images(model):
@@ -698,6 +866,7 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
         reason.append(f"{images} image(s) described by {cfg['describer']}")
     decision = {"at": round(now, 3), "conversation": key[:12], "model": model, "route": used, "level": level,
                 "label": label, "how": how, "margin": margin,
-                "tokens": tokens, "images": images, "described": described, "reason": "; ".join(reason)}
+                "tokens": tokens, "images": images, "described": described, "reason": "; ".join(reason),
+                "session": session, "parent": parent}
     _log(decision)
     return out, decision
