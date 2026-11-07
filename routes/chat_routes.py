@@ -17,6 +17,7 @@ from src.request_models import ChatRequest
 from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
 from src import agent_runs, chat_queue, chat_auto
+from src.opencode_chat import VOICE_CALL_MARK
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
@@ -281,13 +282,13 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         db.close()
 
 
-async def _route_auto(sess, owner, message, *, tools: bool, has_attachments: bool):
+async def _route_auto(sess, owner, message, *, tools: bool, has_attachments: bool, voice_call: bool = False):
     """The chat as it runs this turn when it is on an auto model (src/chat_auto.py): routed by the gateway's router,
     with the chosen model's endpoint. HTTPException when that cannot be done, saying why."""
     from routes.openai_gateway_routes import _complete
     try:
         return await chat_auto.route_turn(sess, owner, message, _complete, tools=tools,
-                                          has_attachments=has_attachments)
+                                          has_attachments=has_attachments, voice_call=voice_call)
     except chat_auto.AutoError as e:
         # {"error", "message"} like the other chat errors: the page shows the message as it is
         raise HTTPException(e.status, detail={"error": "AUTO_MODEL", "message": str(e)})
@@ -330,16 +331,30 @@ async def _client_device_for(request: Request) -> Optional[Dict[str, Any]]:
 
 
 VOICE_CALL_NOTE = (
-    "You are in a live voice call with the user. They are speaking (their words "
+    VOICE_CALL_MARK + " They are speaking (their words "
     "reach you transcribed by speech recognition, so expect small mistakes) and "
     "your replies are read aloud to them. Keep replies short and conversational, "
     "a few sentences, like talking on the phone. No markdown, tables, lists or "
-    "code unless they ask for them. You can still use your tools as usual."
+    "code unless they ask for them. You can still use your tools as usual.\n"
+    "Coding, file and project work is not for you to do out loud: hand it to the "
+    "user's OpenCode chat with the opencode_chat tool (action send), in your own "
+    "words and in full, and answer in one short sentence such as \"On it.\" The "
+    "send returns within a few seconds, working or not. While that chat works, the "
+    "user hears short progress updates and a one or two sentence summary without "
+    "asking, so do not poll its status and do not repeat them. Never read out code, "
+    "file contents or long output. Quick questions you can answer yourself, just answer."
 )
 
 
-def apply_voice_call_note(messages: list) -> None:
-    """Tell the model this turn is spoken in a call: on the system message."""
+def apply_voice_call_note(messages: list, session_id: str = "") -> None:
+    """Tell the model this turn is spoken in a call: on the system message. `session_id` is the chat the call is
+    in: the server then knows a call is open there, which switches spoken progress on for opencode_chat."""
+    if session_id:
+        try:
+            from src import opencode_chat
+            opencode_chat.note_call(session_id)
+        except Exception:
+            pass
     if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
         messages[0]["content"] = (messages[0]["content"] or "") + "\n\n" + VOICE_CALL_NOTE
     else:
@@ -652,7 +667,8 @@ def setup_chat_routes(
             auto_turn = None
             if chat_auto.is_auto_session(sess):
                 auto_turn = await _route_auto(sess, owner, str(message or ""), tools=(chat_mode == "agent"),
-                                              has_attachments=_has_atts)
+                                              has_attachments=_has_atts,
+                                              voice_call=str(form_data.get("voice_call") or "").lower() in ("1", "true"))
                 sess = auto_turn
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
@@ -739,7 +755,7 @@ def setup_chat_routes(
         # A turn spoken in the in-app voice call (static/js/voiceCall.js): the
         # model did not know, and answered "I'm not hearing live audio".
         if str(form_data.get("voice_call") or "").lower() in ("1", "true"):
-            apply_voice_call_note(ctx.messages)
+            apply_voice_call_note(ctx.messages, str(session or ""))
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
 

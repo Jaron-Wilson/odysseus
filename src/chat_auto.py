@@ -93,7 +93,8 @@ def describe(choice: str, decision: Dict, effort: Optional[str] = None) -> Dict:
     reads like "Auto -> qwen3.8:27b (hard, kept for this conversation)"."""
     route = decision.get("route") or ""
     label = decision.get("label") or route
-    parts = [route + (", capped at easy by auto:fast" if label and route and label != route else "")]
+    capped = " by auto:fast" if decision.get("level") == "fast" else " for the call"
+    parts = [route + (f", capped at easy{capped}" if label and route and label != route else "")]
     parts.append(_how_text(decision.get("how") or ""))
     notes = [p for p in str(decision.get("reason") or "").split("; ") if p.endswith(" is busy") or p.endswith(" is offline")]
     if notes:
@@ -180,12 +181,14 @@ async def _sees_images(_model_id: str) -> bool:
 
 
 async def route_turn(sess, owner: Optional[str], message: str, complete, *, tools: bool = False,
-                     has_attachments: bool = False, route=None) -> RoutedSession:
+                     has_attachments: bool = False, route=None, voice_call: bool = False) -> RoutedSession:
     """Route one message of a chat on an auto model and return the chat as it will run this turn.
 
     ``tools``: this turn has tools (agent mode), so the chat model, which has none, is not used. ``has_attachments``:
-    the message has files, which that model cannot read either. ``complete`` is the gateway's way of asking a model
-    (the router's tiebreaker); ``route`` replaces the router's, for tests. Raises AutoError."""
+    the message has files, which that model cannot read either. ``voice_call``: a turn spoken in a call, which stays
+    off the strong model so the answer is quick (the hard work goes to the user's opencode chat). ``complete`` is the
+    gateway's way of asking a model (the router's tiebreaker); ``route`` replaces the router's, for tests. Raises
+    AutoError."""
     from src import openai_gateway as gw
     choice = getattr(sess, "model", "") or "auto"
     if not await asyncio.to_thread(auto_router.enabled):
@@ -195,7 +198,8 @@ async def route_turn(sess, owner: Optional[str], message: str, complete, *, tool
     try:
         out, decision = await (route or auto_router.route)(
             payload, owner, complete, supports_images=_sees_images,
-            conversation=f"chat:{getattr(sess, 'id', '')}", no_chat=no_chat)
+            conversation=f"chat:{getattr(sess, 'id', '')}", no_chat=no_chat,
+            **({"cap_easy": True} if voice_call else {}))
     except Exception as e:
         logger.warning("chat auto: the router failed: %s", e, exc_info=True)
         raise AutoError(f"{auto_router.display_name(choice)} could not choose a model ({type(e).__name__}). "

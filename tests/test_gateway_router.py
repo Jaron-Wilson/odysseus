@@ -51,7 +51,7 @@ def clean(tmp_path, monkeypatch):
     yield tmp_path
 
 
-def run(payload, models=None, vision=lambda m: "vl" in m or "qwen3.8" in m, url=lambda m: "http://" + m):
+def run(payload, models=None, vision=lambda m: "vl" in m or "qwen3.8" in m, url=lambda m: "http://" + m, **route_kw):
     models = models or Models()
 
     async def reach(mid):
@@ -59,7 +59,8 @@ def run(payload, models=None, vision=lambda m: "vl" in m or "qwen3.8" in m, url=
 
     async def sees(mid):
         return vision(mid)
-    return asyncio.run(R.route(payload, "jaron", models, embed=fake_embed, reachable=reach, supports_images=sees)), models
+    return asyncio.run(R.route(payload, "jaron", models, embed=fake_embed, reachable=reach, supports_images=sees,
+                               **route_kw)), models
 
 
 def chat(*msgs, system="You are opencode."):
@@ -336,3 +337,30 @@ def test_an_add_on_endpoint_counts_as_reachable(monkeypatch):
     assert not tried                                     # no socket for an add-on
     assert _REAL_REACHABLE("http://100.102.86.125:11434/v1") is False   # a real server is still checked
     assert tried
+
+
+def test_auto_remote_in_a_call_keeps_a_plain_question_on_the_fast_model_even_with_tools():
+    # An Odysseus chat turn has tools, which reaches the router as no_chat, and a plain question then moves up.
+    # In a call on auto:remote it stays on Luna, which takes tools: the call only hands the work to another agent.
+    q = {"role": "user", "content": "chat: what does a rebase do?"}
+    (out, d), _ = run({**chat(q), "model": "auto:remote"}, no_chat="this turn uses tools", cap_easy=True)
+    assert out["model"] == R.DEFAULTS["remote"]["chat"]["model"] and d["route"] == "chat"
+    # outside a call, and at the other levels, nothing changes
+    (out, d), _ = run({**chat(q, system="s2"), "model": "auto:remote"}, no_chat="this turn uses tools")
+    assert d["route"] == "easy"
+    (out, d), _ = run(chat(q, system="s3"), no_chat="this turn uses tools", cap_easy=True)
+    assert d["route"] == "easy"
+
+
+def test_a_call_turn_never_uses_the_strong_model_but_the_chat_keeps_its_label():
+    hard = chat({"role": "user", "content": "hard: find out why the whole site build crashes"}, system="call")
+    (out, d), _ = run({**hard, "model": "auto:remote"}, cap_easy=True)
+    assert out["model"] == R.DEFAULTS["remote"]["easy"]["model"] and d["route"] == "easy" and d["label"] == "hard"
+    assert "capped at easy by the voice call" in d["reason"]
+    (out, d), _ = run({**chat({"role": "user", "content": "hard: find out why the whole site build crashes"}, system="nocall"),
+                       "model": "auto:remote"})
+    assert out["model"] == R.DEFAULTS["remote"]["hard"]["model"]
+    # auto:hard asked for the strong model: a call does not override that
+    (out, d), _ = run({**chat({"role": "user", "content": "anything"}, system="hardcall"), "model": "auto:hard"},
+                      cap_easy=True)
+    assert d["route"] == "hard"

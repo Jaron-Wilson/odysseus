@@ -935,6 +935,9 @@ app.include_router(setup_native_plans_routes())
 # Ask before Google writes: held calls answered in the chat (routes/action_approvals_routes.py)
 from routes.action_approvals_routes import setup_action_approvals_routes
 app.include_router(setup_action_approvals_routes())
+# Voice calls with the user's opencode chats: the picker, the binding, the spoken updates (routes/opencode_chat_routes.py)
+from routes.opencode_chat_routes import setup_opencode_chat_routes
+app.include_router(setup_opencode_chat_routes())
 
 
 # Email

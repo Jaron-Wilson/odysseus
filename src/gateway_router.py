@@ -563,7 +563,7 @@ def remote_pick(cfg: Dict, route_: str) -> Optional[Dict]:
 
 async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=None,
                 reachable=None, supports_images=None, conversation: Optional[str] = None,
-                no_chat: str = "") -> Tuple[Dict, Dict]:
+                no_chat: str = "", cap_easy: bool = False) -> Tuple[Dict, Dict]:
     """(the payload to send, with "model" set to a real model, decision). Never raises for a routing problem: the
     strong model is the answer when in doubt (except at auto:fast, which never uses it). When no model can take the
     request (too long for every one that can be used now, or all of them offline), the decision has "error", with
@@ -573,7 +573,9 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
     the label is kept per chat; without it the conversation is recognized by its first system prompt and first user
     message, as a client of the gateway sends the whole thing again each step. ``no_chat``, when set, is why this turn
     cannot go to the chat model (it has no tools and cannot read files): "this turn uses tools" in an agent-mode chat
-    turn, "this turn has attachments"."""
+    turn, "this turn has attachments". ``cap_easy`` keeps this turn off the strong model, like auto:fast does (not at
+    auto:hard, which asked for it): a spoken call turn, where the answer has to be quick and the hard work is handed
+    to another agent. The conversation keeps its own label."""
     cfg = config()
     level = level_of(payload.get("model")) or "default"
     reachable = reachable or (lambda mid: _url_of(mid, owner))
@@ -588,16 +590,20 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
         st = _sticky.get(key)
 
     last = _last_user(messages)
+    call_remote = cap_easy and level == "remote"
     label, how, margin = (st or {}).get("route"), "kept for this conversation", None
     new_message = last is not None and (not st or hashlib.sha256(last.encode()).hexdigest() != st.get("seen"))
     if level == "hard":
         label, how, new_message = "hard", "auto:hard", False
     elif new_message and label != "hard":
         got, how, margin = await classify(cfg, owner, last, complete, embed=embed)
-        if got == "chat" and not _chat_ok(messages):
+        if got == "chat" and not call_remote and not _chat_ok(messages):
             got, how = "easy", how + ", but the conversation has used tools or has images"
         label = max(label or got, got, key=RANK.index)
-    if no_chat and label == "chat":
+    # The chat model has no tools and no eyes, so a turn that needs them moves up. auto:remote's plain-question model
+    # (Luna) takes tools and images like the others, so in a call a plain question stays plain: a call that only
+    # hands work to another agent should stay on the fast voice.
+    if no_chat and label == "chat" and not call_remote:
         label, how = "easy", f"{how}, but {no_chat}"
     label = label or ("easy" if level == "fast" else "hard")
     with _lock:
@@ -607,10 +613,11 @@ async def route(payload: Dict, owner: Optional[str], complete: Complete, embed=N
                         "seen": hashlib.sha256((last or "").encode()).hexdigest() if new_message else (st or {}).get("seen")}
 
     # the conversation keeps its own label; auto:fast only caps what is used this time
-    used = "easy" if level == "fast" and label == "hard" else label
+    capped_by = "auto:fast" if level == "fast" else ("the voice call" if cap_easy and level != "hard" else "")
+    used = "easy" if capped_by and label == "hard" else label
     pick = remote_pick(cfg, used) if level == "remote" else None
     model = (pick or {}).get("model") or {"hard": cfg["strong"], "chat": cfg.get("chat")}.get(used) or cfg["fast"]
-    reason = [f"{label} ({how})" + (", capped at easy by auto:fast" if used != label else "")]
+    reason = [f"{label} ({how})" + (f", capped at easy by {capped_by}" if used != label else "")]
     if pick:
         reason.append(f"auto:remote, {model}" + (f" at {pick['effort']} effort" if pick.get("effort") else ""))
     if model == cfg.get("chat"):

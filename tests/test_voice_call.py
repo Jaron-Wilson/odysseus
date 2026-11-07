@@ -167,6 +167,42 @@ class _Fakes:
         self.stt_fail = 0        # this many requests answer 500 first
         self.tts = []            # texts, in request order
         self.tts_ms = 250
+        # The opencode work chat (src/opencode_chat.py). None: the server has no such routes (404), as before.
+        self.work_chats = None
+        self.work_items = []     # updates the next poll returns
+        self.work_bound = None
+        self.work_after = 0
+        self.work_polls = []
+        self.work_puts = []
+        self.work_deletes = 0
+        self.work_approval = None    # a send held for the user's Approve
+        self.work_answers = []       # (approval id, verb) the page answered
+
+
+def _work_route(fakes, r, path):
+    ok = lambda body: r.fulfill(body=json.dumps(body), content_type="application/json")
+    if path.endswith("/updates"):
+        fakes.work_polls.append(r.request.url)
+        items, fakes.work_items = fakes.work_items, []
+        for it in items:
+            fakes.work_after += 1
+            it["seq"] = fakes.work_after
+        ok({"items": items, "after": fakes.work_after, "working": False, "bound": fakes.work_bound,
+            "approval": fakes.work_approval})
+    elif path.endswith("/chats"):
+        ok({"chats": fakes.work_chats, "bound": fakes.work_bound})
+    elif path.endswith("/binding") and r.request.method == "PUT":
+        body = json.loads(r.request.post_data or "{}")
+        fakes.work_puts.append(body)
+        c = next(c for c in fakes.work_chats if c["id"] == body["opencode"])
+        fakes.work_bound = {"id": c["id"], "title": c["title"], "folder": c["folder"], "armed": True}
+        ok({"bound": fakes.work_bound})
+    elif path.endswith("/binding") and r.request.method == "DELETE":
+        fakes.work_deletes += 1
+        fakes.work_bound = None
+        ok({"unbound": True, "bound": None})
+    else:
+        r.fulfill(status=404, body="")
 
 
 @pytest.fixture
@@ -206,6 +242,13 @@ def call_page():
             elif path == "/api/tts/synthesize":
                 fakes.tts.append(json.loads(r.request.post_data or "{}").get("text"))
                 r.fulfill(body=_wav(fakes.tts_ms, freq=330), content_type="audio/wav")
+            elif path.startswith("/api/action_approvals/") and fakes.work_approval is not None:
+                _, _, _, aid, verb = path.split("/")
+                fakes.work_answers.append((aid, verb))
+                fakes.work_approval = None
+                r.fulfill(body=json.dumps({"id": aid, "status": "approved"}), content_type="application/json")
+            elif path.startswith("/api/opencode_chat/") and fakes.work_chats is not None:
+                _work_route(fakes, r, path)
             elif path in ("/", ""):
                 r.fulfill(body=_PAGE, content_type="text/html")
             elif path.startswith("/static/") and (_REPO / path.lstrip("/")).is_file():
@@ -703,3 +746,109 @@ def test_local_whisper_missing_falls_back_to_the_browser_recognizer(call_page):
     }""")
     assert r["a"] == "browser" and "Whisper" in r["notice"]
     assert r["b"] == "none" and "not installed" in r["reason"]
+
+
+# --- The work chat: hand coding to the user's opencode chat, hear its progress ----------
+
+_CHATS = [
+    {"id": "ses_jd", "title": "JaronDynamics", "folder": "~/odysseus-data/workspaces/jarondynamics-site", "busy": False},
+    {"id": "ses_car", "title": "Careers page", "folder": "~/sites/careers", "busy": True},
+]
+
+
+def _open_work(pg, fakes, **kw):
+    fakes.work_chats = _CHATS
+    pg.evaluate("""(kw) => {
+      window.__call = window.__vc.open({
+        getUserMedia: window.__gum, prefs: {}, workPollMs: 120,
+        onEvent: (e) => window.__ev.push(e), ...kw,
+      });
+    }""", kw)
+    _wait_event(pg, "calibrated")
+
+
+def test_the_work_chat_menu_lists_the_chats_and_picking_one_binds_it(call_page):
+    pg, fakes = call_page
+    _open_work(pg, fakes)
+    pg.wait_for_selector(".vc-work:not([hidden])", timeout=5000)
+    labels = pg.eval_on_selector_all(".vc-work-select option", "els => els.map(e => e.textContent)")
+    assert labels[0] == "No work chat"
+    assert "JaronDynamics (~/odysseus-data/workspaces/jarondynamics-site)" in labels
+    assert "Careers page (~/sites/careers, working)" in labels
+    assert "Pick one of your OpenCode chats" in pg.inner_text(".vc-work-note")
+    pg.select_option(".vc-work-select", "ses_jd")
+    pg.wait_for_function("() => document.querySelector('.vc-work-note').textContent.includes('without asking')")
+    assert fakes.work_puts == [{"chat": "s1", "opencode": "ses_jd"}]
+    pg.select_option(".vc-work-select", "")
+    pg.wait_for_function("() => document.querySelector('.vc-work-note').textContent.includes('Pick one')")
+    assert fakes.work_deletes == 1
+
+
+def test_a_server_without_the_work_chat_shows_no_menu_and_the_call_goes_on(call_page):
+    pg, fakes = call_page
+    _open(pg)                                        # every /api/opencode_chat route answers 404 here
+    _wait_event(pg, "calibrated")
+    pg.wait_for_timeout(500)
+    assert pg.evaluate("document.querySelector('.vc-work').hidden") is True
+    _say(pg, 700)
+    _wait_event(pg, "speak-end", 3, timeout=10000)   # the reply is spoken as always
+
+
+def test_progress_and_the_summary_are_spoken_when_the_call_is_idle(call_page):
+    pg, fakes = call_page
+    _open_work(pg, fakes)
+    fakes.work_items = [{"kind": "progress", "text": "OpenCode is editing public/index.html."}]
+    _wait_event(pg, "announce", 1, timeout=8000)
+    _wait_event(pg, "speak-end", 1, timeout=8000)
+    assert fakes.tts == ["OpenCode is editing public/index.html."]
+    pg.wait_for_function("() => document.querySelector('.vc-overlay').dataset.state === 'listening'")
+    fakes.work_items = [{"kind": "done", "text": "OpenCode finished in \"JaronDynamics\". I moved the careers link."}]
+    _wait_event(pg, "speak-end", 3, timeout=8000)
+    assert fakes.tts[1:] == ["OpenCode finished in \"JaronDynamics\".", "I moved the careers link."]
+    pg.wait_for_function("() => document.querySelector('.vc-overlay').dataset.state === 'listening'")
+    assert "I moved the careers link." in pg.inner_text(".vc-transcript")
+    assert [e["kind"] for e in _events_full(pg, "announce")] == ["progress", "done"]
+
+
+def _events_full(pg, kind):
+    return pg.evaluate("kind => window.__ev.filter(e => e.type === kind).map(e => ({kind: e.kind, text: e.text}))", kind)
+
+
+def test_a_finished_run_replaces_the_progress_still_waiting(call_page):
+    pg, fakes = call_page
+    # The user is mid-reply (the agent answering "On it"), so nothing is said until it is done; by then the
+    # run has finished and only its summary is worth hearing.
+    _open_work(pg, fakes)
+    _say(pg, 700)
+    pg.wait_for_function("() => window.__sent.length >= 1", timeout=6000)
+    fakes.work_items = [{"kind": "progress", "text": "OpenCode is reading careers.html."},
+                        {"kind": "done", "text": "OpenCode finished. The footer is blue."}]
+    _wait_event(pg, "announce", 1, timeout=12000)
+    _wait_event(pg, "speak-end", 5, timeout=15000)
+    assert fakes.tts[:3] == ["Sure thing.", "The weather is sunny today.", "Bring a hat!"]     # the reply first
+    assert fakes.tts[3:] == ["OpenCode finished.", "The footer is blue."]                        # then only the result
+
+
+def test_talking_over_an_update_cuts_it_off_like_any_reply(call_page):
+    pg, fakes = call_page
+    fakes.tts_ms = 4000
+    _open_work(pg, fakes, prefs={"echo": "headphones"})
+    fakes.work_items = [{"kind": "done", "text": "OpenCode finished. The footer is blue and the sitemap is updated."}]
+    _wait_event(pg, "speak-start", 1, timeout=8000)
+    _say(pg, 900)
+    _wait_event(pg, "barge-in", 1, timeout=8000)
+    assert len(_events(pg, "speak-end")) == 0
+
+
+def test_a_send_held_for_approve_is_answered_in_the_call_itself(call_page):
+    pg, fakes = call_page
+    _open_work(pg, fakes)
+    fakes.work_approval = {"id": "abc123abc123", "title": 'Send a message to your OpenCode chat "JaronDynamics"',
+                           "message": "make the footer blue"}
+    pg.wait_for_selector(".vc-work-ask:not([hidden])", timeout=5000)
+    text = pg.inner_text(".vc-work-ask-text")
+    assert "JaronDynamics" in text and "make the footer blue" in text
+    pg.click(".vc-work-ok")
+    pg.wait_for_function("() => document.querySelector('.vc-work-ask').hidden")
+    assert fakes.work_answers == [("abc123abc123", "approve")]
+    assert "You will hear how it goes" in pg.inner_text(".vc-hint")

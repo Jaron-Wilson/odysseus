@@ -93,9 +93,12 @@ function render(card, a) {
     answer = 'A Company agent asked for this. Answer it in Company > Approvals.';
   }
   const pending = a.status === 'pending' && a.source !== 'company';
+  // The card is shared: a held Google write, or a message for the user's OpenCode chat
+  // (src/agent_tools/opencode_chat_tool.py).
+  const oc = a.kind === 'opencode_chat';
   card.innerHTML = `
     <div class="aa-head">
-      <span class="aa-kicker">Google change</span>
+      <span class="aa-kicker">${oc ? 'OpenCode chat' : 'Google change'}</span>
       <span class="aa-badge aa-${esc(a.status)}">${esc(label)}</span>
     </div>
     <div class="aa-title">${esc(a.title)}</div>
@@ -103,7 +106,7 @@ function render(card, a) {
     ${details}
     ${body}
     ${answer ? `<div class="aa-answer">${answer}</div>` : ''}
-    ${pending ? `<div class="aa-hint">Nothing has changed in your Google account yet. Approve runs exactly this, once. Expires in ${esc(minutes(a.expires_in))}.</div>` : ''}
+    ${pending ? `<div class="aa-hint">${oc ? 'Nothing has been sent to the chat yet.' : 'Nothing has changed in your Google account yet.'} Approve runs exactly this, once. Expires in ${esc(minutes(a.expires_in))}.</div>` : ''}
     <div class="aa-deny" hidden>
       <textarea class="aa-note" rows="2" maxlength="2000" placeholder="Why not, or what instead? (optional, the assistant sees this)" aria-label="Note for the assistant"></textarea>
       <div class="aa-row">

@@ -164,6 +164,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "claude_code": "Hand a CODING or SOFTWARE task to the coding agent on this host (engines: OpenCode by default on the local models, Claude Code, Antigravity): writing code, editing code, adding a feature, fixing a bug, refactoring, rebuilding or rebranding a website, building a new project, debugging failing tests, reviewing a codebase, explaining how code works. It reads the project, edits files, runs commands and uses its own subagents, streaming its console live. Use for 'claude code', 'claude agent', 'use claude', 'code this', 'build me', 'fix the bug', 'refactor', 'rebrand the site', 'work on my repo'. Changes only run once the user approves a plan you wrote yourself with propose_plan. Also the way to CHECK coding runs: action 'status' or 'list' reports every run of every engine, OpenCode included (running, finished, failed, stopped, with results); use it for 'what is the status of the coding runs', 'did the agent finish', 'how is the OpenCode job going'.",
     "branch_thread": "Branch this chat into a new thread holding the conversation so far, which the user carries on separately. Use for 'branch this out', 'branch off', 'make a branch', 'try another direction in a branch', 'fork this into a thread'.",
     "spawn_subagent": "Hand a task to a subagent: a thread of this chat where the agent works on it in the background with the same tools, posting its report back here when done, while the user keeps chatting. Use for 'subagent this out', 'subagent out', 'have a subagent', 'spin off an agent', 'do it in the background', 'in parallel'.",
+    "opencode_chat": "Talk to a chat the user ALREADY has open on their opencode server: list their chats, send a message into one and get the reply (or 'still working' with the latest steps), check how it is going, stop it, or bind it as this conversation's default. The way to do coding work from a voice call. Use for 'call my opencode', 'my JaronDynamics chat', 'tell my opencode chat to ...', 'ask the chat in the careers folder', 'how is my opencode chat doing', 'what is it working on', 'stop my opencode chat', 'send that to opencode'. A NEW one-off coding run is claude_code instead. Sends are held for the user's Approve unless they picked the chat in the call's work-chat menu.",
     "manage_bg_jobs": "Inspect and control detached background `bash` jobs (the ones started with a background marker like `#!bg`). action='list' shows this chat's jobs (id/status/age/command); action='output' returns a job's captured output so far (check on a long-running job, or re-read a finished one); action='kill' stops a runaway job by id. Use for 'is the background job done', 'check on that job', 'show the build output', 'kill the background job', 'stop the bg task'. output/kill need a job_id from list.",
 }
 
@@ -458,6 +459,11 @@ class ToolIndex:
             {"manage_calendar"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
             {"manage_notes"},
+        # The user's own chats on their opencode server (src/opencode_chat.py).
+        frozenset({"opencode chat", "opencode chats", "my opencode", "to opencode", "call my opencode",
+                   "opencode session", "my chat in opencode", "the opencode chat", "opencode server",
+                   "my coding chat", "my coding agent chat"}):
+            {"opencode_chat"},
         # Detached background `bash` jobs (#!bg): check on / read output / kill.
         frozenset({"background job", "background jobs", "bg job", "bg jobs",
                    "background task", "is the job done", "check the job",

@@ -1450,6 +1450,40 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "opencode_chat",
+            "description": (
+                "Talk to a chat the user ALREADY has open on their opencode server (not a new run: that is "
+                "claude_code). Use it to hand coding, file or project work to the user's own OpenCode chat, to "
+                "carry on a conversation in it, or to check how it is going. In a voice call this is how you do "
+                "coding work: keep your own spoken answer short and send the work here.\n"
+                "Actions: 'list' shows the recent chats (title, folder, how long ago, working now or idle); "
+                "'send' puts `text` in the chat and waits up to `wait_seconds` (default about 20, less in a call) "
+                "for the reply: a finished reply comes back, otherwise 'still working' with the latest steps, "
+                "and the run goes on without you; 'status' shows the steps since its last message in plain "
+                "words and its newest text; 'stop' aborts it; 'bind' makes a chat this conversation's default "
+                "('call my JaronDynamics chat'), so later sends need no `chat`; 'unbind' clears that.\n"
+                "`chat` is an id, a title such as 'JaronDynamics', or 'the one in <folder>'; leave it out to use "
+                "the bound chat. A send is held for the user's Approve in the chat unless they armed that chat in "
+                "the call's work-chat menu: when it is held, say so in one short sentence and end your turn.\n"
+                "After a send that is still working in a voice call, do NOT poll status: short progress updates and "
+                "a summary are spoken to the user for you. Never read out code or long output; give one or two "
+                "sentences."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "send", "status", "stop", "bind", "unbind"], "description": "list | send | status | stop | bind | unbind (default: list)"},
+                    "chat": {"type": "string", "description": "The opencode chat: its id (ses_...), its title, or 'the one in <folder>'. Omit for the chat this conversation is bound to."},
+                    "text": {"type": "string", "description": "For send: the message for the opencode chat, stated in full (it cannot see this conversation)."},
+                    "wait_seconds": {"type": "number", "description": "For send: how long to wait for the reply before returning 'still working' (default 20; 8 in a call; at most 55)."},
+                },
+                "required": ["action"]
+            }
+        }
+    },
 ]
 
 
