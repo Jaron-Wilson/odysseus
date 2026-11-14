@@ -377,15 +377,15 @@ def list_messages() -> Dict:
     return {"messages": items, "unread": sum(1 for e in items if not e.get("read"))}
 
 
-def read_message(key: str) -> Dict:
+def read_message(key: str, mark_read: bool = True) -> Dict:
     e = _find(key)
     with open(os.path.join(_inbox_dir(), key), "rb") as f:
         m = parse(f.read(), {})
-    if not e.get("read"):
+    if mark_read and not e.get("read"):
         _update(key, read=True)
     html = m["body_html"]
     rule = next((r for r in load_config().get("rules") or [] if r.get("address") == e.get("rule")), {})
-    return {**e, "read": True, "date": m["date"], "body": m["body"][:50000], "has_runner": bool(rule.get("runner")),
+    return {**e, "read": bool(e.get("read")) or mark_read, "date": m["date"], "body": m["body"][:50000], "has_runner": bool(rule.get("runner")),
             "body_html": html if len(html) <= 500000 else "",
             "attachments": m["attachments"], "to": m["to"] or e.get("to")}
 
