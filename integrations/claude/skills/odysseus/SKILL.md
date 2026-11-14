@@ -105,6 +105,13 @@ python3 ~/.claude/skills/odysseus/scripts/odysseus_api.py POST /api/codex/memory
 - `POST /api/codex/emails/draft` — body matches `SendEmailRequest` (`to`, `cc`, `bcc`, `subject`, `body`, `body_html`, `attachments`, `account_id`, `in_reply_to`, `references`). Requires `email:draft` (or `email:send`).
 - `POST /api/codex/emails/send` — same body. Requires `email:send`. Never send without explicit user instruction.
 
+## Inbound mail (read only)
+
+- `GET /api/codex/inbound?limit=20` lists mail received by the mail listener, newest first, with an `unread` count. Requires `inbound:read`.
+- `GET /api/codex/inbound/{key}` returns one message (`body`, `to`, `attachments`). It does not mark the message read. 404 if the key is unknown.
+
+These routes never trigger agent turns, fetch, delete or write. Make the token with only `inbound:read`.
+
 ## Cookbook serve (debug a failing model launch)
 
 The Cookbook surface lets you reproduce what a human would do in Odysseus → Cookbook: read which serves are running, tail their tmux output to see why they crashed, edit the launch command, relaunch, kill a stuck one. Use this when the user is debugging a model server that won't come up (compute-capability errors, OOM, missing kernels, wrong attention backend, etc.).

@@ -27,6 +27,7 @@ TODO_WRITE_SCOPES = {"todos:write"}
 EMAIL_READ_SCOPES = {"email:read", "email:draft", "email:send"}
 EMAIL_DRAFT_SCOPES = {"email:draft", "email:send"}
 EMAIL_SEND_SCOPES = {"email:send"}
+INBOUND_READ_SCOPES = {"inbound:read"}
 MEMORY_READ_SCOPES = {"memory:read", "memory:write"}
 MEMORY_WRITE_SCOPES = {"memory:write"}
 CALENDAR_READ_SCOPES = {"calendar:read", "calendar:write"}
@@ -124,6 +125,10 @@ def setup_codex_routes(
                     "send": scoped(EMAIL_SEND_SCOPES),
                     "actions": ["list", "read", "draft", "send"],
                 },
+                "inbound": {
+                    "read": scoped(INBOUND_READ_SCOPES),
+                    "actions": ["list", "read"],
+                },
                 "memory": {
                     "read": scoped(MEMORY_READ_SCOPES),
                     "write": scoped(MEMORY_WRITE_SCOPES),
@@ -186,6 +191,36 @@ def setup_codex_routes(
         args = dict(body)
         args["action"] = action
         return await do_manage_notes(json.dumps(args), owner=owner)
+
+    # ── Inbound mail (mail listener store), read only ─────────────────────
+    # Never marks mail read, fetches, deletes, or starts an agent turn.
+
+    def _inbound_gate(request: Request) -> None:
+        if getattr(request.state, "api_token", False):
+            _scope_owner(request, INBOUND_READ_SCOPES)
+        else:
+            from core.middleware import require_admin
+
+            require_admin(request)
+
+    @router.get("/inbound")
+    def list_inbound(request: Request, limit: int = 20):
+        _inbound_gate(request)
+        from src import mail_listener
+
+        limit = max(1, min(int(limit or 20), 100))
+        data = mail_listener.list_messages()
+        return {"messages": data["messages"][:limit], "unread": data["unread"]}
+
+    @router.get("/inbound/{key}")
+    def read_inbound(request: Request, key: str):
+        _inbound_gate(request)
+        from src import mail_listener
+
+        try:
+            return mail_listener.read_message(key, mark_read=False)
+        except (KeyError, FileNotFoundError):
+            raise HTTPException(404, "No such email")
 
     @router.get("/emails")
     async def list_emails(
