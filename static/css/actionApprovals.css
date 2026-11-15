@@ -76,3 +76,18 @@ html.ui-studio .aa-btn { border-radius: var(--st-r-sm, 8px); }
   .aa-body { max-height: 45vh; }
   .aa-btn { height: 38px; flex: 1 1 auto; }
 }
+
+/* Auto mode (static/js/autoMode.js): what it decided, under a chat step. */
+.auto-mode-notes { margin: 2px 0 6px 22px; display: flex; flex-direction: column; gap: 2px; }
+.auto-mode-note { font-size: 12px; opacity: .85; }
+.auto-mode-note summary { cursor: pointer; list-style: none; }
+.auto-mode-note summary::-webkit-details-marker { display: none; }
+.auto-mode-note summary::before { content: "\25B8"; display: inline-block; margin-right: 5px; opacity: .6; }
+.auto-mode-note[open] summary::before { content: "\25BE"; }
+.auto-mode-note.allow summary { color: #3fa66b; }
+.auto-mode-note.ask summary { color: var(--accent, #c96); }
+.auto-mode-note.block summary { color: var(--accent-error, #d9644f); }
+.auto-mode-note-body { margin: 3px 0 0 14px; opacity: .75; }
+.gw-list .gw-out.auto-allow { color: #3fa66b; }
+.gw-list .gw-out.auto-ask { color: var(--accent, #c96); }
+.gw-list .gw-out.auto-block { color: var(--accent-error, #d9644f); }

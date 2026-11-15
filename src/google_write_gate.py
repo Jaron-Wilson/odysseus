@@ -485,6 +485,26 @@ async def intercept(tool: str, content: str, owner: Optional[str], session_id: O
     if info is None:
         return None
     kind, ctx = _context()
+    if kind == "chat":
+        # Auto mode (src/auto_mode.py): a safety check decides instead of the
+        # card. Ask mode, and tasks or the mail listener, get None here.
+        from src import auto_mode
+        a = _args(content)
+        try:
+            own = [r.get(k) for r in _email_rows() for k in ("from_address", "imap_user") if r.get(k)]
+        except Exception:
+            own = []
+        d = await auto_mode.check(
+            "google_write", t, a, owner=owner, session_id=session_id, action=str(info.get("title") or t),
+            meta={"read_only": False, "outward": t in ("send_email", "reply_to_email") or bool(a.get("attendees")),
+                  "destructive": t in ("delete_email", "bulk_email") or "delete" in str(a.get("action") or ""),
+                  "owner_addresses": own, "about": "Changes the user's Google account or Gmail mailbox."})
+        if d is not None and d.verdict == "allow":
+            return None
+        if d is not None and d.verdict == "block":
+            return f"{t}: blocked by auto mode", auto_mode.blocked_result(d)
+        if d is not None:
+            info = dict(info, details=list(info.get("details") or []) + auto_mode.card_detail(d))
     entry = AA.create(owner, session_id or "", tool, content, info, source=kind)
     await _notify(entry, kind, session_id)
     result = {

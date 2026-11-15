@@ -1350,6 +1350,8 @@
           <button type="button" class="input-icon-btn music-btn" id="music-btn" aria-label="Music" title="Music: show the player bar"></button>
           <!-- Claude Code on/off for this chat (chatClaudeToggle.js) -->
           <button type="button" class="input-icon-btn claude-toggle-btn" id="claude-toggle-btn" aria-label="Coding agents for this chat" aria-pressed="true" hidden></button>
+          <!-- Approvals for this chat: Ask or Auto (autoMode.js, src/auto_mode.py) -->
+          <button type="button" class="input-icon-btn claude-toggle-btn auto-mode-btn" id="auto-mode-btn" aria-label="Approvals for this chat: Ask or Auto" hidden></button>
           <!-- Shell commands in a row for this chat (chatShellLimit.js) -->
           <button type="button" class="input-icon-btn claude-toggle-btn shell-limit-btn" id="shell-limit-btn" aria-label="Shell commands in a row for this chat" hidden></button>
           <span class="chat-notes-wrap">
@@ -2015,6 +2017,42 @@
                 <select id="set-teacherModelSelect" class="settings-select"><option value="">—</option></select>
               </div>
               <div id="set-teacherChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+            </div>
+          </div>
+          <!-- Approvals: Ask or Auto (autoMode.js, routes/auto_mode_routes.py) -->
+          <div class="admin-card" id="auto-mode-card" data-goto-keywords="approvals approve ask auto mode safety check permission confirm auto-approve log">
+            <h2>Approvals</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Ask: every action that needs your OK shows an Approve card (Google and Gmail writes, mod actions, your OpenCode chat, screen control, plans). Auto: a safety check decides each one instead. Routine actions that are clearly what you asked for go ahead and leave a note in the chat; risky ones still ask you, or are blocked, with the reason. Each chat can override this with the Ask / Auto chip next to the message box.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" for="auto-mode-select">Approvals</label>
+                <select id="auto-mode-select" class="settings-select">
+                  <option value="ask">Ask (default)</option>
+                  <option value="auto">Auto</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="auto-mode-model">Safety check model</label>
+                <select id="auto-mode-model" class="settings-select"><option value="">Automatic</option></select>
+              </div>
+              <div class="admin-toggle-sub" id="auto-mode-model-state" role="status"></div>
+              <details>
+                <summary class="admin-toggle-sub">What Auto never approves by itself</summary>
+                <ul class="admin-toggle-sub" style="margin:4px 0;padding-left:18px">
+                  <li>Spending money or buying anything</li>
+                  <li>Email or messages to anyone other than you</li>
+                  <li>Publishing or posting</li>
+                  <li>Deleting data in bulk</li>
+                  <li>Changing sign-in, permissions or security settings</li>
+                  <li>Anything carrying passwords, keys or other credentials</li>
+                </ul>
+                <div class="admin-toggle-sub">These always ask you. If the safety check fails, times out or has no model, it asks you too. Scheduled tasks and the mail listener always ask.</div>
+              </details>
+              <details id="auto-mode-log-box">
+                <summary class="admin-toggle-sub">Auto mode log</summary>
+                <ul class="gw-list" id="auto-mode-log"></ul>
+              </details>
+              <div class="admin-toggle-sub" id="auto-mode-msg" role="status"></div>
             </div>
           </div>
         </div>

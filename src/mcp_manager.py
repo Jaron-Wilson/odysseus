@@ -522,11 +522,29 @@ class McpManager:
                     # runs out.
                     approvals.spend_action(server_id, owner)
                 if not grant:
+                    # Auto mode (src/auto_mode.py): a safety check decides this
+                    # one action instead of asking for a grant; None in Ask mode.
+                    # Nothing is granted: the next action is checked again.
+                    from src import auto_mode
+                    _name = self._connections.get(server_id, {}).get("name", server_id)
+                    _auto = await auto_mode.check(
+                        "screen_control", qualified_name,
+                        {k: v for k, v in _ctx.items() if not str(k).startswith("_")},
+                        owner=owner, session_id=_sess, action=f"{tool_name} on {_name}",
+                        meta={"read_only": False, "controls_devices": True,
+                              "about": f"Drives the screen of {_name} (mouse, keyboard, screenshots, apps)."})
+                    if _auto is not None and _auto.verdict == "block":
+                        return auto_mode.blocked_result(_auto)
+                    if _auto is not None and _auto.verdict == "allow":
+                        grant = {"auto_mode": True}
+                if not grant:
                     conn = self._connections.get(server_id, {})
                     name = conn.get("name", server_id)
                     req = approvals.request_grant(
                         server_id=server_id, server_name=name, owner=owner,
-                        reason=f"{tool_name} on {name}", session_id=_sess)
+                        reason=f"{tool_name} on {name}" + (
+                            f" (auto mode asked because {_auto.reason})" if _auto is not None else ""),
+                        session_id=_sess)
                     return {
                         # Human-readable, and only that: the clickable links
                         # are emitted into the reply by the agent loop, and

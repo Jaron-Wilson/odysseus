@@ -275,6 +275,23 @@ async def execute(tool: str, content: str, owner: Optional[str], session_id: Opt
                     "details": [("Mod", entry.get("name") or mod_id), ("Tool", name)] + [
                         (str(k), json.dumps(v) if not isinstance(v, str) else v) for k, v in list(args.items())[:10]],
                     "body": json.dumps(args, indent=1)[:4000], "body_label": "Arguments"}
+            # Auto mode (src/auto_mode.py): a safety check decides instead of
+            # the card; None in Ask mode.
+            from src import auto_mode
+            d = await auto_mode.check(
+                "mod_action", tool, args, owner=owner, session_id=session_id, action=info["title"],
+                meta={"read_only": bool(t.get("read_only")), "asks_first": bool(t.get("asks_first")),
+                      "controls_devices": bool(t.get("controls_devices")),
+                      "about": f"[Mod: {entry.get('name') or mod_id}] {str(t.get('description') or '')[:300]}"})
+            if d is not None and d.verdict == "block":
+                return f"{tool}: blocked by auto mode", auto_mode.blocked_result(d)
+            if d is not None and d.verdict == "allow":
+                info = None
+            elif d is not None:
+                info["details"] = list(info["details"]) + auto_mode.card_detail(d)
+        else:
+            info = None
+        if info is not None:
             e = AA.create(owner, session_id or "", tool, content, info, source="chat")
             why = "controls a device" if t.get("controls_devices") else "changes something for the user"
             return f"{tool}: waiting for approval", {

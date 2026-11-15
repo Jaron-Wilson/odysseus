@@ -12,6 +12,10 @@ PREFS_FILE = USER_PREFS_FILE
 # phone call provider's auth token (encrypted) before phone calls moved to
 # the Phone & Messages mod, and old stores still have it.
 PRIVATE_KEYS = {"phone_calls"}
+# Readable here, but only saved from their own card: approvals Ask / Auto and
+# the safety check model (routes/auto_mode_routes.py, src/auto_mode.py), so
+# nothing that can reach this generic store can switch auto mode on.
+OWN_CARD_KEYS = {"approvals_mode", "auto_mode_model"}
 
 
 def _load():
@@ -89,7 +93,7 @@ def setup_prefs_routes():
 
     @router.put("/{key}")
     async def set_pref(request: Request, key: str, body: dict):
-        if key in PRIVATE_KEYS:
+        if key in PRIVATE_KEYS or key in OWN_CARD_KEYS:
             raise HTTPException(403, "This setting is saved from its own settings card.")
         user = get_current_user(request)
         prefs = _load_for_user(user)

@@ -2375,6 +2375,13 @@ async def stream_agent_loop(
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
+    # Auto mode (src/auto_mode.py): what the user asked for this turn, for the
+    # safety check, and a fresh per-turn cache of its decisions.
+    try:
+        from src import auto_mode as _auto_mode
+        _auto_mode.begin_turn(session_id, messages)
+    except Exception as _e:
+        logger.debug("auto mode turn setup failed: %s", _e)
     _intent = _classify_agent_request(messages, _last_user)
     # Tool retrieval uses the latest message by default. It may inherit recent
     # user turns only for explicit continuations ("yes", "do it", "1").
@@ -3745,8 +3752,11 @@ async def stream_agent_loop(
             if isinstance(result.get("native_plan"), dict):
                 _np = result["native_plan"]
                 _np_line = (("\n\n" if full_response.strip() else "")
-                            + f"Plan proposed: **{_np.get('title')}** (plan_id {_np.get('id')}). "
-                              "Approve, deny or edit it below.")
+                            + (f"Plan approved by auto mode: **{_np.get('title')}** (plan_id {_np.get('id')}). "
+                               "The work starts in a moment."
+                               if _np.get("status") == "approved" else
+                               f"Plan proposed: **{_np.get('title')}** (plan_id {_np.get('id')}). "
+                               "Approve, deny or edit it below."))
                 full_response += _np_line
                 yield 'data: ' + json.dumps({"delta": _np_line}) + '\n\n'
                 _awaiting_user = True
@@ -3844,6 +3854,9 @@ async def stream_agent_loop(
                 tool_output_data["native_plan_id"] = result["native_plan"].get("id")
             if isinstance(result.get("action_approval"), dict):
                 tool_output_data["action_approval_id"] = result["action_approval"].get("id")
+            if result.get("auto_mode"):
+                # What auto mode decided on the way (src/auto_mode.py): a note on the step.
+                tool_output_data["auto_mode"] = result["auto_mode"]
             if result.get("engine_label"):
                 tool_output_data["label"] = result["engine_label"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
@@ -3968,6 +3981,8 @@ async def stream_agent_loop(
                 tool_event["native_plan_id"] = result["native_plan"].get("id")
             if isinstance(result.get("action_approval"), dict):
                 tool_event["action_approval_id"] = result["action_approval"].get("id")
+            if result.get("auto_mode"):
+                tool_event["auto_mode"] = result["auto_mode"]
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True

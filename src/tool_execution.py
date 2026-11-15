@@ -542,7 +542,7 @@ def _pending_plan_block(tool: str, content: str, session_id: str) -> str:
             "and wait. If the user asked for changes, call propose_plan again with the revised plan.")
 
 
-def _propose_plan(content: str, session_id: Optional[str], owner: Optional[str]) -> Tuple[str, Dict]:
+async def _propose_plan(content: str, session_id: Optional[str], owner: Optional[str]) -> Tuple[str, Dict]:
     """The propose_plan tool: save the model's own plan as a Plans document,
     pending the user's answer in this chat (src/native_plans.py)."""
     from src import native_plans, plans
@@ -582,6 +582,37 @@ def _propose_plan(content: str, session_id: Optional[str], owner: Optional[str])
                    "here: the user's answer comes back as the next message. Do not start the work."),
         "exit_code": 0,
     }
+    # Auto mode (src/auto_mode.py): the safety check may approve the plan in
+    # the user's place. It is approved now, the card shows it approved, and
+    # the work starts in a turn of its own once this one ends, as after the
+    # user's Approve click. Otherwise (ask, block, Ask mode) the card waits.
+    from src import auto_mode
+    d = await auto_mode.check(
+        "native_plan", "propose_plan",
+        {"title": view["title"], "plan": body[:4000], "cwd": str(args.get("cwd") or ""),
+         "engine": str(args.get("engine") or "")},
+        owner=owner, session_id=session_id, action=f"Approve plan \"{view['title']}\"",
+        meta={"read_only": False, "about": "Approves the plan; the assistant then carries it out."})
+    if d is not None and d.verdict == "allow" and session_id:
+        try:
+            approved = native_plans.approve(view["id"], owner or "")
+        except native_plans.Refused as r:
+            approved = None
+            logger.info("auto mode could not approve plan %s: %s", view["id"], r.message)
+        if approved is not None:
+            sid = session_id
+
+            def _start(e=approved):
+                from src.screen_control_resume import start_turn
+                start_turn(sid, native_plans.approved_prompt(e), note_source="native_plan_approved",
+                           reply_source="native_plan_approved_reply")
+            auto_mode.after_turn(sid, _start)
+            result["native_plan"]["status"] = "approved"
+            result["output"] = (f"Plan \"{view['title']}\" (plan_id {view['id']}) was approved by auto mode "
+                                f"({d.reason}). Your turn ends here: the work starts by itself in a new turn "
+                                "right after this one. Do not start it now.")
+    elif d is not None:
+        result["auto_mode"] = [d.note()]
     logger.info("Tool executed: %s (%s)", desc, view["id"])
     return desc, result
 
@@ -596,6 +627,34 @@ async def execute_tool_block(
     tool_policy: Optional[Any] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
+
+    What auto mode decided for this call on the way (src/auto_mode.py) comes
+    back in the result's "auto_mode" list, for the note on the chat step.
+    """
+    from src import auto_mode
+    token = auto_mode.start_notes()
+    try:
+        desc, result = await _execute_tool_block(
+            block, session_id=session_id, disabled_tools=disabled_tools, owner=owner,
+            progress_cb=progress_cb, workspace=workspace, tool_policy=tool_policy)
+    finally:
+        notes = auto_mode.end_notes(token)
+    if notes and isinstance(result, dict):
+        seen = list(result.get("auto_mode") or [])
+        result["auto_mode"] = seen + [n for n in notes if n not in seen]
+    return desc, result
+
+
+async def _execute_tool_block(
+    block: Any,
+    session_id: Optional[str] = None,
+    disabled_tools: Optional[set] = None,
+    owner: Optional[str] = None,
+    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    workspace: Optional[str] = None,
+    tool_policy: Optional[Any] = None,
+) -> Tuple[str, Dict]:
+    """Execute a single tool block (execute_tool_block does the bookkeeping).
 
     `progress_cb` is forwarded to long-running subprocess tools
     (bash, python) so the agent loop can emit `tool_progress` SSE
@@ -736,7 +795,7 @@ async def execute_tool_block(
     # propose_plan: the model writes its plan itself, as a Plans document the
     # user approves or denies in the chat. Ends the turn, like ask_user.
     if tool == "propose_plan":
-        return _propose_plan(content, session_id, owner)
+        return await _propose_plan(content, session_id, owner)
 
     # ask_user: the agent poses a multiple-choice question to the user to get a
     # decision/clarification. This is a pure UI-control marker — no subprocess,
