@@ -30,6 +30,7 @@ import './chatSkipOffscreen.js';
 import './buildBadge.js';
 import './chatClaudeToggle.js';
 import './chatShellLimit.js';
+import './autoMode.js';
 import './chatTidy.js';
 import './musicBar.js';
 import './openRequests.js';
@@ -2908,6 +2909,10 @@ import './chatThreads.js';
                 // A Google write held for the user's answer: Approve / Deny under the step.
                 if (json.action_approval_id && currentToolBubble && window.actionApprovalCard) {
                   try { currentToolBubble.after(window.actionApprovalCard(json.action_approval_id)); } catch (_) {}
+                }
+                // What auto mode decided for this step (autoMode.js): a note under it.
+                if (json.auto_mode && currentToolBubble && window.autoModeNotes) {
+                  try { const n = window.autoModeNotes(json.auto_mode); if (n) currentToolBubble.after(n); } catch (_) {}
                 }
                 // --- Update the current thread node ---
                 if (currentToolBubble && json.label) {

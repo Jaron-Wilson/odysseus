@@ -92,7 +92,7 @@ class OpenCodeChatTool:
                         "chat": chat, "bound": bool(b), "exit_code": 0}
             if action == "status":
                 return await self._status(chat)
-            held = self._hold_unless_ok(action, content, chat, args, ctx)
+            held = await self._hold_unless_ok(action, content, chat, args, ctx)
             if held is not None:
                 return held
             if action == "stop":
@@ -132,7 +132,7 @@ class OpenCodeChatTool:
 
     # ── writes ──
 
-    def _hold_unless_ok(self, action: str, content: str, chat: dict, args: dict, ctx: dict) -> Optional[Dict]:
+    async def _hold_unless_ok(self, action: str, content: str, chat: dict, args: dict, ctx: dict) -> Optional[Dict]:
         """None when this call may run now; else the result that holds it for the user's Approve."""
         from src import action_approvals as AA
         sid = str(ctx.get("session_id") or "")
@@ -151,6 +151,21 @@ class OpenCodeChatTool:
                 "details": [("Chat", chat["title"]), ("Folder", chat["folder"]),
                             ("Working now", "yes" if chat["busy"] else "no")],
                 "body": text[:4000] if action == "send" else "", "body_label": "Message" if action == "send" else ""}
+        # Auto mode (src/auto_mode.py): a safety check decides instead of the
+        # card; None in Ask mode.
+        from src import auto_mode
+        d = await auto_mode.check(
+            "opencode_chat", TOOL, {"action": action, "chat": chat["title"], "folder": chat["folder"],
+                                    "text": text[:2000]},
+            owner=ctx.get("owner"), session_id=sid, action=info["title"],
+            meta={"read_only": False, "about": "Puts work into the user's own OpenCode coding chat, which has "
+                                               "shell and file access in that folder."})
+        if d is not None and d.verdict == "allow":
+            return None
+        if d is not None and d.verdict == "block":
+            return auto_mode.blocked_result(d)
+        if d is not None:
+            info["details"] = list(info["details"]) + auto_mode.card_detail(d)
         e = AA.create(ctx.get("owner"), sid, TOOL, content, info, source="chat")
         return {"action_approval": {"id": e["id"], "title": e["title"], "status": e["status"]},
                 "output": AA.held_output(e), "exit_code": 0}

@@ -352,6 +352,16 @@ sends, replies, deletes, archives or marks Gmail, or creates or changes anything
 account (Docs, Sheets, Slides, Drive, Tasks, Meet, Google Calendar). Reading never asks. See
 [docs/email-gmail.md](docs/email-gmail.md) and [docs/google.md](docs/google.md).
 
+### Auto mode
+**Settings > AI > Approvals** switches from **Ask** (the default: every action that needs your OK
+shows an Approve card) to **Auto**: a safety check decides each one instead, like Claude Code's auto
+mode. Routine actions that are clearly what you asked for go ahead and leave a note in the chat;
+risky ones still ask you, or are blocked, with the reason. Auto never approves by itself spending
+money, email or messages to anyone but you, publishing or posting, bulk deletes, sign-in /
+permission / security changes, or anything carrying credentials. A failed or timed-out check asks.
+Each chat can override the default with the Ask / Auto chip, and every decision is in the Auto mode
+log. See [docs/auto-mode.md](docs/auto-mode.md).
+
 ### Outlook / Office 365 email
 Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
 and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox

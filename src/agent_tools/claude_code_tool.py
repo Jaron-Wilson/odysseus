@@ -2385,6 +2385,33 @@ async def _build_result(job, stream: "_Stream", returncode: int, timed_out: bool
             "Then STOP and wait. Approving starts the run by itself, in this chat; calling "
             "execute before they click Approve will be refused by the server."
         )
+        # Auto mode (src/auto_mode.py): the safety check may approve the plan
+        # in the user's place. The run then starts once this turn ends, the
+        # same way the Approve link starts it. Otherwise the links stay.
+        from src import auto_mode
+        _owner = spec.get("owner") or None
+        d = await auto_mode.check(
+            "coding_plan", "claude_code",
+            {"action": "plan", "cwd": cwd, "engine": spec.get("engine", job.engine), "plan": body[:4000]},
+            owner=_owner, session_id=chat_id, action=f"Approve the coding plan for {Path(cwd).name} ({run_label})",
+            meta={"read_only": False, "about": "Approves a coding agent's plan; the agent then edits files "
+                                               "and runs commands in that folder."})
+        if d is not None and d.verdict == "allow" and chat_id:
+            result.pop("approval", None)
+            result["auto_mode"] = [d.note()]
+            result["next_step"] = (
+                f"Auto mode approved this plan ({d.reason}). Show the plan to the user briefly, and say "
+                f"auto mode approved it and it runs on {run_label} by itself in this chat as soon as your "
+                "turn ends. Do not call execute yourself. Then STOP.")
+            _sid = session_id
+
+            def _approve(_sid=_sid, _owner=_owner):
+                from routes.claude_code_routes import approve_plan
+                approve_plan(_sid, _owner or "")
+            auto_mode.after_turn(chat_id, _approve)
+            return result
+        if d is not None:
+            result["auto_mode"] = [d.note()]
         # Nobody may be looking: say a plan is waiting, where they will see it.
         t = asyncio.create_task(_notify_plan(session_id, chat_id, run_label, body))
         _BG_TASKS.add(t)

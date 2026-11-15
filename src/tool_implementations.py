@@ -2434,6 +2434,9 @@ _APP_API_BLOCKLIST_PREFIXES = (
     # Picking the opencode chat a call may send into is the user's own consent
     # (src/opencode_chat.py): the model must not be able to arm itself.
     "/api/opencode_chat",
+    # Approvals Ask / Auto (src/auto_mode.py) is the user's choice: the model
+    # must not switch itself to Auto or read the decision log.
+    "/api/auto_mode",
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
