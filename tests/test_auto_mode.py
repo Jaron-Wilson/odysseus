@@ -266,9 +266,11 @@ def google(env, monkeypatch):
         async def call_tool(self, name, args):
             sent.append((name, {k: v for k, v in args.items() if not k.startswith("_")}))
             return {"output": f"ok {name}", "exit_code": 0}
-    import src.tool_execution as te
-    monkeypatch.setattr(te, "get_mcp_manager", lambda: FakeMCP())
-    monkeypatch.setattr(te, "_owner_is_admin", lambda owner: True)
+    # The module execute_tool_block lives in (another test file may have
+    # swapped sys.modules["src.tool_execution"] by now).
+    g = execute_tool_block.__globals__
+    monkeypatch.setitem(g, "get_mcp_manager", lambda: FakeMCP())
+    monkeypatch.setitem(g, "_owner_is_admin", lambda owner: True)
     return sent
 
 
