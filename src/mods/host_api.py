@@ -126,9 +126,14 @@ def _stamp(ts) -> Optional[float]:
         return None
 
 
+NOTE_ROLES = ("assistant", "user")
+
+
 def _chat_view(sid: str, sess, last=None) -> Dict[str, Any]:
     return {"id": sid, "name": getattr(sess, "name", "") or "Untitled", "model": getattr(sess, "model", "") or "",
-            "last_activity": _stamp(last), "busy": _busy(sid), "archived": bool(getattr(sess, "archived", False))}
+            "last_activity": _stamp(last), "busy": _busy(sid), "archived": bool(getattr(sess, "archived", False)),
+            # What POST chats/<id>/note takes as `role` (so a mod can tell this core from one before it).
+            "note_roles": list(NOTE_ROLES)}
 
 
 def recent_chats(scope: Optional[str]) -> List[Tuple[str, Any, Any]]:
@@ -466,7 +471,9 @@ def setup_host_routes(router: APIRouter) -> None:
     @router.post(P + "/chats/{sid}/note")
     async def v1_chat_note(request: Request, sid: str):
         """A line in the chat that is not a turn, saved as an assistant note
-        (`meta.excluded`: shown, not read by the model)."""
+        (`meta.excluded`: shown, not read by the model). `role` "user" saves
+        it as the user's own line instead (a text he sent somewhere else,
+        mirrored into a chat); it never starts a reply either way."""
         e = _mod(request, "chats")
         body = await _body(request)
         scope, _ = _user(e, body.get("user"))
@@ -478,12 +485,13 @@ def setup_host_routes(router: APIRouter) -> None:
         meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
         meta = {str(k)[:40]: v for k, v in list(meta.items())[:10]
                 if isinstance(v, (str, int, float, bool)) and str(k) not in ("source", "note")}
+        role = body.get("role") if body.get("role") in NOTE_ROLES else "assistant"
         from core.models import ChatMessage
         sm = _sm()
-        sm.add_message(sid, ChatMessage("assistant", text, metadata={"source": _source(body.get("source")),
-                                                                      "note": True, **meta}))
+        sm.add_message(sid, ChatMessage(role, text, metadata={"source": _source(body.get("source")),
+                                                               "note": True, **meta}))
         sm.save_sessions()
-        return {"ok": True}
+        return {"ok": True, "role": role}
 
     @router.get(P + "/models")
     async def v1_models(request: Request, user: str = ""):
