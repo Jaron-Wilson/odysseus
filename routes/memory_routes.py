@@ -225,6 +225,9 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         except KeyError:
             raise HTTPException(404, "Session not found")
         _assert_session_owner(sess, _owner(request))
+        from src import private_chats
+        if private_chats.is_private(session, getattr(sess, "name", "")):
+            raise HTTPException(403, private_chats.REFUSAL)
 
         system_msg = {
             "role": "system",

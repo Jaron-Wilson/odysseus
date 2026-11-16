@@ -480,8 +480,13 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
         # every user's sessions, which the agent tool then exposed via the
         # "list my chats" reply.
         sessions = _session_manager.get_sessions_for_user(owner)
+        # Private chats (src/private_chats.py) are not shown to the agent.
+        from src import private_chats
+        hidden = private_chats.private_ids()
         rows = []
         for sid, sess in sessions.items():
+            if sid in hidden or private_chats.is_private(None, sess.name):
+                continue
             if keyword and keyword not in (sess.name or "").lower():
                 continue
             db_row = db_rows.get(sid)
@@ -562,6 +567,10 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None, own
 
     # Owner-scope: reject access to another user's session
     if owner and getattr(sess, "owner", None) and sess.owner != owner:
+        return {"error": f"Session '{target_sid}' not found"}
+    # A private chat is never sent to a model nor read from another chat.
+    from src import private_chats
+    if private_chats.is_private(target_sid, getattr(sess, "name", "")):
         return {"error": f"Session '{target_sid}' not found"}
 
     if not message:
@@ -902,6 +911,9 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
 
             source = _session_manager.get_session(target_sid)
             if not source:
+                return {"error": f"Session '{target_sid}' not found"}
+            from src import private_chats
+            if private_chats.is_private(target_sid, getattr(source, "name", "")):
                 return {"error": f"Session '{target_sid}' not found"}
 
             new_sid = str(uuid.uuid4())[:8]

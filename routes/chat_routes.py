@@ -406,6 +406,9 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
+        from src import private_chats
+        if private_chats.is_private(session, getattr(sess, "name", "")):
+            raise HTTPException(403, private_chats.REFUSAL)
         owner = get_current_user(request)
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
@@ -604,6 +607,10 @@ def setup_chat_routes(
             # Verify ownership AFTER coerce (which may resolve a default session)
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
+            # A private chat (src/private_chats.py) is never sent to a model.
+            from src import private_chats
+            if private_chats.is_private(session):
+                raise HTTPException(403, private_chats.REFUSAL)
             # Direct mode (/claude direct, src/claude_direct.py): the attached
             # Claude Code session answers, word for word - no model, no
             # context building, so no model has to be picked for the chat.
@@ -1729,6 +1736,9 @@ def setup_chat_routes(
             raise HTTPException(400, "session_id, original_text, and instruction are required")
 
         _verify_session_owner(request, session_id)
+        from src import private_chats
+        if private_chats.is_private(session_id):
+            raise HTTPException(403, private_chats.REFUSAL)
 
         try:
             sess = session_manager.get_session(session_id)

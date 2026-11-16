@@ -147,6 +147,9 @@ async def tidy(session, *, owner: str = "", keep_recent: int = KEEP_RECENT, reas
     from src.endpoint_resolver import resolve_endpoint
 
     sid = session.id
+    from src import private_chats
+    if private_chats.is_private(sid, getattr(session, "name", "")):
+        return {"tidied": False, "reason": "This chat is private: it is never sent to a model."}
     if sid in _running:
         return {"tidied": False, "reason": "A tidy is already running for this chat."}
     older = candidates(session.history, keep_recent)

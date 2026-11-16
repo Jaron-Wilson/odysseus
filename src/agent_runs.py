@@ -192,7 +192,14 @@ async def stop_all(timeout: float = 10.0) -> int:
 def start(session_id: str, agen: AsyncGenerator[str, None], *, background: bool = False) -> _Run:
     """Start a detached run draining `agen` for a session. If a run is already in
     flight for this session (e.g. a rapid double-send), it's cancelled first.
-    `background`: see _Run.background."""
+    `background`: see _Run.background. A private chat (src/private_chats.py)
+    is never sent to a model: its run only says so."""
+    try:
+        from src import private_chats
+        if private_chats.is_private(session_id):
+            agen = private_chats.refusal_stream(session_id)
+    except Exception:
+        logger.exception("[agent-run] private check failed for %s", session_id)
     prev = _RUNS.get(session_id)
     prev_task: Optional[asyncio.Task] = None
     if prev:

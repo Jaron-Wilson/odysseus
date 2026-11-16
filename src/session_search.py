@@ -209,6 +209,7 @@ def _search_like(
     context_messages: int,
     restrict_owner: bool,
     include_legacy_owner: bool,
+    private: frozenset = frozenset(),
 ) -> list[SessionSearchResult]:
     safe_q = _escape_like(query)
     # A tool's console transcript lives in the metadata JSON, not content —
@@ -230,6 +231,8 @@ def _search_like(
         q = q.filter(DBSession.archived == False)
     if restrict_owner:
         q = _owner_filter(q, owner, include_legacy_owner)
+    if private:
+        q = q.filter(DBSession.id.notin_(sorted(private)))
     rows = q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
 
     def _shape(msg, session_name):
@@ -256,6 +259,7 @@ def _search_fts(
     context_messages: int,
     restrict_owner: bool,
     include_legacy_owner: bool,
+    private: frozenset = frozenset(),
 ) -> list[SessionSearchResult] | None:
     fts_query = _sanitize_fts_query(query)
     if not fts_query or not _has_fts_table(db):
@@ -273,6 +277,13 @@ def _search_fts(
     params: dict[str, Any] = {"fts_query": fts_query, "limit": limit}
     if restrict_owner and owner is not None:
         params["owner"] = owner
+    private_clause = ""
+    if private:
+        names = []
+        for i, sid in enumerate(sorted(private)):
+            params[f"private_{i}"] = sid
+            names.append(f":private_{i}")
+        private_clause = f"AND s.id NOT IN ({', '.join(names)})"
 
     sql = text(
         f"""
@@ -285,6 +296,7 @@ def _search_fts(
         WHERE chat_messages_fts MATCH :fts_query
           {archived_clause}
           {owner_clause}
+          {private_clause}
           AND m.role IN ('user', 'assistant')
         ORDER BY bm25(chat_messages_fts), m.timestamp DESC
         LIMIT :limit
@@ -342,6 +354,10 @@ def search_session_messages(
     if owns_db:
         db = SessionLocal()
     try:
+        # Private chats (src/private_chats.py) are never found: not by the
+        # agent's search_chats, not by the search box.
+        from src import private_chats
+        private = frozenset(private_chats.private_ids(db))
         fts_results = _search_fts(
             db,
             query,
@@ -351,6 +367,7 @@ def search_session_messages(
             context_messages,
             restrict_owner,
             include_legacy_owner,
+            private,
         )
         if fts_results is not None:
             like_results = _search_like(
@@ -362,6 +379,7 @@ def search_session_messages(
                 context_messages,
                 restrict_owner,
                 include_legacy_owner,
+                private,
             )
             merged: list[SessionSearchResult] = []
             seen: set[str] = set()
@@ -382,6 +400,7 @@ def search_session_messages(
             context_messages,
             restrict_owner,
             include_legacy_owner,
+            private,
         )
     finally:
         if owns_db:

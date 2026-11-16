@@ -81,8 +81,12 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
         ).all()
 
         cleanup_now = _utcnow_naive()
+        # Private chats (src/private_chats.py) are left alone: never read,
+        # never sorted by a model, never deleted as throwaway.
+        from src import private_chats
+        private = private_chats.private_ids()
         for row in rows:
-            if getattr(row, 'is_important', False):
+            if getattr(row, 'is_important', False) or row.id in private:
                 continue
             created_at = _as_naive_utc(row.created_at or row.updated_at) or _utcnow_naive()
             is_fresh = (_utcnow_naive() - created_at) < _FRESH_EMPTY_SESSION_GRACE
@@ -148,7 +152,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
 
         session_list = []
         for row in remaining:
-            if row.name == "Incognito":
+            if row.name == "Incognito" or row.id in private:
                 continue
             session_list.append({
                 "id": row.id,

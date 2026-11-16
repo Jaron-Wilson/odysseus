@@ -24,7 +24,9 @@ PREFS_FILE = os.path.join(DATA_DIR, "chat_prefs.json")
 # bypass that limit".
 # "claude" / "opencode" / "antigravity": which coding-agent engines this chat
 # may use (src/agent_tools/claude_code_tool.py ENGINES).
-DEFAULTS = {"claude": True, "opencode": True, "antigravity": True, "tidy": False, "bash_limit": 12}
+# "private": never sent to a model or shared with other chats (src/private_chats.py).
+DEFAULTS = {"claude": True, "opencode": True, "antigravity": True, "tidy": False, "bash_limit": 12,
+            "private": False}
 ENGINE_KEYS = ("opencode", "claude", "antigravity")
 BASH_LIMIT_MAX = 1000
 

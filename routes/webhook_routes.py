@@ -272,6 +272,9 @@ def setup_webhook_routes(
             _sess_owner = getattr(sess, "owner", None)
             if not _caller_owns_session(_sess_owner, _tok_user):
                 raise HTTPException(404, "Session not found")
+            from src import private_chats
+            if private_chats.is_private(session_id, getattr(sess, "name", "")):
+                raise HTTPException(403, private_chats.REFUSAL)
 
         # --- Case 2: Direct API key + model (no pre-configured endpoint needed) ---
         if not sess and body.api_key:
