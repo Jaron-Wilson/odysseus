@@ -42,16 +42,16 @@ def test_the_switch_is_per_chat_and_defaults_on():
 def test_the_old_single_switch_still_means_both_off():
     chat_prefs._save({"chat-old": {"claude_code": False}})
     assert chat_prefs.get("chat-old") == {"claude": False, "opencode": False, "antigravity": False,
-                                          "tidy": False, "bash_limit": 12}
+                                          "tidy": False, "bash_limit": 12, "private": False}
     chat_prefs.set_pref("chat-old", "opencode", True)
     assert chat_prefs.get("chat-old") == {"claude": False, "opencode": True, "antigravity": False,
-                                          "tidy": False, "bash_limit": 12}
+                                          "tidy": False, "bash_limit": 12, "private": False}
 
 
 def test_a_chat_switched_off_before_antigravity_stays_off():
     # Saved as both off before Antigravity was an engine: it must not come on.
-    chat_prefs._save({"chat-was-off": {"claude": False, "opencode": False, "tidy": False, "bash_limit": 12},
-                      "chat-no-claude": {"claude": False, "opencode": True, "tidy": False, "bash_limit": 12}})
+    chat_prefs._save({"chat-was-off": {"claude": False, "opencode": False, "tidy": False, "bash_limit": 12, "private": False},
+                      "chat-no-claude": {"claude": False, "opencode": True, "tidy": False, "bash_limit": 12, "private": False}})
     assert not chat_prefs.claude_code_allowed("chat-was-off")
     assert chat_prefs.engine_allowed("chat-no-claude", "antigravity")
 
@@ -164,9 +164,9 @@ def test_routes_and_button(monkeypatch):
     app.include_router(r.setup_chat_prefs_routes())
     c = TestClient(app)
     assert c.get("/api/chat-prefs/chat-1").json() == {"claude": True, "opencode": True, "antigravity": True,
-                                                      "tidy": False, "bash_limit": 12}
+                                                      "tidy": False, "bash_limit": 12, "private": False}
     assert c.put("/api/chat-prefs/chat-1", json={"claude": False}).json() == {
-        "claude": False, "opencode": True, "antigravity": True, "tidy": False, "bash_limit": 12}
+        "claude": False, "opencode": True, "antigravity": True, "tidy": False, "bash_limit": 12, "private": False}
     assert c.put("/api/chat-prefs/chat-1", json={"bogus": 1}).status_code == 400
     html = open(os.path.join(HERE, "static", "index.html"), encoding="utf-8").read()
     assert 'id="claude-toggle-btn"' in html
