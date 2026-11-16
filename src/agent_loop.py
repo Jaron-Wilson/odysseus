@@ -24,6 +24,7 @@ from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.tool_utils import get_mcp_manager
 from src import tool_cap as _tool_cap
+from src import call_turns as _call_turns
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -1122,12 +1123,17 @@ def _build_system_prompt(
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
     include_skills: bool = True,
+    email_style_by_tools: bool = False,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs.
 
     ``include_skills=False`` leaves out the skills catalog and matched
     skills (Company runs: their task is in the wake message, and on a small
-    window the catalog crowded the task out)."""
+    window the catalog crowded the task out).
+
+    ``email_style_by_tools``: the email writing style goes in whenever email
+    tools are offered, whatever the latest message says, so the system prompt
+    does not change between the turns of a call (src/call_turns.py)."""
     global _cached_base_prompt, _cached_base_prompt_key
     if suppress_local_context:
         active_document = None
@@ -1354,7 +1360,8 @@ def _build_system_prompt(
                     _c = " ".join(b.get("text", "") for b in _c if isinstance(b, dict))
                 _last_user_text = str(_c).lower()
                 break
-        _inject_style = any(tok in _last_user_text for tok in ("email", "mail", "reply", "send", "inbox"))
+        _inject_style = email_style_by_tools or any(
+            tok in _last_user_text for tok in ("email", "mail", "reply", "send", "inbox"))
     if _inject_style and not suppress_local_context:
         try:
             from src.settings import load_settings as _load_settings
@@ -2383,6 +2390,23 @@ async def stream_agent_loop(
     except Exception as _e:
         logger.debug("auto mode turn setup failed: %s", _e)
     _intent = _classify_agent_request(messages, _last_user)
+    # A turn spoken in a call (src/call_turns.py): no reasoning pass, the tool set the call started with, and
+    # no tool re-indexing inside the turn. `_call_kept` is that tool set (None on a call's first turn).
+    _call_turn, _keep_call_tools, _call_kept = False, False, None
+    _turn_blocked: Set[str] = set()     # refused this turn, but its schema stays (the call's prompt does not move)
+    try:
+        _call_turn = _call_turns.in_call(messages)
+        _keep_call_tools = bool(_call_turn and session_id and not guide_only and not relevant_tools
+                                and not _agent_run)
+        if _keep_call_tools:
+            _call_kept = _call_turns.frozen(session_id)
+        elif session_id and not _call_turn:
+            _call_turns.forget(session_id)
+    except Exception as _e:
+        logger.debug("call turn setup skipped: %s", _e)
+    if _call_kept and _call_kept["needs_admin"]:
+        _needs_admin = True
+    _thinking_kw = {"thinking": False} if _call_turn and not _call_turns.think_on_calls() else {}
     # Tool retrieval uses the latest message by default. It may inherit recent
     # user turns only for explicit continuations ("yes", "do it", "1").
     _retrieval_query = str(_intent.get("retrieval_query") or _last_user)
@@ -2414,6 +2438,31 @@ async def stream_agent_loop(
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
+    elif _call_kept is not None and _call_kept["tools"]:
+        # Later turns of a call: the call's tools, no retrieval (the domain tools this message needs are added
+        # below), so the prompt the local server has cached stays the same.
+        _relevant_tools = set(_call_kept["tools"])
+        logger.info("[call] keeping this call's %d tools", len(_relevant_tools))
+        # MCP tools have no domain of their own below: a message that names one ("pause my music") still gets
+        # the MCP tools retrieval finds for it, added to the call's set.
+        if mcp_mgr and _retrieval_query:
+            try:
+                _words = set(re.findall(r"[a-z0-9]+", str(_last_user or "").lower()))
+                _mcp_words = _MCP_KEYWORDS | _mcp_keywords_from_schemas(
+                    mcp_mgr.get_all_openai_schemas(_mcp_disabled_map or {}))
+                if _words & _mcp_words:
+                    from src.tool_index import get_tool_index
+                    _idx = get_tool_index()
+                    if _idx:
+                        _found = await asyncio.wait_for(
+                            asyncio.to_thread(_idx.get_tools_for_query, _retrieval_query, 8),
+                            timeout=_TOOL_SELECTION_TIMEOUT_SECONDS)
+                        _new = {n for n in _found if n.startswith("mcp__")} - _relevant_tools
+                        if _new:
+                            _relevant_tools |= _new
+                            logger.info("[call] adding MCP tools for this message: %s", sorted(_new))
+            except Exception as _e:
+                logger.debug("[call] MCP tool retrieval skipped: %s", _e)
     # A message with no domain words ("hows my 3d print doing?") used to skip
     # retrieval and send every MCP tool: 280 schemas, about 134k tokens, for
     # that one line on 2026-10-21. It goes through retrieval like any other
@@ -2433,18 +2482,24 @@ async def stream_agent_loop(
             from src import research_gate
             _ctx = (_retrieval_query + "\n" + _previous_reply_text(messages, 600)) if _intent.get("continuation") else ""
             if not research_gate.allowed(_last_user, _ctx):
-                disabled_tools.add("trigger_research")
+                (_turn_blocked if _keep_call_tools else disabled_tools).add("trigger_research")
         except Exception as _e:
             logger.debug("research gate skipped: %s", _e)
     if not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
             tool_idx = get_tool_index()
-            if tool_idx:
+            if tool_idx and _call_turn:
+                # A call turn never waits for the index: it is refreshed in the background, and this turn
+                # retrieves from what is there.
+                from src.mods import tools as _mod_tools_ix
+                _call_turns.reindex_in_background(tool_idx, mcp_mgr, _mcp_disabled_map,
+                                                  _mod_tools_ix.index_docs, _mod_tools_ix.generation)
+            elif tool_idx:
                 if mcp_mgr:
                     try:
                         await asyncio.wait_for(
-                            asyncio.to_thread(tool_idx.index_mcp_tools, mcp_mgr, _mcp_disabled_map),
+                            asyncio.to_thread(_call_turns.reindex_tools, tool_idx, mcp_mgr, _mcp_disabled_map),
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
                     except asyncio.TimeoutError:
@@ -2456,10 +2511,12 @@ async def stream_agent_loop(
                 try:
                     from src.mods import tools as _mod_tools_ix
                     await asyncio.wait_for(asyncio.to_thread(
-                        tool_idx.index_extra_tools, "mod", _mod_tools_ix.index_docs(), _mod_tools_ix.generation()),
+                        _call_turns.reindex_tools, tool_idx, None, None,
+                        _mod_tools_ix.index_docs, _mod_tools_ix.generation),
                         timeout=_TOOL_SELECTION_TIMEOUT_SECONDS)
                 except Exception as _e:
                     logger.debug("[tool-rag] mod tool indexing skipped: %s", _e)
+            if tool_idx:
                 if _retrieval_query:
                     try:
                         _relevant_tools = await asyncio.wait_for(
@@ -2554,6 +2611,9 @@ async def stream_agent_loop(
             from src.mods import tools as _mod_tools
             _mod_names = [n for n in _mod_tools.select(_retrieval_query, owner, set(_relevant_tools))
                           if n not in disabled_tools]
+            if _call_kept is not None:
+                _mod_names = [n for n in _call_turns.merge_mod_tools(_call_kept["mod_tools"], _mod_names)
+                              if n not in disabled_tools]
             _relevant_tools = set(_relevant_tools) | set(_mod_names)
             _mod_tool_schemas = _mod_tools.schemas(_mod_names, owner)
             if _mod_names:
@@ -2585,6 +2645,12 @@ async def stream_agent_loop(
 
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
+    if _keep_call_tools and _relevant_tools and _call_kept is None:
+        _relevant_tools |= _call_turns.CALL_TOOLS - disabled_tools
+    if _keep_call_tools and _relevant_tools:
+        # The next turns of this call start from this set (src/call_turns.py).
+        _call_turns.keep(session_id, tools=_relevant_tools,
+                         mod_tools=[s["function"]["name"] for s in _mod_tool_schemas], needs_admin=_needs_admin)
 
     prep_timings["tool_selection"] = time.time() - _t1
 
@@ -2672,6 +2738,7 @@ async def stream_agent_loop(
         owner=owner,
         suppress_local_context=guide_only,
         include_skills=not _agent_run,
+        email_style_by_tools=_keep_call_tools,
     )
     # Derived once per turn: the connected servers cannot change mid-turn, and
     # the local-model gate below is re-evaluated every round.
@@ -2843,6 +2910,8 @@ async def stream_agent_loop(
     messages = [{k: v for k, v in msg.items() if k != "_protected"} for msg in messages]
 
     yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
+    # What a tool call is checked against: the turn's own refusals too (a call keeps their schemas on offer).
+    _exec_disabled = (disabled_tools | _turn_blocked) if _turn_blocked else disabled_tools
 
     full_response = ""
     if _context_trim_note:
@@ -3040,6 +3109,7 @@ async def stream_agent_loop(
                 session_id=session_id,
                 owner=owner,
                 **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
+                **_thinking_kw,
             ),
             FIRST_TOKEN_TIMEOUT_S,
             max(float(agent_stream_timeout), 60.0),
@@ -3497,7 +3567,7 @@ async def stream_agent_loop(
                 _prefetched[_idx] = asyncio.create_task(execute_tool_block(
                     _blk,
                     session_id=session_id,
-                    disabled_tools=disabled_tools,
+                    disabled_tools=_exec_disabled,
                     tool_policy=tool_policy,
                     owner=owner,
                 ))
@@ -3634,7 +3704,7 @@ async def stream_agent_loop(
                         return await execute_tool_block(
                             block,
                             session_id=session_id,
-                            disabled_tools=disabled_tools,
+                            disabled_tools=_exec_disabled,
                             tool_policy=tool_policy,
                             owner=owner,
                             progress_cb=_push_progress,
