@@ -556,6 +556,9 @@ def setup_history_routes(session_manager) -> APIRouter:
     async def fork_session(request: Request, session_id: str):
         """Create a new session with messages copied up to keep_count."""
         _verify_session_owner(request, session_id)
+        from src import private_chats
+        if private_chats.is_private(session_id):
+            raise HTTPException(403, private_chats.REFUSAL)
         try:
             body = await request.json()
             keep_count = body.get("keep_count", 0)

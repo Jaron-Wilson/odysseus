@@ -154,8 +154,15 @@ def recent(exclude: str = "", owner: str = "", *, hours: float = RECENT_HOURS,
     """Other chats' active items, most recently updated first."""
     cutoff = time.time() - hours * 3600
     out = []
+    # A private chat's items are never shown in another chat (src/private_chats.py).
+    from src import private_chats
+    private = None
     for sid, rec in _load().items():
         if sid == exclude or (rec.get("updated") or 0) < cutoff:
+            continue
+        if private is None:
+            private = private_chats.private_ids()
+        if sid in private:
             continue
         if owner and rec.get("owner") and rec["owner"] != owner:
             continue

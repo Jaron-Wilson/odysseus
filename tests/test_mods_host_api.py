@@ -35,6 +35,7 @@ class FakeAuth:
 class Sess:
     def __init__(self, name, owner, model="qwen"):
         self.name, self.owner, self.model, self.archived = name, owner, model, False
+        self.parent_session_id = None
 
 
 class Mgr:
@@ -217,6 +218,34 @@ def test_notes_can_be_the_users_own_line(api):
     # A chat says which roles a note may have.
     assert client.get("/api/mods/v1/chats/a1", headers=bearer(tok),
                       params={"user": "alice"}).json()["note_roles"] == ["assistant", "user"]
+
+
+def test_a_mod_can_make_a_chat_private_and_then_no_turn_runs_in_it(api, monkeypatch, tmp_path):
+    client, tok, _, mgr = api
+    from src import chat_prefs
+    monkeypatch.setattr(chat_prefs, "PREFS_FILE", str(tmp_path / "chat_prefs.json"))
+    from routes import model_routes, session_routes
+    monkeypatch.setattr(model_routes, "resolve_default_chat", lambda u, a: {"model": "qwen", "endpoint_id": "ep"})
+
+    def fake_create(sm, owner, model, endpoint_id, name=""):
+        mgr.sessions["p1"] = Sess(name, owner, model)
+        return "p1", mgr.sessions["p1"]
+    monkeypatch.setattr(session_routes, "create_direct_chat", fake_create)
+    r = client.post("/api/mods/v1/chats", headers=bearer(tok),
+                    json={"user": "alice", "name": "Business", "private": True})
+    assert r.json()["private"] is True and chat_prefs.get("p1")["private"] is True
+    assert client.get("/api/mods/v1/chats/a1", headers=bearer(tok), params={"user": "alice"}).json()["private"] is False
+    # An existing chat, one way only.
+    r = client.post("/api/mods/v1/chats/a2/private", headers=bearer(tok), json={"user": "alice"})
+    assert r.json()["private"] is True
+    assert client.post("/api/mods/v1/chats/b1/private", headers=bearer(tok), json={"user": "alice"}).status_code == 404
+    # No turn in either; a note (a mirror line) is still fine.
+    for sid in ("p1", "a2"):
+        r = client.post(f"/api/mods/v1/chats/{sid}/turn", headers=bearer(tok), json={"user": "alice", "message": "hi"})
+        assert r.status_code == 403 and "private" in r.json()["detail"]
+        r = client.post(f"/api/mods/v1/chats/{sid}/note", headers=bearer(tok),
+                        json={"user": "alice", "text": "mirrored", "role": "user", "meta": {"excluded": True}})
+        assert r.status_code == 200
 
 
 def test_speech_round_trip(api, monkeypatch):

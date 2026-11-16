@@ -38,8 +38,10 @@ def analyze_topics(session_manager, owner: str = None) -> Dict[str, Any]:
     topic_counts: Dict[str, int] = {t: 0 for t in TOPIC_KEYWORDS}
     topic_matches: Dict[str, list] = {t: [] for t in TOPIC_KEYWORDS}
 
+    from src import private_chats
+    private = private_chats.private_ids()
     for session_id, session_data in session_manager.sessions.items():
-        if session_data.get("archived", False):
+        if session_id in private or session_data.get("archived", False):
             continue
         # Strict ownership: any session whose owner does not match the
         # caller is excluded. Ownerless sessions are never included

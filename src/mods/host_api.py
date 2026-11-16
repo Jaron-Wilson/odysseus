@@ -133,7 +133,17 @@ def _chat_view(sid: str, sess, last=None) -> Dict[str, Any]:
     return {"id": sid, "name": getattr(sess, "name", "") or "Untitled", "model": getattr(sess, "model", "") or "",
             "last_activity": _stamp(last), "busy": _busy(sid), "archived": bool(getattr(sess, "archived", False)),
             # What POST chats/<id>/note takes as `role` (so a mod can tell this core from one before it).
-            "note_roles": list(NOTE_ROLES)}
+            "note_roles": list(NOTE_ROLES),
+            # Never sent to a model or shared with other chats (src/private_chats.py).
+            "private": _private(sid, sess)}
+
+
+def _private(sid: str, sess) -> bool:
+    try:
+        from src import private_chats
+        return private_chats.is_private(sid, getattr(sess, "name", ""))
+    except Exception:
+        return False
 
 
 def recent_chats(scope: Optional[str]) -> List[Tuple[str, Any, Any]]:
@@ -391,7 +401,25 @@ def setup_host_routes(router: APIRouter) -> None:
             sid, sess = create_direct_chat(_sm(), scope, model, endpoint_id, name=name)
         except HTTPException:
             raise HTTPException(409, "That model's endpoint is not available any more")
+        if body.get("private") is True:
+            from src import private_chats
+            private_chats.set_private(sid, True)
         runtime.log_line(e["id"], f"[odysseus] new chat {sid} for {user}")
+        return _chat_view(sid, sess)
+
+    @router.post(P + "/chats/{sid}/private")
+    async def v1_chat_private(request: Request, sid: str):
+        """{user}: make the chat private (src/private_chats.py). One way only:
+        a mod can never make a chat shared again (the user can, per chat)."""
+        e = _mod(request, "chats")
+        body = await _body(request)
+        scope, user = _user(e, body.get("user"))
+        sess = owned_chat(scope, sid)
+        if not sess:
+            raise HTTPException(404, "No such chat")
+        from src import private_chats
+        private_chats.set_private(sid, True)
+        runtime.log_line(e["id"], f"[odysseus] chat {sid} made private for {user}")
         return _chat_view(sid, sess)
 
     @router.post(P + "/chats/{sid}/model")
@@ -425,6 +453,9 @@ def setup_host_routes(router: APIRouter) -> None:
         scope, user = _user(e, body.get("user"))
         if not owned_chat(scope, sid):
             raise HTTPException(404, "No such chat")
+        from src import private_chats
+        if private_chats.is_private(sid):
+            raise HTTPException(403, private_chats.REFUSAL)
         message = str(body.get("message") or "").strip()
         if not message or len(message) > MAX_MESSAGE:
             raise HTTPException(400, f"message must be 1 to {MAX_MESSAGE} characters")

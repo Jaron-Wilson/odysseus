@@ -39,6 +39,9 @@ def setup_thread_routes(session_manager) -> APIRouter:
     async def start_thread(request: Request, session_id: str):
         """Start a side thread at a message: {"anchor_msg_id": ...}."""
         _verify_session_owner(request, session_id)
+        from src import private_chats
+        if private_chats.is_private(session_id):
+            raise HTTPException(403, private_chats.REFUSAL)
         body = await request.json()
         anchor = str(body.get("anchor_msg_id") or "")
         parent = _get(session_id)
@@ -158,6 +161,9 @@ def setup_thread_routes(session_manager) -> APIRouter:
         thread holds the conversation up to that message (all of it when
         omitted) and is then carried on by itself."""
         _verify_session_owner(request, session_id)
+        from src import private_chats
+        if private_chats.is_private(session_id):
+            raise HTTPException(403, private_chats.REFUSAL)
         body = await request.json()
         _get(session_id)
         try:
@@ -173,6 +179,9 @@ def setup_thread_routes(session_manager) -> APIRouter:
         runs in the background in a new thread; its report is posted back
         here when it finishes. Stop it with POST /api/chat/stop/{thread id}."""
         _verify_session_owner(request, session_id)
+        from src import private_chats
+        if private_chats.is_private(session_id):
+            raise HTTPException(403, private_chats.REFUSAL)
         body = await request.json()
         _get(session_id)
         try:
