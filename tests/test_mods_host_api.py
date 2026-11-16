@@ -203,6 +203,22 @@ def test_notes_are_saved_as_assistant_lines(api):
     assert meta == {"source": "phone_call", "note": True, "excluded": True}
 
 
+def test_notes_can_be_the_users_own_line(api):
+    client, tok, _, mgr = api
+    r = client.post("/api/mods/v1/chats/a1/note", headers=bearer(tok),
+                    json={"user": "alice", "text": "hi from the phone", "source": "sip", "role": "user",
+                          "meta": {"excluded": True}})
+    assert r.json() == {"ok": True, "role": "user"}
+    assert mgr.notes[0][:3] == ("a1", "user", "hi from the phone")
+    # Anything else is an assistant note, as before.
+    r = client.post("/api/mods/v1/chats/a1/note", headers=bearer(tok),
+                    json={"user": "alice", "text": "x", "role": "system"})
+    assert r.json()["role"] == "assistant" and mgr.notes[1][1] == "assistant"
+    # A chat says which roles a note may have.
+    assert client.get("/api/mods/v1/chats/a1", headers=bearer(tok),
+                      params={"user": "alice"}).json()["note_roles"] == ["assistant", "user"]
+
+
 def test_speech_round_trip(api, monkeypatch):
     client, tok, _, _ = api
 
