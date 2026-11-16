@@ -1102,6 +1102,13 @@ def setup_chat_routes(
                 _auto_md = auto_turn.auto_meta
                 if auto_turn.effort:
                     _effort_kw = {"reasoning_effort": auto_turn.effort}
+            # A turn spoken in a call answers without a reasoning pass (src/call_turns.py); the agent loop
+            # sees the call note itself.
+            _call_think_kw = {}
+            if str(form_data.get("voice_call") or "").lower() in ("1", "true"):
+                from src import call_turns
+                if not call_turns.think_on_calls():
+                    _call_think_kw = {"thinking": False}
 
             # Send model name early so the frontend can show it during streaming
             _model_suffix = "Research" if effective_do_research else None
@@ -1176,6 +1183,7 @@ def setup_chat_routes(
                         session_id=session,
                         owner=_user,
                         **_effort_kw,
+                        **_call_think_kw,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

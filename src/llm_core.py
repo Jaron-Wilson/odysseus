@@ -538,6 +538,23 @@ def _is_self_hosted_openai_compatible(url: str) -> bool:
     return _detect_provider(url) == "openai" and not _host_match(url, "openai.com")
 
 
+def no_thinking_payload(payload: Dict, url: str) -> None:
+    """Ask a self-hosted OpenAI-style server to answer without a reasoning pass, in place.
+
+    vLLM takes ``reasoning_effort: "none"`` for Qwen3-style templates, and both vLLM and llama.cpp's server take
+    ``chat_template_kwargs: {"enable_thinking": false}``; Odysseus's gateway passes ``reasoning_effort`` on to its
+    Ollama models. Hosted APIs are left alone: several reject "none" or an unknown field (a 400), and Ollama
+    (port 11434; its chat calls go to the native API) gets ``think: false`` already."""
+    try:
+        ollama = urlparse(url or "").port == 11434
+    except ValueError:
+        ollama = False
+    if ollama or not _is_self_hosted_openai_compatible(url):
+        return
+    payload["reasoning_effort"] = "none"
+    payload["chat_template_kwargs"] = {**(payload.get("chat_template_kwargs") or {}), "enable_thinking": False}
+
+
 def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:
     """Add llama.cpp-server slot-affinity hints to an outgoing payload, in place.
 
@@ -1748,11 +1765,17 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                     owner: Optional[str] = None, reasoning_effort: Optional[str] = None):
+                     owner: Optional[str] = None, reasoning_effort: Optional[str] = None,
+                     thinking: Optional[bool] = None):
     """Stream LLM responses with improved error handling.
 
     ``reasoning_effort`` ("low", "high" ...) is sent to the providers that take one (ChatGPT Subscription, OpenAI-style
     servers); the others ignore it. The chat sets it for the auto model's remote level.
+
+    ``thinking=False``: answer without a reasoning pass (a spoken call turn, src/call_turns.py). A self-hosted
+    OpenAI-style server (vLLM, llama.cpp, Odysseus's gateway) is asked with ``reasoning_effort: "none"`` and
+    ``chat_template_kwargs.enable_thinking: false`` (no_thinking_payload); Ollama already gets ``think: false``
+    for a thinking model; a hosted API keeps its own default (or the ``reasoning_effort`` given).
 
     ``owner`` is whose ChatGPT sign-in to use for request-scoped providers
     (Sign in with ChatGPT, ChatGPT Subscription); their bearer is resolved
@@ -1826,6 +1849,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             payload["tools"] = _alias_harmony_tools(tools, model)
         if reasoning_effort and provider not in {"copilot"}:
             payload["reasoning_effort"] = reasoning_effort
+        if thinking is False:
+            no_thinking_payload(payload, url)
         # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
         # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.

@@ -2160,7 +2160,7 @@ async function _loadEngines(card) {
   const save = async (body) => {
     try {
       const r = await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (r.status === 403) throw new Error('Only an admin can change the speech engines.');
+      if (r.status === 403) throw new Error('Only an admin can change these settings.');
       if (!r.ok) throw new Error('Could not save.');
       msg.textContent = 'Saved'; msg.style.color = '';
       if (window.voiceRecorderModule && body.stt_provider !== undefined) window.voiceRecorderModule._sttProvider = body.stt_enabled ? body.stt_provider : 'disabled';
@@ -2171,6 +2171,12 @@ async function _loadEngines(card) {
     }
   };
   stt.addEventListener('change', () => save({ stt_enabled: stt.value !== 'disabled', stt_provider: stt.value }));
+  // Call turns answer without a reasoning pass unless this is on (src/call_turns.py).
+  const think = card.querySelector('#set-vcThink');
+  if (think) {
+    think.checked = settings.call_thinking === true;
+    think.addEventListener('change', () => save({ call_thinking: think.checked }));
+  }
   tts.addEventListener('change', () => {
     voice.value = '';
     fillVoices();

@@ -55,6 +55,10 @@ DEFAULT_SETTINGS = {
     "tts_kokoro_model": "",
     # Add-on voices ("mod:<id>", like the ElevenLabs add-on) keep their own
     # key and settings in the add-on (services/tts/tts_service.py).
+    # Turns spoken in a call (the in-app voice call, a phone call to the agent
+    # line) answer without a reasoning pass unless this is on: the pass was
+    # most of the wait before the first spoken word (src/call_turns.py).
+    "call_thinking": False,
     "stt_enabled": False,
     "stt_provider": "disabled",
     # Whisper model for the "local" STT provider (see services/stt/local_models.py).
