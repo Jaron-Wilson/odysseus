@@ -67,6 +67,45 @@ def versions(static_dir: str) -> Dict[str, str]:
 _ATTR = re.compile(r'(\b(?:src|href)=")(/static/(?:js/[^"?]+\.js|css/[^"?]+\.css|app\.js|style\.css))(?:\?[^"]*)?(")')
 
 
+_IMPORT = re.compile(r"""(?:^|[;\n}])\s*(?:import|export)\s[^'";]*?from\s*['"]([^'"]+)['"]|(?:^|[;\n}])\s*import\s*['"]([^'"]+)['"]""")
+_graph_cache: Dict[Tuple[str, ...], list] = {}
+
+
+def boot_modules(html: str, static_dir: str) -> list:
+    """Every module the page's <script type=module> tags pull in through static
+    imports, as '/static/...' urls. Preloading them all turns the browser's
+    discover-one-level-at-a-time fetch chain into a single parallel batch."""
+    roots = re.findall(r'<script[^>]*type="module"[^>]*src="(/static/[^"?]+)', html)
+    vmap = versions(static_dir)
+    key = tuple(roots) + (str(hash(tuple(sorted(vmap.items())))),)
+    hit = _graph_cache.get(key)
+    if hit is not None:
+        return hit
+    seen: Dict[str, None] = {}
+    stack = list(roots)
+    while stack:
+        url = stack.pop()
+        if url in seen or url not in vmap:
+            continue
+        seen[url] = None
+        try:
+            with open(os.path.join(static_dir, url[len("/static/"):]), encoding="utf-8") as f:
+                src = f.read()
+        except OSError:
+            continue
+        for m in _IMPORT.finditer(src):
+            spec = m.group(1) or m.group(2)
+            if not spec.startswith((".", "/")):
+                continue
+            spec = spec.split("?")[0]
+            base = url.rsplit("/", 1)[0]
+            target = os.path.normpath(spec if spec.startswith("/") else base + "/" + spec).replace(os.sep, "/")
+            stack.append(target)
+    _graph_cache.clear()
+    _graph_cache[key] = list(seen)
+    return _graph_cache[key]
+
+
 def stamp_html(html: str, static_dir: str, nonce: str = "") -> str:
     """Version every local js/css reference in the page and prepend the import map."""
     vmap = versions(static_dir)
@@ -78,7 +117,10 @@ def stamp_html(html: str, static_dir: str, nonce: str = "") -> str:
     html = _ATTR.sub(sub, html)
     imports = {u: f"{u}?v={v}" for u, v in vmap.items() if u.endswith(".js")}
     tag = f'<script type="importmap" nonce="{nonce}">{json.dumps({"imports": imports}, separators=(",", ":"))}</script>'
-    return html.replace("<head>", "<head>\n  " + tag, 1)
+    preload = "".join(
+        f'<link rel="modulepreload" href="{u}?v={vmap[u]}">' for u in boot_modules(html, static_dir)
+    )
+    return html.replace("<head>", "<head>\n  " + tag + "\n  " + preload, 1)
 
 
 def cache_header_for(url_path: str, query: str, static_dir: str) -> str:

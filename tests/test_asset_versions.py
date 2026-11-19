@@ -35,3 +35,15 @@ def test_cache_header_immutable_only_for_current_hash(tmp_path):
     assert "immutable" in av.cache_header_for("js/x.js", f"v={h}", d)
     assert av.cache_header_for("js/x.js", "v=deadbeef", d) == "no-cache"
     assert av.cache_header_for("js/x.js", "", d) == "no-cache"
+
+
+def test_boot_modules_follow_static_imports_only(tmp_path):
+    d = _tree(tmp_path)
+    (tmp_path / "js" / "x.js").write_text("import a from './z.js';\nimport('./lazy.js');\n")
+    (tmp_path / "js" / "z.js").write_text("export default 1;\n")
+    (tmp_path / "js" / "lazy.js").write_text("export default 2;\n")
+    av._state.update(at=0.0, map={})
+    html = '<script type="module" src="/static/js/x.js"></script>'
+    mods = av.boot_modules(html, d)
+    assert "/static/js/x.js" in mods and "/static/js/z.js" in mods
+    assert "/static/js/lazy.js" not in mods
