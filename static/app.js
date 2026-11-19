@@ -2128,6 +2128,15 @@ function initializeEventListeners() {
       syncMirrorStates();
     }
 
+    // Several observers ask for a re-check in the same frame; measuring the
+    // toolbar means toggling classes and reading widths, so do it once per frame.
+    let _tbPending = false;
+    function scheduleToolbarOverflow() {
+      if (_tbPending) return;
+      _tbPending = true;
+      requestAnimationFrame(() => { _tbPending = false; checkToolbarOverflow(); });
+    }
+
     // Observe active class changes to sync mirror states
     const observer = new MutationObserver(() => syncMirrorStates());
     collapsibleBtns.forEach(btn => {
@@ -2135,7 +2144,7 @@ function initializeEventListeners() {
     });
 
     // Run on resize and on load
-    window.addEventListener('resize', () => requestAnimationFrame(checkToolbarOverflow));
+    window.addEventListener('resize', () => scheduleToolbarOverflow());
     // Run immediately (state is already restored by this point)
     checkToolbarOverflow();
     // And whenever the right-hand group changes width: its music, Claude
@@ -2145,25 +2154,25 @@ function initializeEventListeners() {
       let _rgW = 0;
       new ResizeObserver(([e]) => {
         const w = Math.round(e.contentRect.width);
-        if (w !== _rgW) { _rgW = w; requestAnimationFrame(checkToolbarOverflow); }
+        if (w !== _rgW) { _rgW = w; scheduleToolbarOverflow(); }
       }).observe(_rightGroup);
     }
     // Re-check when sidebar toggles (changes available width)
     document.addEventListener('overflow-state-change', () =>
-      requestAnimationFrame(checkToolbarOverflow));
+      scheduleToolbarOverflow());
     // Also re-check when sidebar visibility changes
     const sidebarEl = el('sidebar');
     if (sidebarEl) {
-      new MutationObserver(() => requestAnimationFrame(checkToolbarOverflow))
+      new MutationObserver(() => scheduleToolbarOverflow())
         .observe(sidebarEl, { attributes: true, attributeFilter: ['class'] });
     }
     // Re-check when doc panel opens/closes (body.doc-view toggled)
-    new MutationObserver(() => requestAnimationFrame(checkToolbarOverflow))
+    new MutationObserver(() => scheduleToolbarOverflow())
       .observe(document.body, { attributes: true, attributeFilter: ['class'] });
     // Re-check when input bar itself resizes (e.g. doc panel drag)
     const inputBottom = inputLeft.parentElement;
     if (inputBottom) {
-      new ResizeObserver(() => requestAnimationFrame(checkToolbarOverflow)).observe(inputBottom);
+      new ResizeObserver(() => scheduleToolbarOverflow()).observe(inputBottom);
     }
   })();
 
