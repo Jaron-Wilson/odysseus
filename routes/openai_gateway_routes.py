@@ -8,9 +8,13 @@ add-on models, which go through the same provider code a chat turn uses.
 Speech (text to speech) uses the same token and the same "chat" scope; src/gateway_speech.py sends it through
 Odysseus's TTS service, so the voice, fallback and cache settings of the web app apply.
 Requests are never logged with their content, and the caller's token is never sent upstream.
+Every chat request is counted in <data>/gateway_usage.db (src/gateway_usage.py): who, the model asked for, the model it
+resolved to, tokens, latency. The resolved model is also in the X-Odysseus-Model response header, and for auto it is
+the ``model`` of the response (and of every streamed chunk), as OpenRouter does it.
 """
 import asyncio
 import logging
+import time
 
 import httpx
 from fastapi import APIRouter, Request
@@ -18,6 +22,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from src import gateway_router as auto_router
 from src import gateway_speech as speech
+from src import gateway_usage as usage_log
 from src import openai_gateway as gw
 from src.openai_translate import Translator
 from src.auth_helpers import effective_user
@@ -84,7 +89,8 @@ async def _complete(model_id: str, messages: list, owner, max_tokens: int) -> st
         await client.aclose()
 
 
-async def _translated(url: str, headers: dict, model: str, payload: dict, owner, done=lambda: None, extra=None):
+async def _translated(url: str, headers: dict, model: str, payload: dict, owner, done=lambda: None, extra=None,
+                      log=None):
     """Answer a request for a model that does not take a plain OpenAI request."""
     opts = payload.get("stream_options")
     tr = Translator(str(payload.get("model") or model), include_usage=isinstance(opts, dict) and bool(opts.get("include_usage")))
@@ -99,6 +105,13 @@ async def _translated(url: str, headers: dict, model: str, payload: dict, owner,
         kw["max_tokens"] = mt
     agen = _llm_stream(url, model, payload["messages"], **kw)
     closed = []
+
+    def fin(status, error=None):
+        if log:
+            u = tr.usage or {}
+            i, o = int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
+            log(status, {"prompt_tokens": i, "completion_tokens": o, "total_tokens": i + o} if i or o else None,
+                len("".join(tr.text)), error)
 
     async def close():
         try:
@@ -116,8 +129,10 @@ async def _translated(url: str, headers: dict, model: str, payload: dict, owner,
         finally:
             await close()
         if tr.error and not (tr.text or tr.calls):
+            fin(tr.error["status"], tr.error["message"])
             return _error(tr.error["status"], tr.error["message"], "upstream_error")
         tr.finish()
+        fin(200)
         return JSONResponse(tr.completion(), headers=extra or None)
 
     first = []
@@ -126,11 +141,13 @@ async def _translated(url: str, headers: dict, model: str, payload: dict, owner,
             first = tr.feed(chunk)
             if tr.error and not tr.started:
                 await close()
+                fin(tr.error["status"], tr.error["message"])
                 return _error(tr.error["status"], tr.error["message"], "upstream_error")
             if first:
                 break
     except Exception:
         await close()
+        fin(502, "no answer before output")
         logger.warning("gateway: translated stream failed before output")
         return _error(502, "the model did not answer", "upstream_unreachable")
 
@@ -147,6 +164,7 @@ async def _translated(url: str, headers: dict, model: str, payload: dict, owner,
             for line in tr.finish():
                 yield line
         finally:
+            fin(502 if tr.error else 200, tr.error["message"] if tr.error else None)
             await close()
     return StreamingResponse(body(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", **(extra or {})})
@@ -185,6 +203,13 @@ def setup_openai_gateway_routes() -> APIRouter:
             return _error(400, "not a session id", "invalid_session")
         return await asyncio.to_thread(auto_router.session_stats, session_id)
 
+    @router.get("/v1/usage")
+    async def usage(request: Request, days: int = 14):
+        """The gateway's own usage log as JSON: totals and per day, resolved model, requested model and caller."""
+        if not _allowed(request):
+            return _error(403, "this token needs the 'chat' scope", "insufficient_scope")
+        return await asyncio.to_thread(usage_log.summary, max(1, min(365, days)))
+
     @router.post("/v1/audio/speech")
     async def audio_speech(request: Request):
         """Text to speech, as OpenAI's: JSON {model, input, voice, response_format, speed, instructions} in, audio out."""
@@ -221,18 +246,50 @@ def setup_openai_gateway_routes() -> APIRouter:
             return _error(400, "send a JSON object with 'model' and 'messages'")
         owner = effective_user(request)
         extra = {}
-        if auto_router.level_of(payload.get("model")):
+        t0 = time.time()
+        requested = str(payload.get("model") or "")[:120]
+        is_auto = bool(auto_router.level_of(payload.get("model")))
+        who = usage_log.caller_of(request)
+        want = bool(payload.get("stream"))
+        state = {"resolved": None, "reason": None}
+        logged = []
+
+        def log(status, tokens=None, chars=0, error=None):
+            """One usage row for this request (once). Tokens: the upstream's own, else an estimate."""
+            if logged:
+                return
+            logged.append(True)
+            tok, est = dict(tokens or {}), 0
+            if not (tok.get("prompt_tokens") or tok.get("completion_tokens")):
+                try:
+                    p, c = auto_router.estimate_tokens(payload), int(chars / 3.5)
+                except Exception:
+                    p, c = 0, 0
+                tok, est = {"prompt_tokens": p, "completion_tokens": c, "total_tokens": p + c}, 1
+            usage_log.record(owner=owner, requested=requested, resolved=state["resolved"], route_reason=state["reason"],
+                             stream=int(want), status=status, ok=int(status < 400), error=(error or None) and str(error)[:300],
+                             latency_ms=int((time.time() - t0) * 1000), estimated=est, **who, **tok)
+
+        if is_auto:
             if not await asyncio.to_thread(auto_router.enabled):
+                log(404, error="auto is turned off")
                 return _error(404, "the auto model is turned off (gateway_router.json)", "model_not_found")
             session, parent = auto_router.session_ids(request.headers)
             payload, decision = await auto_router.route(payload, owner, _complete, session=session, parent=parent)
             if decision.get("error"):
+                log(decision.get("status") or 503, error=decision["error"])
                 return _error(decision.get("status") or 503, decision["error"], decision.get("code"))
             extra["X-Odysseus-Route"] = f"{decision['model']}; {decision['reason']}"[:500]
+            state["reason"] = str(decision.get("reason") or "")[:300]
         model_id = str(payload.get("model") or "")
+        state["resolved"] = model_id
+        extra["X-Odysseus-Model"] = model_id.encode("ascii", "replace").decode()
+        if is_auto:
+            extra["X-Odysseus-Requested"] = requested.encode("ascii", "replace").decode()
         try:
             url, headers, model, translate = await asyncio.to_thread(gw.resolve, model_id, owner)
         except LookupError as e:
+            log(404, error=str(e))
             return _error(404, str(e), "model_not_found")
         auto_router.begin(model_id)                    # how busy each endpoint is, for the auto model
         ended = []
@@ -243,7 +300,7 @@ def setup_openai_gateway_routes() -> APIRouter:
                 auto_router.end(model_id)
         if translate:
             try:
-                return await _translated(url, headers, model, payload, owner, done=done, extra=extra)
+                return await _translated(url, headers, model, payload, owner, done=done, extra=extra, log=log)
             except BaseException:
                 done()
                 raise
@@ -255,6 +312,7 @@ def setup_openai_gateway_routes() -> APIRouter:
         except httpx.HTTPError as e:
             await client.aclose()
             done()
+            log(502, error=f"unreachable ({type(e).__name__})")
             logger.warning("gateway: %s unreachable: %s", url, type(e).__name__)
             return _error(502, f"the model's server did not answer ({type(e).__name__})", "upstream_unreachable")
         ctype = resp.headers.get("content-type") or ("text/event-stream" if want_stream else "application/json")
@@ -265,13 +323,29 @@ def setup_openai_gateway_routes() -> APIRouter:
                 await resp.aclose()
                 await client.aclose()
                 done()
+            tok, chars = {}, 0
+            if resp.status_code < 400:
+                # for auto, the answer says which model gave it; an explicit model's answer is left as the server sent it
+                data, tok, chars = usage_log.rewrite_completion(data, model_id if is_auto else None)
+            log(resp.status_code, tok, chars, None if resp.status_code < 400 else data[:200].decode("utf-8", "replace"))
             return Response(content=data, status_code=resp.status_code, media_type=ctype, headers=extra or None)
+
+        tap = usage_log.SseTap(model_id if is_auto and resp.status_code < 400 else None)
 
         async def body():
             try:
-                async for chunk in resp.aiter_raw():
-                    yield chunk
+                async for chunk in resp.aiter_bytes():
+                    try:
+                        chunk = tap.feed(chunk)
+                    except Exception:
+                        pass
+                    if chunk:
+                        yield chunk
+                rest = tap.flush()
+                if rest:
+                    yield rest
             finally:
+                log(resp.status_code, tap.tokens, tap.chars, None if resp.status_code < 400 else "upstream error")
                 await resp.aclose()
                 await client.aclose()
                 done()
