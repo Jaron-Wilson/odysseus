@@ -287,11 +287,9 @@
   <style>
     #app-loader .ld-side{position:absolute;left:0;top:0;bottom:0;width:240px;padding:20px 16px;background:var(--panel,#1c1a14);border-right:1px solid var(--border,#2a2820);display:flex;flex-direction:column;gap:12px}
     #app-loader .ld-main{position:absolute;left:240px;right:0;top:0;bottom:0;padding:20px 28px;display:flex;flex-direction:column;justify-content:space-between}
-    #app-loader .ld-bar{display:block;height:12px;border-radius:6px;background:var(--border,#2a2820);opacity:.9;animation:ld-pulse 1.4s ease-in-out infinite}
+    #app-loader .ld-bar{display:block;height:12px;border-radius:6px;background:var(--border,#2a2820);opacity:.7}
     #app-loader .ld-comp{display:block;align-self:center;width:min(720px,100%);height:56px;border-radius:14px;background:var(--panel,#1c1a14);border:1px solid var(--border,#2a2820)}
-    @keyframes ld-pulse{50%{opacity:.4}}
     @media (max-width:768px){#app-loader .ld-side{display:none}#app-loader .ld-main{left:0;padding:16px}}
-    @media (prefers-reduced-motion:reduce){#app-loader .ld-bar{animation:none}}
   </style>
 </head>
 <body>
