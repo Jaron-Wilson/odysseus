@@ -36,7 +36,8 @@ def test_the_call_button_script_and_stylesheet_are_shipped_and_precached():
     sw = (_STATIC / "sw.js").read_text()
     assert 'id="voice-call-btn"' in html
     assert 'id="voice-call-settings"' in html
-    assert '<script type="module" src="/static/js/voiceCall.js"></script>' in html
+    # Loaded right after first paint by static/js/lazyModules.js, not a script tag.
+    assert "import('./voiceCall.js')" in (_STATIC / "js" / "lazyModules.js").read_text()
     # Linked after the other stylesheets so it is not overridden by them.
     links = re.findall(r'<link rel="stylesheet" href="(/static/[^"]+)"', html)
     assert links[-1] == "/static/css/voiceCall.css"

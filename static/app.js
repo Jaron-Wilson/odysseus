@@ -3,6 +3,8 @@
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
 import Storage from './js/storage.js';
+import { whenIdle } from './js/lazyModule.js';
+import { documentModule, compareModule, groupModule, researchPanelModule, searchChatModule, cookbookModule, calendarModule, tasksModule, notesModule, settingsModule, prefetchPanels } from './js/lazyModules.js';
 import uiModule from './js/ui.js';
 import fileHandlerModule from './js/fileHandler.js';
 import screenshareModule from './js/screenshare.js';
@@ -11,9 +13,6 @@ import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
-import compareModule from './js/compare/index.js';
-import documentModule from './js/document.js';
-import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js';
@@ -21,12 +20,6 @@ import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
-import galleryModule from './js/gallery.js';
-import tasksModule from './js/tasks.js';
-import calendarModule from './js/calendar.js';
-import notesModule from './js/notes.js';
-import adminModule from './js/admin.js';
-import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
@@ -45,9 +38,6 @@ import './js/modNav.js';
 // mismatch makes the browser load cookbook.js twice as separate modules (two
 // _envState objects), which broke server selection. Keep all cookbook imports
 // unversioned so this can't recur.
-import cookbookModule from './js/cookbook.js';
-import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
@@ -58,13 +48,59 @@ const API_BASE = window.location.origin;
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
+// Gallery and Admin are big and only used on click, so they load on demand
+// (and are prefetched at idle so the first click is still instant).
+const loadGallery = () => import('./js/gallery.js').then(m => m.default);
+let _adminReal = null;
+const loadAdmin = () => import('./js/admin.js').then(m => {
+  _adminReal = m.default;
+  window.adminModule = _adminReal;  // swap the stand-in for the real module
+  return _adminReal;
+});
+const adminModule = {
+  open: (...args) => loadAdmin().then(m => m.open(...args)),
+  _initData: (...args) => loadAdmin().then(m => m._initData(...args)),
+  get _initialized() { return _adminReal ? _adminReal._initialized : false; },
+};
 window.adminModule = adminModule;
+window.addEventListener('load', () => {
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 2500));
+  idle(() => { loadGallery().catch(() => {}); loadAdmin().catch(() => {}); }, { timeout: 8000 });
+}, { once: true });
 window.cookbookModule = cookbookModule;
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
+
+// Many modules ask for the same small settings/state endpoints while the page
+// boots (auth settings 4x, notes 3x, version 3x ...). Identical plain GETs to
+// this allowlist share one request for a moment; any write drops the cache so
+// nothing read after a change is stale. Everything else goes straight through.
+const _SHARED_GET = /^\/api\/(version|auth\/(settings|status|features)|default-chat|notes|email\/(list|urgency-state|accounts)|claude_code\/(jobs|pending)|calendar\/(events|calendars|sync)|setup\/status|cookbook\/(state|tasks\/status)|prefs(\/[\w-]+)?|memory|stt\/stats|tts\/stats|skills|presets|models|research\/(active|library)|auto_mode|fonts\/custom)$/;
+const _SHARED_TTL_MS = 1500;
+const _sharedGets = new Map();  // url -> { at, promise }
+function _sharedKey(args) {
+  const [input, init] = args;
+  if (typeof input !== 'string') return null;
+  if (init && (init.method && init.method.toUpperCase() !== 'GET' || init.body || init.signal || init.cache || init.headers)) return null;
+  const path = input.split('?')[0].replace(window.location.origin, '');
+  return _SHARED_GET.test(path) ? input : null;
+}
+function _rawFetch(...args) {
+  const init = args[1];
+  const method = String((init && init.method) || (args[0] && args[0].method) || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') _sharedGets.clear();
+  const key = _sharedKey(args);
+  if (!key) return _origFetch.apply(this, args);
+  const hit = _sharedGets.get(key);
+  if (hit && Date.now() - hit.at < _SHARED_TTL_MS) return hit.promise.then(r => r.clone());
+  const promise = _origFetch.apply(this, args);
+  _sharedGets.set(key, { at: Date.now(), promise });
+  promise.then((r) => { if (!r.ok) _sharedGets.delete(key); }, () => _sharedGets.delete(key));
+  return promise.then(r => r.clone());
+}
 window.fetch = async function(...args) {
-  const res = await _origFetch.apply(this, args);
+  const res = await _rawFetch.apply(this, args);
   if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
     window.location.href = '/login';
   }
@@ -878,9 +914,9 @@ function initializeEventListeners() {
   const toolGalleryBtn = el('tool-gallery-btn');
   if (toolGalleryBtn) {
     toolGalleryBtn.addEventListener('click', async () => {
-      if (!galleryModule) return;
       const Modals = await import('./js/modalManager.js');
       if (!Modals.toggle('gallery-modal')) {
+        const galleryModule = await loadGallery();
         if (galleryModule.isGalleryOpen()) galleryModule.closeGallery();
         else galleryModule.openGallery();
       }
@@ -929,7 +965,7 @@ function initializeEventListeners() {
   }
   // Refresh notes due-reminder badge on load and every 5 minutes
   if (notesModule && notesModule.refreshDueBadge) {
-    notesModule.refreshDueBadge();
+    whenIdle(() => notesModule.refreshDueBadge());
     setInterval(() => notesModule.refreshDueBadge(), 5 * 60 * 1000);
   }
 
@@ -2092,6 +2128,15 @@ function initializeEventListeners() {
       syncMirrorStates();
     }
 
+    // Several observers ask for a re-check in the same frame; measuring the
+    // toolbar means toggling classes and reading widths, so do it once per frame.
+    let _tbPending = false;
+    function scheduleToolbarOverflow() {
+      if (_tbPending) return;
+      _tbPending = true;
+      requestAnimationFrame(() => { _tbPending = false; checkToolbarOverflow(); });
+    }
+
     // Observe active class changes to sync mirror states
     const observer = new MutationObserver(() => syncMirrorStates());
     collapsibleBtns.forEach(btn => {
@@ -2099,7 +2144,7 @@ function initializeEventListeners() {
     });
 
     // Run on resize and on load
-    window.addEventListener('resize', () => requestAnimationFrame(checkToolbarOverflow));
+    window.addEventListener('resize', () => scheduleToolbarOverflow());
     // Run immediately (state is already restored by this point)
     checkToolbarOverflow();
     // And whenever the right-hand group changes width: its music, Claude
@@ -2109,25 +2154,25 @@ function initializeEventListeners() {
       let _rgW = 0;
       new ResizeObserver(([e]) => {
         const w = Math.round(e.contentRect.width);
-        if (w !== _rgW) { _rgW = w; requestAnimationFrame(checkToolbarOverflow); }
+        if (w !== _rgW) { _rgW = w; scheduleToolbarOverflow(); }
       }).observe(_rightGroup);
     }
     // Re-check when sidebar toggles (changes available width)
     document.addEventListener('overflow-state-change', () =>
-      requestAnimationFrame(checkToolbarOverflow));
+      scheduleToolbarOverflow());
     // Also re-check when sidebar visibility changes
     const sidebarEl = el('sidebar');
     if (sidebarEl) {
-      new MutationObserver(() => requestAnimationFrame(checkToolbarOverflow))
+      new MutationObserver(() => scheduleToolbarOverflow())
         .observe(sidebarEl, { attributes: true, attributeFilter: ['class'] });
     }
     // Re-check when doc panel opens/closes (body.doc-view toggled)
-    new MutationObserver(() => requestAnimationFrame(checkToolbarOverflow))
+    new MutationObserver(() => scheduleToolbarOverflow())
       .observe(document.body, { attributes: true, attributeFilter: ['class'] });
     // Re-check when input bar itself resizes (e.g. doc panel drag)
     const inputBottom = inputLeft.parentElement;
     if (inputBottom) {
-      new ResizeObserver(() => requestAnimationFrame(checkToolbarOverflow)).observe(inputBottom);
+      new ResizeObserver(() => scheduleToolbarOverflow()).observe(inputBottom);
     }
   })();
 
@@ -3414,25 +3459,20 @@ function startOdysseusApp() {
   searchModule.init(API_BASE);
   chatModule.init(API_BASE);
   chatModule.initListeners();
-  groupModule.init(API_BASE);
-  // Initialize compare module
-  if (compareModule) {
-    compareModule.init(API_BASE);
-  }
-  researchPanelModule.init(API_BASE, markdownModule, sessionModule);
   // Initialize document editor module
   if (documentModule) {
-    documentModule.init(API_BASE);
     // Restore document panel if it was open before refresh
     const _curSession = sessionModule && sessionModule.getCurrentSessionId();
     if (_curSession && localStorage.getItem('odysseus-doc-open-' + _curSession) === '1') {
       documentModule.loadSessionDocs(_curSession);
     }
   }  
-  // Initialize search chat module
-  if (searchChatModule) {
-    searchChatModule.init(API_BASE);
-  }
+  // A group chat that was active before a refresh must be back before sessions load.
+  let _groupReady = Promise.resolve();
+  try { if (/"active":\s*true/.test(localStorage.getItem('odysseus-group-state') || '')) _groupReady = groupModule.load().catch(() => {}); } catch (_) {}
+  // Panels (document, compare, group, research, search, calendar, notes, ...)
+  // load on first use and are prefetched once the first screen is up.
+  whenIdle(prefetchPanels, 2000);
 
   // Search buttons — icon rail + sidebar
   const railSearchBtn = el('rail-search-btn');
@@ -3975,7 +4015,7 @@ function startOdysseusApp() {
     });
 
     // Load sessions first (critical path) — remove loader when done
-    sessionModule.loadSessions()
+    _groupReady.then(() => sessionModule.loadSessions())
       .catch(e => console.warn('loadSessions error:', e))
       .finally(() => {
         const loader = document.getElementById('app-loader');

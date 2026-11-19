@@ -5,7 +5,14 @@
 
 import spinnerModule from './spinner.js';
 import sessionModule from './sessions.js';
-import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary } from './emailLibrary.js';
+import { lazyModule, whenIdle } from './lazyModule.js';
+// The full email library (a large module) loads on first use or at idle.
+let _libDeps = null;
+const emailLib = lazyModule(() => import('./emailLibrary.js'), {
+  onLoad: (m) => { if (_libDeps) m.initEmailLibrary(_libDeps); },
+});
+const openEmailLibrary = (...a) => emailLib.openEmailLibrary(...a);
+const prewarmEmailLibrary = (...a) => emailLib.prewarmEmailLibrary(...a);
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
@@ -87,7 +94,7 @@ export function init(documentModule) {
   _docModule = documentModule;
   _bindEvents();
   // Init the library popup with a callback to open emails
-  initEmailLibrary({
+  _libDeps = {
     documentModule,
     onEmailClick: async (opts) => {
       // Reply / AI Reply / Compose open a draft in the doc editor.
@@ -116,7 +123,7 @@ export function init(documentModule) {
         await _openEmail(opts.email, null, opts.emailData, opts.mode || 'reply');
       }
     },
-  });
+  };
   _watchDocOpenToReDockEmail();
 }
 
@@ -192,7 +199,7 @@ function _bindEvents() {
   // Initial unread count check, refresh every 60s
   _refreshUnreadCount();
   setInterval(_refreshUnreadCount, 60000);
-  prewarmEmailLibrary({ delay: 3000 });
+  whenIdle(() => prewarmEmailLibrary({ delay: 1500 }), 3000);
 
   // Deep-link: #email=<folder>:<uid> opens the library and expands that card
   _maybeOpenFromHash();

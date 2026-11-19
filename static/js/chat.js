@@ -17,10 +17,11 @@ import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
 import searchModule from './search.js';
-import documentModule from './document.js';
+import { documentModule, slashCommands } from './lazyModules.js';
+import { whenIdle } from './lazyModule.js';
+const typewriterInto = (...a) => slashCommands.typewriterInto(...a);
 import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
-import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
@@ -691,7 +692,7 @@ import './chatThreads.js';
    */
   export function init(apiBase) {
     API_BASE = apiBase;
-    initSlashCommands({ apiBase, isStreaming: () => isStreaming });
+    whenIdle(() => slashCommands.initSlashCommands({ apiBase, isStreaming: () => isStreaming }));
     // Initialize email inbox
     emailInbox.init(documentModule);
     // Wire the slash-command autocomplete popup on the chat composer. The
@@ -1017,14 +1018,23 @@ import './chatThreads.js';
       if (submitBtn) submitBtn.classList.remove('send-pending');
     };
 
+    // The slash command code loads on first use (and at idle); a send waits
+    // for it only if the page was just opened. If it cannot load, nothing is
+    // treated as a command and the text goes to the model as usual.
+    const _sc = await slashCommands.load().catch(() => ({
+      isCommand: () => false, getSetupMode: () => false, clearSetupMode() {},
+    }));
+    documentModule.load().catch(() => {});
+    const { isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard } = _sc;
+
     // --- Setup mode: intercept next message (but let slash commands through) ---
     {
       const el = uiModule.el;
       const rawMsg = (el('message').value || '').trim();
-      const currentSetupMode = slashCommands.getSetupMode();
+      const currentSetupMode = _sc.getSetupMode();
       if (currentSetupMode && rawMsg && !isCommand(rawMsg)) {
         const mode = currentSetupMode;
-        slashCommands.clearSetupMode(mode === 'endpoint-provider' || mode === 'endpoint-key-for-provider');
+        _sc.clearSetupMode(mode === 'endpoint-provider' || mode === 'endpoint-key-for-provider');
         el('message').value = '';
         if (window._syncModelPickerAutohide) window._syncModelPickerAutohide();
         if (uiModule.autoResize) uiModule.autoResize(el('message'));
@@ -1037,7 +1047,7 @@ import './chatThreads.js';
         return;
       }
       if (currentSetupMode && rawMsg && isCommand(rawMsg)) {
-        slashCommands.clearSetupMode();  // Clear setup mode, fall through to slash handler
+        _sc.clearSetupMode();  // Clear setup mode, fall through to slash handler
       }
     }
 

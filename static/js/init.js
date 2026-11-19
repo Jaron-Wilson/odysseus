@@ -111,6 +111,9 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
   const rail = document.getElementById('icon-rail');
   const sidebar = document.getElementById('sidebar');
   const root = document.documentElement;
+  const _setRoot = (name, value) => {
+    if (root.style.getPropertyValue(name) !== value) root.style.setProperty(name, value);
+  };
   const _measure = (el) => {
     if (!el) return null;
     const cs = window.getComputedStyle(el);
@@ -124,14 +127,14 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
     if (rw === null) {
       root.style.removeProperty('--icon-rail-w');
     } else if (rw > 0) {
-      root.style.setProperty('--icon-rail-w', rw + 'px');
+      _setRoot('--icon-rail-w', rw + 'px');
     } else {
       // 0 from a visible-but-not-yet-laid-out rail: don't shadow the
       // CSS fallback; re-sync on the next frame instead.
       const cs = rail && window.getComputedStyle(rail);
       const hidden = !cs || cs.display === 'none' || cs.visibility === 'hidden';
       if (hidden) {
-        root.style.setProperty('--icon-rail-w', '0px');
+        _setRoot('--icon-rail-w', '0px');
       } else {
         root.style.removeProperty('--icon-rail-w');
         requestAnimationFrame(_sync);
@@ -144,7 +147,7 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
     if (sw === null) {
       root.style.removeProperty('--sidebar-w');
     } else {
-      root.style.setProperty('--sidebar-w', sw + 'px');
+      _setRoot('--sidebar-w', sw + 'px');
     }
   };
   _sync();
@@ -172,6 +175,7 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
   const chatBar = document.querySelector('.chat-input-bar');
   const attachStrip = document.getElementById('attach-strip');
   const chatContainer = document.getElementById('chat-container');
+  let _lastClearance = null;
   const _syncComposerClearance = () => {
     let top = window.innerHeight;
     for (const el of [attachStrip, chatBar]) {
@@ -180,7 +184,12 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
       if (rect.height > 0) top = Math.min(top, rect.top);
     }
     const clearance = Math.max(12, Math.ceil(window.innerHeight - top + 8));
-    root.style.setProperty('--composer-clearance', clearance + 'px');
+    // Same value again would still invalidate every element's style (it is a
+    // root custom property), and this runs on every resize/transition tick.
+    if (clearance !== _lastClearance) {
+      _lastClearance = clearance;
+      root.style.setProperty('--composer-clearance', clearance + 'px');
+    }
   };
   requestAnimationFrame(_syncComposerClearance);
   if (typeof ResizeObserver !== 'undefined') {
