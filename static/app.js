@@ -21,11 +21,9 @@ import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
-import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
-import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
@@ -58,7 +56,25 @@ const API_BASE = window.location.origin;
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
+// Gallery and Admin are big and only used on click, so they load on demand
+// (and are prefetched at idle so the first click is still instant).
+const loadGallery = () => import('./js/gallery.js').then(m => m.default);
+let _adminReal = null;
+const loadAdmin = () => import('./js/admin.js').then(m => {
+  _adminReal = m.default;
+  window.adminModule = _adminReal;  // swap the stand-in for the real module
+  return _adminReal;
+});
+const adminModule = {
+  open: (...args) => loadAdmin().then(m => m.open(...args)),
+  _initData: (...args) => loadAdmin().then(m => m._initData(...args)),
+  get _initialized() { return _adminReal ? _adminReal._initialized : false; },
+};
 window.adminModule = adminModule;
+window.addEventListener('load', () => {
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 2500));
+  idle(() => { loadGallery().catch(() => {}); loadAdmin().catch(() => {}); }, { timeout: 8000 });
+}, { once: true });
 window.cookbookModule = cookbookModule;
 
 // Redirect to login on 401 from any fetch
@@ -878,9 +894,9 @@ function initializeEventListeners() {
   const toolGalleryBtn = el('tool-gallery-btn');
   if (toolGalleryBtn) {
     toolGalleryBtn.addEventListener('click', async () => {
-      if (!galleryModule) return;
       const Modals = await import('./js/modalManager.js');
       if (!Modals.toggle('gallery-modal')) {
+        const galleryModule = await loadGallery();
         if (galleryModule.isGalleryOpen()) galleryModule.closeGallery();
         else galleryModule.openGallery();
       }

@@ -969,12 +969,32 @@ export function enhanceMedia(container) {
   }
 }
 
+// Mermaid is 3.5 MB, so it is fetched the first time a diagram needs drawing
+// instead of on every page load.
+let _mermaidLoading = null;
+function loadMermaid() {
+  if (window.mermaid) return Promise.resolve();
+  if (_mermaidLoading) return _mermaidLoading;
+  _mermaidLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.id = 'mermaid-script';
+    s.src = '/static/lib/mermaid.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => { _mermaidLoading = null; reject(new Error('mermaid failed to load')); };
+    document.head.appendChild(s);
+  });
+  return _mermaidLoading;
+}
+
 export function renderMermaid(container) {
-  if (!window.mermaid) return;
-  initMermaid();
   const target = container || document;
   const pending = target.querySelectorAll('pre.mermaid:not([data-processed])');
   if (pending.length === 0) return;
+  if (!window.mermaid) {
+    loadMermaid().then(() => renderMermaid(container)).catch((e) => console.warn(e.message));
+    return;
+  }
+  initMermaid();
   try {
     window.mermaid.run({ nodes: pending });
   } catch (e) {
@@ -999,7 +1019,7 @@ const markdownModule = {
 
 export default markdownModule;
 
-// Mermaid is loaded async so it cannot delay the app shell.
+// Mermaid is loaded on demand (loadMermaid above) so it cannot delay the app shell.
 function initMermaid() {
   if (!window.mermaid || window.__odysseusMermaidReady) return;
   window.mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });

@@ -242,15 +242,10 @@
        below (inline onload= attrs are blocked by CSP script-src-attr). -->
   <link id="katex-css" rel="stylesheet" href="/static/lib/katex/katex.min.css" media="print">
   <script async src="/static/lib/katex/katex.min.js"></script>
-  <script id="mermaid-script" async src="/static/lib/mermaid.min.js"></script>
   <script nonce="{{CSP_NONCE}}">
     (function(){
       var k = document.getElementById('katex-css');
       if (k) k.addEventListener('load', function(){ k.media = 'all'; }, { once: true });
-      var m = document.getElementById('mermaid-script');
-      if (m) m.addEventListener('load', function(){
-        if (window.odysseusInitMermaid) window.odysseusInitMermaid();
-      }, { once: true });
     })();
   </script>
   <link rel="stylesheet" href="/static/style.css">
@@ -260,31 +255,53 @@
   <link rel="stylesheet" href="/static/css/studio-pages-a.css">
   <link rel="stylesheet" href="/static/css/studio-pages-b.css">
   <link rel="stylesheet" href="/static/css/workspace.css">
-  <link rel="stylesheet" href="/static/css/codePanel.css">
-  <link rel="stylesheet" href="/static/css/claudeAttach.css">
-  <link rel="stylesheet" href="/static/css/mods.css">
-  <link rel="stylesheet" href="/static/css/modsInstalled.css">
-  <link rel="stylesheet" href="/static/css/plans.css">
-  <link rel="stylesheet" href="/static/css/nativePlans.css">
-  <link rel="stylesheet" href="/static/css/actionApprovals.css">
-  <link rel="stylesheet" href="/static/css/googleSettings.css">
+  <link rel="stylesheet" href="/static/css/codePanel.css" media="print" data-defer-css>
+  <link rel="stylesheet" href="/static/css/claudeAttach.css" media="print" data-defer-css>
+  <link rel="stylesheet" href="/static/css/mods.css" media="print" data-defer-css>
+  <link rel="stylesheet" href="/static/css/modsInstalled.css" media="print" data-defer-css>
+  <link rel="stylesheet" href="/static/css/plans.css" media="print" data-defer-css>
+  <link rel="stylesheet" href="/static/css/nativePlans.css" media="print" data-defer-css>
+  <link rel="stylesheet" href="/static/css/actionApprovals.css" media="print" data-defer-css>
+  <link rel="stylesheet" href="/static/css/googleSettings.css" media="print" data-defer-css>
   <link rel="stylesheet" href="/static/css/settingsNav.css">
-  <link rel="stylesheet" href="/static/css/setupGuide.css">
-  <link rel="stylesheet" href="/static/css/whatsNew.css">
+  <link rel="stylesheet" href="/static/css/setupGuide.css" media="print" data-defer-css>
+  <link rel="stylesheet" href="/static/css/whatsNew.css" media="print" data-defer-css>
   <link rel="stylesheet" href="/static/css/chatThreads.css">
   <link rel="stylesheet" href="/static/css/chatThreadTabs.css">
-  <link rel="stylesheet" href="/static/css/voiceCall.css">
+  <link rel="stylesheet" href="/static/css/voiceCall.css" media="print" data-defer-css>
+  <script nonce="{{CSP_NONCE}}">
+    // Stylesheets for panels and dialogs load without blocking the first paint.
+    (function(){
+      var go=function(l){ l.media='all'; };
+      document.querySelectorAll('link[data-defer-css]').forEach(function(l){
+        if (l.sheet) go(l); else l.addEventListener('load', function(){ go(l); }, { once: true });
+      });
+    })();
+  </script>
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
   <link rel="modulepreload" href="/static/js/sessions.js">
   <link rel="modulepreload" href="/static/js/markdown.js">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content, viewport-fit=cover" />
+  <style>
+    #app-loader .ld-side{position:absolute;left:0;top:0;bottom:0;width:240px;padding:20px 16px;background:var(--panel,#1c1a14);border-right:1px solid var(--border,#2a2820);display:flex;flex-direction:column;gap:12px}
+    #app-loader .ld-main{position:absolute;left:240px;right:0;top:0;bottom:0;padding:20px 28px;display:flex;flex-direction:column;justify-content:space-between}
+    #app-loader .ld-bar{display:block;height:12px;border-radius:6px;background:var(--border,#2a2820);opacity:.9;animation:ld-pulse 1.4s ease-in-out infinite}
+    #app-loader .ld-comp{display:block;align-self:center;width:min(720px,100%);height:56px;border-radius:14px;background:var(--panel,#1c1a14);border:1px solid var(--border,#2a2820)}
+    @keyframes ld-pulse{50%{opacity:.4}}
+    @media (max-width:768px){#app-loader .ld-side{display:none}#app-loader .ld-main{left:0;padding:16px}}
+    @media (prefers-reduced-motion:reduce){#app-loader .ld-bar{animation:none}}
+  </style>
 </head>
 <body>
   <!-- Loading overlay — hides all flashing until app is ready -->
   <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#17150f);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
-    <div id="loader-wave" style="color:var(--brand-color,var(--red,#e06c75));font-family:monospace;font-size:11px;opacity:.5">▁▂▃</div>
+    <!-- Skeleton of the app: paints with the first byte, before any script or
+         stylesheet has loaded, in the user's own theme colours. -->
+    <div class="ld-side"><i class="ld-bar" style="width:55%"></i><i class="ld-bar" style="width:80%;margin-top:18px"></i><i class="ld-bar" style="width:70%"></i><i class="ld-bar" style="width:76%"></i><i class="ld-bar" style="width:64%"></i></div>
+    <div class="ld-main"><i class="ld-bar" style="width:min(260px,50%);height:22px"></i><i class="ld-comp"></i></div>
+    <div id="loader-wave" style="color:var(--brand-color,var(--red,#e06c75));font-family:monospace;font-size:11px;opacity:.5;position:relative;z-index:1">▁▂▃</div>
   </div>
   <script nonce="{{CSP_NONCE}}">
   (function(){
@@ -3279,7 +3296,6 @@
 <script type="module" src="/static/js/spinner.js"></script>
 <script type="module" src="/static/js/tts-ai.js"></script>
 <script type="module" src="/static/js/document.js"></script>
-<script type="module" src="/static/js/gallery.js"></script>
 <script type="module" src="/static/js/chatRenderer.js"></script>
 <script type="module" src="/static/js/codeRunner.js"></script>
 <script type="module" src="/static/js/chatStream.js"></script>
@@ -3291,7 +3307,6 @@
 <script type="module" src="/static/js/theme.js"></script>
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js"></script>
-<script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/js/voiceCall.js"></script>
 <script type="module" src="/static/js/sttEngines.js"></script>
