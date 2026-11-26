@@ -11,8 +11,12 @@ Requests are never logged with their content, and the caller's token is never se
 Every chat request is counted in <data>/gateway_usage.db (src/gateway_usage.py): who, the model asked for, the model it
 resolved to, tokens, latency. The resolved model is also in the X-Odysseus-Model response header, and for auto it is
 the ``model`` of the response (and of every streamed chunk), as OpenRouter does it.
+Refusal fallback (src/refusal_fallback.py, off by default): when a paired model refuses a clean, direct request from an
+allowed owner, the same request is re-sent to the model's abliterated twin, behind the same input and output guard;
+the response then says so in X-Odysseus-Fallback.
 """
 import asyncio
+import json
 import logging
 import time
 
@@ -24,6 +28,7 @@ from src import gateway_router as auto_router
 from src import gateway_speech as speech
 from src import gateway_usage as usage_log
 from src import openai_gateway as gw
+from src import refusal_fallback as fallback
 from src.openai_translate import Translator
 from src.auth_helpers import effective_user
 
@@ -170,6 +175,65 @@ async def _translated(url: str, headers: dict, model: str, payload: dict, owner,
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", **(extra or {})})
 
 
+async def _from_twin(twin_id: str, payload: dict, owner, want_stream: bool, extra: dict, state: dict, log, s: dict):
+    """The twin's answer to a request the normal model refused, or None when the twin cannot be used or its answer
+    is blocked by the output guard (the caller then returns the normal model's refusal)."""
+    try:
+        url, headers, model, translate = await asyncio.to_thread(gw.resolve, twin_id, owner)
+    except LookupError:
+        logger.warning("gateway: refusal fallback twin %s is not a gateway model", twin_id)
+        return None
+    if translate:
+        return None
+    body = fallback.twin_payload(payload, model, s)
+    body["stream"] = False             # read whole, so the output guard sees the answer before the caller does
+    body.pop("stream_options", None)
+    auto_router.begin(twin_id)
+    client = _client()
+    try:
+        r = await client.post(url, json=body, headers=headers)
+        data = r.content
+    except httpx.HTTPError as e:
+        logger.warning("gateway: refusal fallback twin unreachable: %s", type(e).__name__)
+        return None
+    finally:
+        await client.aclose()
+        auto_router.end(twin_id)
+    if r.status_code >= 400:
+        logger.warning("gateway: refusal fallback twin answered %s", r.status_code)
+        return None
+    text, _ = fallback.completion_text(data)
+    blocked = fallback.check_output(text)
+    if blocked:
+        logger.info("gateway: refusal fallback answer blocked by the output guard (%s)", blocked)
+        return None
+    state["resolved"] = twin_id
+    state["reason"] = f"refusal fallback from {payload.get('model') or '?'}"[:300]
+    extra = dict(extra, **{"X-Odysseus-Fallback": f"refusal -> {twin_id}".encode("ascii", "replace").decode(),
+                           "X-Odysseus-Model": twin_id.encode("ascii", "replace").decode()})
+    data, tok, chars = usage_log.rewrite_completion(data, twin_id)
+    log(200, tok, chars)
+    if not want_stream:
+        return Response(content=data, status_code=200, media_type="application/json", headers=extra)
+    # the caller asked for a stream: send the whole answer as one SSE chunk, then [DONE]
+    try:
+        j = json.loads(data)
+        ch = (j.get("choices") or [{}])[0] or {}
+        msg = ch.get("message") or {}
+        delta = {"role": "assistant", "content": msg.get("content") or ""}
+        if msg.get("tool_calls"):
+            delta["tool_calls"] = [dict(tc, index=i) for i, tc in enumerate(msg["tool_calls"])]
+        chunk = {"id": j.get("id") or "fallback", "object": "chat.completion.chunk", "created": j.get("created") or 0,
+                 "model": twin_id, "choices": [{"index": 0, "delta": delta, "finish_reason": ch.get("finish_reason") or "stop"}]}
+        if j.get("usage"):
+            chunk["usage"] = j["usage"]
+        sse = b"data: " + json.dumps(chunk).encode() + b"\n\ndata: [DONE]\n\n"
+    except Exception:
+        return None
+    return Response(content=sse, status_code=200, media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", **extra})
+
+
 def setup_openai_gateway_routes() -> APIRouter:
     router = APIRouter(tags=["openai_gateway"])
 
@@ -291,6 +355,8 @@ def setup_openai_gateway_routes() -> APIRouter:
         except LookupError as e:
             log(404, error=str(e))
             return _error(404, str(e), "model_not_found")
+        fb_s = await asyncio.to_thread(fallback.settings)
+        twin, _why = fallback.plan(model_id, payload, owner, translate, fb_s)
         auto_router.begin(model_id)                    # how busy each endpoint is, for the auto model
         ended = []
 
@@ -324,6 +390,12 @@ def setup_openai_gateway_routes() -> APIRouter:
                 await client.aclose()
                 done()
             tok, chars = {}, 0
+            if twin and resp.status_code < 400:
+                text, tools = fallback.completion_text(data)
+                if not tools and fallback.looks_like_refusal(text, int(fb_s.get("probe_chars") or 400)):
+                    alt = await _from_twin(twin, payload, owner, False, extra, state, log, fb_s)
+                    if alt is not None:
+                        return alt
             if resp.status_code < 400:
                 # for auto, the answer says which model gave it; an explicit model's answer is left as the server sent it
                 data, tok, chars = usage_log.rewrite_completion(data, model_id if is_auto else None)
@@ -331,10 +403,40 @@ def setup_openai_gateway_routes() -> APIRouter:
             return Response(content=data, status_code=resp.status_code, media_type=ctype, headers=extra or None)
 
         tap = usage_log.SseTap(model_id if is_auto and resp.status_code < 400 else None)
+        upstream_iter = resp.aiter_bytes().__aiter__()
+        head = []
+        if twin and resp.status_code < 400:
+            # read the start of the answer; on a refusal from a clean direct request, ask the twin instead
+            probe = fallback.StreamProbe(int(fb_s.get("probe_chars") or 400))
+            verdict = None
+            try:
+                while verdict is None:
+                    try:
+                        chunk = await upstream_iter.__anext__()
+                    except StopAsyncIteration:
+                        verdict = probe.decide(final=True)
+                        break
+                    verdict = probe.feed(chunk)
+            except httpx.HTTPError:
+                verdict = False
+            head = probe.raw
+            if verdict:
+                alt = await _from_twin(twin, payload, owner, True, extra, state, log, fb_s)
+                if alt is not None:
+                    await resp.aclose()
+                    await client.aclose()
+                    done()
+                    return alt
+
+        async def upstream_chunks():
+            for chunk in head:
+                yield chunk
+            async for chunk in upstream_iter:
+                yield chunk
 
         async def body():
             try:
-                async for chunk in resp.aiter_bytes():
+                async for chunk in upstream_chunks():
                     try:
                         chunk = tap.feed(chunk)
                     except Exception:
