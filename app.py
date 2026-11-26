@@ -487,7 +487,13 @@ class _RevalidatingStatic(StaticFiles):
 
     async def get_response(self, path, scope):
         resp = await super().get_response(path, scope)
-        if path.endswith((".js", ".css", ".html")):
+        if path.endswith((".js", ".css")):
+            # A URL stamped with the file's current content hash (core/asset_versions.py)
+            # can never change, so it is cached for good. Anything else revalidates.
+            from core.asset_versions import cache_header_for
+            qs = scope.get("query_string", b"").decode("latin-1")
+            resp.headers["Cache-Control"] = cache_header_for(path, qs, "static")
+        elif path.endswith(".html"):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
@@ -982,6 +988,9 @@ def _serve_html_with_nonce(request: Request, file_path: str, mod_styles: bool = 
         html = f.read()
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
+    if file_path.endswith("index.html"):
+        from core.asset_versions import stamp_html
+        html = stamp_html(html, os.path.dirname(file_path), nonce)
     if mod_styles:
         from src.mods import style as mod_style
         html = mod_style.with_links(html, request)

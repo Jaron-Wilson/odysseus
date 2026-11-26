@@ -549,7 +549,17 @@ export function autoResize(textarea) {
   let clone = textarea._resizeClone;
   if (!clone) {
     clone = textarea.cloneNode(false);
-    clone.style.cssText = getComputedStyle(textarea).cssText;
+    // Only what changes how the text wraps. Copying the whole computed
+    // cssText (hundreds of properties) cost about 20 ms the first time.
+    const cs = getComputedStyle(textarea);
+    for (const prop of ['boxSizing', 'fontFamily', 'fontSize', 'fontStyle', 'fontWeight', 'fontStretch',
+      'fontVariationSettings', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform',
+      'whiteSpace', 'wordBreak', 'overflowWrap', 'tabSize',
+      'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+      'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+      'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle']) {
+      clone.style[prop] = cs[prop];
+    }
     clone.style.position = 'absolute';
     clone.style.visibility = 'hidden';
     clone.style.height = '0';

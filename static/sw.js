@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v369';
+const CACHE_NAME = 'odysseus-v370';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -171,6 +171,21 @@ self.addEventListener('fetch', (e) => {
 
   // JS/CSS: network-first — always try the network so code/style edits show up
   // on a normal reload; fall back to cache only when offline.
+  // A URL carrying ?v=<content hash> (stamped by the server into the page and
+  // import map) never changes content, so it is served from cache first.
+  if (url.pathname.startsWith('/static/') && /\.(js|css)$/.test(url.pathname) && /(^|&)v=[0-9a-f]+/.test(url.search.slice(1))) {
+    e.respondWith(
+      caches.open(CACHE_NAME).then(async cache => {
+        const hit = await cache.match(e.request);
+        if (hit) return hit;
+        const res = await fetch(e.request);
+        if (res && res.ok) cache.put(e.request, res.clone());
+        return res;
+      })
+    );
+    return;
+  }
+
   if (url.pathname.startsWith('/static/') && /\.(js|css)(\?|$)/.test(url.pathname + url.search)) {
     e.respondWith(
       fetch(e.request).then(res => {

@@ -255,7 +255,8 @@ def test_call_turns_tell_the_model_it_is_in_a_voice_call():
 def test_wiring_script_worker_and_service_worker():
     html = (_REPO / "static" / "index.html").read_text()
     sw = (_REPO / "static" / "sw.js").read_text()
-    assert '<script type="module" src="/static/js/callHandoff.js"></script>' in html
+    # Loaded right after first paint by static/js/lazyModules.js, not a script tag.
+    assert "import('./callHandoff.js')" in (_REPO / "static" / "js" / "lazyModules.js").read_text()
     assert 'id="set-vcEcho"' in html
     assert "'/static/js/callHandoff.js'" in sw and "'/static/js/callPresenceWorker.js'" in sw
     assert "options.tag === 'odysseus-call'" in sw and "odysseus-call-offer" in sw
