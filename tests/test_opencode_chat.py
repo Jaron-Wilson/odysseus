@@ -152,6 +152,7 @@ def fake(monkeypatch, tmp_path):
     oc._queues.clear()
     oc._calls.clear()
     oc._touched.clear()
+    oc._api_cache.clear()
     yield srv
     for t in list(oc._watchers.values()):
         t.cancel()
@@ -174,6 +175,170 @@ DONE_TEXT = ("Done. I moved the careers link into the footer and updated the sit
 def finished(text=DONE_TEXT):
     return {"parts": [tool_part("t1", "edit", {"filePath": f"{HOME}/sites/careers/index.html"}), text_part("x1", text)],
             "completed": True}
+
+
+# --- opencode 2.x: the same chats behind the /api routes --------------------------------------------------------
+
+class FakeServerV2(FakeServer):
+    """The same chats as FakeServer, served the way opencode 2.x does: /api/info, /api/session (location.directory),
+    /api/session/active, /api/session/<id>/message (newest first, type/text/content, an `idle` message at the end
+    of a run), POST /api/session/<id>/prompt {text} and /interrupt, /api/permission/request, /api/form. The 1.x
+    routes answer 200 with the web page, as the real 2.x server does."""
+
+    @staticmethod
+    def _v2_msg(m, busy):
+        info, parts = m["info"], m["parts"]
+        if info["role"] == "user":
+            return [{"id": info["id"], "type": "user", "time": info["time"], "text": parts[0]["text"]}]
+        content = []
+        for p in parts:
+            if p["type"] == "text":
+                content.append({"type": "text", "text": p["text"]})
+            elif p["type"] == "tool":
+                content.append({"type": "tool", "id": p["id"], "name": "shell" if p["tool"] == "bash" else p["tool"],
+                                "state": dict(p["state"])})
+        out = [{"id": info["id"], "type": "assistant", "time": info["time"], "finish": info.get("finish"),
+                "content": content}]
+        if info["time"].get("completed") and not busy:
+            err = info.get("error") or {}
+            idle = {"id": info["id"] + "_idle", "type": "idle", "time": {"created": info["time"]["completed"] + 1},
+                    "outcome": "interrupted" if err.get("name") == "MessageAbortedError" else "failed" if err else "succeeded"}
+            if err and idle["outcome"] == "failed":
+                idle["error"] = {"type": "unknown", "message": (err.get("data") or {}).get("message") or "boom"}
+            out.append(idle)
+        return out
+
+    def __call__(self, request):
+        self.auth_seen.add(request.headers.get("authorization", ""))
+        params = dict(request.url.params)
+        body = json.loads(request.content) if request.content else None
+        self.requests.append((request.method, request.url.path, params, body))
+        if self.fail:
+            return httpx.Response(self.fail)
+        path, m = request.url.path, request.method
+        if not path.startswith("/api/"):
+            return httpx.Response(200, text="<!doctype html><html></html>", headers={"content-type": "text/html"})
+        if path == "/api/info":
+            return httpx.Response(200, json={"version": "2.4.2", "pid": 1})
+        if m == "GET" and path == "/api/session":
+            rows = []
+            for s in self.sessions:
+                v2 = {k: v for k, v in s.items() if k != "directory"}
+                v2["location"] = {"directory": s["directory"]}
+                rows.append(v2)
+            return httpx.Response(200, json={"data": rows, "cursor": {"previous": None, "next": None}})
+        if m == "GET" and path == "/api/session/active":
+            return httpx.Response(200, json={"data": {sid: {"type": "busy"} for sid in self.busy}})
+        if m == "GET" and path == "/api/permission/request":
+            return httpx.Response(200, json={"location": {"directory": "/"}, "data": self.permission})
+        if m == "GET" and path == "/api/form":
+            return httpx.Response(200, json={"location": {"directory": "/"}, "data": []})
+        parts = path.strip("/").split("/")          # api session <id> <what>
+        if len(parts) == 4 and parts[1] == "session" and parts[3] == "message" and m == "GET":
+            sid = parts[2]
+            msgs = self._messages(sid)
+            busy = sid in self.busy
+            out = [x for mm in msgs for x in self._v2_msg(mm, busy)]
+            return httpx.Response(200, json={"data": list(reversed(out)), "cursor": {"previous": None, "next": None}})
+        if len(parts) == 4 and parts[1] == "session" and parts[3] == "prompt" and m == "POST":
+            sid = parts[2]
+            n = len(self.messages[sid])
+            self.messages[sid].append({"info": {"id": f"msg_new{n}", "role": "user", "time": {"created": NOW_MS + n}},
+                                       "parts": [text_part(f"p_new{n}", body["text"])]})
+            self.busy.add(sid)
+            self.cursor[sid] = 0
+            return httpx.Response(200, json={"data": {"id": f"msg_new{n}", "type": "user"}})
+        if len(parts) == 4 and parts[1] == "session" and parts[3] == "interrupt" and m == "POST":
+            self.busy.discard(parts[2])
+            self.timeline.pop(parts[2], None)
+            return httpx.Response(200, json={"interrupted": True})
+        return httpx.Response(404)
+
+    def prompts(self):
+        return [r for r in self.requests if r[1].endswith("/prompt")]
+
+
+@pytest.fixture
+def fake2(fake):
+    srv = FakeServerV2()
+    oc.set_transport(httpx.MockTransport(srv))
+    oc._api_cache.clear()
+    yield srv
+    oc._api_cache.clear()
+
+
+async def test_v2_is_detected_from_api_info_and_remembered_for_a_while(fake2, monkeypatch):
+    assert await oc.api_version() == 2
+    n = len([r for r in fake2.requests if r[1] == "/api/info"])
+    assert await oc.api_version() == 2 and len([r for r in fake2.requests if r[1] == "/api/info"]) == n
+    # after the TTL a rollback to 1.x (its /api/info is the web page) is picked up
+    oc.set_transport(httpx.MockTransport(FakeServer()))
+    monkeypatch.setattr(oc, "API_TTL_S", 0.0)
+    assert await oc.api_version() == 1
+
+
+async def test_a_1x_server_answering_api_info_with_its_web_page_is_1x(fake):
+    def page(request):
+        if request.url.path == "/api/info":
+            return httpx.Response(200, text="<!doctype html>", headers={"content-type": "text/html"})
+        return fake(request)
+    oc.set_transport(httpx.MockTransport(page))
+    assert await oc.api_version() == 1
+    assert [r["id"] for r in await oc.list_chats()] == ["ses_jd", "ses_car", "ses_old"]
+
+
+async def test_v2_list_reads_the_folder_from_location_and_skips_subagents_and_archived(fake2):
+    fake2.busy.add("ses_car")
+    rows = await oc.list_chats()
+    assert [r["id"] for r in rows] == ["ses_jd", "ses_car", "ses_old"]
+    assert rows[0]["folder"] == "~/odysseus-data/workspaces/jarondynamics-site" and rows[1]["busy"]
+    assert not [r for r in fake2.requests if not r[1].startswith("/api/")]     # no 1.x route was used
+
+
+async def test_v2_send_posts_text_to_prompt_and_reads_the_reply(fake2):
+    fake2.seed("ses_jd", "earlier", [text_part("e", "earlier reply")])
+    fake2.run("ses_jd", [{"parts": [tool_part("t", "read", {"filePath": f"{HOME}/x/a.md"}, "running")]}, finished()])
+    chat = await oc.find("JaronDynamics")
+    r = await oc.send_and_wait(chat, "move the careers link", wait=5, owner_chat="odys1")
+    assert r["status"] == "done"
+    assert oc.summary_of(r["progress"].text).startswith("Done. I moved the careers link")
+    method, path, params, body = fake2.prompts()[0]
+    assert path == "/api/session/ses_jd/prompt" and params["location[directory]"].endswith("jarondynamics-site")
+    assert body == {"text": "move the careers link"}
+
+
+async def test_v2_progress_names_the_shell_tool_like_bash(fake2, posted):
+    fake2.run("ses_jd", [{"parts": [tool_part("t", "bash", {"command": "make", "description": "build the site"}, "running")]}])
+    chat = await oc.find("JaronDynamics")
+    r = await oc.send_and_wait(chat, "build", wait=0.3, owner_chat="odys1")
+    assert r["status"] == "working" and r["progress"].current == "running a command (build the site)"
+
+
+async def test_v2_a_failed_or_stopped_run_ends_with_its_reason(fake2):
+    fake2.run("ses_jd", [{"parts": [], "completed": True, "error": {"name": "APIError", "data": {"message": "quota"}}}])
+    chat = await oc.find("JaronDynamics")
+    r = await oc.send_and_wait(chat, "go", wait=3)
+    assert r["status"] == "done" and "quota" in r["progress"].error
+    msgs = [oc._v2_message({"id": "i", "type": "idle", "time": {"created": 5}, "outcome": "interrupted"})]
+    assert oc._error_words(msgs[0]["info"]["error"]) == "it was stopped"
+
+
+async def test_v2_permission_wait_and_stop_use_the_api_routes(fake2, posted):
+    fake2.permission = [{"id": "per1", "sessionID": "ses_jd", "action": "external_directory", "resources": []}]
+    fake2.run("ses_jd", [{"parts": [tool_part("t", "bash", {"command": "x"}, "running")]}])
+    chat = await oc.find("JaronDynamics")
+    r = await oc.send_and_wait(chat, "go", wait=2, owner_chat="odys1")
+    assert r["status"] == "working" and "waiting for your permission to use externaldirectory" in r["waiting_on"]
+    assert await oc.abort(chat) is True
+    assert [r for r in fake2.requests if r[0] == "POST" and r[1] == "/api/session/ses_jd/interrupt"]
+
+
+def test_v2_message_kinds_the_progress_does_not_use_are_dropped():
+    assert oc._v2_message({"id": "s", "type": "system", "text": "x"}) is None
+    assert oc._v2_message("junk") is None
+    a = oc._v2_message({"id": "a", "type": "assistant", "time": {"created": 1},
+                        "content": [{"type": "reasoning", "text": "hm"}, {"type": "text", "text": "hi"}]})
+    assert [p["type"] for p in a["parts"]] == ["text"]
 
 
 # --- Reading the server -----------------------------------------------------
