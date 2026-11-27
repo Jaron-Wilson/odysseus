@@ -279,7 +279,7 @@ def _build_opencode(events: List[Dict], meta: Dict) -> List[Dict]:
             if text:
                 text_c, clipped = _clip(text, MAX_TEXT_CHARS)
                 blocks.append({"kind": "text", "text": text_c, "clipped": clipped})
-        elif et == "tool":
+        elif et in ("tool", "tool_use"):           # run --format json says tool_use (1.x and 2.x)
             state = part.get("state") or {}
             name = str(part.get("tool") or "tool")
             inp = state.get("input") or {}

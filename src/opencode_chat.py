@@ -8,9 +8,9 @@ user's real work lives in chats on the shared opencode server (opencode-serve, 1
 ~/.config/opencode/server.env). This module is the client for those chats and what a voice call needs around it:
 
   list / resolve   the recent chats of every folder; a chat named by id, by title, or "the one in <folder>"
-  send             POST /session/<id>/prompt_async (returns at once), then wait up to `wait_seconds` for the reply
+  send             POST /session/<id>/prompt_async (2.x: /api/session/<id>/prompt; returns at once), then wait up to `wait_seconds` for the reply
   progress         the chat's tool steps since the last message, in plain words ("reading careers.html")
-  stop             POST /session/<id>/abort
+  stop             POST /session/<id>/abort (2.x: /api/session/<id>/interrupt)
   bindings         which opencode chat an Odysseus chat is bound to, and whether the user armed it (see below)
   the watcher      after a send that is still going, one background task per chat follows it and puts short
                    spoken updates (at most one every UPDATE_MIN_S) and a one or two sentence summary in a queue
@@ -25,6 +25,11 @@ tool holds a send for the user's Approve unless the user armed that chat themsel
 work-chat menu (an authenticated request from their own page) arms it for ARM_TTL_S. See the tool for the policy.
 
 The server's password is read here and never logged or returned.
+
+Both opencode generations are spoken: 1.x (routes at the root, /session/...) and 2.x (everything under /api/...,
+where the old routes answer 200 with the web page). api_version() asks GET /api/info once a minute per server
+address (JSON with a version: 2.x, anything else: 1.x), so the module keeps working across an upgrade or a
+rollback without a restart. 2.x sessions and messages are turned into the 1.x shapes the rest of the module reads.
 """
 from __future__ import annotations
 
@@ -63,7 +68,10 @@ QUEUE_TTL_S = 15 * 60
 SUMMARY_CHARS = 280
 LIST_LIMIT = 30
 
+API_TTL_S = 60.0                # how long a server's detected generation is trusted (an upgrade is seen this fast)
+
 _transport: Optional[httpx.AsyncBaseTransport] = None      # tests put a fake server here
+_api_cache: Dict[str, Tuple[int, float]] = {}               # base url -> (1 or 2, monotonic time it was seen)
 _lock = threading.RLock()
 
 
@@ -132,6 +140,94 @@ async def _call(method: str, path: str, *, params: Optional[dict] = None, body: 
         return None
 
 
+async def api_version() -> int:
+    """2 when the server is opencode 2.x (GET /api/info answers JSON with a version), else 1. A server that does
+    not answer is not remembered (the call that follows reports it); 1.x answers /api/info with its web page."""
+    url = base_url()
+    hit = _api_cache.get(url)
+    if hit and time.monotonic() - hit[1] < API_TTL_S:
+        return hit[0]
+    try:
+        async with _client(5.0) as c:
+            r = await c.get("/api/info")
+    except httpx.HTTPError:
+        return hit[0] if hit else 1
+    if r.status_code in (401, 403) or r.status_code >= 500:
+        return hit[0] if hit else 1
+    ver = 1
+    if r.status_code == 200:
+        try:
+            info = r.json()
+        except ValueError:
+            info = None
+        major = str((info or {}).get("version") or "").split(".")[0] if isinstance(info, dict) else ""
+        if major.isdigit() and int(major) >= 2:
+            ver = 2
+    _api_cache[url] = (ver, time.monotonic())
+    return ver
+
+
+def _loc(chat: dict) -> dict:
+    """2.x's folder query parameter (location[directory]); empty when the chat has no folder."""
+    d = chat.get("directory") or ""
+    return {"location[directory]": d} if d else {}
+
+
+def _v2_data(r: Any) -> Any:
+    return r.get("data") if isinstance(r, dict) else r
+
+
+def _v2_session(s: dict) -> dict:
+    """A 2.x Session.Info in the 1.x shape (directory at the top)."""
+    out = dict(s)
+    out["directory"] = (s.get("location") or {}).get("directory") or s.get("directory") or ""
+    return out
+
+
+def _v2_error(err: Any, outcome: str = "") -> Optional[dict]:
+    """A 2.x StructuredError (or an interrupted end) as the 1.x {name, data: {message}} _error_words reads."""
+    if outcome == "interrupted":
+        return {"name": "MessageAbortedError"}
+    if isinstance(err, dict):
+        return {"name": "", "data": {"message": err.get("message") or err.get("type") or ""}}
+    return {"name": "", "data": {"message": "the run failed"}} if outcome == "failed" else None
+
+
+def _v2_message(m: dict) -> Optional[dict]:
+    """A 2.x session message in the 1.x {info, parts} shape, or None for kinds the progress does not use.
+    An `idle` message (the end of a run) becomes a finished assistant message with no parts, carrying the
+    run's error when it failed or was stopped."""
+    if not isinstance(m, dict):
+        return None
+    kind, mid, t = m.get("type"), m.get("id") or "", dict(m.get("time") or {})
+    if kind == "user":
+        return {"info": {"id": mid, "role": "user", "time": t},
+                "parts": [{"type": "text", "id": mid + ":text", "text": m.get("text") or ""}]}
+    if kind == "assistant":
+        parts = []
+        for i, c in enumerate(m.get("content") or []):
+            if not isinstance(c, dict):
+                continue
+            if c.get("type") == "text":
+                parts.append({"type": "text", "id": f"{mid}:{i}", "text": c.get("text") or ""})
+            elif c.get("type") == "tool":
+                st = c.get("state") or {}
+                parts.append({"type": "tool", "id": c.get("id") or f"{mid}:{i}", "tool": c.get("name") or "",
+                              "state": {"status": st.get("status"), "input": st.get("input")}})
+        info = {"id": mid, "role": "assistant", "time": t, "finish": m.get("finish")}
+        if m.get("error"):
+            info["error"] = _v2_error(m.get("error"))
+        return {"info": info, "parts": parts}
+    if kind == "idle":
+        created = t.get("created") or 0
+        info = {"id": mid, "role": "assistant", "time": {"created": created, "completed": created}, "finish": "stop"}
+        err = _v2_error(m.get("error"), m.get("outcome") or "")
+        if err:
+            info["error"] = err
+        return {"info": info, "parts": []}
+    return None
+
+
 # ── chats ─────────────────────────────────────────────────────────────────
 
 def ago(ms: Optional[float], now: Optional[float] = None) -> str:
@@ -166,6 +262,9 @@ def _chat_row(s: dict, busy: set) -> dict:
 
 async def busy_ids() -> set:
     try:
+        if await api_version() >= 2:
+            st = _v2_data(await _call("GET", "/api/session/active"))
+            return {k for k in (st or {})} if isinstance(st, dict) else set()
         st = await _call("GET", "/session/status")
     except OpenCodeError:
         return set()
@@ -174,12 +273,18 @@ async def busy_ids() -> set:
 
 async def list_chats(limit: int = LIST_LIMIT) -> List[dict]:
     """The newest top-level chats across all folders (subagent and archived chats left out), newest first."""
-    try:
-        rows = await _call("GET", "/experimental/session", params={"roots": "true", "limit": max(1, min(limit * 2, 100))})
-    except OpenCodeError as e:
-        if "404" not in str(e):
-            raise
-        rows = await _call("GET", "/session", params={"roots": "true"})
+    if await api_version() >= 2:
+        # 2.x lists every folder's chats, subagent chats included (left out below), with a cursor for more.
+        got = _v2_data(await _call("GET", "/api/session", params={"limit": max(1, min(limit * 4, 200))}))
+        rows = [_v2_session(s) for s in (got or []) if isinstance(s, dict)]
+    else:
+        try:
+            rows = await _call("GET", "/experimental/session",
+                               params={"roots": "true", "limit": max(1, min(limit * 2, 100))})
+        except OpenCodeError as e:
+            if "404" not in str(e):
+                raise
+            rows = await _call("GET", "/session", params={"roots": "true"})
     rows = [s for s in (rows or []) if isinstance(s, dict) and s.get("id") and not s.get("parentID")
             and not (s.get("time") or {}).get("archived")]
     rows.sort(key=lambda s: -((s.get("time") or {}).get("updated") or 0))
@@ -264,6 +369,11 @@ async def find(ref: str) -> dict:
 
 
 async def get_messages(chat: dict, limit: int = 60) -> List[dict]:
+    if await api_version() >= 2:
+        got = _v2_data(await _call("GET", f"/api/session/{chat['id']}/message",
+                                   params={**_loc(chat), "limit": limit, "order": "desc"}))
+        msgs = [_v2_message(m) for m in (got or [])]
+        return [m for m in reversed(msgs) if m]          # oldest first, as 1.x returns them
     rows = await _call("GET", f"/session/{chat['id']}/message",
                        params={"directory": chat.get("directory") or "", "limit": limit})
     return [m for m in (rows or []) if isinstance(m, dict) and isinstance(m.get("info"), dict)]
@@ -302,7 +412,7 @@ def step_words(tool: str, inp: Any, root: str = "") -> Optional[str]:
         return f"writing {_rel(path, root)}" if path else "writing a file"
     if tool in ("patch", "apply_patch"):
         return "applying a patch"
-    if tool == "bash":
+    if tool in ("bash", "shell"):           # 2.x calls the bash tool shell
         d = _clean_phrase(inp.get("description") or "", 60)
         return f"running a command ({d})" if d else "running a command"
     if tool == "grep":
@@ -492,6 +602,17 @@ async def _state(chat: dict, after_ids: Optional[set] = None) -> Tuple[Progress,
 
 async def waiting_on(chat: dict) -> str:
     """A permission or question the chat is blocked on (the person has to answer it in opencode), or ""."""
+    if await api_version() >= 2:
+        for path, noun in (("/api/permission/request", "permission"), ("/api/form", "answer")):
+            try:
+                rows = _v2_data(await _call("GET", path, params=_loc(chat)))
+            except OpenCodeError:
+                continue
+            for r in rows or []:
+                if isinstance(r, dict) and r.get("sessionID") == chat["id"]:
+                    what = _clean_phrase(r.get("action") or "", 40) if noun == "permission" else ""
+                    return f"it is waiting for your {noun}" + (f" to use {what}" if what else "") + " in opencode"
+        return ""
     for path, noun in (("/permission", "permission"), ("/question", "answer")):
         try:
             rows = await _call("GET", path, params={"directory": chat.get("directory") or ""})
@@ -505,11 +626,19 @@ async def waiting_on(chat: dict) -> str:
 
 
 async def post_prompt(chat: dict, text: str) -> None:
+    if await api_version() >= 2:
+        # 2.x returns as soon as the message is queued (as prompt_async did); it runs with the chat's own
+        # agent and model, as 1.x did when none was given.
+        await _call("POST", f"/api/session/{chat['id']}/prompt", params=_loc(chat), body={"text": text})
+        return
     await _call("POST", f"/session/{chat['id']}/prompt_async", params={"directory": chat.get("directory") or ""},
                 body={"parts": [{"type": "text", "text": text}]})
 
 
 async def abort(chat: dict) -> bool:
+    if await api_version() >= 2:
+        r = await _call("POST", f"/api/session/{chat['id']}/interrupt", params=_loc(chat))
+        return not (isinstance(r, dict) and r.get("interrupted") is False)
     r = await _call("POST", f"/session/{chat['id']}/abort", params={"directory": chat.get("directory") or ""})
     return r is not False
 

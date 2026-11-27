@@ -119,6 +119,61 @@ def engine_cli(engine: str) -> Optional[str]:
     return found
 
 
+_OC_MAJOR: Dict[str, tuple] = {}      # real path of the opencode CLI -> (mtime, major version)
+
+
+def opencode_major(cli: str) -> int:
+    """The installed opencode CLI's major version (1 or 2), from `opencode --version`, remembered until the
+    binary changes, so an upgrade (or a rollback) is picked up by the next run without a restart. 1 when unsure."""
+    try:
+        real = os.path.realpath(cli)
+        mtime = os.stat(real).st_mtime
+    except OSError:
+        return 1
+    hit = _OC_MAJOR.get(real)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    major = 1
+    try:
+        # Both generations print it at once; a CLI that does not is taken as 1.x, and remembered as such
+        # (until it changes) so a hung binary costs these seconds once, not on every run.
+        out = subprocess.run([cli, "--version"], capture_output=True, text=True, timeout=5,
+                             stdin=subprocess.DEVNULL).stdout
+        m = re.search(r"(\d+)\.\d+\.\d+", out or "")
+        if m:
+            major = int(m.group(1))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    _OC_MAJOR[real] = (mtime, major)
+    return major
+
+
+def opencode_run_cmd(cli: str, cwd: str, agent: str, *, auto: bool = False) -> list:
+    """The start of an `opencode run --format json` command line for either generation.
+
+    1.x runs its own server in-process and takes the folder as --dir. 2.x has no --dir (the folder is the
+    working directory, which every caller already sets) and would otherwise start or join its background
+    service, so it is pointed at the shared server (ODYSSEUS_OPENCODE_URL, default 127.0.0.1:4096) with
+    --server; --auto lets an execute run through permission asks the config does not deny, since nobody is
+    there to answer them. The event stream is the same in both."""
+    if opencode_major(cli) >= 2:
+        from src import opencode_chat
+        cmd = [cli, "run", "--format", "json", "--server", opencode_chat.base_url(), "--agent", agent]
+        return cmd + (["--auto"] if auto else [])
+    return [cli, "run", "--format", "json", "--dir", str(cwd), "--agent", agent]
+
+
+def opencode_run_env(env: dict, cli: str) -> dict:
+    """2.x `run --server` logs in with OPENCODE_SERVER_PASSWORD; give it the shared server's login."""
+    if opencode_major(cli) >= 2 and not env.get("OPENCODE_SERVER_PASSWORD"):
+        from src import opencode_chat
+        user, pw = opencode_chat._credentials()
+        if pw:
+            env["OPENCODE_SERVER_PASSWORD"] = pw
+            env.setdefault("OPENCODE_SERVER_USERNAME", user)
+    return env
+
+
 _AGY_CHECK: Dict[str, object] = {"at": 0.0, "path": "", "problem": "", "argv": []}
 # Seen 2026-09-30 on this server: a KVM guest on QEMU's generic CPU model
 # hides PCLMUL, and agy dies at start ("compiled with pclmul enabled, but
@@ -306,7 +361,7 @@ def _summarize_opencode(event: dict) -> Optional[str]:
     part = event.get("part") or {}
     if etype == "text":
         return (part.get("text") or "").strip() or None
-    if etype == "tool":
+    if etype in ("tool", "tool_use"):        # `run --format json` says tool_use (1.x and 2.x)
         state = part.get("state") or {}
         name = part.get("tool") or "tool"
         inp = state.get("input") or {}
@@ -1288,8 +1343,8 @@ class ClaudeCodeTool:
         elif engine == "opencode":
             # OpenCode mints its own ses_… id, which the event stream reports.
             session_id = "" if run_fresh else (resume_id or "")
-            cmd = [cli, "run", "--format", "json", "--dir", str(cwd_path),
-                   "--agent", "build" if action == "execute" else "plan"]
+            cmd = opencode_run_cmd(cli, str(cwd_path), "build" if action == "execute" else "plan",
+                                   auto=action == "execute")
             if args.get("model"):
                 cmd += ["--model", str(args["model"])]
             if resume_id and not run_fresh:
@@ -1430,6 +1485,7 @@ class ClaudeCodeTool:
         env["ODYSSEUS_STATUS_FILE"] = os.path.join(job.run_dir, "status.jsonl")
         if engine == "opencode":
             scratch_env(env, job.run_dir)
+            opencode_run_env(env, cmd[0])
         prompt_path = os.path.join(job.run_dir, "prompt.txt")
         if prompt_via_stdin:
             with open(prompt_path, "w", encoding="utf-8") as f:
@@ -1457,7 +1513,7 @@ class ClaudeCodeTool:
         # an opaque spinner and has to go hunting in `ps` to find out whether a
         # process exists at all, what it may touch, or how to kill it.
         if engine == "opencode":
-            _grant = f"--agent {'build' if action == 'execute' else 'plan'}"
+            _grant = f"--agent {'build' if action == 'execute' else 'plan'}" + (" --auto" if "--auto" in cmd else "")
         elif engine == "antigravity":
             _grant = "--dangerously-skip-permissions" if action == "execute" else "--sandbox (read-only: tools needing approval are denied)"
         else:
@@ -1981,8 +2037,7 @@ async def _wrap_up(job, reason: str) -> str:
             cmd += ["--model", spec["args_model"]]
         stdin_data = None
     elif engine == "opencode":
-        cmd = [cli, "run", "--format", "json", "--dir", spec.get("cwd") or job.cwd,
-               "--agent", "plan", "--session", sid]
+        cmd = opencode_run_cmd(cli, spec.get("cwd") or job.cwd, "plan") + ["--session", sid]
         if spec.get("args_model"):
             cmd += ["--model", spec["args_model"]]
         cmd.append(prompt)
@@ -1997,6 +2052,8 @@ async def _wrap_up(job, reason: str) -> str:
             cmd += ["--max-budget-usd", f"{max(0.05, cost_cap):.2f}"]
         stdin_data = prompt.encode()
     env = _cli_env()
+    if engine == "opencode":
+        opencode_run_env(env, cli)
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=spec.get("cwd") or job.cwd, env=env,
